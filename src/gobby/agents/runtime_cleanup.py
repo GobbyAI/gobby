@@ -26,6 +26,7 @@ def cleanup_agent_runtime_state(
     *,
     run_id: str | None,
     child_session_id: str | None,
+    terminal_reason: str | None,
 ) -> AgentRuntimeCleanupResult:
     """Release runtime rows tied to a terminal agent run.
 
@@ -48,7 +49,7 @@ def cleanup_agent_runtime_state(
             logger.warning(message)
             errors.append(message)
 
-    if child_session_id:
+    if child_session_id and terminal_reason != "daemon_stop":
         try:
             workflow_instance_rows = WorkflowInstanceManager(db).delete_instances_for_session(
                 child_session_id

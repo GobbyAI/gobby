@@ -38,7 +38,7 @@ def test_terminal_transition_rolls_back_when_post_update_step_fails(
 
     with patch.object(
         agent_manager,
-        "_expire_sessions_for_run_ids",
+        "_transition_sessions_for_terminal_run",
         side_effect=RuntimeError("post-update failure"),
     ):
         with pytest.raises(RuntimeError, match="post-update failure"):
@@ -498,6 +498,10 @@ class TestLocalAgentRunManager:
             prompt="Complete child session test",
             child_session_id=child_session.id,
         )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=agent_run.id,
+        )
         agent_manager.start(agent_run.id)
 
         agent_manager.complete(agent_run.id, result="Done")
@@ -619,6 +623,10 @@ class TestLocalAgentRunManager:
             provider="claude",
             prompt="Timeout child session test",
             child_session_id=child_session.id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=agent_run.id,
         )
         agent_manager.start(agent_run.id)
 
@@ -1557,13 +1565,15 @@ class TestLocalAgentRunManager:
                 agent_manager,
                 "timeout",
                 side_effect=[MagicMock(), RuntimeError("transition failed"), MagicMock()],
-            ),
+            ) as timeout,
             patch("gobby.storage.agents._cleanup.logger") as mock_logger,
         ):
             run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
 
         assert run_ids == ["run-first", "run-last"]
+        assert timeout.call_count == 3
         mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_count == 1
 
     def test_cleanup_stale_pending_runs(
         self,

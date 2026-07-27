@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -11,7 +12,12 @@ import pytest
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
-from gobby.runner_lifecycle_agents import _RUN_REPLAY_PAGE_SIZE, _list_active_agent_runs_once
+from gobby.runner_lifecycle_agents import (
+    _RUN_REPLAY_PAGE_SIZE,
+    _list_active_agent_runs_once,
+    _rehydrate_active_agent_completion_subscribers,
+    _resolve_provisional_daemon_resumes,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -43,6 +49,68 @@ class TestAgentRestartReconciliation:
             call(limit=page_size, offset=page_size),
         ]
         assert runner.completion_registry.register.call_count == page_size + 3
+
+    @pytest.mark.asyncio
+    async def test_rehydrate_subscribers_skips_reconciliation_pending_run(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            resume_metadata_json={"reconciliation_pending": True},
+        )
+        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        subscriber_manager = SimpleNamespace(get_completion_subscribers=MagicMock())
+        runner = self._runner(run_storage, db=object())
+
+        with (
+            patch(
+                "gobby.runner_lifecycle_agents.LocalAgentRunManager",
+                return_value=run_storage,
+            ),
+            patch(
+                "gobby.runner_lifecycle_agents.CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+        ):
+            rehydrated = await _rehydrate_active_agent_completion_subscribers(runner)
+
+        assert rehydrated == 0
+        subscriber_manager.get_completion_subscribers.assert_not_called()
+        assert subscriber_manager.get_completion_subscribers.call_count == 0
+        runner.completion_registry.register.assert_not_called()
+        assert runner.completion_registry.register.call_count == 0
+        assert run_storage.list_active.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_provisional_resolution_skips_reconciliation_pending_run(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            resume_metadata_json={
+                "daemon_stop_resume_phase": "prepared",
+                "reconciliation_pending": True,
+            },
+        )
+        run_storage = SimpleNamespace(
+            list_active=MagicMock(return_value=[]),
+            list_provisional_daemon_resumes=MagicMock(return_value=[run]),
+        )
+        runner = self._runner(run_storage)
+        tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
+
+        with (
+            patch(
+                "gobby.agents.tmux.get_tmux_session_manager",
+                return_value=tmux_manager,
+            ),
+            patch(
+                "gobby.storage.agent_resume.rollback_prepared_daemon_resume",
+            ) as rollback,
+        ):
+            resolved = await _resolve_provisional_daemon_resumes(runner)
+
+        assert resolved == 0
+        rollback.assert_not_called()
+        assert rollback.call_count == 0
+        assert tmux_manager.list_sessions.await_count == 1
+        assert run_storage.list_provisional_daemon_resumes.call_count == 1
 
     def test_list_active_agent_runs_paginates_offsets(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
@@ -97,7 +165,7 @@ class TestAgentRestartReconciliation:
         assert run.tmux_session_name == "gobby-run-1"
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
-            subscribers=["parent-1"],
+            subscribers=[],
             continuation_prompt="continue later",
         )
         run_storage.update_runtime.assert_called_once_with(
@@ -108,7 +176,7 @@ class TestAgentRestartReconciliation:
         output_reader.start_reader.assert_awaited_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1"
         )
-        runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
@@ -146,16 +214,16 @@ class TestAgentRestartReconciliation:
         assert reconciled == 2
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
-            subscribers=["parent-1"],
+            subscribers=[],
             continuation_prompt=None,
         )
         run_storage.update_runtime.assert_not_called()
         start_reader.assert_awaited_once_with("ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1")
-        runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_reconcile_missing_tmux_session_cleans_run(self) -> None:
+    async def test_reconcile_missing_tmux_session_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
         )
@@ -166,22 +234,32 @@ class TestAgentRestartReconciliation:
         runner = self._runner(run_storage)
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
 
-        with patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            return_value=tmux_manager,
+        with (
+            patch(
+                "gobby.agents.tmux.get_tmux_session_manager",
+                return_value=tmux_manager,
+            ),
+            patch(
+                "gobby.agents.resume_executor.resume_agent_run",
+                new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+            ) as resume,
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
         assert reconciled == 2
-        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_called_once_with()
-        runner.agent_lifecycle_monitor.cleanup_agent.assert_awaited_once()
-        cleanup_call = runner.agent_lifecycle_monitor.cleanup_agent.await_args
-        assert cleanup_call.args[0] is run
-        assert "tmux session 'gobby-run-1' was missing" in cleanup_call.kwargs["terminal_payload"]
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            run.id,
+            terminal_reason="daemon_stop",
+        )
+        assert runner.agent_lifecycle_monitor.terminalize_cancelled_run.await_count == 1
+        resume.assert_awaited_once()
+        assert resume.await_count == 1
         run_storage.update_runtime.assert_not_called()
+        assert run_storage.update_runtime.call_count == 0
+        assert tmux_manager.list_sessions.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_reconcile_dead_tmux_pane_cleans_run(self) -> None:
+    async def test_reconcile_dead_tmux_pane_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
         )
@@ -195,15 +273,27 @@ class TestAgentRestartReconciliation:
             )
         )
 
-        with patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            return_value=tmux_manager,
+        with (
+            patch(
+                "gobby.agents.tmux.get_tmux_session_manager",
+                return_value=tmux_manager,
+            ),
+            patch(
+                "gobby.agents.resume_executor.resume_agent_run",
+                new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+            ) as resume,
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
         assert reconciled == 2
-        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_called_once_with()
-        runner.agent_lifecycle_monitor.cleanup_agent.assert_awaited_once()
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            run.id,
+            terminal_reason="daemon_stop",
+        )
+        assert runner.agent_lifecycle_monitor.terminalize_cancelled_run.await_count == 1
+        resume.assert_awaited_once()
+        assert resume.await_count == 1
+        assert tmux_manager.list_sessions.await_count == 1
 
     @pytest.mark.asyncio
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
@@ -220,7 +310,7 @@ class TestAgentRestartReconciliation:
         assert reconciled == 1
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
-            subscribers=["parent-1"],
+            subscribers=[],
             continuation_prompt=None,
         )
 
@@ -334,14 +424,35 @@ class TestAgentRestartReconciliation:
         with pytest.raises(RuntimeError, match="runner.agent_runner is not configured"):
             _list_active_agent_runs_once(runner)
 
-    def _runner(self, run_storage: SimpleNamespace, db: object | None = None) -> SimpleNamespace:
-        cleanup_agent = AsyncMock()
+    def _runner(self, run_storage: Any, db: object | None = None) -> Any:
+        if not hasattr(run_storage, "list_provisional_daemon_resumes"):
+            run_storage.list_provisional_daemon_resumes = MagicMock(return_value=[])
+        list_active = run_storage.list_active
+        if isinstance(list_active, MagicMock):
+            returned = list_active.return_value
+            active = returned if isinstance(returned, list) else []
+        else:
+            active = list_active(limit=1, offset=0)
+        parked = active[0] if active else None
+        if parked is not None:
+            if not hasattr(parked, "resume_metadata_json"):
+                parked.resume_metadata_json = {}
+            if not hasattr(parked, "child_session_id"):
+                parked.child_session_id = "child-1"
+        if not hasattr(run_storage, "get"):
+            run_storage.get = MagicMock(return_value=parked)
+        terminalize_cancelled_run = AsyncMock(return_value=True)
         return SimpleNamespace(
             database=db,
-            agent_runner=SimpleNamespace(run_storage=run_storage),
+            config=SimpleNamespace(),
+            session_manager=MagicMock(),
+            agent_runner=SimpleNamespace(
+                child_session_manager=MagicMock(),
+                run_storage=run_storage,
+            ),
             agent_lifecycle_monitor=SimpleNamespace(
-                get_cleanup_agent=MagicMock(return_value=cleanup_agent),
-                cleanup_agent=cleanup_agent,
+                terminalize_cancelled_run=terminalize_cancelled_run,
+                get_cleanup_agent=MagicMock(),
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["parent-1"]),

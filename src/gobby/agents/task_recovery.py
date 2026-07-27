@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.tasks.state_semantics import (
@@ -319,6 +320,8 @@ class TaskRecoveryHandler:
                 "cancelled" if status == "cancelled" else "failed"
             )
             for db_run in runs:
+                if is_daemon_stop_parked(db_run):
+                    continue
                 if await self.recover_task_from_terminal_agent(db_run, outcome=outcome):
                     recovered += 1
         return recovered

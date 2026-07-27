@@ -23,6 +23,7 @@ from gobby.hooks.inbox import (
     _load_envelope,
     _post_envelope,
     _quarantine_file,
+    drain_hook_inbox_barrier,
     drain_hook_inbox_once,
 )
 
@@ -39,6 +40,40 @@ def _valid_envelope() -> dict[str, Any]:
         "source": "claude",
         "headers": {},
     }
+
+
+@pytest.mark.asyncio
+async def test_barrier_timeout_reports_unresolved_run_and_session(tmp_path: Path) -> None:
+    envelope = _valid_envelope()
+    envelope["input_data"] = {
+        "terminal_context": {
+            "gobby_agent_run_id": "run-1",
+            "gobby_session_id": "session-from-context",
+        }
+    }
+    envelope["headers"] = {"X-Gobby-Session-Id": "session-from-header"}
+    (tmp_path / "pending.json").write_text(json.dumps(envelope), encoding="utf-8")
+
+    with patch(
+        "gobby.hooks.inbox.drain_hook_inbox_once",
+        new=AsyncMock(return_value=0),
+    ) as drain:
+        result = await drain_hook_inbox_barrier(
+            FastAPI(),
+            tmp_path,
+            timeout_seconds=0,
+        )
+
+    assert result.replayed == 0
+    assert result.timed_out is True
+    assert result.unresolved_run_ids == ("run-1",)
+    assert result.unresolved_session_ids == (
+        "session-from-context",
+        "session-from-header",
+    )
+    drain.assert_awaited_once()
+    assert drain.await_args is not None
+    assert drain.await_args.kwargs == {"include_fresh": True}
 
 
 @pytest.mark.asyncio

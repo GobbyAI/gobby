@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from random import SystemRandom
 from typing import Any
@@ -168,7 +170,22 @@ async def _post_envelope(
         )
 
 
-async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
+@dataclass(frozen=True)
+class HookInboxBarrierResult:
+    """Bounded startup replay outcome."""
+
+    replayed: int
+    timed_out: bool
+    unresolved_run_ids: tuple[str, ...]
+    unresolved_session_ids: tuple[str, ...]
+
+
+async def drain_hook_inbox_once(
+    app: Any,
+    inbox_dir: Path | None = None,
+    *,
+    include_fresh: bool = False,
+) -> int:
     """Replay all pending hook envelopes once.
 
     Returns the number of envelopes successfully replayed and deleted.
@@ -195,7 +212,7 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
             path.unlink(missing_ok=True)
             continue
 
-        if is_inbox_envelope_fresh(path):
+        if not include_fresh and is_inbox_envelope_fresh(path):
             logger.debug("Skipping fresh hook inbox envelope %s", path.name)
             continue
 
@@ -246,6 +263,64 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
         )
 
     return replayed
+
+
+async def drain_hook_inbox_barrier(
+    app: Any,
+    inbox_dir: Path | None = None,
+    *,
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.05,
+) -> HookInboxBarrierResult:
+    """Replay fresh and stale envelopes before agent restart classification."""
+    pending_dir = inbox_dir or get_hook_inbox_dir()
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    replayed = 0
+
+    while True:
+        replayed += await drain_hook_inbox_once(
+            app,
+            pending_dir,
+            include_fresh=True,
+        )
+        pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
+        if not pending_files:
+            return HookInboxBarrierResult(replayed, False, (), ())
+        if time.monotonic() >= deadline:
+            run_ids, session_ids = _unresolved_envelope_identities(pending_files)
+            return HookInboxBarrierResult(
+                replayed,
+                True,
+                tuple(sorted(run_ids)),
+                tuple(sorted(session_ids)),
+            )
+        await asyncio.sleep(poll_interval_seconds)
+
+
+def _unresolved_envelope_identities(paths: list[Path]) -> tuple[set[str], set[str]]:
+    run_ids: set[str] = set()
+    session_ids: set[str] = set()
+    for path in paths:
+        envelope = _load_envelope(path)
+        if envelope is None:
+            continue
+        input_data = envelope.get("input_data")
+        if not isinstance(input_data, dict):
+            continue
+        terminal_context = input_data.get("terminal_context")
+        if isinstance(terminal_context, dict):
+            run_id = terminal_context.get("gobby_agent_run_id")
+            if isinstance(run_id, str) and run_id:
+                run_ids.add(run_id)
+            session_id = terminal_context.get("gobby_session_id")
+            if isinstance(session_id, str) and session_id:
+                session_ids.add(session_id)
+        headers = envelope.get("headers")
+        if isinstance(headers, dict):
+            session_id = headers.get("X-Gobby-Session-Id") or headers.get("x-gobby-session-id")
+            if isinstance(session_id, str) and session_id:
+                session_ids.add(session_id)
+    return run_ids, session_ids
 
 
 def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> float:

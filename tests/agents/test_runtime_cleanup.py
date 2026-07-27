@@ -14,9 +14,19 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 pytestmark = pytest.mark.unit
 
 
-def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
+@pytest.mark.parametrize(
+    ("terminal_reason", "expected_workflow_rows"),
+    [
+        (None, 1),
+        ("user_cancelled", 1),
+        ("daemon_stop", 0),
+    ],
+)
+def test_cleanup_agent_runtime_state_releases_mutex_and_conditionally_deletes_workflow(
     temp_db,
     sample_project,
+    terminal_reason: str | None,
+    expected_workflow_rows: int,
 ) -> None:
     temp_db.execute(
         """
@@ -36,7 +46,8 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
         project_id=sample_project["id"],
         title="Agent-owned task",
         validation_criteria=(
-            "Agent runtime cleanup releases its dispatch mutex and removes its workflow instance."
+            "Agent runtime cleanup always releases its dispatch mutex and retains workflow state "
+            "only for daemon-stop."
         ),
     )
     mutex = TaskDispatchMutexManager(temp_db)
@@ -62,10 +73,12 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
         temp_db,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2004",
         child_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
+        terminal_reason=terminal_reason,
     )
 
     assert result.dispatch_mutex_rows == 1
-    assert result.workflow_instance_rows == 1
+    assert result.workflow_instance_rows == expected_workflow_rows
     assert result.errors == ()
     assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_active_instances("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001") == []
+    remaining = instance_manager.get_active_instances("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001")
+    assert len(remaining) == (1 if terminal_reason == "daemon_stop" else 0)

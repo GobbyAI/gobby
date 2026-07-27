@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _AUDIT_HEADING = "Agent resume after daemon restart failed"
 _ESCALATION_REASON = "agent_resume_after_daemon_restart_failed"
+_MAX_RESUME_FAILURES = 3
 _WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS = 10
 
 
@@ -55,6 +56,11 @@ async def try_resume_daemon_stop_run(
     workspace_dirty = await _workspace_dirty(workspace_path)
     runner = getattr(services, "agent_runner", None)
     session_manager = getattr(services, "session_manager", None)
+    from gobby.storage.agent_resume import increment_daemon_resume_failure_count
+
+    failure_count = increment_daemon_resume_failure_count(db, run_id=candidate.id)
+    candidate = LocalAgentRunManager(db).get(candidate.id) or candidate
+    metadata = candidate.resume_metadata_json or metadata
     if runner is None or session_manager is None:
         error = "services_missing:agent_runner,session_manager"
         return _handle_resume_failure(
@@ -65,6 +71,7 @@ async def try_resume_daemon_stop_run(
             workspace_path,
             workspace_dirty,
             error,
+            failure_count=failure_count,
         )
 
     resume_result = await resume_agent_run(
@@ -72,7 +79,6 @@ async def try_resume_daemon_stop_run(
         resume_metadata=metadata,
         runner=runner,
         session_manager=session_manager,
-        task_manager=getattr(services, "task_manager", None),
         daemon_config=getattr(services, "config", None),
         completion_registry=getattr(services, "completion_registry", None),
     )
@@ -92,6 +98,7 @@ async def try_resume_daemon_stop_run(
         workspace_path,
         workspace_dirty,
         resume_result.error or "resume_failed",
+        failure_count=failure_count,
     )
 
 
@@ -122,13 +129,29 @@ def _handle_resume_failure(
     workspace_path: str | None,
     workspace_dirty: bool,
     error: str,
+    *,
+    failure_count: int,
 ) -> DaemonStopResumeResult:
-    if not workspace_dirty:
+    if not workspace_dirty and failure_count < _MAX_RESUME_FAILURES:
         logger.info(
-            "Daemon-stop resume failed for clean workspace; falling back to fresh spawn",
-            extra={"task_id": action.task_id, "run_id": candidate.id, "error": error},
+            "Daemon-stop resume remains recovery-pending after clean failure",
+            extra={
+                "task_id": action.task_id,
+                "run_id": candidate.id,
+                "error": error,
+                "failure_count": failure_count,
+            },
         )
-        return DaemonStopResumeResult(attempted=True, handled=False)
+        TaskDispatchMutexManager(db).clear_by_run_id(candidate.id)
+        mutex.release()
+        from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_task
+
+        schedule_dispatcher_tick_for_task(
+            db,
+            task_id=action.task_id,
+            reason="daemon_resume_retry",
+        )
+        return DaemonStopResumeResult(attempted=True, handled=True)
 
     _append_resume_failure_marker(
         db,
@@ -138,8 +161,13 @@ def _handle_resume_failure(
         error=error,
     )
     try:
+        reason = (
+            _ESCALATION_REASON
+            if workspace_dirty
+            else f"daemon_stop_resume_retry_exhausted:{failure_count}"
+        )
         try:
-            escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
+            escalate_task(db, action.task_id, reason=reason)
         except (TaskAlreadyEscalatedError, ValueError):
             logger.warning(
                 "Failed to escalate task after daemon-stop resume failure",

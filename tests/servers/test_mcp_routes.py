@@ -3640,6 +3640,57 @@ class TestHooksEndpoints:
         else:
             assert "non-fatal" in data["systemMessage"]
 
+    def test_execute_hook_releases_claim_for_retryable_run_identity(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        retryable = AgentRunIngressRetryableError(
+            session_id="child-1",
+            expected_run_id="run-1",
+            reason="run is not durable yet",
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new=AsyncMock(side_effect=retryable),
+            ),
+            patch(
+                "gobby.servers.routes.mcp.hooks.release_envelope_processing_claim",
+                return_value=True,
+            ) as release,
+            patch(
+                "gobby.servers.routes.mcp.hooks.mark_envelope_processed",
+            ) as mark_processed,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Envelope-Id": "retryable-run-identity"},
+                json=_hook_envelope(
+                    hook_type="SessionStart",
+                    source="codex",
+                    critical=True,
+                    input_data={"session_id": "child-1"},
+                ),
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "retry",
+            "reason": "agent_run_identity_pending",
+        }
+        release.assert_called_once_with("retryable-run-identity")
+        mark_processed.assert_not_called()
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
         [

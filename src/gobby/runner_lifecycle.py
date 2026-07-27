@@ -14,7 +14,6 @@ import uvicorn
 from gobby.app_context import clear_app_context
 from gobby.runner_gate import acquire_runner_gate
 from gobby.runner_lifecycle_agents import (
-    _cancel_active_agent_runs_for_shutdown,
     _reconcile_agent_runs_after_restart,
     _recover_agent_runs_after_restart,
     _register_persisted_completion_subscribers,
@@ -45,7 +44,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "StartupTracker",
     "_await_critical_stop_hook_grace_window",
-    "_cancel_active_agent_runs_for_shutdown",
     "_init_subsystems",
     "_log_subsystem_init_result",
     "_reap_remaining_child_processes",
@@ -293,7 +291,6 @@ async def run_daemon(
                 uvicorn_drain_timeout,
                 await_critical_stop_hook_grace_window=_await_critical_stop_hook_grace_window,
                 shutdown_websocket_server=_shutdown_websocket_server,
-                cancel_active_agent_runs_for_shutdown=_cancel_active_agent_runs_for_shutdown,
                 reap_remaining_child_processes=_reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_owned_pid_file,

@@ -384,13 +384,14 @@ async def test_dirty_daemon_stop_resume_failure_propagates_unexpected_escalation
                 str(workspace),
                 True,
                 "native resume failed",
+                failure_count=3,
             )
 
     assert storage.get_mutex(task.id) is None
 
 
 @pytest.mark.asyncio
-async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
+async def test_clean_daemon_stop_resume_failure_retries_without_fresh_spawn(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -431,9 +432,8 @@ async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     updated = get_task(temp_db, task.id)
     mutex = TaskDispatchMutexManager(temp_db).get_mutex(task.id)
     assert result.executed == 1
-    assert spawned == [task.id]
-    assert mutex is not None
-    assert mutex.run_id == "c38b3e6b-098a-5a5b-b4a6-ce24b9a6e0bd"
+    assert spawned == []
+    assert mutex is None
     assert updated.dispatch_failure_count == 0
     assert "### Agent resume after daemon restart failed" not in (updated.description or "")
 

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr
+from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr, older_than_now_expr
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
 from ._models import AgentRun
@@ -100,6 +100,91 @@ class _AgentRunQueryMixin:
             """,
             (task_id, max_age_hours),
             order_by="ORDER BY ar.completed_at DESC NULLS LAST, ar.updated_at DESC",
+            limit=limit,
+        )
+
+    def list_provisional_daemon_resumes(
+        self: _AgentRunQueryHost,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """List non-finalized successor runs requiring boot resolution."""
+        phase_sql = json_text_expr(
+            self.db,
+            "ar.resume_metadata_json",
+            "daemon_stop_resume_phase",
+        )
+        return self._fetch_runs_with_live_stats(
+            f"""
+            WHERE {phase_sql} IN ('prepared', 'launch_requested', 'runtime_persisted')
+            """,
+            (),
+            order_by="ORDER BY ar.created_at ASC, ar.id ASC",
+            limit=limit,
+        )
+
+    def list_reconciliation_pending(
+        self: _AgentRunQueryHost,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """List active runs deferred by an unresolved startup inbox barrier."""
+        pending_sql = json_text_expr(
+            self.db,
+            "ar.resume_metadata_json",
+            "reconciliation_pending",
+        )
+        return self._fetch_runs_with_live_stats(
+            f"""
+            WHERE ar.status IN ('pending', 'running')
+              AND {pending_sql} = 'true'
+            """,
+            (),
+            order_by="ORDER BY ar.updated_at ASC, ar.id ASC",
+            limit=limit,
+        )
+
+    def list_daemon_stop_orphans(
+        self: _AgentRunQueryHost,
+        *,
+        max_age_hours: float = 24,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """List parked originals whose durable-session recovery window elapsed."""
+        if max_age_hours <= 0:
+            raise ValueError("max_age_hours must be positive")
+        consumed_at_sql = json_text_expr(
+            self.db,
+            "ar.resume_metadata_json",
+            "daemon_stop_resume_consumed_at",
+        )
+        reaped_at_sql = json_text_expr(
+            self.db,
+            "ar.resume_metadata_json",
+            "daemon_stop_orphan_reaped_at",
+        )
+        old_sql = older_than_now_expr(
+            self.db,
+            "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
+            "%s",
+            "hour",
+        )
+        return self._fetch_runs_with_live_stats(
+            f"""
+            WHERE ar.status = 'cancelled'
+              AND ar.terminal_reason = 'daemon_stop'
+              AND ({consumed_at_sql} IS NULL OR {consumed_at_sql} = '')
+              AND ({reaped_at_sql} IS NULL OR {reaped_at_sql} = '')
+              AND EXISTS (
+                    SELECT 1
+                    FROM sessions s
+                    WHERE s.id = ar.child_session_id
+                      AND s.agent_run_id = ar.id
+              )
+              AND {old_sql}
+            """,
+            (max_age_hours,),
+            order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
 

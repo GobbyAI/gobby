@@ -896,7 +896,6 @@ class TestShutdownSessionStatusLifecycle:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=lambda: events.append("telemetry"),
             cleanup_pid_file=lambda: events.append("cleanup"),
@@ -961,7 +960,6 @@ class TestShutdownSessionStatusLifecycle:
                 1,
                 await_critical_stop_hook_grace_window=AsyncMock(),
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=AsyncMock(),
                 shutdown_telemetry=MagicMock(),
                 cleanup_pid_file=MagicMock(),
@@ -987,10 +985,6 @@ class TestShutdownSessionStatusLifecycle:
 
         async def hook_shutdown() -> None:
             events.append("hook")
-
-        async def cancel_agents(_runner: object) -> int:
-            events.append("agent-cancel")
-            return 0
 
         async def agent_monitor_stop() -> None:
             events.append("agent-monitor")
@@ -1038,7 +1032,6 @@ class TestShutdownSessionStatusLifecycle:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=cancel_agents,
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
@@ -1048,7 +1041,6 @@ class TestShutdownSessionStatusLifecycle:
         assert events == [
             "sessions",
             "lifecycle",
-            "agent-cancel",
             "agent-monitor",
             "message-processor",
             "approval-timeout-cancel",
@@ -1060,7 +1052,6 @@ class TestShutdownSessionStatusLifecycle:
         for event in (
             "sessions",
             "lifecycle",
-            "agent-cancel",
             "agent-monitor",
             "message-processor",
             "hook",

@@ -7,22 +7,19 @@ import logging
 import shutil
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
 
-from gobby.agents.agent_cleanup import (
-    _deliver_existing_terminal_run_unshielded,
-    run_terminal_delivery_offload,
-    shielded_terminal_delivery,
-)
-from gobby.agents.capture import CaptureStorage, capture_then_kill_async
 from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
+from gobby.agents.resume_finalization import (
+    finalize_resume_handoff,
+    notify_parent_of_recovery,
+)
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
-from gobby.agents.spawn import prepare_terminal_spawn
+from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -38,8 +35,6 @@ from gobby.ai.codex_endpoint import (
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
-from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 
 logger = logging.getLogger(__name__)
 
@@ -48,37 +43,14 @@ DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
     "workspace state, preserve any existing work, and continue from where the prior run left off."
 )
-RESUME_CONSUMED_AT_KEY = "daemon_stop_resume_consumed_at"
-RESUME_CONSUMED_BY_RUN_ID_KEY = "daemon_stop_resume_consumed_by_run_id"
-
-
-class _ResumePreflightError(RuntimeError):
-    """Resume cannot safely acquire the resources needed to spawn."""
-
-
-class _RunStorage(CaptureStorage, Protocol):
-    db: Any
-
-    def update_resume_metadata(self, run_id: str, metadata: dict[str, Any]) -> Any: ...
-
-    def update_child_session(self, run_id: str, child_session_id: str) -> Any: ...
-
-    def update_runtime(
-        self,
-        run_id: str,
-        *,
-        pid: int | None,
-        tmux_session_name: str | None,
-        worktree_id: str | None,
-        clone_id: str | None,
-    ) -> Any: ...
-
-    def start(self, run_id: str) -> AgentRun | None: ...
 
 
 class _ResumeRunner(Protocol):
-    child_session_manager: Any
-    run_storage: _RunStorage
+    @property
+    def child_session_manager(self) -> Any: ...
+
+    @property
+    def run_storage(self) -> LocalAgentRunManager: ...
 
 
 class _SessionLookup(Protocol):
@@ -99,8 +71,6 @@ async def resume_agent_run(
     resume_metadata: dict[str, Any],
     runner: _ResumeRunner,
     session_manager: _SessionLookup,
-    task_manager: Any | None = None,
-    worktree_manager: Any | None = None,
     daemon_config: Any | None = None,
     completion_registry: Any | None = None,
 ) -> ResumeAgentResult:
@@ -111,7 +81,6 @@ async def resume_agent_run(
         resume_metadata: Persisted launch snapshot from the original run.
         runner: Agent runner exposing child session creation and run storage.
         session_manager: Session lookup used to recover provider-native IDs.
-        task_manager: Optional task manager used to claim the resumed child session.
         daemon_config: Optional daemon config used for tmux spawn settings.
     """
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
@@ -181,52 +150,54 @@ async def resume_agent_run(
         prompt = DAEMON_STOP_CONTINUATION_PROMPT
 
     run_id = str(uuid.uuid4())
+    child_session_id = original_run.child_session_id
+    if not child_session_id:
+        return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
+    planned_tmux_title = f"gobby-resume-{run_id}"
     metadata = dict(resume_metadata)
     metadata["resumed_from_run_id"] = original_run.id
     metadata["provider_native_session_id"] = native_session_id
+    metadata["daemon_stop_resume_phase"] = "prepared"
+    metadata["daemon_stop_resume_planned_tmux_title"] = planned_tmux_title
 
     initial_variables = dict(resume_metadata.get("initial_variables") or {})
     initial_variables["daemon_stop_resume"] = True
     initial_variables["resumed_from_agent_run_id"] = original_run.id
 
-    spawn_context = prepare_terminal_spawn(
-        session_manager=runner.child_session_manager,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        machine_id=_metadata_str(resume_metadata, "machine_id") or "unknown",
-        source=provider,
-        workflow_name=_metadata_str(resume_metadata, "workflow"),
-        agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
-        initial_variables=initial_variables,
-        git_branch=_metadata_str(resume_metadata, "branch_name"),
-        prompt=prompt,
-        model=resume_model,
-        is_local=bool(getattr(original_run, "is_local", False)),
-        agent_run_id=run_id,
-        task_id=original_run.task_id,
-        claimed_session_id=original_run.claimed_session_id,
-        timeout_seconds=original_run.timeout_seconds,
-        sandbox_enabled=_sandbox_enabled(resume_metadata),
-        requested_reasoning_effort=_metadata_str(resume_metadata, "requested_reasoning_effort"),
-        effective_reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
-        reasoning_required=bool(resume_metadata.get("reasoning_required")),
-        reasoning_status=_metadata_str(resume_metadata, "reasoning_status") or "not_requested",
-        reasoning_message=_metadata_str(resume_metadata, "reasoning_message"),
-        resume_metadata_json=metadata,
-    )
     try:
-        _mark_original_run_consumed(runner, original_run, resume_metadata, run_id)
-        _claim_task_for_resume(task_manager, original_run, spawn_context.session_id)
-        _claim_worktree_for_resume(
-            worktree_manager or _worktree_manager_from_runner(runner),
-            original_run,
-            resume_metadata,
-            spawn_context.session_id,
+        spawn_context = prepare_terminal_resume(
+            session_manager=runner.child_session_manager,
+            existing_session_id=child_session_id,
+            original_run_id=original_run.id,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            source=provider,
+            workflow_name=_metadata_str(resume_metadata, "workflow"),
+            agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
+            initial_variables=initial_variables,
+            git_branch=_metadata_str(resume_metadata, "branch_name"),
+            prompt=prompt,
+            model=resume_model,
+            is_local=bool(getattr(original_run, "is_local", False)),
+            max_agent_depth=5,
+            agent_run_id=run_id,
+            task_id=original_run.task_id,
+            claimed_session_id=original_run.claimed_session_id,
+            timeout_seconds=original_run.timeout_seconds,
+            sandbox_enabled=_sandbox_enabled(resume_metadata),
+            requested_reasoning_effort=_metadata_str(
+                resume_metadata,
+                "requested_reasoning_effort",
+            ),
+            effective_reasoning_effort=_metadata_str(
+                resume_metadata,
+                "effective_reasoning_effort",
+            ),
+            reasoning_required=bool(resume_metadata.get("reasoning_required")),
+            reasoning_status=_metadata_str(resume_metadata, "reasoning_status") or "not_requested",
+            reasoning_message=_metadata_str(resume_metadata, "reasoning_message"),
+            resume_metadata_json=metadata,
         )
-    except _ResumePreflightError as exc:
-        error = str(exc)
-        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
-        return ResumeAgentResult(False, run_id=run_id, error=error)
     except (ValueError, psycopg.Error) as exc:
         error = f"resume_preflight_failed:{type(exc).__name__}"
         logger.warning(
@@ -235,7 +206,6 @@ async def resume_agent_run(
             exc_info=True,
             extra={"run_id": run_id, "original_run_id": original_run.id, "error": str(exc)},
         )
-        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     env = merge_resume_metadata_env(resume_metadata.get("env"))
@@ -255,11 +225,11 @@ async def resume_agent_run(
                 resolver = get_sandbox_resolver(provider)
             except ValueError:
                 error = f"resume_sandbox_unsupported:{provider}"
-                await _fail_run(
+                await _rollback_prepared_resume(
                     runner,
-                    run_id,
-                    error,
-                    completion_registry=completion_registry,
+                    original_run_id=original_run.id,
+                    successor_run_id=run_id,
+                    child_session_id=spawn_context.session_id,
                 )
                 return ResumeAgentResult(False, run_id=run_id, error=error)
         daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
@@ -279,7 +249,12 @@ async def resume_agent_run(
             )
         except (OSError, ValueError, SrtRuntimeError) as exc:
             error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
-            await _fail_run(runner, run_id, error, completion_registry=completion_registry)
+            await _rollback_prepared_resume(
+                runner,
+                original_run_id=original_run.id,
+                successor_run_id=run_id,
+                child_session_id=spawn_context.session_id,
+            )
             return ResumeAgentResult(False, run_id=run_id, error=error)
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
@@ -336,12 +311,30 @@ async def resume_agent_run(
     metadata["sandbox_env"] = dict(launch.provider_env)
     metadata["sandbox"] = launch.metadata()
     metadata["config_overrides"] = config_overrides
-    try:
-        update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
-        if callable(update_resume_metadata):
-            update_resume_metadata(run_id, metadata)
-    except Exception:
-        logger.warning("Failed to persist resumed launch metadata for %s", run_id, exc_info=True)
+    runner.run_storage.merge_resume_metadata(run_id, metadata)
+    launched = runner.run_storage.transition_resume_phase(
+        run_id,
+        expected_phase="prepared",
+        new_phase="launch_requested",
+    )
+    if launched is None:
+        current = runner.run_storage.get(run_id)
+        if current is not None and (
+            current.status in {"running", "success", "error", "timeout", "cancelled"}
+            or (current.resume_metadata_json or {}).get("daemon_stop_resume_phase") == "finalized"
+        ):
+            return ResumeAgentResult(
+                True,
+                run_id=run_id,
+                child_session_id=spawn_context.session_id,
+            )
+        await _rollback_prepared_resume(
+            runner,
+            original_run_id=original_run.id,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
+        )
+        return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
     pre_approve_directory(provider, cwd)
     try:
@@ -350,22 +343,42 @@ async def resume_agent_run(
             command=command,
             cwd=cwd,
             env=env,
+            title=planned_tmux_title,
         )
     except Exception as exc:
         error = f"resume_spawn_failed:{type(exc).__name__}:{exc}"
-        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
+        await _park_unlaunched_successor(
+            runner,
+            original_run=original_run,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
+            completion_registry=completion_registry,
+        )
         return ResumeAgentResult(False, run_id=run_id, error=error)
     if not terminal_result.success:
         error = terminal_result.error or terminal_result.message or "resume_spawn_failed"
-        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
+        await _park_unlaunched_successor(
+            runner,
+            original_run=original_run,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
+            completion_registry=completion_registry,
+        )
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     tmux_session_name = getattr(terminal_result, "tmux_session_name", None)
+    runner.run_storage.merge_resume_metadata(
+        run_id,
+        {
+            "tmux_socket_name": getattr(terminal_result, "tmux_socket_name", None),
+            "tmux_socket_path": getattr(terminal_result, "tmux_socket_path", None),
+            "daemon_stop_resume_tmux_session_name": tmux_session_name,
+        },
+    )
     try:
         started_run = _persist_resume_runtime(
             runner,
             run_id,
-            child_session_id=spawn_context.session_id,
             pid=terminal_result.pid,
             tmux_session_name=tmux_session_name,
             worktree_id=_metadata_str(resume_metadata, "worktree_id"),
@@ -373,24 +386,67 @@ async def resume_agent_run(
         )
     except Exception as exc:
         error = f"resume_runtime_persist_failed:{type(exc).__name__}"
-        await _kill_spawned_tmux_session(
-            runner.run_storage,
+        logger.warning(
+            "Leaving live provisional successor %s for reconciliation: %s",
             run_id,
-            tmux_session_name,
-            reason=error,
-            completion_registry=completion_registry,
+            error,
+            exc_info=True,
         )
-        return ResumeAgentResult(False, run_id=run_id, error=error)
+        return ResumeAgentResult(
+            True,
+            run_id=run_id,
+            child_session_id=spawn_context.session_id,
+            error=error,
+        )
     if started_run is None:
-        await _kill_spawned_tmux_session(
-            runner.run_storage,
-            run_id,
-            tmux_session_name,
-            reason="agent_run_start_skipped",
+        current = runner.run_storage.get(run_id)
+        if current is None:
+            return ResumeAgentResult(False, run_id=run_id, error="agent_run_missing_after_spawn")
+        if current.status not in {"running", "success", "error", "timeout", "cancelled"}:
+            return ResumeAgentResult(
+                True,
+                run_id=run_id,
+                child_session_id=spawn_context.session_id,
+                error="agent_run_start_reconciliation_pending",
+            )
+
+    try:
+        finalize_resume_handoff(
+            runner.run_storage.db,
+            original_run_id=original_run.id,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
             completion_registry=completion_registry,
         )
-        return ResumeAgentResult(False, run_id=run_id, error="agent_run_start_skipped")
+    except (ValueError, psycopg.Error) as exc:
+        logger.warning(
+            "Leaving successor %s for handoff finalization retry: %s",
+            run_id,
+            exc,
+        )
+        return ResumeAgentResult(
+            True,
+            run_id=run_id,
+            child_session_id=spawn_context.session_id,
+            error=f"resume_finalization_pending:{type(exc).__name__}",
+        )
+
+    latest = runner.run_storage.get(run_id)
+    if latest is not None and latest.status in {"success", "error", "timeout", "cancelled"}:
+        return ResumeAgentResult(
+            True,
+            run_id=run_id,
+            child_session_id=spawn_context.session_id,
+        )
     _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
+    notify_parent_of_recovery(
+        runner.run_storage.db,
+        child_session_id=spawn_context.session_id,
+        parent_session_id=parent_session_id,
+        content=f"Child agent relaunched after daemon restart as run {run_id}; session state preserved.",
+        run_id=run_id,
+        event="agent_relaunched",
+    )
     return ResumeAgentResult(True, run_id=run_id, child_session_id=spawn_context.session_id)
 
 
@@ -427,13 +483,11 @@ def _persist_resume_runtime(
     runner: _ResumeRunner,
     run_id: str,
     *,
-    child_session_id: str,
     pid: int | None,
     tmux_session_name: str | None,
     worktree_id: str | None,
     clone_id: str | None,
 ) -> AgentRun | None:
-    runner.run_storage.update_child_session(run_id, child_session_id)
     runner.run_storage.update_runtime(
         run_id,
         pid=pid,
@@ -441,137 +495,70 @@ def _persist_resume_runtime(
         worktree_id=worktree_id,
         clone_id=clone_id,
     )
-    return runner.run_storage.start(run_id)
-
-
-def _mark_original_run_consumed(
-    runner: _ResumeRunner,
-    original_run: AgentRun,
-    resume_metadata: dict[str, Any],
-    resumed_run_id: str,
-) -> None:
-    metadata = dict(original_run.resume_metadata_json or resume_metadata)
-    metadata[RESUME_CONSUMED_AT_KEY] = datetime.now(UTC).isoformat()
-    metadata[RESUME_CONSUMED_BY_RUN_ID_KEY] = resumed_run_id
-    updated = runner.run_storage.update_resume_metadata(original_run.id, metadata)
-    if updated is None:
-        raise _ResumePreflightError("resume_candidate_consume_failed")
-
-
-def _claim_task_for_resume(task_manager: Any | None, run: AgentRun, child_session_id: str) -> None:
-    if not run.task_id:
-        return
-    if task_manager is None:
-        raise _ResumePreflightError("resume_task_manager_missing")
-    task = task_manager.get_task(run.task_id)
-    if not task:
-        raise _ResumePreflightError("resume_task_missing")
-    if not is_task_actionable(task):
-        raise _ResumePreflightError("resume_task_not_actionable")
-    current_owner = get_claimed_session_id(task)
-    prior_owners = {None, run.child_session_id, run.claimed_session_id, child_session_id}
-    if current_owner not in prior_owners:
-        raise _ResumePreflightError("resume_task_claim_conflict")
-    claimed = task_manager.claim_task(run.task_id, session_id=child_session_id)
-    if get_claimed_session_id(claimed) != child_session_id:
-        raise _ResumePreflightError("resume_task_claim_failed")
-
-
-def _claim_worktree_for_resume(
-    worktree_manager: Any | None,
-    run: AgentRun,
-    resume_metadata: dict[str, Any],
-    child_session_id: str,
-) -> None:
-    worktree_id = _metadata_str(resume_metadata, "worktree_id")
-    if not worktree_id:
-        return
-    if worktree_manager is None:
-        raise _ResumePreflightError("resume_worktree_manager_missing")
-    allowed_sessions = {None, run.child_session_id, run.claimed_session_id, child_session_id}
-    claim_if_available = getattr(worktree_manager, "claim_if_available", None)
-    if callable(claim_if_available):
-        claimed = claim_if_available(
-            worktree_id,
-            child_session_id,
-            allowed_existing_session_ids=allowed_sessions,
-        )
-    else:
-        worktree = worktree_manager.get(worktree_id)
-        if worktree is None or getattr(worktree, "agent_session_id", None) not in allowed_sessions:
-            claimed = None
-        else:
-            claimed = worktree_manager.claim(worktree_id, child_session_id)
-    if claimed is None or getattr(claimed, "agent_session_id", None) != child_session_id:
-        raise _ResumePreflightError("resume_worktree_claim_failed")
-
-
-def _worktree_manager_from_runner(runner: _ResumeRunner) -> Any | None:
-    storage = getattr(getattr(runner, "child_session_manager", None), "_storage", None)
-    db = getattr(storage, "db", None)
-    if db is None:
+    transitioned = runner.run_storage.transition_resume_phase(
+        run_id,
+        expected_phase="launch_requested",
+        new_phase="runtime_persisted",
+    )
+    if transitioned is None:
+        current = runner.run_storage.get(run_id)
+        if current is not None and (
+            current.status in {"running", "success", "error", "timeout", "cancelled"}
+            or (current.resume_metadata_json or {}).get("daemon_stop_resume_phase") == "finalized"
+        ):
+            return current
         return None
-    return LocalWorktreeManager(db)
+    started = runner.run_storage.start(run_id)
+    if started is not None:
+        return started
+    current = runner.run_storage.get(run_id)
+    return current if current is not None and current.status == "running" else None
 
 
-async def _kill_spawned_tmux_session(
-    storage: _RunStorage,
-    run_id: str,
-    tmux_session_name: str | None,
+async def _rollback_prepared_resume(
+    runner: _ResumeRunner,
     *,
-    reason: str,
+    original_run_id: str,
+    successor_run_id: str,
+    child_session_id: str,
+) -> bool:
+    from gobby.storage.agent_resume import rollback_prepared_daemon_resume
+
+    return await asyncio.to_thread(
+        rollback_prepared_daemon_resume,
+        runner.run_storage.db,
+        original_run_id=original_run_id,
+        successor_run_id=successor_run_id,
+        child_session_id=child_session_id,
+    )
+
+
+async def _park_unlaunched_successor(
+    runner: _ResumeRunner,
+    *,
+    original_run: AgentRun,
+    successor_run_id: str,
+    child_session_id: str,
     completion_registry: Any | None,
 ) -> None:
-    async def operation() -> None:
-        try:
-            if not tmux_session_name:
-                await run_terminal_delivery_offload(storage.fail, run_id, error=reason)
-                return
+    from gobby.agents.resume_finalization import finalize_resume_handoff
+    from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
-            from gobby.agents.tmux import get_tmux_session_manager
-
-            run = await run_terminal_delivery_offload(storage.get, run_id)
-            if run is None:
-                logger.warning(
-                    "Refusing raw tmux kill for missing resumed run %s",
-                    run_id,
-                )
-                return
-            tmux = get_tmux_session_manager()
-            session_name = str(tmux_session_name)
-            result = await capture_then_kill_async(
-                storage=storage,
-                run_id=run.id,
-                session_name=session_name,
-                action="fail",
-                reason=reason,
-                session_alive=lambda: tmux.has_session(session_name),
-                capture=lambda: tmux.capture_full_pane(session_name),
-                kill=lambda: tmux.kill_session(session_name, missing_ok=True),
-            )
-            if not result.success:
-                raise RuntimeError(f"{result.error_code}: {result.error}")
-        except Exception as exc:
-            logger.warning(
-                "Failed to kill tmux session after resume persistence failure",
-                exc_info=True,
-                extra={
-                    "run_id": run_id,
-                    "tmux_session_name": tmux_session_name,
-                    "error": str(exc),
-                },
-            )
-            await run_terminal_delivery_offload(storage.fail, run_id, error=reason)
-        finally:
-            await _deliver_existing_terminal_run_unshielded(
-                db=storage.db,
-                agent_run_manager=storage,
-                completion_registry=completion_registry,
-                run_id=run_id,
-                run_db=run_terminal_delivery_offload,
-            )
-
-    await shielded_terminal_delivery(run_id, operation)
+    finalize_resume_handoff(
+        runner.run_storage.db,
+        original_run_id=original_run.id,
+        successor_run_id=successor_run_id,
+        child_session_id=child_session_id,
+        completion_registry=completion_registry,
+    )
+    runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
+    await asyncio.to_thread(
+        cleanup_agent_runtime_state,
+        runner.run_storage.db,
+        run_id=successor_run_id,
+        child_session_id=child_session_id,
+        terminal_reason="daemon_stop",
+    )
 
 
 def _fire_resume_started(
@@ -599,30 +586,6 @@ def _fire_resume_started(
         )
     except Exception as exc:
         logger.warning("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
-
-
-async def _fail_run(
-    runner: Any,
-    run_id: str,
-    error: str,
-    *,
-    completion_registry: Any | None,
-) -> None:
-    async def operation() -> None:
-        try:
-            await run_terminal_delivery_offload(runner.run_storage.fail, run_id, error=error)
-        except Exception:
-            logger.warning("Failed to mark resumed agent run %s failed", run_id, exc_info=True)
-        finally:
-            await _deliver_existing_terminal_run_unshielded(
-                db=runner.run_storage.db,
-                agent_run_manager=runner.run_storage,
-                completion_registry=completion_registry,
-                run_id=run_id,
-                run_db=run_terminal_delivery_offload,
-            )
-
-    await shielded_terminal_delivery(run_id, operation)
 
 
 def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSpawner:
@@ -663,3 +626,7 @@ def _resume_api_base(provider: str, env: dict[str, str]) -> str | None:
 def _sandbox_enabled(metadata: dict[str, Any]) -> bool:
     sandbox_config = metadata.get("sandbox_config")
     return isinstance(sandbox_config, dict) and bool(sandbox_config.get("enabled"))
+
+
+if TYPE_CHECKING:
+    from gobby.storage.agents import LocalAgentRunManager

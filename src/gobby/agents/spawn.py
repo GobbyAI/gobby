@@ -12,6 +12,8 @@ Implementation is split across submodules:
 from __future__ import annotations
 
 import logging
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,6 +37,7 @@ __all__ = [
     "TmuxSpawner",
     # Helpers
     "PreparedSpawn",
+    "prepare_terminal_resume",
     "prepare_terminal_spawn",
     "build_cli_command",
     "create_prompt_file",
@@ -142,8 +145,6 @@ def prepare_terminal_spawn(
     Raises:
         ValueError: If max agent depth exceeded
     """
-    import uuid
-
     # Create child session config
     config = ChildSessionConfig(
         parent_session_id=parent_session_id,
@@ -168,32 +169,185 @@ def prepare_terminal_spawn(
             child_session.id, initial_variables
         )
 
-    # Use provided agent_run_id or generate one (backward compat)
+    # Use provided agent_run_id or generate one.
     if agent_run_id is None:
         agent_run_id = str(uuid.uuid4())
 
-    # Create agent_runs record so the FK constraint on sessions.agent_run_id is satisfied.
-    import logging as _logging
+    def bind_fresh_run(run_id: str) -> None:
+        session_manager.update_terminal_pickup_metadata(
+            session_id=child_session.id,
+            agent_run_id=run_id,
+            workflow_name=workflow_name,
+        )
 
-    from gobby.storage.agents import LocalAgentRunManager
-
-    _pts_logger = _logging.getLogger("agents.spawn.prepare_terminal_spawn")
-    _pts_logger.debug(
-        "Creating agent_run %s for child_session %s",
-        agent_run_id,
-        child_session.id,
+    return _prepare_run_for_session(
+        session_manager=session_manager,
+        session_id=child_session.id,
+        session_depth=child_session.agent_depth,
+        session_seq_num=getattr(child_session, "seq_num", None),
+        parent_session_id=parent_session_id,
+        project_id=project_id,
+        provider=source,
+        workflow_name=workflow_name,
+        agent_name=agent_name,
+        git_branch=git_branch,
+        prompt=prompt,
+        model=model,
+        is_local=is_local,
+        max_agent_depth=max_agent_depth,
+        agent_run_id=agent_run_id,
+        task_id=task_id,
+        claimed_session_id=claimed_session_id,
+        timeout_seconds=timeout_seconds,
+        sandbox_enabled=sandbox_enabled,
+        requested_reasoning_effort=requested_reasoning_effort,
+        effective_reasoning_effort=effective_reasoning_effort,
+        reasoning_required=reasoning_required,
+        reasoning_status=reasoning_status,
+        reasoning_message=reasoning_message,
+        resume_metadata_json=resume_metadata_json,
+        bind_run=bind_fresh_run,
     )
 
+
+def prepare_terminal_resume(
+    session_manager: ChildSessionManager,
+    *,
+    existing_session_id: str,
+    original_run_id: str,
+    parent_session_id: str,
+    project_id: str,
+    source: str,
+    workflow_name: str | None,
+    agent_name: str | None,
+    initial_variables: dict[str, Any] | None,
+    git_branch: str | None,
+    prompt: str,
+    model: str | None,
+    is_local: bool,
+    max_agent_depth: int,
+    agent_run_id: str,
+    task_id: str | None,
+    claimed_session_id: str | None,
+    timeout_seconds: float | None,
+    sandbox_enabled: bool,
+    requested_reasoning_effort: str | None,
+    effective_reasoning_effort: str | None,
+    reasoning_required: bool,
+    reasoning_status: str,
+    reasoning_message: str | None,
+    resume_metadata_json: dict[str, Any],
+) -> PreparedSpawn:
+    """Prepare a successor run against an existing durable child session."""
+    child_session = session_manager._storage.get(existing_session_id)
+    if child_session is None:
+        raise ValueError("Daemon resume child session does not exist")
+    if child_session.status in {"expired", "deleted"}:
+        raise ValueError("Daemon resume child session is terminal")
+    if child_session.parent_session_id != parent_session_id:
+        raise ValueError("Daemon resume child session belongs to another parent")
+    if child_session.project_id != project_id:
+        raise ValueError("Daemon resume child session belongs to another project")
+    if child_session.agent_run_id != original_run_id:
+        raise ValueError("Daemon resume child session is owned by another run")
+    from gobby.storage.session_lifecycle import rebind_agent_run
+
+    def bind_successor_run(run_id: str) -> None:
+        rebound = rebind_agent_run(
+            session_manager._storage.db,
+            session_id=child_session.id,
+            expected_run_id=original_run_id,
+            new_run_id=run_id,
+            workflow_name=workflow_name,
+        )
+        if not rebound:
+            raise ValueError("Daemon resume session ownership changed concurrently")
+
+    with session_manager._storage.db.transaction():
+        if initial_variables:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(session_manager._storage.db).merge_variables(
+                child_session.id,
+                initial_variables,
+            )
+        return _prepare_run_for_session(
+            session_manager=session_manager,
+            session_id=child_session.id,
+            session_depth=child_session.agent_depth,
+            session_seq_num=getattr(child_session, "seq_num", None),
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            provider=source,
+            workflow_name=workflow_name,
+            agent_name=agent_name,
+            git_branch=git_branch,
+            prompt=prompt,
+            model=model,
+            is_local=is_local,
+            max_agent_depth=max_agent_depth,
+            agent_run_id=agent_run_id,
+            task_id=task_id,
+            claimed_session_id=claimed_session_id,
+            timeout_seconds=timeout_seconds,
+            sandbox_enabled=sandbox_enabled,
+            requested_reasoning_effort=requested_reasoning_effort,
+            effective_reasoning_effort=effective_reasoning_effort,
+            reasoning_required=reasoning_required,
+            reasoning_status=reasoning_status,
+            reasoning_message=reasoning_message,
+            resume_metadata_json=resume_metadata_json,
+            bind_run=bind_successor_run,
+        )
+
+
+def _prepare_run_for_session(
+    *,
+    session_manager: ChildSessionManager,
+    session_id: str,
+    session_depth: int,
+    session_seq_num: int | None,
+    parent_session_id: str,
+    project_id: str,
+    provider: str,
+    workflow_name: str | None,
+    agent_name: str | None,
+    git_branch: str | None,
+    prompt: str | None,
+    model: str | None,
+    is_local: bool,
+    max_agent_depth: int,
+    agent_run_id: str,
+    task_id: str | None,
+    claimed_session_id: str | None,
+    timeout_seconds: float | None,
+    sandbox_enabled: bool,
+    requested_reasoning_effort: str | None,
+    effective_reasoning_effort: str | None,
+    reasoning_required: bool,
+    reasoning_status: str,
+    reasoning_message: str | None,
+    resume_metadata_json: dict[str, Any] | None,
+    bind_run: Callable[[str], None],
+) -> PreparedSpawn:
+    """Create and bind a run, then construct its terminal identity."""
+    from gobby.storage.agents import LocalAgentRunManager
+
+    logging.getLogger("agents.spawn.prepare_terminal_spawn").debug(
+        "Creating agent_run %s for child_session %s",
+        agent_run_id,
+        session_id,
+    )
     agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
     agent_run_mgr.create(
         parent_session_id=parent_session_id,
-        provider=source,
+        provider=provider,
         prompt=prompt or "",
         workflow_name=workflow_name,
         agent_name=agent_name,
         model=model,
         is_local=is_local,
-        child_session_id=child_session.id,
+        child_session_id=session_id,
         claimed_session_id=claimed_session_id,
         run_id=agent_run_id,
         task_id=task_id,
@@ -205,15 +359,8 @@ def prepare_terminal_spawn(
         reasoning_message=reasoning_message,
         resume_metadata_json=resume_metadata_json,
     )
+    bind_run(agent_run_id)
 
-    # Persist agent_run_id to session record for hook-based lifecycle tracking
-    session_manager.update_terminal_pickup_metadata(
-        session_id=child_session.id,
-        agent_run_id=agent_run_id,
-        workflow_name=workflow_name,
-    )
-
-    # Handle prompt - decide env var vs file
     prompt_env: str | None = None
     prompt_file: str | None = None
 
@@ -221,29 +368,27 @@ def prepare_terminal_spawn(
         if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
             prompt_env = prompt
         else:
-            # Write to temp file with secure permissions
-            prompt_file = create_prompt_file(prompt, child_session.id)
+            prompt_file = create_prompt_file(prompt, session_id)
 
-    # Build environment variables
     env_vars = get_terminal_env_vars(
-        session_id=child_session.id,
+        session_id=session_id,
         parent_session_id=parent_session_id,
         agent_run_id=agent_run_id,
         project_id=project_id,
         workflow_name=workflow_name,
-        agent_depth=child_session.agent_depth,
+        agent_depth=session_depth,
         max_agent_depth=max_agent_depth,
         prompt=prompt_env,
         prompt_file=prompt_file,
     )
 
     return PreparedSpawn(
-        session_id=child_session.id,
+        session_id=session_id,
         agent_run_id=agent_run_id,
         parent_session_id=parent_session_id,
         project_id=project_id,
         workflow_name=workflow_name,
-        agent_depth=child_session.agent_depth,
+        agent_depth=session_depth,
         env_vars=env_vars,
-        seq_num=getattr(child_session, "seq_num", None),
+        seq_num=session_seq_num,
     )

@@ -493,6 +493,11 @@ def _make_terminal_run(
         timeout_seconds=timeout_seconds,
         requested_reasoning_effort=requested_reasoning_effort,
     )
+    if child_session_id is not None:
+        agent_run_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run.id, child_session_id),
+        )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(
         run.id,
@@ -543,6 +548,10 @@ def _make_dispatched_stage_run(
         run_id=run_id,
         task_id=task.id,
     )
+    temp_db.execute(
+        "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+        (run.id, child_session_id),
+    )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
     agent_run_manager.update_resume_metadata(
@@ -581,6 +590,11 @@ def _make_autonomous_run(
         run_id=run_id,
         child_session_id=child_session_id,
     )
+    if child_session_id is not None:
+        agent_run_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run.id, child_session_id),
+        )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(
         run.id,
@@ -2738,6 +2752,10 @@ class TestCheckExpiredAgents:
             timeout_seconds=300,
             child_session_id=child_session.id,
         )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=run.id,
+        )
         agent_run_manager.start(run.id)
         agent_run_manager.update_runtime(
             run.id,
@@ -2788,6 +2806,10 @@ class TestCheckExpiredAgents:
             run_id=_rid("run-terminal-completed"),
             child_session_id=child_session.id,
         )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=run.id,
+        )
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
             """
@@ -2825,6 +2847,10 @@ class TestCheckExpiredAgents:
             prompt="test",
             run_id=_rid("run-terminal-lingering-tmux"),
             child_session_id=child_session.id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=run.id,
         )
         agent_run_manager.update_runtime(
             run.id,
@@ -3114,6 +3140,10 @@ class TestCheckExpiredAgents:
             run_id=_rid("run-exp-wt"),
             timeout_seconds=300,
             child_session_id=child_session.id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=run.id,
         )
         agent_run_manager.start(run.id)
         agent_run_manager.update_runtime(

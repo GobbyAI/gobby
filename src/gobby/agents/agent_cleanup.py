@@ -376,26 +376,28 @@ class AgentCleanupHandler:
         allow_parent_session_fallback: bool = False,
         notification_result: dict[str, Any] | None = None,
         notification_message: str = "",
+        force_full_cleanup: bool = False,
     ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
+        parking = run.terminal_reason == "daemon_stop" and not force_full_cleanup
         session_id = cleanup_session_id
         if session_id is None:
             session_id = run.child_session_id
         if session_id is None and allow_parent_session_fallback:
             session_id = run.parent_session_id
-        session_manager = self._get_session_manager()
         session_coordinator = self._get_session_coordinator()
 
-        await deliver_and_cleanup_terminal_run(
-            db=self._db,
-            completion_registry=self._completion_registry,
-            run_id=run.id,
-            result=notification_result,
-            message=notification_message,
-            run_db=self._run_db,
-        )
+        if not parking:
+            await deliver_and_cleanup_terminal_run(
+                db=self._db,
+                completion_registry=self._completion_registry,
+                run_id=run.id,
+                result=notification_result,
+                message=notification_message,
+                run_db=self._run_db,
+            )
 
         if self._attention_manager is not None:
             try:
@@ -424,30 +426,24 @@ class AgentCleanupHandler:
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
 
-        if session_coordinator and session_id:
+        if not parking and session_coordinator and session_id:
             try:
                 session_coordinator.release_session_worktrees(session_id)
             except Exception as e:
                 logger.warning("Failed to release worktrees for agent %s: %s", run.id, e)
 
-        if self._clone_storage and run.clone_id:
+        if not parking and self._clone_storage and run.clone_id:
             try:
                 await self._run_db(self._clone_storage.release, run.clone_id)
             except Exception as e:
                 logger.warning("Failed to release clone for agent %s: %s", run.id, e)
-
-        if session_manager and session_id:
-            try:
-                await self._run_db(session_manager.update_status, session_id, "expired")
-                logger.debug("Expired session %s for agent %s", session_id, run.id)
-            except Exception as e:
-                logger.warning("Failed to expire session for agent %s: %s", run.id, e)
 
         cleanup = await self._run_db(
             cleanup_agent_runtime_state,
             self._db,
             run_id=run.id,
             child_session_id=run.child_session_id,
+            terminal_reason=run.terminal_reason if parking else None,
         )
         if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
             logger.debug(
@@ -456,7 +452,7 @@ class AgentCleanupHandler:
                 cleanup.dispatch_mutex_rows,
                 cleanup.workflow_instance_rows,
             )
-        if run.task_id:
+        if run.task_id and not parking:
             try:
                 initial_variables = (run.resume_metadata_json or {}).get("initial_variables")
                 reused_worktree = (
@@ -794,7 +790,11 @@ class AgentCleanupHandler:
             )
             return False
 
-        await self._task_recovery.recover_task_from_terminal_agent(db_run, outcome="cancelled")
+        if terminal_reason != "daemon_stop":
+            await self._task_recovery.recover_task_from_terminal_agent(
+                db_run,
+                outcome="cancelled",
+            )
         await self.post_terminal_cleanup(
             db_run,
             cleanup_session_id=db_run.child_session_id,
@@ -813,7 +813,9 @@ class AgentCleanupHandler:
                 schedule_dispatcher_tick_for_task(
                     self._db,
                     task_id=db_run.task_id,
-                    reason="agent_cancelled",
+                    reason="agent_parked"
+                    if terminal_reason == "daemon_stop"
+                    else "agent_cancelled",
                 )
             except Exception:
                 logger.warning(

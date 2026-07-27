@@ -18,6 +18,7 @@ from starlette.requests import ClientDisconnect
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.claude_contract import get_claude_contract
 from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
+from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
@@ -801,6 +802,30 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
                 return mark_processed_and_return(result)
+
+            except AgentRunIngressRetryableError as exc:
+                inc_counter("hooks_failed_total")
+                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                logger.warning(
+                    "Retrying managed hook until durable run identity is available",
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        session_id=exc.session_id,
+                        run_id=exc.expected_run_id,
+                        reason=exc.reason,
+                        envelope_id=envelope_id,
+                        processing_claim_released=released,
+                    ),
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "retry",
+                        "reason": "agent_run_identity_pending",
+                    },
+                )
 
             except VerificationReceiptIngestionError as exc:
                 inc_counter("hooks_failed_total")

@@ -7,6 +7,10 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.recovery_state import (
+    is_daemon_stop_parked,
+    is_reconciliation_pending,
+)
 from gobby.events.completion_registry import wake_result_is_delivered
 from gobby.storage.agents import (
     TERMINAL_AGENT_RUN_STATUSES,
@@ -74,6 +78,8 @@ async def _rehydrate_active_agent_completion_subscribers(runner: GobbyRunner) ->
         if not runs:
             break
         for run in runs:
+            if is_reconciliation_pending(run):
+                continue
             subscribers = await _run_db(
                 runner,
                 subscriber_manager.get_completion_subscribers,
@@ -117,6 +123,8 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
             if not runs:
                 break
             for run in runs:
+                if is_daemon_stop_parked(run):
+                    continue
                 subscribers = await _run_db(
                     runner,
                     subscriber_manager.get_completion_subscribers,
@@ -185,6 +193,8 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
         if not batch:
             break
         for run in batch:
+            if is_reconciliation_pending(run):
+                continue
             if run.id in seen_ids:
                 continue
             seen_ids.add(run.id)
@@ -208,7 +218,8 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
     if runner.agent_runner is None:
         return 0
 
-    reconciled = await _recover_agent_runs_after_restart(runner)
+    reconciled = await _resolve_provisional_daemon_resumes(runner)
+    reconciled += await _recover_agent_runs_after_restart(runner)
     active_runs = _list_active_agent_runs_once(runner)
     non_tmux_runs = [run for run in active_runs if not getattr(run, "tmux_session_name", None)]
     for run in non_tmux_runs:
@@ -240,11 +251,9 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
 
         run_storage = runner.agent_runner.run_storage
         pane_pid = getattr(live_info, "pane_pid", None)
-        update_runtime = getattr(run_storage, "update_runtime", None)
         if pane_pid is not None and pane_pid != getattr(run, "pid", None):
-            if callable(update_runtime):
-                update_runtime(run_id, pid=pane_pid, tmux_session_name=session_name)
-                reconciled += 1
+            run_storage.update_runtime(run_id, pid=pane_pid, tmux_session_name=session_name)
+            reconciled += 1
 
         if output_reader is None:
             from gobby.agents.tmux import get_tmux_output_reader
@@ -261,8 +270,138 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
             )
         if _refresh_active_run_dispatch_mutex(runner, run):
             reconciled += 1
+        metadata = getattr(run, "resume_metadata_json", None) or {}
+        parent_session_id = metadata.get("parent_session_id")
+        child_session_id = getattr(run, "child_session_id", None)
+        if isinstance(parent_session_id, str) and isinstance(child_session_id, str):
+            from gobby.agents.resume_finalization import notify_parent_of_recovery
+
+            notify_parent_of_recovery(
+                runner.database,
+                child_session_id=child_session_id,
+                parent_session_id=parent_session_id,
+                content=f"Reconnected agent run {run_id} after daemon restart.",
+                run_id=run_id,
+                event="reconnected",
+            )
 
     return reconciled
+
+
+async def _resolve_provisional_daemon_resumes(runner: GobbyRunner) -> int:
+    """Resolve every durable resume phase before normal run classification."""
+    if runner.agent_runner is None:
+        return 0
+
+    from gobby.agents.resume_executor import resume_agent_run
+    from gobby.agents.resume_finalization import (
+        finalize_resume_handoff,
+        notify_parent_of_recovery,
+    )
+    from gobby.agents.tmux import get_tmux_session_manager
+    from gobby.storage.agent_resume import rollback_prepared_daemon_resume
+
+    run_storage = runner.agent_runner.run_storage
+    provisional = run_storage.list_provisional_daemon_resumes(limit=_RUN_REPLAY_PAGE_SIZE)
+    if not provisional:
+        return 0
+
+    live_sessions = await get_tmux_session_manager().list_sessions()
+    live_by_name = {session.name: session for session in live_sessions}
+    resolved = 0
+    for run in provisional:
+        if is_reconciliation_pending(run):
+            continue
+        metadata = run.resume_metadata_json or {}
+        phase = metadata.get("daemon_stop_resume_phase")
+        original_run_id = metadata.get("resumed_from_run_id")
+        child_session_id = getattr(run, "child_session_id", None)
+        if not isinstance(original_run_id, str) or not isinstance(child_session_id, str):
+            logger.error("Provisional daemon resume %s has incomplete ownership metadata", run.id)
+            continue
+
+        if phase == "prepared":
+            if rollback_prepared_daemon_resume(
+                runner.database,
+                original_run_id=original_run_id,
+                successor_run_id=run.id,
+                child_session_id=child_session_id,
+            ):
+                resolved += 1
+            continue
+
+        session_name = (
+            getattr(run, "tmux_session_name", None)
+            or metadata.get("daemon_stop_resume_tmux_session_name")
+            or metadata.get("daemon_stop_resume_planned_tmux_title")
+        )
+        live_info = live_by_name.get(session_name) if isinstance(session_name, str) else None
+        if live_info is not None and not getattr(live_info, "pane_dead", False):
+            pane_pid = getattr(live_info, "pane_pid", None)
+            run_storage.update_runtime(
+                run.id,
+                pid=pane_pid,
+                tmux_session_name=live_info.name,
+            )
+            if phase == "launch_requested":
+                run_storage.transition_resume_phase(
+                    run.id,
+                    expected_phase="launch_requested",
+                    new_phase="runtime_persisted",
+                )
+            if run.status == "pending":
+                run_storage.start(run.id)
+            finalize_resume_handoff(
+                runner.database,
+                original_run_id=original_run_id,
+                successor_run_id=run.id,
+                child_session_id=child_session_id,
+                completion_registry=runner.completion_registry,
+            )
+            parent_session_id = metadata.get("parent_session_id")
+            if isinstance(parent_session_id, str):
+                notify_parent_of_recovery(
+                    runner.database,
+                    child_session_id=child_session_id,
+                    parent_session_id=parent_session_id,
+                    content=f"Reconnected agent run {run.id} after daemon restart.",
+                    run_id=run.id,
+                    event="reconnected",
+                )
+            resolved += 1
+            continue
+
+        finalize_resume_handoff(
+            runner.database,
+            original_run_id=original_run_id,
+            successor_run_id=run.id,
+            child_session_id=child_session_id,
+            completion_registry=runner.completion_registry,
+        )
+        monitor = runner.agent_lifecycle_monitor
+        if monitor is None:
+            raise RuntimeError("Cannot park dead provisional resume without lifecycle monitor")
+        await monitor.terminalize_cancelled_run(run.id, terminal_reason="daemon_stop")
+        parked = run_storage.get(run.id)
+        if parked is None:
+            raise RuntimeError(f"Dead provisional resume {run.id} disappeared during parking")
+        result = await resume_agent_run(
+            parked,
+            resume_metadata=parked.resume_metadata_json or metadata,
+            runner=runner.agent_runner,
+            session_manager=runner.session_manager,
+            daemon_config=runner.config,
+            completion_registry=runner.completion_registry,
+        )
+        if not result.success:
+            logger.warning(
+                "Immediate retry for dead provisional resume %s remains parked: %s",
+                run.id,
+                result.error,
+            )
+        resolved += 1
+
+    return resolved
 
 
 def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:
@@ -309,6 +448,8 @@ def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
         if not batch:
             break
         for run in batch:
+            if is_reconciliation_pending(run):
+                continue
             run_id = str(getattr(run, "id", ""))
             if not run_id or run_id in seen_ids:
                 continue
@@ -320,92 +461,103 @@ def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
     return active_runs
 
 
+async def _run_agent_hook_replay_barrier(
+    runner: GobbyRunner,
+    *,
+    timeout_seconds: float = 5.0,
+) -> bool:
+    """Replay hook ingress and fence unresolved runs from restart classification."""
+    agent_runner = getattr(runner, "agent_runner", None)
+    http_server = getattr(runner, "http_server", None)
+    app = getattr(http_server, "app", None)
+    if app is None:
+        return True
+
+    from gobby.hooks.inbox import drain_hook_inbox_barrier
+
+    result = await drain_hook_inbox_barrier(
+        app,
+        timeout_seconds=timeout_seconds,
+    )
+    if not result.timed_out:
+        return True
+    if agent_runner is None:
+        logger.warning("Hook replay timed out while agent services were unavailable")
+        return False
+
+    run_storage = agent_runner.run_storage
+    unresolved_run_ids = set(result.unresolved_run_ids)
+    session_manager = getattr(runner, "session_manager", None)
+    if session_manager is not None:
+        for session_id in result.unresolved_session_ids:
+            session = session_manager.get(session_id)
+            run_id = getattr(session, "agent_run_id", None)
+            if isinstance(run_id, str) and run_id:
+                unresolved_run_ids.add(run_id)
+
+    for run_id in unresolved_run_ids:
+        run = run_storage.get(run_id)
+        if run is None or run.status not in {"pending", "running"}:
+            continue
+        run_storage.merge_resume_metadata(run_id, {"reconciliation_pending": True})
+
+    logger.warning(
+        "Agent hook replay barrier timed out with %d unresolved run(s)",
+        len(unresolved_run_ids),
+    )
+    return False
+
+
+async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
+    """Let the lifecycle monitor reclassify fenced runs after inbox replay settles."""
+    if runner.agent_runner is None:
+        return 0
+    settled = await _run_agent_hook_replay_barrier(runner, timeout_seconds=0.0)
+    if not settled:
+        return 0
+
+    run_storage = runner.agent_runner.run_storage
+    pending = run_storage.list_reconciliation_pending(limit=_RUN_REPLAY_PAGE_SIZE)
+    if not pending:
+        return 0
+    for run in pending:
+        run_storage.merge_resume_metadata(run.id, {"reconciliation_pending": False})
+    return await _reconcile_agent_runs_after_restart(runner)
+
+
 async def _cleanup_missing_tmux_agent_run(
     runner: GobbyRunner,
     run: Any,
     session_name: str,
 ) -> bool:
-    """Fail an active run whose persisted tmux session did not survive restart."""
+    """Park and immediately resume a run whose tmux session did not survive."""
     monitor = runner.agent_lifecycle_monitor
-    if monitor is None:
+    if monitor is None or runner.agent_runner is None:
         return False
 
-    get_cleanup_agent = getattr(monitor, "get_cleanup_agent", None)
-    cleanup_agent = get_cleanup_agent() if callable(get_cleanup_agent) else None
-    if not callable(cleanup_agent):
+    from gobby.agents.resume_executor import resume_agent_run
+
+    transitioned = await monitor.terminalize_cancelled_run(
+        run.id,
+        terminal_reason="daemon_stop",
+    )
+    parked = runner.agent_runner.run_storage.get(run.id)
+    if not transitioned or parked is None:
+        return False
+
+    result = await resume_agent_run(
+        parked,
+        resume_metadata=parked.resume_metadata_json or {},
+        runner=runner.agent_runner,
+        session_manager=runner.session_manager,
+        daemon_config=runner.config,
+        completion_registry=runner.completion_registry,
+    )
+    if not result.success:
         logger.warning(
-            "Cannot clean missing tmux-backed agent %s: cleanup handler unavailable",
-            getattr(run, "id", "unknown"),
-        )
-        return False
-
-    await cleanup_agent(
-        run,
-        terminal_payload=(f"tmux session {session_name!r} was missing after daemon restart"),
-    )
-    return True
-
-
-async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
-    """Cancel live agent runs before subsystem teardown on daemon shutdown."""
-    lifecycle_monitor = runner.agent_lifecycle_monitor
-    agent_runner = runner.agent_runner
-    if lifecycle_monitor is None or agent_runner is None:
-        return 0
-
-    from gobby.agents.agent_cleanup import (
-        _deliver_existing_terminal_run_unshielded,
-        shielded_terminal_delivery,
-    )
-    from gobby.agents.kill import kill_agent as _kill_agent_process
-
-    cancelled = 0
-    for run in _list_active_agent_runs_once(runner):
-        _register_persisted_completion_subscribers(
-            runner,
+            "Agent %s remained parked after missing tmux session %r: %s",
             run.id,
-            continuation_prompt=getattr(run, "continuation_prompt", None),
+            session_name,
+            result.error,
         )
-
-        async def cancel_and_deliver(run: Any = run) -> bool:
-            try:
-                result = await _kill_agent_process(
-                    run,
-                    runner.database,
-                    signal_name="TERM",
-                    close_terminal=True,
-                )
-                if not result.get("success") and result.get("error") != "No target PID found":
-                    logger.warning(
-                        "Failed to stop active agent %s during shutdown; retaining its row and "
-                        "completion subscriptions for next-boot recovery: %s",
-                        run.id,
-                        result.get("error"),
-                    )
-                    return False
-
-                return bool(
-                    await lifecycle_monitor.terminalize_cancelled_run(
-                        run.id,
-                        terminal_reason="daemon_stop",
-                    )
-                )
-            finally:
-                await _deliver_existing_terminal_run_unshielded(
-                    db=runner.database,
-                    agent_run_manager=agent_runner.run_storage,
-                    completion_registry=runner.completion_registry,
-                    run_id=run.id,
-                    run_db=lambda func, *args, **kwargs: _run_db(
-                        runner,
-                        func,
-                        *args,
-                        **kwargs,
-                    ),
-                )
-
-        transitioned = bool(await shielded_terminal_delivery(run.id, cancel_and_deliver))
-        if transitioned:
-            cancelled += 1
-
-    return cancelled
+    return True

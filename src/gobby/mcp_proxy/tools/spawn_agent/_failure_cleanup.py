@@ -84,6 +84,9 @@ async def start_run_or_cleanup(
 
     if not start_skipped:
         return None
+    current = runner.run_storage.get(run_id)
+    if current is not None and current.status == "running":
+        return None
 
     error = "Agent run was no longer pending after spawn"
     await cleanup_failed_spawn(

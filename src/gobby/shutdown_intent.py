@@ -26,12 +26,8 @@ class ShutdownIntent(StrEnum):
     RESTART = "restart"
 
     @property
-    def cancel_agents(self) -> bool:
-        return self is ShutdownIntent.STOP
-
-    @property
     def preserve_agents(self) -> bool:
-        return self is ShutdownIntent.RESTART
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,10 +41,6 @@ class ShutdownIntentRecord:
     stale: bool = False
     error: str | None = None
     raw: dict[str, Any] | None = None
-
-    @property
-    def cancel_agents(self) -> bool:
-        return self.intent.cancel_agents
 
     @property
     def preserve_agents(self) -> bool:

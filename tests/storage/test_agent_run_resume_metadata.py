@@ -107,6 +107,7 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Resume candidate filtering",
+        validation_criteria="Only recent unconsumed daemon-stop runs are candidates.",
     )
 
     recent = manager.create(

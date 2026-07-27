@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 
+from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
@@ -78,6 +79,7 @@ class HookManager:
         self.broadcaster = broadcaster
         self.tool_proxy_getter = tool_proxy_getter
         self._message_processor = message_processor
+        self._completion_registry = completion_registry
         self._owns_database = database is None and session_manager is None
         self._shutdown_complete = False
 
@@ -313,8 +315,6 @@ class HookManager:
         """Run hook handling after the daemon readiness gate has passed."""
         if blocking_deadline is None:
             blocking_deadline = new_blocking_effect_deadline()
-        self._record_machine_ingress(event)
-
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the
@@ -330,6 +330,20 @@ class HookManager:
                 self.logger.debug(
                     "Skipping SESSION_START without project context: %s",
                     project_resolution.reason,
+                )
+                return HookResponse(decision="allow")
+            ingress = validate_managed_agent_hook(
+                event,
+                session_manager=self._session_manager,
+                agent_run_manager=self._agent_run_manager,
+                database=self._database,
+                completion_registry=self._completion_registry,
+                registry_loop=self._loop,
+            )
+            if not ingress.accepted:
+                self.logger.info(
+                    "Ignoring stale managed SESSION_START hook for run %s",
+                    ingress.run_id,
                 )
                 return HookResponse(decision="allow")
         else:
@@ -348,12 +362,29 @@ class HookManager:
                 return HookResponse(decision="allow")
             # Resolve platform session_id from CLI external_id
             self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
+            ingress = validate_managed_agent_hook(
+                event,
+                session_manager=self._session_manager,
+                agent_run_manager=self._agent_run_manager,
+                database=self._database,
+                completion_registry=self._completion_registry,
+                registry_loop=self._loop,
+            )
+            if not ingress.accepted:
+                self.logger.info(
+                    "Ignoring stale managed hook for run %s (event=%s)",
+                    ingress.run_id,
+                    event.event_type.value,
+                )
+                return HookResponse(decision="allow")
             self._record_session_activity_pulse(event)
             ingest_hook_verification_receipt(
                 event,
                 database=self._database,
                 logger=self.logger,
             )
+
+        self._record_machine_ingress(event)
 
         # Translate #N session references to UUIDs for MCP tool calls.
         # #N is human-friendly but ambiguous across projects (seq_num is per-project).

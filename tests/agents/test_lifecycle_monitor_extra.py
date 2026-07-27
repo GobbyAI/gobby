@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -1187,6 +1188,7 @@ class TestTerminalizeCancelledRun:
     async def test_reopens_in_progress_task_and_notifies(self) -> None:
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
+        mock_task_mgr.stage_states.get.return_value = None
         mock_completion_registry = MagicMock()
         mock_completion_registry.notify = AsyncMock()
         mock_session_mgr = MagicMock()
@@ -1222,10 +1224,14 @@ class TestTerminalizeCancelledRun:
             task_manager=mock_task_mgr,
         )
 
-        transitioned = await monitor.terminalize_cancelled_run(
-            "run-cancel",
-            terminal_reason="user_cancelled",
-        )
+        with patch(
+            "gobby.agents.agent_cleanup.cleanup_merged_task_artifacts_after_agent_exit",
+            return_value=[],
+        ):
+            transitioned = await monitor.terminalize_cancelled_run(
+                "run-cancel",
+                terminal_reason="user_cancelled",
+            )
 
         assert transitioned is True
         mock_task_mgr.release_task_claim.assert_called_once_with("task-1")
@@ -1242,9 +1248,7 @@ class TestTerminalizeCancelledRun:
         )
         assert mock_completion_registry.notify.await_count == 1
         assert mock_completion_registry.notify.await_args is not None
-        mock_session_mgr.update_status.assert_called_once_with("child-1", "expired")
-        assert mock_session_mgr.update_status.call_count == 1
-        assert mock_session_mgr.update_status.call_args is not None
+        mock_session_mgr.update_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_clears_claim_without_status_change_for_review_task(self) -> None:
@@ -1503,3 +1507,75 @@ class TestTerminalizeCancelledRun:
         mock_completion_registry.notify.assert_not_awaited()
         assert mock_completion_registry.notify.await_count == 0
         assert mock_completion_registry.notify.await_args is None
+
+    @pytest.mark.asyncio
+    async def test_daemon_stop_orphan_reaper_performs_full_cleanup(self) -> None:
+        run = AgentRun(
+            id="run-orphan",
+            parent_session_id="parent-1",
+            child_session_id="child-1",
+            task_id="task-1",
+            provider="codex",
+            prompt="resume after restart",
+            status="cancelled",
+            terminal_reason="daemon_stop",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        run_manager = MagicMock()
+        run_manager.list_daemon_stop_orphans.return_value = [run]
+        monitor = AgentLifecycleMonitor(
+            detection_registry=cast(Any, DETECTION_REGISTRY),
+            agent_run_manager=run_manager,
+            db=MagicMock(),
+            task_manager=MagicMock(),
+        )
+        recover_task = AsyncMock()
+        full_cleanup = AsyncMock()
+
+        with (
+            patch.object(
+                monitor._task_recovery,
+                "recover_task_from_terminal_agent",
+                new=recover_task,
+            ),
+            patch.object(
+                monitor._cleanup_handler,
+                "post_terminal_cleanup",
+                new=full_cleanup,
+            ),
+            patch(
+                "gobby.storage.agent_resume.claim_daemon_stop_orphan_reap",
+                return_value=True,
+            ) as claim,
+            patch(
+                "gobby.storage.agent_resume.expire_parked_daemon_session",
+                return_value=True,
+            ) as expire,
+        ):
+            reaped = await monitor.reap_daemon_stop_orphans()
+
+        assert reaped == 1
+        claim.assert_called_once()
+        assert claim.call_count == 1
+        recover_task.assert_awaited_once_with(
+            run,
+            outcome="cancelled",
+        )
+        assert recover_task.await_count == 1
+        full_cleanup.assert_awaited_once_with(
+            run,
+            cleanup_session_id="child-1",
+            notification_result={
+                "status": "cancelled",
+                "terminal_reason": "daemon_stop",
+                "run_id": "run-orphan",
+            },
+            notification_message="Agent run-orphan recovery window expired",
+            force_full_cleanup=True,
+        )
+        assert full_cleanup.await_count == 1
+        expire.assert_called_once()
+        assert expire.call_count == 1
+        run_manager.merge_resume_metadata.assert_called_once()
+        assert run_manager.merge_resume_metadata.call_count == 1

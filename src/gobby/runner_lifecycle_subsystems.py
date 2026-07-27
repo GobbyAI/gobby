@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.runner_lifecycle_agents import (
+    _reclassify_reconciliation_pending_runs,
     _reconcile_agent_runs_after_restart,
     _recover_agent_completion_subscribers_on_startup,
+    _run_agent_hook_replay_barrier,
 )
 from gobby.runner_lifecycle_startup import (
     StartupTracker,
@@ -350,7 +352,6 @@ async def _check_tmux_health(tracker: StartupTracker | None) -> None:
 async def _start_agent_lifecycle_monitor(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
-    reconcile_agent_runs_after_restart: AgentLifecycleOperation,
 ) -> None:
     monitor = runner.agent_lifecycle_monitor
     if not monitor:
@@ -358,17 +359,6 @@ async def _start_agent_lifecycle_monitor(
 
     startup_errors: list[str] = []
     try:
-        try:
-            reconciled_runs = await reconcile_agent_runs_after_restart(runner)
-            if reconciled_runs > 0:
-                logger.info(
-                    "Reconciled %d active agent run(s) after daemon restart",
-                    reconciled_runs,
-                )
-        except Exception as e:
-            startup_errors.append(f"reconcile failed: {e}")
-            logger.exception("Agent restart reconciliation failed during startup")
-
         try:
             await monitor.cleanup_stale_pending_runs()
         except Exception as e:
@@ -779,7 +769,27 @@ async def init_subsystems(
     ),
 ) -> None:
     """Heavy initialization that runs after HTTP is already serving."""
-    await recover_agent_completion_subscribers(runner)
+    monitor = getattr(runner, "agent_lifecycle_monitor", None)
+    if monitor is None:
+        if getattr(runner, "agent_runner", None) is not None:
+            raise RuntimeError("Agent reconciliation owner is unavailable")
+    else:
+        monitor.set_reconciliation_callback(lambda: _reclassify_reconciliation_pending_runs(runner))
+    await _run_agent_hook_replay_barrier(runner)
+    reconciled_runs = (
+        await reconcile_agent_runs_after_restart(runner)
+        if getattr(runner, "agent_runner", None) is not None
+        else 0
+    )
+    if reconciled_runs > 0:
+        logger.info(
+            "Reconciled %d active agent run(s) after daemon restart",
+            reconciled_runs,
+        )
+    try:
+        await recover_agent_completion_subscribers(runner)
+    except Exception:
+        logger.exception("Agent completion subscriber recovery failed during startup")
     _schedule_provider_model_refresh(
         runner,
         tracker,
@@ -797,7 +807,6 @@ async def init_subsystems(
     await _start_agent_lifecycle_monitor(
         runner,
         tracker,
-        reconcile_agent_runs_after_restart,
     )
     await _start_cron_scheduler(runner, tracker)
     if code_index_bm25_ready:

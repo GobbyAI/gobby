@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 from uuid import UUID
 
@@ -18,6 +18,10 @@ from gobby.agents.detection.safe_regex import (
     InvalidPatternError,
     RegexOutcome,
     compile_safe_regex,
+)
+from gobby.agents.recovery_state import (
+    daemon_resume_successor_id,
+    is_daemon_stop_parked,
 )
 from gobby.agents.tmux import get_tmux_session_manager
 from gobby.mcp_proxy.tools.agent_live_activity import (
@@ -32,6 +36,7 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
     clamp_wait_tool_timeout,
 )
+from gobby.storage.agent_resume import register_daemon_resume_waiter
 from gobby.storage.agents import AgentRunStatus
 
 _WAIT_OUTPUT_CAPTURE_LINES = 200
@@ -100,6 +105,28 @@ def _finite_number(value: float, *, name: str) -> tuple[float | None, dict[str, 
     return number, None
 
 
+def _follow_daemon_resume_chain(
+    run: Any,
+    *,
+    get_run: Callable[[str], Any | None],
+) -> tuple[Any, bool]:
+    """Follow consumed daemon-stop originals to their authoritative successor."""
+    current = run
+    visited: set[str] = set()
+    while True:
+        current_id = str(current.id)
+        if current_id in visited:
+            return current, False
+        visited.add(current_id)
+        successor_id = daemon_resume_successor_id(current)
+        if not successor_id:
+            return current, is_daemon_stop_parked(current)
+        successor = get_run(successor_id)
+        if successor is None:
+            return current, True
+        current = successor
+
+
 def register_agent_query_tools(
     registry: InternalToolRegistry,
     ctx: AgentsRegistryContext,
@@ -112,8 +139,16 @@ def register_agent_query_tools(
         run = ctx.runner.get_run(run_id)
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
+        run, recovery_pending = _follow_daemon_resume_chain(
+            run,
+            get_run=ctx.runner.get_run,
+        )
         run = await overlay_live_activity(run, ctx.transcript_reader)
-        return {"success": True, **_agent_result_payload(run)}
+        return {
+            "success": True,
+            "recovery_pending": recovery_pending,
+            **_agent_result_payload(run),
+        }
 
     @registry.tool(
         name="wait_for_agent",
@@ -127,7 +162,12 @@ def register_agent_query_tools(
         run = ctx.runner.get_run(run_id)
         if run is None:
             return {"success": False, "error": f"Agent run {run_id} not found"}
-        if run.status in agents._TERMINAL_AGENT_STATUSES:
+        requested_run = run
+        run, recovery_pending = _follow_daemon_resume_chain(
+            run,
+            get_run=ctx.runner.get_run,
+        )
+        if run.status in agents._TERMINAL_AGENT_STATUSES and not recovery_pending:
             payload = _agent_result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
                 include_prompt=False,
@@ -151,6 +191,55 @@ def register_agent_query_tools(
                 "success": False,
                 "error": "Agent completion notification services are unavailable",
                 "error_code": "completion_services_unavailable",
+            }
+
+        if recovery_pending or run.id != requested_run.id:
+            try:
+                wait_target = register_daemon_resume_waiter(
+                    ctx.db,
+                    run_id=requested_run.id,
+                    subscriber_session_id=session_id,
+                )
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "daemon_resume_wait_registration_failed",
+                }
+            target_run = ctx.runner.get_run(wait_target.run_id)
+            if target_run is None:
+                return {
+                    "success": False,
+                    "error": f"Agent run {wait_target.run_id} not found",
+                }
+            run = target_run
+            if run.status in agents._TERMINAL_AGENT_STATUSES and not wait_target.recovery_pending:
+                payload = _agent_result_payload(
+                    await overlay_live_activity(run, ctx.transcript_reader),
+                    include_prompt=False,
+                )
+                return {
+                    "success": True,
+                    "completed": True,
+                    "notification_registered": False,
+                    **payload,
+                }
+            ctx.completion_registry.register(
+                run.id,
+                subscribers=[session_id],
+                continuation_prompt=getattr(run, "continuation_prompt", None),
+            )
+            payload = _agent_result_payload(
+                await overlay_live_activity(run, ctx.transcript_reader),
+                include_prompt=False,
+            )
+            return {
+                "success": True,
+                "completed": False,
+                "recovery_pending": wait_target.recovery_pending,
+                "notification_registered": True,
+                "notification_session_id": session_id,
+                **payload,
             }
 
         payload = _agent_result_payload(

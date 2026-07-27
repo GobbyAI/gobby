@@ -1,137 +1,25 @@
-"""Tests for daemon-stop resume execution."""
-
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 
 from gobby.agents import resume_executor
-from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
-from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
-pytestmark = pytest.mark.unit
+_SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
 
-@pytest.mark.asyncio
-async def test_resume_agent_run_persists_only_safe_cache_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Resume launch metadata should not retain provider/token-style env values."""
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-        "machine_id": "machine-1",
-        "env": {
-            "PERSISTED": "old",
-            CARGO_HOME: "/old/cargo",
-            "GOBBY_SESSION_ID": "stale-child",
-            "GOBBY_AGENT_RUN_ID": "stale-run",
-        },
-        "sandbox_env": {"SANDBOX": "enabled"},
-    }
-    persisted_metadata: list[tuple[str, dict[str, Any]]] = []
-
-    def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
-        agent_run_id = kwargs["agent_run_id"]
-        return SimpleNamespace(
-            session_id="child-new",
-            env_vars={
-                "GOBBY_SESSION_ID": "child-new",
-                "GOBBY_AGENT_RUN_ID": agent_run_id,
-                UV_CACHE_DIR: "/new/uv",
-            },
-        )
-
-    class FakeSpawner:
-        env: dict[str, str]
-
-        def spawn(self, *, command: list[str], cwd: str, env: dict[str, str]) -> SimpleNamespace:
-            self.env = env
-            return SimpleNamespace(
-                success=True,
-                pid=123,
-                tmux_session_name="tmux-new",
-                error=None,
-                message=None,
-            )
-
-    spawner = FakeSpawner()
-    run_storage = MagicMock()
-
-    def update_resume_metadata(run_id: str, metadata: dict[str, Any]) -> object:
-        persisted_metadata.append((run_id, metadata))
-        return object()
-
-    run_storage.update_resume_metadata.side_effect = update_resume_metadata
-    runner = SimpleNamespace(
-        child_session_manager=MagicMock(),
-        run_storage=run_storage,
-    )
-
-    monkeypatch.setattr(resume_executor, "prepare_terminal_spawn", fake_prepare_terminal_spawn)
-    monkeypatch.setattr(
-        resume_executor,
-        "build_cli_command",
-        lambda **_kwargs: (["codex", "resume"], {}),
-    )
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "_fire_resume_started", lambda *_args: None)
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-    )
-
-    assert result.success is True
-    assert "PERSISTED" not in spawner.env
-    assert spawner.env[CARGO_HOME] == "/old/cargo"
-    assert spawner.env[UV_CACHE_DIR] == "/new/uv"
-    assert "SANDBOX" not in spawner.env
-    assert spawner.env["GOBBY_SESSION_ID"] == "child-new"
-    assert spawner.env["GOBBY_AGENT_RUN_ID"] == result.run_id
-    assert spawner.env["GOBBY_MACHINE_ID"] == "machine-1"
-    resumed_metadata = next(
-        metadata for run_id, metadata in persisted_metadata if run_id == result.run_id
-    )
-    consumed_metadata = next(
-        metadata for run_id, metadata in persisted_metadata if run_id == "run-old"
-    )
-    assert resumed_metadata["env"] == {
-        CARGO_HOME: "/old/cargo",
-        UV_CACHE_DIR: "/new/uv",
-    }
-    assert consumed_metadata["daemon_stop_resume_consumed_by_run_id"] == result.run_id
-
-
-@pytest.mark.asyncio
-async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
+def _original_run() -> AgentRun:
+    return AgentRun(
+        id="e87bc595-eb81-4cd2-9745-06fc59dcd13d",
+        parent_session_id="7d307ae2-5834-43d0-8d59-c385ab37885f",
+        child_session_id="0bd17b43-4097-4efe-b16c-4c739ea4787d",
         provider="codex",
         prompt="Original prompt",
         status="cancelled",
@@ -140,604 +28,208 @@ async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
         continuation_prompt="Continue",
         terminal_reason="daemon_stop",
     )
-    model_selector = "endpoint:openrouter/moonshotai/kimi-k3"
-    provider_override = 'model_provider="gobby_endpoint_openrouter"'
-    resume_metadata: dict[str, Any] = {
+
+
+def _resume_metadata() -> dict[str, Any]:
+    return {
         "provider": "codex",
         "provider_native_session_id": "native-123",
         "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
+        "project_id": "f963cb16-3802-4fcf-b202-0198bb4d271c",
+        "parent_session_id": "7d307ae2-5834-43d0-8d59-c385ab37885f",
         "machine_id": "machine-1",
-        "model": model_selector,
-        "config_overrides": [provider_override],
+        "env": {
+            "UV_CACHE_DIR": "/cache/uv",
+            "OPENAI_API_KEY": "must-not-survive",
+            "GOBBY_AGENT_RUN_ID": "stale-run",
+        },
     }
-    persisted_metadata: list[dict[str, Any]] = []
-    command_args: dict[str, Any] = {}
 
-    def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            session_id="child-new",
-            env_vars={
-                "GOBBY_SESSION_ID": "child-new",
-                "GOBBY_AGENT_RUN_ID": kwargs["agent_run_id"],
-            },
-        )
 
-    class FakeSpawner:
-        env: dict[str, str]
-
-        def spawn(self, *, command: list[str], cwd: str, env: dict[str, str]) -> SimpleNamespace:
-            self.env = env
-            return SimpleNamespace(
-                success=True,
-                pid=123,
-                tmux_session_name="tmux-new",
-                error=None,
-                message=None,
-            )
-
-    def fake_build_cli_command(**kwargs: Any) -> tuple[list[str], dict[str, str]]:
-        command_args.update(kwargs)
-        return ["codex", "resume"], {}
-
-    def record_resume_metadata(_run_id: str, metadata: dict[str, Any]) -> object:
-        persisted_metadata.append(metadata)
-        return object()
-
-    run_storage = MagicMock()
-    run_storage.update_resume_metadata.side_effect = record_resume_metadata
-    runner = SimpleNamespace(
+def _runner(*, storage: MagicMock | None = None) -> SimpleNamespace:
+    run_storage = storage or MagicMock()
+    run_storage.db = MagicMock()
+    running = SimpleNamespace(
+        id=str(_SUCCESSOR_ID),
+        status="running",
+        resume_metadata_json={"daemon_stop_resume_phase": "runtime_persisted"},
+    )
+    run_storage.transition_resume_phase.return_value = running
+    run_storage.start.return_value = running
+    run_storage.get.return_value = running
+    return SimpleNamespace(
         child_session_manager=MagicMock(),
         run_storage=run_storage,
     )
-    spawner = FakeSpawner()
-    monkeypatch.setattr(resume_executor, "prepare_terminal_spawn", fake_prepare_terminal_spawn)
-    monkeypatch.setattr(resume_executor, "build_cli_command", fake_build_cli_command)
+
+
+def _spawn_result(*, success: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        success=success,
+        pid=123,
+        tmux_session_name="gobby-resume-successor",
+        tmux_socket_name="gobby",
+        tmux_socket_path="/tmp/gobby.sock",
+        error=None if success else "spawn failed",
+        message=None,
+    )
+
+
+def _patch_common(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    spawner: MagicMock,
+    finalize: MagicMock,
+) -> MagicMock:
+    prepare = MagicMock(
+        return_value=SimpleNamespace(
+            session_id=_original_run().child_session_id,
+            env_vars={
+                "GOBBY_SESSION_ID": _original_run().child_session_id,
+                "GOBBY_AGENT_RUN_ID": str(_SUCCESSOR_ID),
+            },
+        )
+    )
+    monkeypatch.setattr(uuid, "uuid4", lambda: _SUCCESSOR_ID)
+    monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
     monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
     monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "_fire_resume_started", lambda *_args: None)
+    monkeypatch.setattr(resume_executor, "finalize_resume_handoff", finalize)
+    monkeypatch.setattr(
+        "gobby.agents.resume_finalization.finalize_resume_handoff",
+        finalize,
+    )
+    monkeypatch.setattr(resume_executor, "notify_parent_of_recovery", MagicMock())
+    monkeypatch.setattr(resume_executor, "_fire_resume_started", MagicMock())
+    return prepare
+
+
+@pytest.mark.asyncio
+async def test_resume_reuses_child_session_and_finalizes_durable_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = MagicMock()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
 
     result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
+        _original_run(),
+        resume_metadata=_resume_metadata(),
         runner=runner,
         session_manager=MagicMock(),
-        daemon_config=DaemonConfig(
-            ai={
-                "generation": {
-                    "endpoints": {
-                        "openrouter": {
-                            "protocol": "openai-compatible",
-                            "wire_api": "responses",
-                            "api_base": "https://openrouter.ai/api/v1",
-                            "api_key": "sk-openrouter-test",
-                            "model": "moonshotai/kimi-k3",
-                        }
-                    }
-                }
-            }
-        ),
     )
 
     assert result.success is True
-    assert command_args["model"] == "moonshotai/kimi-k3"
-    assert command_args["config_overrides"].count(provider_override) == 1
-    assert spawner.env["GOBBY_CODEX_ENDPOINT_API_KEY"] == "sk-openrouter-test"
-    assert "sk-openrouter-test" not in repr(command_args)
-    assert "sk-openrouter-test" not in repr(persisted_metadata)
+    assert result.run_id == str(_SUCCESSOR_ID)
+    assert result.child_session_id == _original_run().child_session_id
+    assert prepare.call_args.kwargs["existing_session_id"] == _original_run().child_session_id
+    assert prepare.call_args.kwargs["original_run_id"] == _original_run().id
+    assert storage.transition_resume_phase.call_args_list[0].kwargs == {
+        "expected_phase": "prepared",
+        "new_phase": "launch_requested",
+    }
+    assert storage.transition_resume_phase.call_args_list[1].kwargs == {
+        "expected_phase": "launch_requested",
+        "new_phase": "runtime_persisted",
+    }
+    finalize.assert_called_once_with(
+        storage.db,
+        original_run_id=_original_run().id,
+        successor_run_id=str(_SUCCESSOR_ID),
+        child_session_id=_original_run().child_session_id,
+        completion_registry=None,
+    )
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env["UV_CACHE_DIR"] == "/cache/uv"
+    assert "OPENAI_API_KEY" not in spawn_env
+    assert spawn_env["GOBBY_AGENT_RUN_ID"] == str(_SUCCESSOR_ID)
 
 
 @pytest.mark.asyncio
-async def test_resume_agent_run_skips_started_side_effects_when_start_transition_is_stale(
+async def test_live_spawn_is_left_provisional_when_runtime_persistence_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-    }
-    run_storage = MagicMock()
-    run_storage.start.return_value = None
-    runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
+    storage = MagicMock()
+    storage.update_runtime.side_effect = RuntimeError("database unavailable")
+    runner = _runner(storage=storage)
     spawner = MagicMock()
-    spawner.spawn.return_value = SimpleNamespace(
-        success=True,
-        pid=123,
-        tmux_session_name="tmux-new",
-        error=None,
-        message=None,
-    )
-    fire_resume_started = MagicMock()
-    killed_tmux_sessions: list[tuple[str, str | None]] = []
-
-    async def fake_kill_spawned_tmux_session(
-        _storage: object,
-        run_id: str,
-        tmux_session_name: str | None,
-        *,
-        reason: str,
-        completion_registry: object | None,
-    ) -> None:
-        assert reason == "agent_run_start_skipped"
-        assert completion_registry is None
-        killed_tmux_sessions.append((run_id, tmux_session_name))
-
-    monkeypatch.setattr(
-        resume_executor,
-        "prepare_terminal_spawn",
-        lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
-    )
-    monkeypatch.setattr(
-        resume_executor,
-        "build_cli_command",
-        lambda **_kwargs: (["codex", "resume"], {}),
-    )
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "_fire_resume_started", fire_resume_started)
-    monkeypatch.setattr(
-        resume_executor, "_kill_spawned_tmux_session", fake_kill_spawned_tmux_session
-    )
+    spawner.spawn.return_value = _spawn_result()
+    finalize = MagicMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
 
     result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
+        _original_run(),
+        resume_metadata=_resume_metadata(),
         runner=runner,
         session_manager=MagicMock(),
     )
 
-    assert result.success is False
-    assert result.error == "agent_run_start_skipped"
-    run_storage.start.assert_called_once_with(result.run_id)
-    assert killed_tmux_sessions == [(result.run_id, "tmux-new")]
-    fire_resume_started.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_resume_agent_run_fails_before_spawn_when_task_claim_conflicts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        child_session_id="child-old",
-        claimed_session_id="owner-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-        task_id="task-1",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-    }
-    run_storage = MagicMock()
-    run_storage.update_resume_metadata.return_value = object()
-    runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
-    spawner = MagicMock()
-    task_manager = MagicMock()
-    task_manager.get_task.return_value = {"claimed_by_session_id": "other-owner"}
-    completion_registry = object()
-    delivered: list[tuple[str, object]] = []
-
-    async def deliver_terminal_run(**kwargs: Any) -> bool:
-        delivered.append((kwargs["run_id"], kwargs["completion_registry"]))
-        return True
-
-    monkeypatch.setattr(
-        resume_executor,
-        "prepare_terminal_spawn",
-        lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
-    )
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(
-        resume_executor,
-        "_deliver_existing_terminal_run_unshielded",
-        deliver_terminal_run,
-    )
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-        task_manager=task_manager,
-        completion_registry=completion_registry,
-    )
-
-    assert result.success is False
-    assert result.error == "resume_task_claim_conflict"
-    spawner.spawn.assert_not_called()
-    run_storage.fail.assert_called_once_with(result.run_id, error="resume_task_claim_conflict")
-    assert delivered == [(result.run_id, completion_registry)]
-
-
-@pytest.mark.asyncio
-async def test_resume_agent_run_fails_before_spawn_when_worktree_claim_conflicts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        child_session_id="child-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-        "worktree_id": "wt-1",
-    }
-    run_storage = MagicMock()
-    run_storage.update_resume_metadata.return_value = object()
-    runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
-    spawner = MagicMock()
-    worktree_manager = MagicMock()
-    worktree_manager.claim_if_available.return_value = None
-
-    monkeypatch.setattr(
-        resume_executor,
-        "prepare_terminal_spawn",
-        lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
-    )
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-        worktree_manager=worktree_manager,
-    )
-
-    assert result.success is False
-    assert result.error == "resume_worktree_claim_failed"
-    spawner.spawn.assert_not_called()
-    worktree_manager.claim_if_available.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_resume_agent_run_kills_spawned_tmux_when_runtime_persistence_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-    }
-    run_storage = MagicMock()
-    run_storage.update_resume_metadata.return_value = object()
-    run_storage.update_child_session.side_effect = RuntimeError("database unavailable")
-
-    def capture_run(run_id: str, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            id=run_id,
-            status="running",
-            result=None,
-            capture_id=None,
-            capture_revision=0,
-        )
-
-    run_storage.get.side_effect = capture_run
-    run_storage.record_termination_intent.side_effect = capture_run
-    run_storage.replace_capture_slot.side_effect = capture_run
-    run_storage.fail.return_value = SimpleNamespace(status="error")
-    runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
-    spawner = MagicMock()
-    spawner.spawn.return_value = SimpleNamespace(
-        success=True,
-        pid=123,
-        tmux_session_name="tmux-new",
-        error=None,
-        message=None,
-    )
-    killed_sessions: list[tuple[str, bool]] = []
-
-    class FakeTmuxSessionManager:
-        def __init__(self) -> None:
-            self.alive = True
-
-        async def has_session(self, _name: str) -> bool:
-            return self.alive
-
-        async def capture_full_pane(self, _name: str) -> str:
-            return "resume failure output"
-
-        async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
-            killed_sessions.append((name, missing_ok))
-            self.alive = False
-            return True
-
-    monkeypatch.setattr(
-        resume_executor,
-        "prepare_terminal_spawn",
-        lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
-    )
-    monkeypatch.setattr(
-        resume_executor,
-        "build_cli_command",
-        lambda **_kwargs: (["codex", "resume"], {}),
-    )
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(
-        "gobby.agents.tmux.get_tmux_session_manager", lambda: FakeTmuxSessionManager()
-    )
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-    )
-
-    assert result.success is False
+    assert result.success is True
     assert result.error == "resume_runtime_persist_failed:RuntimeError"
-    assert killed_sessions == [("tmux-new", True)]
-    run_storage.fail.assert_called_once()
-    assert run_storage.fail.call_args.args[0] == result.run_id
-    assert run_storage.fail.call_args.kwargs["error"].startswith(
-        "resume_runtime_persist_failed:RuntimeError"
-    )
+    finalize.assert_not_called()
+    storage.cancel.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_resume_agent_run_rejects_relative_cwd_before_trust(
+async def test_spawn_failure_parks_successor_without_releasing_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="codex",
-        prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
-        continuation_prompt="Continue",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "codex",
-        "provider_native_session_id": "native-123",
-        "cwd": "relative/repo",
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-    }
-    preapproved: list[tuple[str, str]] = []
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result(success=False)
+    finalize = MagicMock()
+    cleanup_runtime = MagicMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     monkeypatch.setattr(
-        resume_executor,
-        "pre_approve_directory",
-        lambda provider, cwd: preapproved.append((provider, cwd)),
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        cleanup_runtime,
     )
 
     result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=SimpleNamespace(child_session_manager=MagicMock(), run_storage=MagicMock()),
+        _original_run(),
+        resume_metadata=_resume_metadata(),
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    finalize.assert_called_once()
+    assert finalize.call_count == 1
+    storage.cancel.assert_called_once_with(
+        str(_SUCCESSOR_ID),
+        terminal_reason="daemon_stop",
+    )
+    assert storage.cancel.call_count == 1
+    cleanup_runtime.assert_called_once_with(
+        storage.db,
+        run_id=str(_SUCCESSOR_ID),
+        child_session_id=_original_run().child_session_id,
+        terminal_reason="daemon_stop",
+    )
+    assert cleanup_runtime.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_relative_cwd_before_preparing_successor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare = MagicMock()
+    monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
+    metadata = _resume_metadata()
+    metadata["cwd"] = "relative/repo"
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=_runner(),
         session_manager=MagicMock(),
     )
 
     assert result.success is False
     assert result.error == "resume_cwd_not_absolute"
-    assert preapproved == []
-
-
-@pytest.mark.asyncio
-async def test_resume_agent_run_uses_workspace_mcp_config_for_claude(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Claude resumes must keep workspace MCP flags before the continuation prompt."""
-    (tmp_path / ".mcp.json").write_text(
-        '{"mcpServers":{"gobby":{"command":"uv","args":["run","gobby","mcp-server"]}}}'
-    )
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="claude",
-        prompt="Original prompt",
-        status="cancelled",
-        created_at=datetime(2026, 5, 30, tzinfo=UTC),
-        updated_at=datetime(2026, 5, 30, tzinfo=UTC),
-        continuation_prompt="Continue",
-        terminal_reason="daemon_stop",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "claude",
-        "provider_native_session_id": "native-claude",
-        "cwd": str(tmp_path),
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-        "machine_id": "machine-1",
-        "model": "opus",
-        "effective_reasoning_effort": "xhigh",
-        "sandbox_config": {"enabled": True, "backend": "provider-native"},
-    }
-
-    def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            session_id="child-new",
-            env_vars={
-                "GOBBY_SESSION_ID": "child-new",
-                "GOBBY_AGENT_RUN_ID": kwargs["agent_run_id"],
-            },
-        )
-
-    class FakeSpawner:
-        command: list[str]
-
-        def spawn(self, *, command: list[str], cwd: str, env: dict[str, str]) -> SimpleNamespace:
-            self.command = command
-            return SimpleNamespace(
-                success=True,
-                pid=123,
-                tmux_session_name="tmux-new",
-                error=None,
-                message=None,
-            )
-
-    spawner = FakeSpawner()
-    runner = SimpleNamespace(
-        child_session_manager=MagicMock(),
-        run_storage=MagicMock(),
-    )
-
-    monkeypatch.setattr(resume_executor, "prepare_terminal_spawn", fake_prepare_terminal_spawn)
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "_fire_resume_started", lambda *_args: None)
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-    )
-
-    command = spawner.command
-    mcp_config_path = str(tmp_path / ".mcp.json")
-    prompt_index = command.index("Continue")
-    assert result.success is True
-    assert command[-1] == "Continue"
-    assert command[0:3] == ["claude", "--resume", "native-claude"]
-    assert command[command.index("--mcp-config") + 1] == mcp_config_path
-    assert command.index("--strict-mcp-config") < command.index("--settings") < prompt_index
-
-
-@pytest.mark.asyncio
-async def test_resume_agent_run_reuses_persisted_claude_mcp_config(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Claude resumes should keep the exact MCP config selected at initial launch."""
-    cwd = tmp_path / "repo"
-    cwd.mkdir()
-    persisted_dir = tmp_path / "persisted"
-    persisted_dir.mkdir()
-    persisted_mcp_path = persisted_dir / ".mcp.json"
-    persisted_mcp_path.write_text(
-        '{"mcpServers":{"gobby":{"command":"uv","args":["run","gobby","mcp-server"]}}}',
-        encoding="utf-8",
-    )
-    original_run = AgentRun(
-        id="run-old",
-        parent_session_id="parent-old",
-        provider="claude",
-        prompt="Original prompt",
-        status="cancelled",
-        created_at=datetime(2026, 5, 30, tzinfo=UTC),
-        updated_at=datetime(2026, 5, 30, tzinfo=UTC),
-        continuation_prompt="Continue",
-        terminal_reason="daemon_stop",
-    )
-    resume_metadata: dict[str, Any] = {
-        "provider": "claude",
-        "provider_native_session_id": "native-claude",
-        "cwd": str(cwd),
-        "project_id": "proj-1",
-        "parent_session_id": "parent-1",
-        "machine_id": "machine-1",
-        "mcp_path": str(persisted_mcp_path),
-        "strict_mcp": True,
-        "sandbox_config": {"enabled": True, "backend": "provider-native"},
-    }
-    persisted_metadata: list[tuple[str, dict[str, Any]]] = []
-
-    def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            session_id="child-new",
-            env_vars={
-                "GOBBY_SESSION_ID": "child-new",
-                "GOBBY_AGENT_RUN_ID": kwargs["agent_run_id"],
-            },
-        )
-
-    class FakeSpawner:
-        command: list[str]
-
-        def spawn(self, *, command: list[str], cwd: str, env: dict[str, str]) -> SimpleNamespace:
-            self.command = command
-            return SimpleNamespace(
-                success=True,
-                pid=123,
-                tmux_session_name="tmux-new",
-                error=None,
-                message=None,
-            )
-
-    spawner = FakeSpawner()
-    run_storage = MagicMock()
-
-    def update_resume_metadata(run_id: str, metadata: dict[str, Any]) -> object:
-        persisted_metadata.append((run_id, metadata))
-        return object()
-
-    run_storage.update_resume_metadata.side_effect = update_resume_metadata
-    runner = SimpleNamespace(
-        child_session_manager=MagicMock(),
-        run_storage=run_storage,
-    )
-
-    monkeypatch.setattr(resume_executor, "prepare_terminal_spawn", fake_prepare_terminal_spawn)
-    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
-    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "_fire_resume_started", lambda *_args: None)
-
-    result = await resume_executor.resume_agent_run(
-        original_run,
-        resume_metadata=resume_metadata,
-        runner=runner,
-        session_manager=MagicMock(),
-    )
-
-    command = spawner.command
-    prompt_index = command.index("Continue")
-    assert result.success is True
-    assert command[command.index("--mcp-config") + 1] == str(persisted_mcp_path)
-    assert command.index("--strict-mcp-config") < command.index("--settings") < prompt_index
-    resumed_metadata = next(
-        metadata for run_id, metadata in persisted_metadata if run_id == result.run_id
-    )
-    consumed_metadata = next(
-        metadata for run_id, metadata in persisted_metadata if run_id == "run-old"
-    )
-    assert resumed_metadata["mcp_path"] == str(persisted_mcp_path)
-    assert resumed_metadata["strict_mcp"] is True
-    assert consumed_metadata["daemon_stop_resume_consumed_by_run_id"] == result.run_id
+    prepare.assert_not_called()

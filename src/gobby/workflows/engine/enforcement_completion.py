@@ -184,6 +184,7 @@ class EnforcementCompletionMixin:
                 self.db,
                 run_id=run_id,
                 child_session_id=cleanup_session_id,
+                terminal_reason=None,
             )
             return
         if callable(terminalize_successful_run):
@@ -205,6 +206,7 @@ class EnforcementCompletionMixin:
             self.db,
             run_id=run_id,
             child_session_id=cleanup_session_id,
+            terminal_reason=None,
         )
 
     async def _process_step_after_tool(

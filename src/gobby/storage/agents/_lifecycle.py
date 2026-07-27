@@ -46,8 +46,11 @@ def _execute_terminal_transition(
         cursor = txn.execute(sql, params)
         if not _positive_rowcount(cursor):
             return None
-        host._expire_sessions_for_run_ids([run_id])
-        return host.get(run_id)
+        updated_run = host.get(run_id)
+        if updated_run is None:
+            return None
+        host._transition_sessions_for_terminal_run(updated_run)
+        return updated_run
 
 
 class _AgentRunLifecycleHost(Protocol):
@@ -55,7 +58,7 @@ class _AgentRunLifecycleHost(Protocol):
 
     def get(self, run_id: str) -> AgentRun | None: ...
 
-    def _expire_sessions_for_run_ids(self, run_ids: Sequence[str]) -> int: ...
+    def _transition_sessions_for_terminal_run(self, run: AgentRun) -> int: ...
 
 
 class _AgentRunLifecycleMixin:
@@ -164,64 +167,48 @@ class _AgentRunLifecycleMixin:
         if not _positive_rowcount(cursor):
             return None
         return self.get(run_id)
-        return self.get(run_id)
 
-    def _expire_sessions_for_run_ids(
+    def _transition_sessions_for_terminal_run(
         self: _AgentRunLifecycleHost,
-        run_ids: Sequence[str],
+        run: AgentRun,
     ) -> int:
-        """Expire active child sessions associated with terminal agent runs."""
-        filtered_run_ids = [run_id for run_id in run_ids if run_id]
-        if not filtered_run_ids:
-            return 0
-
-        placeholders = ", ".join("%s" for _ in filtered_run_ids)
+        """Pause parked sessions and expire sessions for genuine terminal outcomes."""
+        status = "paused" if run.terminal_reason == "daemon_stop" else "expired"
         now = utc_now()
         cursor = self.db.execute(
-            f"""
+            """
             UPDATE sessions
-            SET status = 'expired',
+            SET status = %s,
                 updated_at = %s
             WHERE status IN ('active', 'paused')
-            AND (
-                agent_run_id IN ({placeholders})
-                OR id IN (
-                    SELECT child_session_id
-                    FROM agent_runs
-                    WHERE id IN ({placeholders})
-                    AND child_session_id IS NOT NULL
-                )
-            )
+              AND agent_run_id = %s
             """,
-            (now, *filtered_run_ids, *filtered_run_ids),
+            (status, now, run.id),
         )
         return _positive_rowcount(cursor)
 
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
-        status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
         now = utc_now()
         cursor = self.db.execute(
-            f"""
+            """
             UPDATE sessions
             SET status = 'expired',
                 updated_at = %s
             WHERE status IN ('active', 'paused')
-            AND (
-                agent_run_id IN (
-                    SELECT id
-                    FROM agent_runs
-                    WHERE status IN ({status_placeholders})
-                )
-                OR id IN (
-                    SELECT child_session_id
-                    FROM agent_runs
-                    WHERE status IN ({status_placeholders})
-                    AND child_session_id IS NOT NULL
-                )
-            )
+              AND EXISTS (
+                    SELECT 1
+                    FROM agent_runs ar
+                    WHERE ar.id = sessions.agent_run_id
+                      AND ar.status = ANY(%s)
+                      AND (
+                            ar.terminal_reason IS DISTINCT FROM 'daemon_stop'
+                            OR COALESCE(ar.resume_metadata_json, '{}'::jsonb)
+                               ? 'daemon_stop_resume_consumed_at'
+                      )
+              )
             """,
-            (now, *TERMINAL_AGENT_RUN_STATUSES, *TERMINAL_AGENT_RUN_STATUSES),
+            (now, list(TERMINAL_AGENT_RUN_STATUSES)),
         )
         return _positive_rowcount(cursor)
 

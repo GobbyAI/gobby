@@ -52,6 +52,88 @@ class _AgentRunRuntimeMixin:
             return None
         return self.get(run_id)
 
+    def merge_resume_metadata(
+        self: _AgentRunRuntimeHost,
+        run_id: str,
+        updates: Mapping[str, Any],
+    ) -> AgentRun | None:
+        """Atomically merge top-level keys into resume metadata."""
+        if not updates:
+            return self.get(run_id)
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json =
+                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (dump_resume_metadata(updates), now, run_id),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
+    def transition_resume_phase(
+        self: _AgentRunRuntimeHost,
+        run_id: str,
+        *,
+        expected_phase: str,
+        new_phase: str,
+        updates: Mapping[str, Any] | None = None,
+    ) -> AgentRun | None:
+        """Advance a provisional resume only from the expected durable phase."""
+        patch = dict(updates or {})
+        patch["daemon_stop_resume_phase"] = new_phase
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json =
+                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
+                updated_at = %s
+            WHERE id = %s
+              AND resume_metadata_json ->> 'daemon_stop_resume_phase' = %s
+            """,
+            (dump_resume_metadata(patch), now, run_id, expected_phase),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
+    def mark_daemon_resume_consumed(
+        self: _AgentRunRuntimeHost,
+        run_id: str,
+        *,
+        successor_run_id: str,
+        consumed_at: str,
+    ) -> AgentRun | None:
+        """Guardedly bind an original daemon-stop run to one successor."""
+        patch = {
+            "daemon_stop_resume_consumed_at": consumed_at,
+            "daemon_stop_resume_consumed_by_run_id": successor_run_id,
+        }
+        now = utc_now()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json =
+                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
+                updated_at = %s
+            WHERE id = %s
+              AND (
+                    NOT (COALESCE(resume_metadata_json, '{}'::jsonb)
+                         ? 'daemon_stop_resume_consumed_at')
+                    OR resume_metadata_json ->> 'daemon_stop_resume_consumed_by_run_id' = %s
+              )
+            """,
+            (dump_resume_metadata(patch), now, run_id, successor_run_id),
+        )
+        if not _positive_rowcount(cursor):
+            return None
+        return self.get(run_id)
+
     def update_sdk_session_id(
         self: _AgentRunRuntimeHost,
         run_id: str,

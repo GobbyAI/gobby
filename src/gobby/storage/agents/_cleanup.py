@@ -62,6 +62,12 @@ class _AgentRunCleanupMixin:
                 LEFT JOIN sessions child ON child.id = ar.child_session_id
                 LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
                 WHERE ar.status = 'running'
+                  AND COALESCE(
+                        ar.resume_metadata_json ->> 'reconciliation_pending',
+                        'false'
+                      ) != 'true'
+                  AND COALESCE(ar.resume_metadata_json ->> 'daemon_stop_resume_phase', '')
+                      NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
             )
             SELECT
                 id,
@@ -149,6 +155,9 @@ class _AgentRunCleanupMixin:
                     completed_at = %s,
                     updated_at = %s
                 WHERE status = 'pending'
+                AND COALESCE(resume_metadata_json ->> 'reconciliation_pending', 'false') != 'true'
+                AND COALESCE(resume_metadata_json ->> 'daemon_stop_resume_phase', '')
+                    NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
                 AND (
                     (
                         tmux_session_name IS NULL

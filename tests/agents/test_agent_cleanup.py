@@ -4,6 +4,7 @@ import asyncio
 from contextlib import nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,8 +34,8 @@ async def test_shielded_terminal_delivery_settles_before_cancellation_propagates
     owner = asyncio.create_task(agent_cleanup.shielded_terminal_delivery("run-shielded", operation))
     await started.wait()
     owner.cancel()
-    await asyncio.sleep(0)
 
+    assert owner.cancelling() == 1
     assert not owner.done()
     assert not settled.is_set()
 
@@ -113,6 +114,7 @@ def _run(
     *,
     child_session_id: str | None = "child-1",
     status: str = "success",
+    terminal_reason: str | None = None,
     tool_calls_count: int = 0,
     turns_used: int = 0,
     reused_worktree: bool = False,
@@ -124,6 +126,7 @@ def _run(
         provider="codex",
         prompt="test",
         status=status,
+        terminal_reason=terminal_reason,
         created_at="2026-05-20T00:00:00+00:00",
         updated_at="2026-05-20T00:00:00+00:00",
         task_id=task_id,
@@ -432,7 +435,7 @@ async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(
 
     await agent_cleanup.deliver_and_cleanup_terminal_run(
         db=RecordingDb(),
-        completion_registry=registry,
+        completion_registry=cast(Any, registry),
         run_id="run-1",
         result={"status": "completed"},
         message="Agent completed",
@@ -514,13 +517,13 @@ async def test_deliver_existing_terminal_run_rereads_and_synthesizes_payload() -
 
 
 @pytest.mark.asyncio
-async def test_post_terminal_cleanup_subscriber_failure_does_not_stop_later_cleanup(
+async def test_daemon_stop_parking_skips_later_resource_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = RecordingDb()
     session_manager = MagicMock()
     session_coordinator = MagicMock()
-    runtime_calls: list[tuple[object, str, str | None]] = []
+    runtime_calls: list[tuple[object, str, str | None, str | None]] = []
 
     def fail_subscriber_cleanup(**_kwargs: object) -> None:
         raise RuntimeError("subscriber cleanup failed")
@@ -530,8 +533,9 @@ async def test_post_terminal_cleanup_subscriber_failure_does_not_stop_later_clea
         *,
         run_id: str,
         child_session_id: str | None,
+        terminal_reason: str | None,
     ) -> SimpleNamespace:
-        runtime_calls.append((cleanup_db, run_id, child_session_id))
+        runtime_calls.append((cleanup_db, run_id, child_session_id, terminal_reason))
         return SimpleNamespace(dispatch_mutex_rows=1, workflow_instance_rows=0)
 
     monkeypatch.setattr(
@@ -547,11 +551,14 @@ async def test_post_terminal_cleanup_subscriber_failure_does_not_stop_later_clea
         db,
         session_manager=session_manager,
         session_coordinator=session_coordinator,
-    ).post_terminal_cleanup(_run(task_id=None), allow_parent_session_fallback=False)
+    ).post_terminal_cleanup(
+        _run(task_id=None, terminal_reason="daemon_stop"),
+        allow_parent_session_fallback=False,
+    )
 
-    session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
-    session_manager.update_status.assert_called_once_with("child-1", "expired")
-    assert runtime_calls == [(db, "run-1", "child-1")]
+    session_coordinator.release_session_worktrees.assert_not_called()
+    session_manager.update_status.assert_not_called()
+    assert runtime_calls == [(db, "run-1", "child-1", "daemon_stop")]
     assert db.executed == []
 
 

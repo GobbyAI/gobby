@@ -920,13 +920,15 @@ def _record_agent_run_native_session(handler: Any, run_id: str, external_id: str
 
         manager = LocalAgentRunManager(handler._session_manager.db)
         run = manager.get(run_id)
-        if run is None:
+        if (
+            run is None
+            or (run.resume_metadata_json or {}).get("provider_native_session_id") == external_id
+        ):
             return
-        metadata = dict(run.resume_metadata_json or {})
-        if metadata.get("provider_native_session_id") == external_id:
-            return
-        metadata["provider_native_session_id"] = external_id
-        manager.update_resume_metadata(run_id, metadata)
+        manager.merge_resume_metadata(
+            run_id,
+            {"provider_native_session_id": external_id},
+        )
     except psycopg.Error as exc:
         handler.logger.debug(
             "Failed to persist provider-native session id for agent run %s: %s",

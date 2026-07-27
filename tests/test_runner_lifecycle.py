@@ -663,29 +663,26 @@ class TestInitSubsystems:
 
         tracker = runner_lifecycle.StartupTracker()
         monitor = SimpleNamespace(
+            set_reconciliation_callback=MagicMock(),
             cleanup_stale_pending_runs=AsyncMock(side_effect=RuntimeError("cleanup failed")),
             start=AsyncMock(side_effect=RuntimeError("start failed")),
         )
         runner = SimpleNamespace(agent_lifecycle_monitor=monitor)
-        reconcile = AsyncMock(side_effect=RuntimeError("reconcile failed"))
-
         with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
-            await _start_agent_lifecycle_monitor(runner, tracker, reconcile)
+            await _start_agent_lifecycle_monitor(
+                runner,
+                tracker,
+            )
 
-        reconcile.assert_awaited_once_with(runner)
         monitor.cleanup_stale_pending_runs.assert_awaited_once()
         monitor.start.assert_awaited_once()
         assert tracker.steps_completed == []
         assert tracker.errors == [
             {
                 "subsystem": "Agent lifecycle monitor",
-                "error": (
-                    "reconcile failed: reconcile failed; cleanup failed: cleanup failed; "
-                    "start failed: start failed"
-                ),
+                "error": "cleanup failed: cleanup failed; start failed: start failed",
             }
         ]
-        assert "Agent restart reconciliation failed during startup" in caplog.text
         assert "Agent stale pending cleanup failed during startup" in caplog.text
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
 
@@ -1015,7 +1012,6 @@ class TestShutdownDaemonServices:
                 1,
                 await_critical_stop_hook_grace_window=grace_window,
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=AsyncMock(),
                 shutdown_telemetry=MagicMock(),
                 cleanup_pid_file=MagicMock(),
@@ -1109,7 +1105,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=cleanup_pid_file,
@@ -1182,7 +1177,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=grace_window,
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
@@ -1223,7 +1217,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=fail_pid_cleanup,
@@ -1284,7 +1277,6 @@ class TestShutdownDaemonServices:
                 1,
                 await_critical_stop_hook_grace_window=AsyncMock(),
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_pid_file,
@@ -1296,7 +1288,7 @@ class TestShutdownDaemonServices:
         assert elapsed < 0.5
         assert "Graceful shutdown exceeded 0.1s budget" in caplog.text
         reap_remaining_child_processes.assert_awaited_once_with(
-            preserve_agents=False,
+            preserve_agents=True,
             preserved_agent_pids=set(),
         )
         shutdown_telemetry.assert_called_once_with()
@@ -1356,7 +1348,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=reap_children,
             shutdown_telemetry=lambda: events.append("telemetry"),
             cleanup_pid_file=lambda: events.append("pid"),
@@ -1407,7 +1398,6 @@ class TestShutdownDaemonServices:
                     side_effect=asyncio.CancelledError()
                 ),
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_pid_file,
@@ -1472,7 +1462,6 @@ class TestShutdownDaemonServices:
                     1,
                     await_critical_stop_hook_grace_window=AsyncMock(),
                     shutdown_websocket_server=AsyncMock(),
-                    cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                     reap_remaining_child_processes=AsyncMock(),
                     shutdown_telemetry=MagicMock(),
                     cleanup_pid_file=MagicMock(),
@@ -1580,7 +1569,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=grace_window,
             shutdown_websocket_server=shutdown_websocket,
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
@@ -1636,7 +1624,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
@@ -1719,7 +1706,6 @@ class TestShutdownDaemonServices:
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
             shutdown_websocket_server=AsyncMock(),
-            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
@@ -1770,7 +1756,6 @@ class TestShutdownDaemonServices:
                 1,
                 await_critical_stop_hook_grace_window=AsyncMock(),
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=AsyncMock(),
                 shutdown_telemetry=MagicMock(),
                 cleanup_pid_file=MagicMock(),
@@ -1814,7 +1799,6 @@ class TestShutdownDaemonServices:
                 1,
                 await_critical_stop_hook_grace_window=AsyncMock(),
                 shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
                 reap_remaining_child_processes=AsyncMock(),
                 shutdown_telemetry=MagicMock(),
                 cleanup_pid_file=MagicMock(),
@@ -1940,10 +1924,26 @@ class TestShutdownDaemonServices:
             ),
             db_executor=SimpleNamespace(run=run_db),
         )
+        tmux_manager = SimpleNamespace(
+            list_sessions=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        name=f"agent-{index}",
+                        pane_pid=20_000 + index,
+                        pane_dead=False,
+                    )
+                    for index in range(run_count)
+                ]
+            )
+        )
 
-        preserved_pids = await runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
+        with patch(
+            "gobby.agents.tmux.get_tmux_session_manager",
+            return_value=tmux_manager,
+        ):
+            preserved_pids = await runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
 
-        assert preserved_pids == {10_000 + index for index in range(run_count)}
+        assert preserved_pids == {20_000 + index for index in range(run_count)}
         assert db_calls == [
             (runner_lifecycle_shutdown._list_active_agent_runs_once, (runner,)),
         ]
@@ -3334,8 +3334,18 @@ class TestMainFunctionExtended:
 
 
 @pytest.mark.asyncio
-async def test_startup_completion_recovery_is_first_operation_before_failure() -> None:
+async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure() -> None:
     events: list[str] = []
+    monitor = SimpleNamespace(set_reconciliation_callback=MagicMock())
+
+    async def barrier(_runner: object) -> bool:
+        assert monitor.set_reconciliation_callback.call_count == 1
+        events.append("barrier")
+        return True
+
+    async def reconcile(_runner: object) -> int:
+        events.append("classify")
+        return 0
 
     async def recover(_runner: object) -> int:
         events.append("recover")
@@ -3351,6 +3361,11 @@ async def test_startup_completion_recovery_is_first_operation_before_failure() -
     with (
         patch.object(
             runner_lifecycle_subsystems,
+            "_run_agent_hook_replay_barrier",
+            side_effect=barrier,
+        ),
+        patch.object(
+            runner_lifecycle_subsystems,
             "_schedule_provider_model_refresh",
             side_effect=schedule,
         ),
@@ -3362,13 +3377,30 @@ async def test_startup_completion_recovery_is_first_operation_before_failure() -
         pytest.raises(RuntimeError, match="optional startup failed"),
     ):
         await runner_lifecycle_subsystems.init_subsystems(
-            SimpleNamespace(),
+            SimpleNamespace(
+                agent_runner=object(),
+                agent_lifecycle_monitor=monitor,
+            ),
             AsyncMock(),
             None,
+            reconcile_agent_runs_after_restart=reconcile,
             recover_agent_completion_subscribers=recover,
         )
 
-    assert events == ["recover", "schedule", "connect"]
+    assert events == ["barrier", "classify", "recover", "schedule", "connect"]
+
+
+@pytest.mark.asyncio
+async def test_startup_fails_closed_without_agent_reconciliation_owner() -> None:
+    with pytest.raises(RuntimeError, match="Agent reconciliation owner is unavailable"):
+        await runner_lifecycle_subsystems.init_subsystems(
+            SimpleNamespace(
+                agent_runner=object(),
+                agent_lifecycle_monitor=None,
+            ),
+            AsyncMock(),
+            None,
+        )
 
 
 class TestAgentRestartRecoveryHelpers:
@@ -3738,63 +3770,7 @@ class TestAgentRestartRecoveryHelpers:
         )
 
     @pytest.mark.asyncio
-    async def test_cancel_active_agent_runs_for_shutdown_kills_and_cancels(self) -> None:
-        from gobby.agents.agent_cleanup import reopen_terminal_delivery_admission
-
-        reopen_terminal_delivery_admission()
-        run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            status="cancelled",
-            error=None,
-        )
-        runner = SimpleNamespace(
-            agent_lifecycle_monitor=SimpleNamespace(
-                terminalize_cancelled_run=AsyncMock(return_value=True)
-            ),
-            agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(
-                    list_active=MagicMock(return_value=[run]),
-                    get=MagicMock(return_value=run),
-                )
-            ),
-            pipeline_execution_manager=SimpleNamespace(
-                get_completion_subscribers=MagicMock(return_value=["sess-1"]),
-                remove_completion_subscribers=MagicMock(),
-            ),
-            completion_registry=SimpleNamespace(
-                register=MagicMock(),
-                notify=AsyncMock(return_value={}),
-                cleanup=MagicMock(),
-            ),
-            database=MagicMock(),
-        )
-
-        with patch(
-            "gobby.agents.kill.kill_agent",
-            new_callable=AsyncMock,
-            return_value={"success": True},
-        ) as mock_kill:
-            cancelled = await runner_lifecycle._cancel_active_agent_runs_for_shutdown(runner)
-
-        assert cancelled == 1
-        assert runner.agent_lifecycle_monitor.terminalize_cancelled_run.await_count == 1
-        mock_kill.assert_awaited_once_with(
-            run,
-            runner.database,
-            signal_name="TERM",
-            close_terminal=True,
-        )
-        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
-            "ac314d27-4314-5fe3-a0ab-01645086e137",
-            terminal_reason="daemon_stop",
-        )
-        runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
-        runner.completion_registry.cleanup.assert_called_once_with(
-            "ac314d27-4314-5fe3-a0ab-01645086e137"
-        )
-
-    @pytest.mark.asyncio
-    async def test_stop_shutdown_policy_cancels_active_agents(self) -> None:
+    async def test_stop_shutdown_policy_preserves_active_agents(self) -> None:
         class LifecycleMonitor:
             def __init__(self) -> None:
                 self.stopped = False
@@ -3809,19 +3785,11 @@ class TestAgentRestartRecoveryHelpers:
             message_processor=None,
             communications_manager=None,
         )
-        cancelled_runners: list[object] = []
-
-        async def cancel_active(active_runner: object) -> int:
-            cancelled_runners.append(active_runner)
-            return 2
-
         await runner_lifecycle_shutdown._stop_started_services(
             runner,
-            cancel_active,
             shutdown_intent=ShutdownIntent.STOP,
         )
 
-        assert cancelled_runners == [runner]
         assert monitor.stopped is True
 
     @pytest.mark.asyncio
@@ -3840,19 +3808,11 @@ class TestAgentRestartRecoveryHelpers:
             message_processor=None,
             communications_manager=None,
         )
-        cancelled_runners: list[object] = []
-
-        async def cancel_active(active_runner: object) -> int:
-            cancelled_runners.append(active_runner)
-            return 2
-
         await runner_lifecycle_shutdown._stop_started_services(
             runner,
-            cancel_active,
             shutdown_intent=ShutdownIntent.RESTART,
         )
 
-        assert cancelled_runners == []
         assert monitor.stopped is True
 
     @pytest.mark.asyncio
@@ -3866,7 +3826,6 @@ class TestAgentRestartRecoveryHelpers:
             message_processor=None,
             communications_manager=None,
         )
-        cancel_active = AsyncMock(return_value=0)
 
         async def raise_timeout(awaitable, timeout: float):
             awaitable.close()
@@ -3876,7 +3835,6 @@ class TestAgentRestartRecoveryHelpers:
         with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
             await runner_lifecycle_shutdown._stop_started_services(
                 runner,
-                cancel_active,
                 shutdown_intent=ShutdownIntent.RESTART,
             )
 
@@ -3894,7 +3852,6 @@ class TestAgentRestartRecoveryHelpers:
             message_processor=None,
             communications_manager=None,
         )
-        cancel_active = AsyncMock(return_value=0)
 
         async def raise_timeout(awaitable, timeout: float):
             awaitable.close()
@@ -3904,7 +3861,6 @@ class TestAgentRestartRecoveryHelpers:
         with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
             await runner_lifecycle_shutdown._stop_started_services(
                 runner,
-                cancel_active,
                 shutdown_intent=ShutdownIntent.STOP,
             )
 

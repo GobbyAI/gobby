@@ -102,7 +102,7 @@ def _best_effort_sync[T](operation: Callable[[], T], name: str) -> T | None:
 
 
 async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
-    """Return pane PIDs for active tmux-backed agents that survive restart."""
+    """Resolve live pane PIDs for active tmux-backed agents that survive shutdown."""
     agent_runner = getattr(runner, "agent_runner", None)
     run_storage = getattr(agent_runner, "run_storage", None)
     if run_storage is None:
@@ -116,11 +116,27 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return set()
+    try:
+        from gobby.agents.tmux import get_tmux_session_manager
+
+        live_sessions = await get_tmux_session_manager().list_sessions()
+    except Exception as e:
+        logger.warning("Failed to verify tmux panes for agent preservation: %s", e)
+        return set()
+    live_by_name = {
+        session.name: session
+        for session in live_sessions
+        if not getattr(session, "pane_dead", False)
+    }
     pids: set[int] = set()
     for run in runs:
-        pid = getattr(run, "pid", None)
-        if getattr(run, "tmux_session_name", None) and isinstance(pid, int) and pid > 0:
-            pids.add(pid)
+        session_name = getattr(run, "tmux_session_name", None)
+        if not isinstance(session_name, str):
+            continue
+        live = live_by_name.get(session_name)
+        pane_pid = getattr(live, "pane_pid", None)
+        if isinstance(pane_pid, int) and pane_pid > 0:
+            pids.add(pane_pid)
     return pids
 
 
@@ -476,23 +492,11 @@ async def _cleanup_pipeline_background_tasks() -> None:
 
 async def _stop_started_services(
     runner: GobbyRunner,
-    cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
     *,
     shutdown_intent: ShutdownIntent,
 ) -> None:
     if runner.agent_lifecycle_monitor:
-        if shutdown_intent.cancel_agents:
-            cancelled_runs = await _best_effort(
-                lambda: cancel_active_agent_runs_for_shutdown(runner),
-                "Active agent run cancellation",
-            )
-            if cancelled_runs is not None and cancelled_runs > 0:
-                logger.info(
-                    "Cancelled %d active agent run(s) during graceful shutdown",
-                    cancelled_runs,
-                )
-        else:
-            logger.info("Preserving active agent runs during daemon restart")
+        logger.info("Preserving active agent runs during daemon shutdown")
         await _best_effort(
             runner.agent_lifecycle_monitor.stop,
             "Agent lifecycle monitor shutdown",
@@ -726,7 +730,6 @@ async def _run_graceful_shutdown_sequence(
     shutdown_intent: ShutdownIntent,
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
-    cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
 ) -> None:
     if shutdown_intent is ShutdownIntent.STOP:
         await _best_effort(
@@ -800,7 +803,6 @@ async def _run_graceful_shutdown_sequence(
     await _best_effort(
         lambda: _stop_started_services(
             runner,
-            cancel_active_agent_runs_for_shutdown,
             shutdown_intent=shutdown_intent,
         ),
         "Started service shutdown",
@@ -837,12 +839,10 @@ async def _run_async_shutdown_cleanup(
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
     await _settle_terminal_delivery_barrier()
-    preserved_agent_pids = (
-        await _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
-    )
+    preserved_agent_pids = await _preserved_agent_terminal_pids(runner)
     await _best_effort(
         lambda: reap_remaining_child_processes(
-            preserve_agents=shutdown_intent.preserve_agents,
+            preserve_agents=True,
             preserved_agent_pids=preserved_agent_pids,
         ),
         "Child process reap",
@@ -866,7 +866,6 @@ async def shutdown_daemon_services(
     *,
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
-    cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
     reap_remaining_child_processes: ReapChildProcesses,
     shutdown_telemetry: Callable[[], None],
     cleanup_pid_file: Callable[[], None],
@@ -906,9 +905,6 @@ async def shutdown_daemon_services(
                                     await_critical_stop_hook_grace_window
                                 ),
                                 shutdown_websocket_server=shutdown_websocket_server,
-                                cancel_active_agent_runs_for_shutdown=(
-                                    cancel_active_agent_runs_for_shutdown
-                                ),
                             ),
                             "Graceful shutdown sequence",
                         )
