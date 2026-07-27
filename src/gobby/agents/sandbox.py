@@ -577,6 +577,7 @@ def compute_sandbox_paths(
     *,
     gobby_websocket_port: int = 60888,
     provider: str | None = None,
+    provider_executable: str | None = None,
     api_base: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ResolvedSandboxPaths:
@@ -625,7 +626,15 @@ def compute_sandbox_paths(
             str(workspace),
             *write_paths,
             *gobby_read_exceptions(policy_env),
-            *(provider_read_exceptions(provider, policy_env) if provider else []),
+            *(
+                provider_read_exceptions(
+                    provider,
+                    policy_env,
+                    provider_executable=provider_executable,
+                )
+                if provider
+                else []
+            ),
             *config.extra_read_paths,
         ],
         base=workspace,

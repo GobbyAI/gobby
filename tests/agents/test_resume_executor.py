@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from gobby.agents import resume_executor
+from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
@@ -148,6 +149,55 @@ async def test_resume_reuses_child_session_and_finalizes_durable_phases(
     assert spawn_env["UV_CACHE_DIR"] == "/cache/uv"
     assert "OPENAI_API_KEY" not in spawn_env
     assert spawn_env["GOBBY_AGENT_RUN_ID"] == str(_SUCCESSOR_ID)
+
+
+@pytest.mark.asyncio
+async def test_srt_resume_executes_resolved_provider_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    target = "/opt/claude/versions/2.1.220"
+    launch = SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        provider_executable=target,
+        policy_path="/policy/settings.json",
+        violation_path="/policy/violations.jsonl",
+        node_path="/managed/node",
+        runner_path="/managed/runner.mjs",
+    )
+    prepare_sandbox = AsyncMock(return_value=launch)
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
+    metadata = _resume_metadata()
+    metadata.update(
+        {
+            "provider": "claude",
+            "sandbox_config": {
+                "enabled": True,
+                "backend": "srt",
+                "allow_network": False,
+            },
+        }
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    spawn_kwargs = spawner.spawn.call_args.kwargs
+    command = spawn_kwargs["command"]
+    assert command[command.index("--") + 1] == target
+    assert spawn_kwargs["auth_cli"] == "claude"
+    prepare_sandbox.assert_awaited_once()
 
 
 @pytest.mark.asyncio

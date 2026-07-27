@@ -71,10 +71,22 @@ async def _spawn_terminal(
     command: list[str],
     cwd: str,
     env: dict[str, str],
+    auth_cli: str,
 ) -> TerminalSpawnResult:
     if inspect.iscoroutinefunction(getattr(spawner, "spawn_async", None)):
-        return await spawner.spawn_async(command=command, cwd=cwd, env=env)
-    return await asyncio.to_thread(spawner.spawn, command=command, cwd=cwd, env=env)
+        return await spawner.spawn_async(
+            command=command,
+            cwd=cwd,
+            env=env,
+            auth_cli=auth_cli,
+        )
+    return await asyncio.to_thread(
+        spawner.spawn,
+        command=command,
+        cwd=cwd,
+        env=env,
+        auth_cli=auth_cli,
+    )
 
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:

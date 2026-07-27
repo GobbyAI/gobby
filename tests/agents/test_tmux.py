@@ -1424,17 +1424,35 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "kill_session", new_callable=AsyncMock
             ) as mock_kill,
+            patch.object(
+                spawner._session_manager, "capture_pane", new_callable=AsyncMock
+            ) as mock_capture,
         ):
+            events: list[str] = []
+
+            def capture_failure(*_args: object, **_kwargs: object) -> str:
+                events.append("capture")
+                return "/bin/bash: claude: command not found\n"
+
+            def record_cleanup(*_args: object, **_kwargs: object) -> None:
+                events.append("cleanup")
+
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
             mock_get.return_value = TmuxSessionInfo(
                 name="test-session",
                 pane_pid=456,
                 pane_dead=True,
             )
+            mock_capture.side_effect = capture_failure
+            mock_kill.side_effect = record_cleanup
             result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
 
         assert result.success is False
-        assert result.error == "tmux session 'test-session' pane is dead"
+        assert result.error is not None
+        assert result.error.startswith("tmux session 'test-session' pane is dead")
+        assert "/bin/bash: claude: command not found" in result.error
+        assert events == ["capture", "cleanup"]
+        mock_capture.assert_awaited_once_with("test-session", lines=50)
         mock_kill.assert_awaited_once_with("test-session", missing_ok=True)
 
     @pytest.mark.asyncio
@@ -1451,15 +1469,51 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "kill_session", new_callable=AsyncMock
             ) as mock_kill,
+            patch.object(
+                spawner._session_manager, "capture_pane", new_callable=AsyncMock
+            ) as mock_capture,
             patch("gobby.agents.tmux.spawner.time.monotonic", side_effect=[0.0, 2.1]),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
+            mock_capture.return_value = "/bin/bash: claude: command not found\n"
             result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
 
         assert result.success is False
-        assert result.error == "tmux session 'test-session' has no pane PID"
+        assert result.error is not None
+        assert result.error.startswith("tmux session 'test-session' has no pane PID")
+        assert "/bin/bash: claude: command not found" in result.error
+        mock_capture.assert_awaited_once_with("test-session", lines=50)
         mock_kill.assert_awaited_once_with("test-session", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_spawn_keeps_generic_error_when_dead_pane_capture_fails(self) -> None:
+        spawner = TmuxSpawner(TmuxConfig())
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+            patch.object(
+                spawner._session_manager, "capture_pane", new_callable=AsyncMock
+            ) as mock_capture,
+            patch.object(spawner._session_manager, "kill_session", new_callable=AsyncMock),
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
+            mock_get.return_value = TmuxSessionInfo(
+                name="test-session",
+                pane_pid=456,
+                pane_dead=True,
+            )
+            mock_capture.side_effect = TmuxSessionError("capture failed")
+            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+
+        assert result.success is False
+        assert result.error == "tmux session 'test-session' pane is dead"
+        assert result.message == "tmux session 'test-session' failed live-pane verification"
+        assert "Pane output:" not in result.error
 
     @pytest.mark.asyncio
     async def test_spawn_kills_session_when_live_pane_verification_raises(self) -> None:
@@ -1523,9 +1577,16 @@ class TestTmuxSpawner:
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             await spawner._async_spawn(
-                command=["claude", "--dangerously-skip-permissions"],
+                command=[
+                    "/managed/node",
+                    "/managed/runner.mjs",
+                    "--",
+                    "/opt/claude/versions/2.1.220",
+                    "--dangerously-skip-permissions",
+                ],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
+                auth_cli="claude",
             )
 
         env_arg = mock_create.call_args[1]["env"]

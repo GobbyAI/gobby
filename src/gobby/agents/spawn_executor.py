@@ -262,6 +262,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         command=cmd,
         cwd=request.cwd,
         env=env,
+        auth_cli="claude",
     )
 
     if not terminal_result.success:
@@ -373,6 +374,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         command=cmd,
         cwd=request.cwd,
         env=env,
+        auth_cli="qwen",
     )
 
     if not terminal_result.success:
@@ -473,6 +475,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         command=cmd,
         cwd=request.cwd,
         env=env,
+        auth_cli="grok",
     )
 
     if not terminal_result.success:
@@ -597,6 +600,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         command=cmd,
         cwd=request.cwd,
         env=env,
+        auth_cli="codex",
     )
 
     if not terminal_result.success:
@@ -704,6 +708,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
         command=cmd,
         cwd=request.cwd,
         env=env,
+        auth_cli="droid",
     )
 
     if not terminal_result.success:

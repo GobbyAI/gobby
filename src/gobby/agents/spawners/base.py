@@ -86,6 +86,7 @@ class TerminalSpawnerBase(ABC):
         cwd: str | Path,
         env: dict[str, str] | None = None,
         title: str | None = None,
+        auth_cli: str | None = None,
     ) -> SpawnResult:
         """
         Spawn a new terminal window with the given command.
@@ -95,6 +96,7 @@ class TerminalSpawnerBase(ABC):
             cwd: Working directory
             env: Environment variables to set
             title: Optional window title
+            auth_cli: Optional provider hint for credential forwarding
 
         Returns:
             SpawnResult with success status and process info

@@ -65,7 +65,7 @@ async def _check_tmux_session_alive(
     session_name: str,
     socket_name: str | None = None,
     socket_path: str | None = None,
-) -> bool:
+) -> tuple[bool, str | None]:
     """Check if a tmux session is still alive after spawn."""
     from gobby.agents.tmux import get_configured_tmux_config
 
@@ -79,12 +79,21 @@ async def _check_tmux_session_alive(
         )
     manager = TmuxSessionManager(config)
     if not manager.is_available():
-        return True  # Can't check without tmux binary, assume alive
+        return True, None  # Can't check without tmux binary, assume alive
     try:
         info = await asyncio.wait_for(manager.get_session(session_name), timeout=5.0)
-        return bool(info and not info.pane_dead and info.pane_pid is not None)
+        alive = bool(info and not info.pane_dead and info.pane_pid is not None)
+        if alive or info is None:
+            return alive, None
+        try:
+            output = await manager.capture_pane(session_name, lines=50)
+        except Exception:
+            output = None
+        if not output or not output.strip():
+            return False, None
+        return False, output.strip()[-4096:]
     except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
-        return True  # Timed out, assume alive
+        return True, None  # Timed out, assume alive
     except asyncio.CancelledError:
         raise
 
@@ -100,7 +109,7 @@ async def _deferred_tmux_health_check(
 ) -> None:
     try:
         await asyncio.sleep(delay)
-        alive = await _check_tmux_session_alive(
+        alive, pane_output = await _check_tmux_session_alive(
             tmux_session_name,
             socket_name=socket_name,
             socket_path=socket_path,
@@ -109,15 +118,14 @@ async def _deferred_tmux_health_check(
             run = runner.run_storage.get(run_id)
             if run is not None and run.status not in ("pending", "running"):
                 return
-            logger.error(
-                "Agent %s tmux session %r exited immediately after spawn",
-                run_id,
-                tmux_session_name,
-            )
+            error = "Agent process exited immediately after spawn"
+            if pane_output:
+                error = f"{error}\nPane output:\n{pane_output}"
+            logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)
             try:
                 failed = runner.run_storage.fail(
                     run_id,
-                    error="Agent process exited immediately after spawn",
+                    error=error,
                 )
                 if failed is not None:
                     from gobby.agents.agent_cleanup import (

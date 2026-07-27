@@ -50,6 +50,7 @@ class SandboxLaunch:
     enforced: bool
     provider_args: list[str] = field(default_factory=list)
     provider_env: dict[str, str] = field(default_factory=dict)
+    provider_executable: str | None = None
     runtime_version: str | None = None
     policy_hash: str | None = None
     policy_path: str | None = None
@@ -61,12 +62,24 @@ class SandboxLaunch:
         """Wrap one provider argv exactly once when SRT is active."""
         if self.backend != "srt" or not self.enforced:
             return list(command)
-        if not all((self.node_path, self.runner_path, self.policy_path, self.violation_path)):
+        if not all(
+            (
+                self.provider_executable,
+                self.node_path,
+                self.runner_path,
+                self.policy_path,
+                self.violation_path,
+            )
+        ):
             raise SrtRuntimeError("SRT launch metadata is incomplete")
+        assert self.provider_executable is not None
         assert self.node_path is not None
         assert self.runner_path is not None
         assert self.policy_path is not None
         assert self.violation_path is not None
+        provider_command = list(command)
+        if provider_command:
+            provider_command[0] = self.provider_executable
         return [
             self.node_path,
             self.runner_path,
@@ -75,7 +88,7 @@ class SandboxLaunch:
             "--violations",
             self.violation_path,
             "--",
-            *command,
+            *provider_command,
         ]
 
     def metadata(self) -> dict[str, Any]:
@@ -86,6 +99,7 @@ class SandboxLaunch:
             "policy_hash": self.policy_hash,
             "policy_path": self.policy_path,
             "violation_path": self.violation_path,
+            "provider_executable": self.provider_executable,
         }
 
 
@@ -202,12 +216,22 @@ async def prepare_sandbox_launch(
     if not config.enabled:
         return SandboxLaunch(backend=config.backend, enforced=False)
 
+    if config.backend == "srt" and config.allow_network:
+        raise SrtRuntimeError(
+            "SRT does not accept unrestricted network access; configure explicit "
+            "allowed_domains or enable a scoped Git/package capability"
+        )
+
+    provider_executable = (
+        _resolve_provider_executable(provider, env) if config.backend == "srt" else None
+    )
     paths = compute_sandbox_paths(
         config,
         workspace_path,
         daemon_port,
         gobby_websocket_port=websocket_port,
         provider=provider,
+        provider_executable=provider_executable,
         api_base=api_base,
         env=env,
     )
@@ -222,12 +246,6 @@ async def prepare_sandbox_launch(
             enforced=True,
             provider_args=provider_args,
             provider_env=provider_env,
-        )
-
-    if config.allow_network:
-        raise SrtRuntimeError(
-            "SRT does not accept unrestricted network access; configure explicit "
-            "allowed_domains or enable a scoped Git/package capability"
         )
 
     installation = verify_srt_installation()
@@ -253,11 +271,29 @@ async def prepare_sandbox_launch(
         policy_path=str(policy_path),
         violation_path=str(violation_path),
         provider_env={"CLAUDE_CODE_TMPDIR": temp_path},
+        provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),
     )
     await _preflight_srt(launch, workspace_path, {**env, **launch.provider_env})
     return launch
+
+
+def _resolve_provider_executable(provider: str, env: Mapping[str, str]) -> str:
+    """Resolve one SRT provider to the exact executable used by the sandbox."""
+    try:
+        search_path = env["PATH"]
+    except KeyError as exc:
+        raise SrtRuntimeError(f"{provider} executable resolution requires PATH") from exc
+    executable = shutil.which(provider, path=search_path)
+    if executable is None:
+        raise SrtRuntimeError(f"{provider} executable not found in PATH")
+    try:
+        return str(Path(executable).resolve(strict=True))
+    except OSError as exc:
+        raise SrtRuntimeError(
+            f"Failed to resolve {provider} executable {executable!r}: {exc}"
+        ) from exc
 
 
 def _write_private_file(path: Path, content: bytes) -> None:

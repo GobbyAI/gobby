@@ -86,9 +86,10 @@ class TmuxSpawner(TerminalSpawnerBase):
         cwd: str | Path,
         env: dict[str, str] | None = None,
         title: str | None = None,
+        auth_cli: str | None = None,
     ) -> SpawnResult:
         """Spawn a command inside a new tmux session."""
-        return await self._async_spawn(command, cwd, env, title)
+        return await self._async_spawn(command, cwd, env, title, auth_cli)
 
     def spawn(
         self,
@@ -96,9 +97,10 @@ class TmuxSpawner(TerminalSpawnerBase):
         cwd: str | Path,
         env: dict[str, str] | None = None,
         title: str | None = None,
+        auth_cli: str | None = None,
     ) -> SpawnResult:
         """Spawn a command inside a new tmux session for sync callers."""
-        return asyncio.run(self.spawn_async(command, cwd, env, title))
+        return asyncio.run(self.spawn_async(command, cwd, env, title, auth_cli))
 
     async def _async_spawn(
         self,
@@ -106,6 +108,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         cwd: str | Path,
         env: dict[str, str] | None = None,
         title: str | None = None,
+        auth_cli: str | None = None,
     ) -> SpawnResult:
         """Async implementation of spawn."""
         suffix = uuid.uuid4().hex[:8]
@@ -127,7 +130,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
 
         spawn_env = dict(env or {})
-        if cli := _infer_auth_cli(command):
+        if cli := auth_cli or _infer_auth_cli(command):
             for key, value in terminal_env_passthrough(cli).items():
                 spawn_env.setdefault(key, value)
         apply_spawn_cache_policy(spawn_env)
@@ -161,7 +164,7 @@ class TmuxSpawner(TerminalSpawnerBase):
             )
 
         try:
-            verified_info, verification_error = await self._verify_live_pane(info.name)
+            verified_info, verification_error, pane_output = await self._verify_live_pane(info.name)
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._session_manager.kill_session(info.name, missing_ok=True)
@@ -173,10 +176,13 @@ class TmuxSpawner(TerminalSpawnerBase):
         if verified_info is None:
             with contextlib.suppress(Exception):
                 await self._session_manager.kill_session(info.name, missing_ok=True)
+            error = verification_error or "tmux session verification failed"
+            if pane_output:
+                error = f"{error}\nPane output:\n{pane_output}"
             return SpawnResult(
                 success=False,
                 message=f"tmux session '{info.name}' failed live-pane verification",
-                error=verification_error or "tmux session verification failed",
+                error=error,
             )
 
         attach_cmd = self._attach_command(verified_info.name)
@@ -193,7 +199,7 @@ class TmuxSpawner(TerminalSpawnerBase):
 
     async def _verify_live_pane(
         self, session_name: str
-    ) -> tuple[TmuxSessionInfo | None, str | None]:
+    ) -> tuple[TmuxSessionInfo | None, str | None, str | None]:
         """Verify tmux created a live pane and return its authoritative metadata."""
         deadline = time.monotonic() + 2.0
         last_error = f"tmux session '{session_name}' was not found"
@@ -202,15 +208,31 @@ class TmuxSpawner(TerminalSpawnerBase):
             if info is None:
                 last_error = f"tmux session '{session_name}' was not found"
             elif info.pane_dead:
-                return None, f"tmux session '{session_name}' pane is dead"
+                output = await self._capture_failure_output(session_name)
+                return None, f"tmux session '{session_name}' pane is dead", output
             elif info.pane_pid is None:
                 last_error = f"tmux session '{session_name}' has no pane PID"
             else:
-                return info, None
+                return info, None, None
 
             if time.monotonic() >= deadline:
-                return None, last_error
+                output = (
+                    await self._capture_failure_output(session_name)
+                    if info is not None and info.pane_pid is None
+                    else None
+                )
+                return None, last_error, output
             await asyncio.sleep(0.1)
+
+    async def _capture_failure_output(self, session_name: str) -> str | None:
+        try:
+            output = await self._session_manager.capture_pane(session_name, lines=50)
+        except Exception:
+            logger.debug("Failed to capture tmux pane %r after exit", session_name, exc_info=True)
+            return None
+        if not output or not output.strip():
+            return None
+        return output.strip()[-4096:]
 
     def _attach_command(self, session_name: str) -> str:
         """Return a tmux attach command for the configured socket."""
@@ -311,4 +333,5 @@ class TmuxSpawner(TerminalSpawnerBase):
             cwd=cwd,
             env=env,
             title=title,
+            auth_cli=cli,
         )

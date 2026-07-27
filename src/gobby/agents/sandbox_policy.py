@@ -150,14 +150,19 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     return canonical_paths([str(path) for path in paths])
 
 
-def provider_read_exceptions(provider: str, env: Mapping[str, str]) -> list[str]:
+def provider_read_exceptions(
+    provider: str,
+    env: Mapping[str, str],
+    *,
+    provider_executable: str | None = None,
+) -> list[str]:
     """Return exact auth/config and executable roots required by one provider."""
     paths = list(_PROVIDER_AUTH_PATHS.get(provider, ()))
     paths.extend(("~/.gitconfig", "~/.config/git"))
 
     search_path = env.get("PATH")
     for executable in (
-        shutil.which(provider, path=search_path),
+        provider_executable or shutil.which(provider, path=search_path),
         shutil.which("node", path=search_path),
     ):
         if not executable:

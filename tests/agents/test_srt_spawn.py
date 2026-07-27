@@ -37,8 +37,17 @@ def test_every_managed_provider_wraps_the_completed_command_once(spawn_name: str
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "wrap"
     ]
+    terminal_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_spawn_terminal"
+    ]
 
     assert len(wrap_calls) == 1
+    assert len(terminal_calls) == 1
+    assert any(keyword.arg == "auth_cli" for keyword in terminal_calls[0].keywords)
 
 
 def test_auth_cli_inference_looks_through_srt_wrapper() -> None:
@@ -63,7 +72,7 @@ async def test_pane_pid_identity_accepts_provider_inside_srt_argv() -> None:
         return (
             0,
             "/managed/node /managed/runner.mjs --settings /policy -- "
-            "claude --session-id child-session",
+            "/opt/claude/versions/2.1.220 --session-id child-session",
             "",
         )
 
@@ -102,6 +111,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         policy_hash="hash",
         policy_path="/policy/settings.json",
         violation_path="/policy/violations.jsonl",
+        provider_executable="/opt/droid/versions/0.48.0",
         node_path="/managed/node",
         runner_path="/managed/runner.mjs",
     )
@@ -133,7 +143,8 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
     assert result.success is True
     prepare_launch.assert_awaited_once()
     assert prepare_launch.call_args.kwargs["resolver"] is None
-    command = spawner.spawn.call_args.kwargs["command"]
+    spawn_kwargs = spawner.spawn.call_args.kwargs
+    command = spawn_kwargs["command"]
     assert command[:7] == [
         "/managed/node",
         "/managed/runner.mjs",
@@ -143,7 +154,9 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         "/policy/violations.jsonl",
         "--",
     ]
-    assert sum(1 for value in command if value == "droid") == 1
+    assert command[7] == "/opt/droid/versions/0.48.0"
+    assert "droid" not in command
+    assert spawn_kwargs["auth_cli"] == "droid"
 
 
 @pytest.mark.asyncio

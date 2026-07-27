@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -220,6 +221,16 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     package_json = runtime / "package.json"
     for path in (node, runner, package_json):
         path.write_text("test", encoding="utf-8")
+    provider_root = tmp_path / "claude"
+    provider_target = provider_root / "versions" / "2.1.220"
+    provider_target.parent.mkdir(parents=True)
+    provider_target.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider_target.chmod(0o755)
+    (provider_root / "package.json").write_text("{}", encoding="utf-8")
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    provider_shim = shim_dir / "claude"
+    provider_shim.symlink_to(provider_target)
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     monkeypatch.setattr(
         srt_runtime,
@@ -236,17 +247,33 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
         preflights.append((launch, cwd, env))
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+    original_which = shutil.which
+    provider_lookups = 0
+
+    def fake_which(
+        command: str,
+        mode: int = os.F_OK | os.X_OK,
+        path: str | None = None,
+    ) -> str | None:
+        nonlocal provider_lookups
+        if command == "claude":
+            provider_lookups += 1
+            return str(provider_shim)
+        result = original_which(command, mode=mode, path=path)
+        return None if result is None else str(result)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
 
     launch = await prepare_sandbox_launch(
         config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
-        provider="codex",
+        provider="claude",
         workspace_path=str(workspace),
         run_id="run/unsafe id",
         resolver=None,
         daemon_port=60887,
         websocket_port=60888,
         api_base=None,
-        env={"PATH": os.environ.get("PATH", "")},
+        env={"PATH": str(shim_dir)},
     )
 
     policy_path = Path(launch.policy_path or "")
@@ -254,6 +281,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     expected_parent = gobby_home / "run" / "sandbox" / "rununsafeid"
     assert launch.backend == "srt"
     assert launch.enforced is True
+    assert launch.provider_executable == str(provider_target.resolve())
     assert launch.runtime_version == SRT_VERSION
     assert policy_path.parent == expected_parent
     assert violation_path.parent == expected_parent
@@ -269,13 +297,86 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
             launch,
             str(workspace),
             {
-                "PATH": os.environ.get("PATH", ""),
+                "PATH": str(shim_dir),
                 "CLAUDE_CODE_TMPDIR": str(temp_path),
             },
         )
     ]
-    assert launch.wrap(["codex", "exec"]).count("codex") == 1
-    assert launch.wrap(["codex", "exec"])[-2:] == ["codex", "exec"]
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    allowed_reads = policy["filesystem"]["allowRead"]
+    assert str(provider_target.resolve()) in allowed_reads
+    assert str(provider_root.resolve()) in allowed_reads
+    assert str(provider_shim.absolute()) not in allowed_reads
+    assert str(shim_dir.resolve()) not in allowed_reads
+    wrapped = launch.wrap(["claude", "--version"])
+    assert wrapped[wrapped.index("--") + 1] == str(provider_target.resolve())
+    assert launch.metadata()["provider_executable"] == str(provider_target.resolve())
+    assert provider_lookups == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolution", ["missing", "broken"])
+async def test_prepare_srt_launch_fails_before_policy_for_unresolved_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    resolution: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    broken = tmp_path / "bin" / "claude"
+    broken.parent.mkdir()
+    broken.symlink_to(tmp_path / "missing-target")
+    resolved = None if resolution == "missing" else str(broken)
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    def unexpected_verify() -> Any:
+        pytest.fail("runtime verification must not run before provider resolution")
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda command, path=None: resolved if command == "claude" else None,
+    )
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verify)
+
+    with pytest.raises(SrtRuntimeError, match="claude executable|Failed to resolve"):
+        await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            provider="claude",
+            workspace_path=str(workspace),
+            run_id=f"run-{resolution}",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={"PATH": str(broken.parent)},
+        )
+
+    assert not (gobby_home / "run" / "sandbox").exists()
+
+
+@pytest.mark.parametrize(
+    "launch",
+    [
+        SandboxLaunch(
+            backend="provider-native",
+            enforced=True,
+            provider_executable="/resolved/claude",
+        ),
+        SandboxLaunch(
+            backend="srt",
+            enforced=False,
+            provider_executable="/resolved/claude",
+        ),
+    ],
+)
+def test_non_enforced_srt_and_provider_native_launches_keep_provider_argv(
+    launch: SandboxLaunch,
+) -> None:
+    command = ["claude", "--version"]
+
+    assert launch.wrap(command) == command
 
 
 @pytest.mark.asyncio

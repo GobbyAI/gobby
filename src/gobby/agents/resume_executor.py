@@ -368,6 +368,7 @@ async def resume_agent_run(
             cwd=cwd,
             env=env,
             title=planned_tmux_title,
+            auth_cli=provider,
         )
     except Exception as exc:
         error = f"resume_spawn_failed:{type(exc).__name__}:{exc}"
