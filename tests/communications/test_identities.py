@@ -243,6 +243,8 @@ async def test_inbound_metadata_selects_conversation_scoped_session(
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_inbound_access_policy_rejection_logs_at_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

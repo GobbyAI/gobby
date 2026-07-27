@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Protocol
 
@@ -9,6 +10,7 @@ from gobby.ai.vision import VisionExtractRequest, VisionExtractResult
 from gobby.communications.models import CommsAttachment, CommsMessage
 
 logger = logging.getLogger(__name__)
+_STICKER_VISION_TIMEOUT_SECONDS = 30.0
 
 
 class StickerVisionService(Protocol):
@@ -40,21 +42,15 @@ async def apply_sticker_vision(
         _append_content(message, fallback)
         return
 
-    image = next(
-        (
-            attachment
-            for attachment in attachments
-            if attachment.content_type.casefold().startswith("image/") and attachment.local_path
-        ),
-        None,
-    )
-    if image is None:
+    image_path: str | None = None
+    for attachment in attachments:
+        if attachment.content_type.casefold().startswith("image/") and attachment.local_path:
+            image_path = attachment.local_path
+            break
+    if image_path is None:
         message.metadata_json["sticker_vision_status"] = "unsupported"
         _append_content(message, fallback)
         return
-    image_path = image.local_path
-    if image_path is None:
-        raise AssertionError("selected sticker image is missing a local path")
 
     format_name = raw_sticker.get("format")
     format_text = format_name if isinstance(format_name, str) else "unknown"
@@ -66,12 +62,15 @@ async def apply_sticker_vision(
         context = f"{context} Its associated emoji is {emoji_text}."
 
     try:
-        result = await service.extract(
-            VisionExtractRequest(
-                image_path=image_path,
-                context=context,
-                caller="communications.telegram.sticker",
-            )
+        result = await asyncio.wait_for(
+            service.extract(
+                VisionExtractRequest(
+                    image_path=image_path,
+                    context=context,
+                    caller="communications.telegram.sticker",
+                )
+            ),
+            timeout=_STICKER_VISION_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         logger.warning(

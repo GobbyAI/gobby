@@ -27,6 +27,7 @@ class _CloseTag:
 type _Token = _Text | _OpenTag | _CloseTag
 
 _SAFE_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tg"})
+_MAX_INLINE_NESTING = 16
 
 
 def markdown_to_telegram_html_chunks(content: str, max_length: int) -> list[str]:
@@ -38,7 +39,9 @@ def markdown_to_telegram_html_chunks(content: str, max_length: int) -> list[str]
     return _chunk_tokens(_parse_inline(content), max_length)
 
 
-def _parse_inline(source: str) -> list[_Token]:
+def _parse_inline(source: str, *, depth: int = 0) -> list[_Token]:
+    if depth >= _MAX_INLINE_NESTING:
+        return [_Text(source)]
     tokens: list[_Token] = []
     plain: list[str] = []
     index = 0
@@ -103,7 +106,9 @@ def _parse_inline(source: str) -> list[_Token]:
                                 "</a>",
                             )
                         )
-                        tokens.extend(_parse_inline(source[index + 1 : label_end]))
+                        tokens.extend(
+                            _parse_inline(source[index + 1 : label_end], depth=depth + 1)
+                        )
                         tokens.append(_CloseTag("a"))
                         index = url_end + 1
                         continue
@@ -119,7 +124,12 @@ def _parse_inline(source: str) -> list[_Token]:
                 continue
             flush_plain()
             tokens.append(_OpenTag(tag, f"<{tag}>", f"</{tag}>"))
-            tokens.extend(_parse_inline(source[index + len(delimiter) : end]))
+            tokens.extend(
+                _parse_inline(
+                    source[index + len(delimiter) : end],
+                    depth=depth + 1,
+                )
+            )
             tokens.append(_CloseTag(tag))
             index = end + len(delimiter)
             matched = True
@@ -179,6 +189,9 @@ def _chunk_tokens(tokens: list[_Token], max_length: int) -> list[str]:
 
     def finish_chunk() -> None:
         nonlocal parts, visible_length
+        if visible_length == 0:
+            parts = [tag.opening for tag in active]
+            return
         parts.extend(tag.closing for tag in reversed(active))
         chunks.append("".join(parts))
         parts = [tag.opening for tag in active]
@@ -220,7 +233,7 @@ def _chunk_tokens(tokens: list[_Token], max_length: int) -> list[str]:
             remaining = remainder
             finish_chunk()
 
-    if parts or not chunks:
+    if visible_length > 0 or not chunks:
         parts.extend(tag.closing for tag in reversed(active))
         chunks.append("".join(parts))
     return chunks

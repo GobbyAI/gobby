@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
 from gobby.communications.models import CommsAttachment, CommsMessage
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceTranscriber(Protocol):
@@ -38,6 +41,8 @@ async def apply_voice_transcription(
     message: CommsMessage,
     attachments: list[CommsAttachment],
     transcriber: VoiceTranscriber | None,
+    *,
+    timeout_seconds: float = 120.0,
 ) -> None:
     """Replace voice-note content with a transcript while retaining its attachment."""
     if message.metadata_json.get("voice_note") is not True:
@@ -54,7 +59,21 @@ async def apply_voice_transcription(
         raise ValueError("Voice note is missing a stored audio attachment")
 
     audio_bytes = await asyncio.to_thread(Path(attachment.local_path).read_bytes)
-    transcript = (await transcriber.transcribe(audio_bytes, attachment.content_type)).strip()
+    try:
+        transcript = (
+            await asyncio.wait_for(
+                transcriber.transcribe(audio_bytes, attachment.content_type),
+                timeout=timeout_seconds,
+            )
+        ).strip()
+    except Exception as exc:
+        logger.warning(
+            "Voice transcription failed for message %s (%s)",
+            message.id,
+            type(exc).__name__,
+        )
+        message.metadata_json["voice_transcription_status"] = "failed"
+        return
     if not transcript:
         message.metadata_json["voice_transcription_status"] = "empty"
         return

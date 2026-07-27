@@ -156,6 +156,39 @@ async def test_adapter_sends_keyboard_and_routes_callback_to_originating_session
 
 
 @pytest.mark.asyncio
+async def test_failed_keyboard_send_discards_registered_callbacks() -> None:
+    clock = [100.0]
+    adapter = TelegramAdapter()
+    adapter._callback_registry = _registry(clock)
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="message-id",
+        channel_id="channel-id",
+        direction="outbound",
+        content="Proceed?",
+        session_id="session-1",
+        metadata_json={
+            "platform_destination": "2222222",
+            "inline_keyboard": [[{"text": "Approve", "value": "approve"}]],
+        },
+        created_at=datetime.now(UTC),
+    )
+    post_json = AsyncMock(return_value={"ok": False, "description": "send denied"})
+
+    with patch.object(adapter, "_post_json", post_json):
+        result = await adapter.send_message(message)
+
+    assert result is None
+    post_call = post_json.await_args
+    assert post_call is not None
+    payload = post_call.args[1]
+    callback_data = payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    callback = adapter.parse_webhook(_callback_payload(callback_data), {})[0]
+    assert callback.metadata_json["callback_status"] == "invalid"
+
+
+@pytest.mark.asyncio
 async def test_adapter_rejects_expired_callback_without_agent_content() -> None:
     clock = [100.0]
     adapter = TelegramAdapter()

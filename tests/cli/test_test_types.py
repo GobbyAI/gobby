@@ -7,9 +7,12 @@ import shlex
 import sys
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from gobby.test_types.cli import test_types as types_command
+
+pytestmark = pytest.mark.cli
 
 
 def _write_checker(root: Path) -> str:

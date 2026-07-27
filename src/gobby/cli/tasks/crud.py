@@ -188,14 +188,14 @@ def create_task(
         gobby tasks create "Note" --project _personal
     """
     create_task_impl(
-        _services(),
-        title,
-        description,
-        validation_criteria,
-        priority,
-        task_type,
-        depends_on,
-        project_ref,
+        services=_services(),
+        title=title,
+        description=description,
+        validation_criteria=validation_criteria,
+        priority=priority,
+        task_type=task_type,
+        depends_on=depends_on,
+        project_ref=project_ref,
     )
 
 
@@ -281,7 +281,13 @@ def close_task_cmd(
     Structural parents require all children to be closed first. Non-epic leaves
     must use the evidence-aware close_task MCP contract.
     """
-    close_task_impl(_services(), task_ids, reason, skip_validation, force)
+    close_task_impl(
+        services=_services(),
+        task_ids=task_ids,
+        reason=reason,
+        skip_validation=skip_validation,
+        force=force,
+    )
 
 
 @click.command("reopen")

@@ -10,6 +10,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.storage.hub.protocol import HubDatabase
 
 
+@pytest.mark.unit
 def test_tool_result_offload_defaults_and_app_accessor() -> None:
     config = ToolResultOffloadConfig()
 
@@ -70,9 +71,13 @@ def test_tool_result_offload_rejects_reachable_invalid_values(
         ToolResultOffloadConfig(**kwargs)
 
 
+@pytest.mark.integration
 def test_tool_results_migration_is_unique_and_applied(temp_db: HubDatabase) -> None:
     migrations_dir = Path(__file__).resolve().parents[2] / "src/gobby/storage/migrations"
-    migration_paths = sorted(migrations_dir.glob("*.sql"))
+    migration_paths = sorted(
+        migrations_dir.glob("*.sql"),
+        key=lambda path: int(path.name.split("_", 1)[0]),
+    )
     versions = [int(path.name.split("_", 1)[0]) for path in migration_paths]
 
     assert versions.count(340) == 1

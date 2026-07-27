@@ -247,7 +247,7 @@ class TestToolHandlerEdgeCases:
                 return_value="src/gobby/example.py",
             ),
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager",
+                "gobby.hooks.event_handlers._tool.SessionVariableManager",
                 return_value=variable_manager,
             ),
         ):
@@ -291,7 +291,7 @@ class TestToolHandlerEdgeCases:
                 return_value="src/gobby/example.py",
             ),
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager",
+                "gobby.hooks.event_handlers._tool.SessionVariableManager",
                 return_value=variable_manager,
             ),
         ):
@@ -813,8 +813,9 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
-            response.context or ""
+        assert (
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"playwright"})' in (response.context or "")
         )
         assert "Browser automation" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
@@ -901,6 +902,7 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
-            response.context or ""
+        assert (
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"playwright"})' in (response.context or "")
         )

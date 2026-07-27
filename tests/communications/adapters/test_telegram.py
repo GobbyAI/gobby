@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -179,10 +181,11 @@ async def test_initialize_with_webhook(
 
 
 @pytest.mark.asyncio
-async def test_initialize_surfaces_set_my_commands_api_failure(
+async def test_initialize_warns_and_continues_on_set_my_commands_api_failure(
     adapter: TelegramAdapter,
     channel_config: ChannelConfig,
     secret_resolver: Callable[[str], str | None],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     get_me_response = MagicMock()
     get_me_response.json.return_value = {"ok": True, "result": {"id": 123}}
@@ -191,19 +194,25 @@ async def test_initialize_surfaces_set_my_commands_api_failure(
         "ok": False,
         "description": "command registration denied",
     }
-    post = AsyncMock(side_effect=[get_me_response, commands_response])
+    delete_webhook_response = MagicMock()
+    delete_webhook_response.json.return_value = {"ok": True}
+    post = AsyncMock(
+        side_effect=[get_me_response, commands_response, delete_webhook_response]
+    )
 
     with patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value.post = post
 
-        with pytest.raises(
-            RuntimeError,
-            match="Telegram setMyCommands failed: command registration denied",
+        with caplog.at_level(
+            logging.WARNING,
+            logger="gobby.communications.adapters.telegram",
         ):
             await adapter.initialize(channel_config, secret_resolver)
 
-    assert post.await_count == 2
-    assert post.await_args_list[-1].args[0].endswith("/setMyCommands")
+    assert post.await_count == 3
+    assert post.await_args_list[1].args[0].endswith("/setMyCommands")
+    assert post.await_args_list[2].args[0].endswith("/deleteWebhook")
+    assert "Failed to synchronize Telegram bot commands" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -375,6 +384,35 @@ async def test_send_message_chunking(
 
 
 @pytest.mark.asyncio
+async def test_send_message_stops_after_first_failed_chunk(
+    adapter: TelegramAdapter,
+) -> None:
+    post_json = AsyncMock(
+        side_effect=[
+            {"ok": True, "result": {"message_id": 100}},
+            {"ok": False, "description": "send denied"},
+            {"ok": True, "result": {"message_id": 102}},
+        ]
+    )
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel-1",
+        direction="outbound",
+        content="A" * 9000,
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+
+    with patch.object(adapter, "_post_json", post_json):
+        result = await adapter.send_message(message)
+
+    assert result is None
+    assert post_json.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter) -> None:
     mock_client = MagicMock()
 
@@ -537,6 +575,25 @@ async def test_edit_message_calls_edit_message_text_with_html(
             "parse_mode": "HTML",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_edit_message_treats_not_modified_as_success(
+    adapter: TelegramAdapter,
+) -> None:
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    post_json = AsyncMock(
+        return_value={
+            "ok": False,
+            "description": "Bad Request: message is not modified",
+        }
+    )
+
+    with patch.object(adapter, "_post_json", post_json):
+        await adapter.edit_message("12345", "unchanged", "chat999")
+
+    post_json.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1046,17 +1103,19 @@ async def test_poll(
         await adapter.acknowledge_messages(messages)
         assert adapter._offset == 501
 
-    mock_get.assert_called_with(
-        "https://api.telegram.org/bottest-telegram-token/getUpdates",
-        params={
-            "offset": 0,
-            "timeout": 30,
-            "allowed_updates": (
-                '["message", "message_reaction", "message_reaction_count", "callback_query"]'
-            ),
-        },
-        timeout=35.0,
-    )
+    mock_get.assert_called_once()
+    request_url = mock_get.call_args.args[0]
+    request_params = mock_get.call_args.kwargs["params"]
+    assert request_url == "https://api.telegram.org/bottest-telegram-token/getUpdates"
+    assert request_params["offset"] == 0
+    assert request_params["timeout"] == 30
+    assert json.loads(request_params["allowed_updates"]) == [
+        "message",
+        "message_reaction",
+        "message_reaction_count",
+        "callback_query",
+    ]
+    assert mock_get.call_args.kwargs["timeout"] == 35.0
 
 
 @pytest.mark.asyncio

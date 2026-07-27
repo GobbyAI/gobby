@@ -83,6 +83,7 @@ class CommunicationsManager:
         self._telegram_binding_locks: dict[str, asyncio.Lock] = {}
         self._websocket_broadcast: Any | None = None
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
+        self._voice_transcription_timeout_seconds = 120.0
         self._vision_extract_service: VisionExtractService | None = None
 
         self._identity_manager = IdentityManager(store, session_store, config)
@@ -312,15 +313,26 @@ class CommunicationsManager:
         self._websocket_broadcast = broadcast
         self._lifecycle.set_websocket_broadcast(broadcast)
 
-    def set_voice_transcriber_getter(self, getter: VoiceTranscriberGetter | None) -> None:
+    def set_voice_transcriber_getter(
+        self,
+        getter: VoiceTranscriberGetter | None,
+        *,
+        timeout_seconds: float = 120.0,
+    ) -> None:
         """Wire the voice subsystem's current speech-to-text singleton."""
         self._voice_transcriber_getter = getter
+        self._voice_transcription_timeout_seconds = timeout_seconds
 
     def get_voice_transcriber(self) -> VoiceTranscriber | None:
         """Return the current shared speech-to-text service when available."""
         if self._voice_transcriber_getter is None:
             return None
         return self._voice_transcriber_getter()
+
+    @property
+    def voice_transcription_timeout_seconds(self) -> float:
+        """Return the configured per-message speech-to-text deadline."""
+        return self._voice_transcription_timeout_seconds
 
     def set_vision_extract_service(self, service: VisionExtractService | None) -> None:
         """Wire the daemon's configured vision extraction service."""
@@ -340,12 +352,13 @@ class CommunicationsManager:
         message: CommsMessage,
     ) -> bool:
         """Apply channel access control before resolving identity or persisting content."""
-        group_decision = evaluate_group_message(channel.config_json, message)
-        if channel.channel_type == "telegram" and group_decision.is_group:
-            if not group_decision.authorized:
-                return False
-            message.metadata_json["passive_context"] = not group_decision.should_respond
-            return True
+        if channel.channel_type == "telegram":
+            group_decision = evaluate_group_message(channel.config_json, message)
+            if group_decision.is_group:
+                if not group_decision.authorized:
+                    return False
+                message.metadata_json["passive_context"] = not group_decision.should_respond
+                return True
 
         if not is_telegram_dm(channel, message):
             return True

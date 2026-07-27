@@ -433,7 +433,10 @@ class TelegramAdapter(BaseChannelAdapter):
         self._message_link_preview_options.clear()
 
         self._api_base = f"https://api.telegram.org/bot{self._bot_token}"
-        proxy_url = resolve_telegram_proxy_url(config.config_json.get("proxy_url"), secret_resolver)
+        proxy_url = resolve_telegram_proxy_url(
+            config.config_json.get("proxy_url"),
+            secret_resolver,
+        )
         self._client = (
             httpx.AsyncClient(timeout=30.0, proxy=proxy_url)
             if proxy_url
@@ -453,20 +456,27 @@ class TelegramAdapter(BaseChannelAdapter):
                 if isinstance(user_id, str | int):
                     self._bot_user_id = str(user_id)
 
-        commands_response = await self._client.post(
-            f"{self._api_base}/setMyCommands",
-            json={"commands": telegram_bot_commands()},
-        )
-        self._raise_for_status_with_redacted_token(commands_response)
-        commands_body = commands_response.json()
-        if not isinstance(commands_body, dict) or commands_body.get("ok") is not True:
-            description = (
-                commands_body.get("description", "unknown Telegram API error")
-                if isinstance(commands_body, dict)
-                else "invalid Telegram API response"
+        try:
+            commands_response = await self._client.post(
+                f"{self._api_base}/setMyCommands",
+                json={"commands": telegram_bot_commands()},
             )
-            raise RuntimeError(f"Telegram setMyCommands failed: {description}")
-        logger.info("Synchronized Telegram bot commands")
+            self._raise_for_status_with_redacted_token(commands_response)
+            commands_body = commands_response.json()
+            if not isinstance(commands_body, dict) or commands_body.get("ok") is not True:
+                description = (
+                    commands_body.get("description", "unknown Telegram API error")
+                    if isinstance(commands_body, dict)
+                    else "invalid Telegram API response"
+                )
+                raise RuntimeError(f"Telegram setMyCommands failed: {description}")
+        except Exception as exc:
+            logger.warning(
+                "Failed to synchronize Telegram bot commands: %s",
+                self._redact_bot_token(str(exc)),
+            )
+        else:
+            logger.info("Synchronized Telegram bot commands")
 
         # Optionally call setWebhook if webhook_base_url is configured
         webhook_base_url = config.config_json.get("webhook_base_url")
@@ -515,25 +525,33 @@ class TelegramAdapter(BaseChannelAdapter):
         )
 
         message_ids: list[str] = []
-        for index, chunk in enumerate(chunks):
-            payload: dict[str, Any] = {
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-            }
-            if link_preview_options is not None:
-                payload["link_preview_options"] = link_preview_options
-            if reply_markup is not None and index == len(chunks) - 1:
-                payload["reply_markup"] = reply_markup
+        try:
+            for index, chunk in enumerate(chunks):
+                payload: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "text": chunk,
+                    "parse_mode": "HTML",
+                }
+                if link_preview_options is not None:
+                    payload["link_preview_options"] = link_preview_options
+                if reply_markup is not None and index == len(chunks) - 1:
+                    payload["reply_markup"] = reply_markup
 
-            if message.platform_thread_id:
-                payload["message_thread_id"] = _outbound_message_thread_id(
-                    message.platform_thread_id
-                )
+                if message.platform_thread_id:
+                    payload["message_thread_id"] = _outbound_message_thread_id(
+                        message.platform_thread_id
+                    )
 
-            data = await self._post_json("sendMessage", payload)
-            if data.get("ok"):
+                data = await self._post_json("sendMessage", payload)
+                if not data.get("ok"):
+                    if reply_markup is not None:
+                        self._callback_registry.discard_keyboard(reply_markup)
+                    return None
                 message_ids.append(str(data["result"]["message_id"]))
+        except BaseException:
+            if reply_markup is not None:
+                self._callback_registry.discard_keyboard(reply_markup)
+            raise
 
         if not message_ids:
             return None
@@ -610,7 +628,11 @@ class TelegramAdapter(BaseChannelAdapter):
                 }
                 if link_preview_options is not None:
                     payload["link_preview_options"] = link_preview_options
-                await self._post_json("editMessageText", payload)
+                result = await self._post_json("editMessageText", payload)
+                if not result.get("ok"):
+                    description = str(result.get("description", "unknown Telegram API error"))
+                    if "message is not modified" not in description.casefold():
+                        raise RuntimeError(f"Telegram editMessageText failed: {description}")
                 continue
 
             payload = {

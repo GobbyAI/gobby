@@ -321,11 +321,18 @@ async def _run_adapter_hook(
     finished_at: float | None = None
     exception_type: str | None = None
 
+    class FailClosedHookManager:
+        def handle(self, event: Any) -> Any:
+            return hook_manager.handle(
+                event,
+                fail_closed_verification_receipts=True,
+            )
+
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
         try:
-            return cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
+            return cast(dict[str, Any], adapter.handle_native(payload, FailClosedHookManager()))
         finally:
             finished_at = time.perf_counter()
 

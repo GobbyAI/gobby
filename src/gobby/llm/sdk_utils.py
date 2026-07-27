@@ -80,7 +80,7 @@ class BudgetResult:
 
 _SECTION_HEADING_RE = re.compile(r"^##(?:[ \t]+(?P<title>.*?)[ \t]*|[ \t]*)\r?\n?$")
 _FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
-_MANDATORY_SECTION_TITLES = ("next steps", "current state")
+MANDATORY_HANDOFF_SECTION_TITLES = ("next steps", "current state")
 _SECTION_TRIM_MARKER = "\n\n[section trimmed]\n"
 _PREAMBLE_PRIORITY = 25
 
@@ -188,7 +188,7 @@ def _mandatory_section_owners(sections: list[MarkdownSection]) -> list[MarkdownS
     owners: list[MarkdownSection] = []
     seen: set[str] = set()
     for section in sections:
-        if section.title in _MANDATORY_SECTION_TITLES and section.title not in seen:
+        if section.title in MANDATORY_HANDOFF_SECTION_TITLES and section.title not in seen:
             owners.append(section)
             seen.add(section.title)
     return owners
@@ -264,8 +264,11 @@ def _section_priority(
 ) -> int:
     if section.title == "":
         return _PREAMBLE_PRIORITY
-    if section.title in _MANDATORY_SECTION_TITLES and section.order not in mandatory_owner_orders:
-        return unknown_priority
+        if (
+            section.title in MANDATORY_HANDOFF_SECTION_TITLES
+            and section.order not in mandatory_owner_orders
+        ):
+            return unknown_priority
     return priorities.get(section.title, unknown_priority)
 
 

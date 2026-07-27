@@ -571,7 +571,10 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby plan draft auth")
 
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"})' in result
+        assert (
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"plan"})' in result
+        )
         assert "User arguments:" not in result
         assert "draft auth" not in result
         assert "<skill-context" not in result

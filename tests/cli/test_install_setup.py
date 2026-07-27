@@ -12,6 +12,7 @@ from urllib.error import URLError
 import pytest
 import yaml
 
+from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli.install_setup import (
     _download_release_binary,
     _ensure_gobby_bin_on_path,
@@ -208,6 +209,47 @@ class TestRunDaemonSetup:
             "Warning: Failed to configure Antigravity terminal integration: "
             "Failed to parse settings.json"
         ) in output
+
+    @patch("gobby.cli.install_setup_srt.install_srt_runtime")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.cli.installers.install_default_mcp_servers")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup._install_gcode")
+    @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
+    def test_run_daemon_setup_continues_when_srt_install_fails(
+        self,
+        mock_ide: MagicMock,
+        mock_ghook: MagicMock,
+        mock_gcode: MagicMock,
+        mock_run: MagicMock,
+        mock_mcp: MagicMock,
+        mock_sync: MagicMock,
+        mock_init: MagicMock,
+        mock_srt: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_srt.side_effect = SrtRuntimeError("Node.js 20.11 or newer is required")
+        mock_init.return_value = MagicMock()
+        mock_sync.return_value = {"total_synced": 0, "errors": []}
+        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
+        mock_gcode.return_value = {"skipped": True}
+        mock_ghook.return_value = {"skipped": True}
+        mock_ide.return_value = {"Code": {"added": False}}
+        mock_run.return_value = MagicMock(returncode=0)
+
+        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
+            mock_tmux.return_value = {"success": True, "updated": False}
+            run_daemon_setup(tmp_path, configure_ide_settings=True)
+
+        output = capsys.readouterr().out
+        assert "agent_sandbox.backend = provider-native" in output
+        mock_gcode.assert_called_once()
+        mock_ghook.assert_called_once()
+        mock_ide.assert_called_once()
+        mock_tmux.assert_called_once_with()
 
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")

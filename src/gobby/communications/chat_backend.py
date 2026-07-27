@@ -32,6 +32,22 @@ _PASSIVE_CONTEXT_SCAN_LIMIT = 50
 VoiceSynthesizer = Callable[[TTSProvider, str], Awaitable[bytes]]
 
 
+async def _await_cleanup(awaitable: Awaitable[None]) -> None:
+    """Finish cleanup even when the owning turn receives another cancellation."""
+    cleanup_task: asyncio.Future[None] = asyncio.ensure_future(awaitable)
+    while True:
+        try:
+            await asyncio.shield(cleanup_task)
+            return
+        except asyncio.CancelledError:
+            if cleanup_task.done():
+                await cleanup_task
+                return
+            current = asyncio.current_task()
+            if current is not None:
+                current.uncancel()
+
+
 class AttachmentStore(Protocol):
     """Attachment storage surface required by generated voice notes."""
 
@@ -162,14 +178,17 @@ class ChatSessionCommsBackend:
                     transport.text,
                 )
         finally:
-            if typing_task is not None:
-                typing_task.cancel()
-                await asyncio.gather(typing_task, return_exceptions=True)
-            try:
+            async def cleanup() -> None:
+                if typing_task is not None:
+                    typing_task.cancel()
+                    await asyncio.gather(typing_task, return_exceptions=True)
                 if tts_provider is not None and not voice_delivered:
                     await transport.release_deferred_text()
                 else:
                     await transport.finalize()
+
+            try:
+                await _await_cleanup(cleanup())
             finally:
                 if current is not None and self._active_turns.get(session_key) is current:
                     self._active_turns.pop(session_key, None)

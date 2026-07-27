@@ -148,11 +148,11 @@ class CommunicationsChatStreamTransport:
             return
         self._finalized = True
 
+        if self._last_delivered_text == self._text:
+            return
         if not self._supports_edit or not self._initial_sent:
             await self._send(self._text)
             self._last_delivered_text = self._text
-            return
-        if self._last_delivered_text == self._text:
             return
         if self._platform_message_id is not None:
             await self._edit(self._text)

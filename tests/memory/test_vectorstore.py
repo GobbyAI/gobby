@@ -238,6 +238,15 @@ def test_recoverable_vector_store_errors(error: BaseException) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_collection_names_uses_public_initialized_accessor(
+    vector_store: VectorStore,
+) -> None:
+    names = await vector_store.list_collection_names()
+
+    assert "test_memories" in names
+
+
+@pytest.mark.asyncio
 async def test_upsert_and_count(vector_store: VectorStore) -> None:
     """upsert() should insert a point; count() should reflect it."""
     await vector_store.upsert(MEM_1, _make_embedding(1.0), {"content": "hello"})

@@ -129,6 +129,23 @@ class TelegramCallbackRegistry:
             value=entry.value,
         )
 
+    def discard_keyboard(self, markup: object) -> None:
+        """Remove callback tokens allocated for a keyboard that was not delivered."""
+        if not isinstance(markup, dict):
+            return
+        rows = markup.get("inline_keyboard")
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, list):
+                continue
+            for button in row:
+                if not isinstance(button, dict):
+                    continue
+                callback_data = button.get("callback_data")
+                if isinstance(callback_data, str) and callback_data.startswith(_CALLBACK_PREFIX):
+                    self._entries.pop(callback_data.removeprefix(_CALLBACK_PREFIX), None)
+
     def _new_token(self) -> str:
         for _attempt in range(10):
             token = self._token_factory()

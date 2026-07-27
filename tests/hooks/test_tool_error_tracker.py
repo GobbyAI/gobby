@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +27,8 @@ from gobby.hooks.tool_outcomes import (
     ToolOutcomeStatus,
     classify_raw_tool_result,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class _RecordingVariables:
@@ -261,6 +264,22 @@ def test_argument_fingerprint_is_canonical_across_mapping_order() -> None:
     assert first.startswith("args:")
 
 
+def test_recursive_and_deep_payloads_have_bounded_stable_identity() -> None:
+    recursive: dict[str, Any] = {}
+    recursive["self"] = recursive
+    deep: dict[str, Any] = {"leaf": "failure"}
+    for _ in range(32):
+        deep = {"nested": deep}
+
+    first = extract_target_key({"tool_name": "exec"}, recursive)
+    second = extract_target_key({"tool_name": "exec"}, recursive)
+    snippet = extract_error_snippet({"error": deep})
+
+    assert first == second
+    assert first
+    assert snippet
+
+
 def test_proxy_outcome_classes_apply_caller_and_final_resolution_policy() -> None:
     variables = _RecordingVariables()
     caller = ("server-a", "run", {"command": "echo original"})
@@ -345,6 +364,26 @@ def test_proxy_outcome_classes_apply_caller_and_final_resolution_policy() -> Non
             extract_target_key({"tool_name": "fixed"}, final[2]),
         ),
     ]
+
+
+def test_unknown_proxy_outcome_class_logs_and_fails_open(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    variables = _RecordingVariables()
+
+    with caplog.at_level(logging.WARNING, logger="gobby.hooks.tool_error_tracker"):
+        track_proxy_outcome(
+            variables,
+            "session-1",
+            ("server-a", "run", {}),
+            ("server-b", "fixed", {}),
+            {"success": False, "error": "future outcome"},
+            "future_outcome",
+        )
+
+    assert variables.upserts == []
+    assert variables.resolutions == []
+    assert "Ignoring unknown proxy outcome class" in caplog.text
 
 
 def test_same_identity_executed_failure_updates_without_prior_resolution() -> None:

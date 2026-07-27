@@ -5,7 +5,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from gobby.adapters.codex_impl.execution_chain import validate_functions_exec_wrapper
+from gobby.adapters.codex_impl.execution_chain import (
+    FUNCTIONS_EXEC_NAMES,
+    validate_functions_exec_wrapper,
+)
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -54,7 +57,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
-        if event.source.value == "codex" and tool_name in {"exec", "functions.exec"}:
+        if event.source.value == "codex" and tool_name in FUNCTIONS_EXEC_NAMES:
             wrapper_error = validate_functions_exec_wrapper(
                 input_data.get("arguments", input_data.get("tool_input"))
             )
@@ -369,7 +372,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if rel_path is None:
                 return
 
-            from gobby.workflows.state_manager import SessionVariableManager
             from gobby.workflows.verification_evidence import (
                 VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
                 VERIFICATION_EVIDENCE_RESET_UPDATES,

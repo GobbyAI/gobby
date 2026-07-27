@@ -360,6 +360,7 @@ class SessionCoordinator:
         result_prefix: str,
         tool_calls_count: int,
         turns_used: int,
+        session_id: str,
     ) -> Any | None:
         """Run the terminal storage chain on the managed executor."""
         from gobby.agents.agent_cleanup import submit_terminal_delivery_offload
@@ -374,6 +375,7 @@ class SessionCoordinator:
                 result_prefix=result_prefix,
                 tool_calls_count=tool_calls_count,
                 turns_used=turns_used,
+                session_id=session_id,
             )
             return future.result(timeout=5)
         except (FutureCancelledError, FutureTimeoutError, RuntimeError):
@@ -395,11 +397,24 @@ class SessionCoordinator:
         result_prefix: str,
         tool_calls_count: int,
         turns_used: int,
+        session_id: str,
     ) -> Any | None:
         """Persist intent and capture before killing and terminalizing a run."""
         manager = self._agent_run_manager
         if manager is None:
             return None
+
+        def finish_followups(updated_run: Any | None) -> Any | None:
+            if updated_run is None:
+                return None
+            status = self._agent_run_notification_status(
+                run_id,
+                updated_run,
+                default="success" if action == "complete" else "error",
+            )
+            self._notify_agent_completion(run_id, status)
+            self.release_session_worktrees(session_id)
+            return updated_run
 
         def terminalize(_action: TerminalAction, payload: str | None) -> Any | None:
             if _action == "complete":
@@ -432,7 +447,7 @@ class SessionCoordinator:
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
                 )
-            return updated or manager.get(run_id)
+            return finish_followups(updated or manager.get(run_id))
 
         # Fixed tmux argv, exact session target, and shell execution disabled.
         import subprocess  # nosec B404
@@ -494,7 +509,7 @@ class SessionCoordinator:
                 result.error_code,
             )
             return None
-        return result.run
+        return finish_followups(result.run)
 
     def complete_agent_run(self, session: Any) -> None:
         """
@@ -611,6 +626,7 @@ class SessionCoordinator:
                     result_prefix=result,
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
+                    session_id=session_id,
                 )
                 if updated_run is None:
                     return
@@ -618,13 +634,6 @@ class SessionCoordinator:
                     "Agent run %s marked as failed: incomplete step workflow on session end",
                     agent_run_id,
                 )
-                notification_status = self._agent_run_notification_status(
-                    agent_run_id,
-                    updated_run,
-                    default="error",
-                )
-                self._notify_agent_completion(agent_run_id, notification_status)
-                self.release_session_worktrees(session.id)
                 return
 
             # Guard: agent exited cleanly but did nothing — treat as error
@@ -637,6 +646,7 @@ class SessionCoordinator:
                     result_prefix=result,
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
+                    session_id=session_id,
                 )
                 if updated_run is None:
                     return
@@ -644,13 +654,6 @@ class SessionCoordinator:
                     "Agent run %s marked as failed: no activity detected (0 tool calls, 0 turns)",
                     agent_run_id,
                 )
-                notification_status = self._agent_run_notification_status(
-                    agent_run_id,
-                    updated_run,
-                    default="error",
-                )
-                self._notify_agent_completion(agent_run_id, notification_status)
-                self.release_session_worktrees(session.id)
                 return
 
             # Mark as success
@@ -662,6 +665,7 @@ class SessionCoordinator:
                 result_prefix=result,
                 tool_calls_count=tool_calls_count,
                 turns_used=turns_used,
+                session_id=session_id,
             )
             if updated_run is None:
                 return
@@ -671,15 +675,6 @@ class SessionCoordinator:
                 tool_calls_count,
                 turns_used,
             )
-
-            # Notify completion registry (fallback if kill_agent didn't fire it)
-            notification_status = self._agent_run_notification_status(
-                agent_run_id,
-                updated_run,
-                default="success",
-            )
-            self._notify_agent_completion(agent_run_id, notification_status)
-            self.release_session_worktrees(session.id)
 
         except Exception as e:
             self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)

@@ -171,15 +171,38 @@ def release_envelope_processing_claim(
     processed_dir: Path | None = None,
 ) -> bool:
     """Release a live processing claim so a retry can reclaim the envelope."""
-    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None or record.get("status") != "processing":
+    if not envelope_id:
         return False
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    claimed_marker = marker.with_name(f".{marker.name}.{uuid4().hex}.release")
     try:
-        marker.unlink()
+        marker.rename(claimed_marker)
     except FileNotFoundError:
         return False
-    return True
+    try:
+        try:
+            record = json.loads(claimed_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            record = None
+        if isinstance(record, dict) and record.get("status") == "processing":
+            claimed_marker.unlink(missing_ok=True)
+            return True
+
+        try:
+            os.link(claimed_marker, marker)
+        except FileExistsError:
+            pass
+        finally:
+            claimed_marker.unlink(missing_ok=True)
+        return False
+    except Exception:
+        if claimed_marker.exists() and not marker.exists():
+            try:
+                os.link(claimed_marker, marker)
+            except FileExistsError:
+                pass
+        claimed_marker.unlink(missing_ok=True)
+        raise
 
 
 def read_envelope_marker(

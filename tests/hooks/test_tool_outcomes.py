@@ -157,3 +157,16 @@ def test_canonical_tool_output_precedes_response_envelope_status() -> None:
 
     assert outcome.status is ToolOutcomeStatus.FAILED
     assert outcome.provenance == "tool_output.success"
+
+
+def test_null_tool_output_does_not_mask_later_result_alias() -> None:
+    outcome = normalize_tool_outcome(
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_output": None,
+            "tool_result": {"success": True},
+        }
+    )
+
+    assert outcome.status is ToolOutcomeStatus.SUCCEEDED
+    assert outcome.provenance == "tool_result.success"

@@ -6,16 +6,20 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox_policy import secure_policy_directory
 from gobby.paths import get_gobby_home
+from gobby.sync.jsonl_io import export_file_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from gobby.agents.sandbox import SandboxConfig, SandboxResolver
 
@@ -93,8 +97,34 @@ def srt_install_root() -> Path:
     return get_gobby_home() / "tools" / "srt" / SRT_VERSION
 
 
-def verify_srt_installation() -> SrtInstallation:
-    """Verify the pinned package, receipt, runner, and absolute Node runtime."""
+@contextmanager
+def srt_install_lock() -> Iterator[None]:
+    """Serialize installation and verification of the pinned SRT version."""
+    with export_file_lock(srt_install_root()):
+        yield
+
+
+def resolve_srt_node() -> Path:
+    """Resolve an active Node interpreter that satisfies SRT's engine floor."""
+    node_raw = shutil.which("node")
+    if not node_raw:
+        raise SrtRuntimeError("Node.js 20.11 or newer is required for managed SRT")
+    node = Path(node_raw).resolve(strict=True)
+    result = subprocess.run(
+        [str(node), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)\s*", result.stdout)
+    if result.returncode != 0 or match is None or tuple(map(int, match.groups())) < (20, 11, 0):
+        raise SrtRuntimeError("Node.js 20.11 or newer is required for managed SRT")
+    return node
+
+
+def verify_srt_installation_locked() -> SrtInstallation:
+    """Verify the pinned runtime while the caller holds :func:`srt_install_lock`."""
     root = srt_install_root().resolve(strict=False)
     receipt_path = root / "receipt.json"
     runner = root / "runner.mjs"
@@ -131,11 +161,14 @@ def verify_srt_installation() -> SrtInstallation:
     if hashlib.sha256(lockfile_bytes).hexdigest() != SRT_LOCKFILE_SHA256:
         raise SrtRuntimeError("managed SRT lockfile checksum mismatch")
 
-    node_raw = shutil.which("node")
-    if not node_raw:
-        raise SrtRuntimeError("Node.js 20.11 or newer is required for managed SRT")
-    node = Path(node_raw).resolve(strict=True)
+    node = resolve_srt_node()
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
+
+
+def verify_srt_installation() -> SrtInstallation:
+    """Serialize and verify the pinned package, receipt, runner, and Node runtime."""
+    with srt_install_lock():
+        return verify_srt_installation_locked()
 
 
 def render_srt_settings(paths: Any) -> dict[str, Any]:

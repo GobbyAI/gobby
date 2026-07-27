@@ -277,3 +277,86 @@ In @src/gobby/hooks/event_handlers/_tool.py around lines 57 - 62, Update the con
 ## Finding #776
 
 In @tests/cli/tasks/test_task_id_resolution.py around lines 299 - 302, Add an explicit assertion in the hash-format close-task test that the #3 input is passed to resolve_task_reference, while retaining the existing contract-failure, exit-code, output, and close_task-not-called assertions. Anchor the new verification to the test’s runner.invoke call and the resolve_task_reference mock.
+
+## Disposition ledger
+
+Reviewed against the packet implementation and focused validation evidence below. No
+finding was silently dropped: 64 were resolved, findings #219, #637, and #665 were
+already satisfied in the packet baseline, and finding #670 was resolved with its
+placeholder recommendation corrected to match the production psycopg transaction
+contract.
+
+| Finding | Disposition | Resolution evidence |
+| --- | --- | --- |
+| #176 | Resolved | CLI embedding responses now fall back to response text for empty or non-JSON bodies on both success and failure paths. |
+| #177 | Resolved | Setup warns with the explicit provider-native fallback and continues helper, tmux, and IDE setup after an SRT installation failure. |
+| #178 | Resolved | SRT staging, promotion, verification, and cleanup now share a per-version filesystem lock. |
+| #179 | Resolved | SRT verification resolves the active Node executable and enforces Node 20.11 or newer before launch. |
+| #180 | Resolved | Added and used the public async `VectorStore.list_collection_names()` accessor instead of calling a private initializer. |
+| #181 | Resolved | Managed-collection inspection failures now emit structured operation context before the fail-closed exception is raised. |
+| #182 | Resolved | `config_store` now uses the concrete `ConfigStore` type under `TYPE_CHECKING`. |
+| #183 | Resolved | Project purge now requires `--confirm <project-name>` and refuses a mismatched name before mutation. |
+| #184 | Resolved | Project purge checks HTTP status before JSON parsing and uses response text for non-JSON failures. |
+| #185 | Resolved | Daemon startup preflights configured SRT, warns without aborting, and the sandbox guide documents Node and provider-native recovery. |
+| #219 | Already satisfied | Rate-limit detection already recognized HTTP 429, “too many requests,” and hyphenated `rate-limit` text. |
+| #232 | Resolved | Added the module-level unit marker to lifecycle daemon command tests. |
+| #268 | Resolved | Blocked-attention aggregation now executes while the session-manager context is active. |
+| #269 | Resolved | Attention reasons are deduplicated per session, sorted deterministically, and counted after deduplication. |
+| #328 | Resolved | Startup summaries report port 60889 for dev UI mode and the configured HTTP port for production. |
+| #359 | Resolved | Restored-memory reconciliation runs through bounded concurrency with a semaphore of eight and awaits all work. |
+| #360 | Resolved | Caller cancellation now waits for and consumes the owned reconciliation task before propagating cancellation. |
+| #381 | Resolved | Added concrete fixture, callback-parameter, and return annotations to the memory-sync tests. |
+| #425 | Resolved | Wrapped the long gobby-skills assertion without changing its value. |
+| #426 | Resolved | Wrapped all affected coordinator and Playwright assertion strings within Ruff’s line limit. |
+| #460 | Resolved | Terminal persistence now owns agent notification and worktree release so caller timeout cannot skip follow-ups. |
+| #461 | Resolved | Outcome parsing skips aliases whose value is `None` and selects a populated later alias. |
+| #512 | Resolved | Shell normalization tracks logical continuations and defers heredoc-body skipping until the complete command terminates. |
+| #555 | Resolved | Added the module-level CLI marker to test-types command tests. |
+| #556 | Resolved | Added baseline-only and fail-on-new-only ratchet classification cases. |
+| #596 | Resolved | Duplicate inbound messages append the persisted database record rather than the raw incoming object. |
+| #597 | Resolved | Channel updates use per-channel serialization, adapter generations, and current-row patches to reject stale callbacks. |
+| #598 | Resolved | Exported one mandatory handoff-title constant and reused it in both handoff summary functions. |
+| #616 | Resolved | Added rollback coverage proving message and attachment rows remain atomic when attachment persistence fails. |
+| #617 | Resolved | Added the async test’s explicit `None` return annotation. |
+| #618 | Resolved | Marked the wrapped-command validation test directly as a unit test. |
+| #637 | Already satisfied | Telegram overflow IDs already used a bounded `OrderedDict` capped at 1024 entries. |
+| #638 | Resolved | Telegram chunk sending stops and returns `None` immediately after the first failed send. |
+| #639 | Resolved | Telegram’s “message is not modified” response is treated as a successful edit no-op only for that error. |
+| #640 | Resolved | Inline Telegram formatting has a bounded recursion depth with plain-text fallback at the cap. |
+| #641 | Resolved | Chunk finalization suppresses formatting-only trailing chunks while retaining chunks with visible text. |
+| #642 | Resolved | Turn cancellation cannot interrupt typing shutdown or the final partial-response transport flush. |
+| #643 | Resolved | Finalization does not resend text already delivered without a platform message ID. |
+| #644 | Resolved | Conversation queues cap pending turns at eight and return the busy response when the cap is exceeded. |
+| #645 | Resolved | Voice transcription enforces the configured timeout and degrades the message locally on timeout or failure. |
+| #646 | Resolved | Envelope claim release uses rename-then-inspect and preserves newer finalized markers. |
+| #647 | Resolved | Removed the redundant local `SessionVariableManager` import and reused the module import. |
+| #648 | Resolved | Local hook receipt ingestion is fail-open by default, while the HTTP adapter explicitly requests strict behavior. |
+| #649 | Resolved | Deferred recall lifecycle logs carry session and parent-turn identifiers as structured fields. |
+| #650 | Resolved | Active recall futures are separate from a bounded 4096-entry deduplication watermark store. |
+| #651 | Resolved | Recursive error-text extraction has a propagated depth budget. |
+| #652 | Resolved | Unknown proxy outcome classes are logged and ignored so tool dispatch remains fail-open. |
+| #653 | Resolved | Hash normalization bounds depth and cycles with stable type markers for pathological payloads. |
+| #665 | Already satisfied | The voice-note inbound test already had the required asyncio marker. |
+| #666 | Resolved | Added the asyncio marker to the access-gate async test. |
+| #667 | Resolved | Applied direct unit and integration markers to config and Postgres migration coverage. |
+| #668 | Resolved | Migration ordering now uses parsed numeric versions and checks version 340 only for uniqueness. |
+| #669 | Resolved | Added finalized-marker preservation and empty-envelope release cases. |
+| #670 | Resolved with correction | Both inserts now use `HubDatabase.transaction()`; `%s` placeholders were retained because the production psycopg transaction executes SQL directly and does not accept `$1…$N`. |
+| #671 | Resolved | Added the module-level unit marker to tool-error tracker tests. |
+| #696 | Resolved | Telegram callback tokens are discarded whenever a registered keyboard send fails. |
+| #697 | Resolved | Removed unsupported `start` command recognition so `/start` follows the normal backend-turn path. |
+| #698 | Resolved | Sticker image selection uses ordinary control-flow narrowing instead of an assertion. |
+| #699 | Resolved | Sticker vision extraction is bounded by an async timeout and uses the existing failed fallback. |
+| #717 | Resolved | Telegram `allowed_updates` assertions parse JSON before comparing update types. |
+| #734 | Resolved | `setMyCommands` failures warn and allow channel initialization to continue; connectivity checks remain fail-fast. |
+| #735 | Resolved | Wrapped the Telegram proxy-resolution call within Ruff’s line limit. |
+| #736 | Resolved | Group-message evaluation now runs only for Telegram channels. |
+| #750 | Resolved | Added direct asyncio and unit markers to the inbound access-policy logging test. |
+| #751 | Resolved | Bound the expected ignore message once and reused it for log filtering. |
+| #760 | Resolved | Both task-create and task-close implementation calls now pass all arguments by keyword. |
+| #763 | Resolved | Tool wrapper validation now uses the exported `FUNCTIONS_EXEC_NAMES` constant. |
+| #776 | Resolved | The hash-close test asserts the required project-scoped call `resolve_task_reference("#3", "proj-123")`. |
+
+Focused evidence: 245 CLI tests, 563 hook tests, 214 communications tests, and 75
+sync/runtime/vector/config tests passed. Final Ruff, mypy, test-quality, and
+test-types gates are recorded by the task’s validation receipts.

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 from urllib.error import URLError
 
 import pytest
@@ -84,6 +85,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
         )
 
     npm_commands: list[tuple[list[str], Path]] = []
+    install_lock = MagicMock()
 
     def fake_npm_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
         cwd = Path(kwargs["cwd"])
@@ -96,7 +98,8 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
         )
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr(install_setup_srt, "verify_srt_installation", fake_verify)
+    monkeypatch.setattr(install_setup_srt, "verify_srt_installation_locked", fake_verify)
+    monkeypatch.setattr(install_setup_srt, "srt_install_lock", lambda: install_lock)
     monkeypatch.setattr(install_setup_srt, "srt_install_root", lambda: target)
     monkeypatch.setattr(install_setup_srt, "_require_node", lambda: node)
     monkeypatch.setattr(
@@ -132,3 +135,5 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["package"] == SRT_PACKAGE
     assert receipt["version"] == SRT_VERSION
+    install_lock.__enter__.assert_called_once_with()
+    install_lock.__exit__.assert_called_once()

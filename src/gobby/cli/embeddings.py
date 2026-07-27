@@ -85,13 +85,23 @@ def switch(
                 "/api/embeddings/switch/start",
                 json_data={"catalog_key": catalog_key, "provider": provider},
             )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = response.text
         if response.status_code >= 400:
-            detail = response.json().get("detail", response.text)
+            detail = (
+                payload.get("detail", response.text)
+                if isinstance(payload, dict)
+                else payload or response.text
+            )
             click.echo(f"Error: {detail}", err=True)
             raise click.exceptions.Exit(1)
-        payload = response.json()
-        click.echo(json_dumps(payload, indent=2, sort_keys=True))
-        if payload.get("status") == "failed":
+        if isinstance(payload, str):
+            click.echo(payload)
+        else:
+            click.echo(json_dumps(payload, indent=2, sort_keys=True))
+        if isinstance(payload, dict) and payload.get("status") == "failed":
             raise click.exceptions.Exit(1)
 
     except click.exceptions.Exit:

@@ -339,3 +339,23 @@ def test_verify_srt_installation_wraps_missing_lockfile(
 
     with pytest.raises(SrtRuntimeError, match="missing or invalid"):
         verify_srt_installation()
+
+
+def test_resolve_srt_node_rejects_version_below_engine_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    node = tmp_path / "node"
+    node.write_text("", encoding="utf-8")
+    monkeypatch.setattr("gobby.agents.srt_runtime.shutil.which", lambda _command: str(node))
+    monkeypatch.setattr(
+        "gobby.agents.srt_runtime.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="v20.10.0\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(SrtRuntimeError, match="20.11"):
+        srt_runtime.resolve_srt_node()

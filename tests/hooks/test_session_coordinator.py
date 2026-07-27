@@ -640,6 +640,51 @@ class TestAgentRunCompletion:
         assert mock_agent_run_manager.complete.call_count == 0
         assert coordinator._notify_agent_completion.call_count == 1
 
+    def test_timed_out_terminal_offload_runs_followups_after_persistence(self) -> None:
+        manager = MagicMock()
+        terminal_run = MagicMock(status="success")
+        manager.complete.return_value = terminal_run
+        coordinator = SessionCoordinator(agent_run_manager=manager)
+        mock_notify = MagicMock()
+        mock_release = MagicMock()
+        submitted: dict[str, Any] = {}
+
+        def submit(operation: Any, **kwargs: Any) -> MagicMock:
+            submitted["operation"] = operation
+            submitted["kwargs"] = kwargs
+            future = MagicMock()
+            future.result.side_effect = TimeoutError("still running")
+            return future
+
+        with (
+            patch.object(coordinator, "_notify_agent_completion", mock_notify),
+            patch.object(coordinator, "release_session_worktrees", mock_release),
+            patch(
+                "gobby.agents.agent_cleanup.submit_terminal_delivery_offload",
+                side_effect=submit,
+            ),
+        ):
+            result = coordinator._terminate_agent_run(
+                run_id="run-123",
+                agent_run=MagicMock(tmux_session_name=None),
+                action="complete",
+                reason=None,
+                result_prefix="result",
+                tool_calls_count=2,
+                turns_used=1,
+                session_id="session-123",
+            )
+
+            assert result is None
+            mock_notify.assert_not_called()
+            mock_release.assert_not_called()
+
+            updated = submitted["operation"](**submitted["kwargs"])
+
+            assert updated is terminal_run
+            mock_notify.assert_called_once_with("run-123", "success")
+            mock_release.assert_called_once_with("session-123")
+
     def test_complete_agent_run_skips_without_run_id(self) -> None:
         """Test complete_agent_run skips sessions without agent_run_id."""
         mock_agent_run_manager = MagicMock()

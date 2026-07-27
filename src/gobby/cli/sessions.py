@@ -67,15 +67,15 @@ def _format_seq_range(values: Sequence[int | None]) -> str:
 def _blocked_attention_by_session(manager: SessionManager) -> dict[str, tuple[int, str]]:
     """Aggregate blocked roster entries without conflating them with lifecycle state."""
     snapshot = AttentionStateManager(manager.db).snapshot()
-    reasons_by_session: dict[str, list[str]] = {}
+    reasons_by_session: dict[str, set[str]] = {}
     for state in snapshot.states:
         if state.state != "blocked" or state.session_id is None:
             continue
-        reasons_by_session.setdefault(state.session_id, []).append(
+        reasons_by_session.setdefault(state.session_id, set()).add(
             state.reason or "Attention required"
         )
     return {
-        session_id: (len(reasons), sorted(reasons)[0])
+        session_id: (len(reasons), "; ".join(sorted(reasons)))
         for session_id, reasons in reasons_by_session.items()
     }
 
@@ -163,6 +163,7 @@ def list_sessions(
             machine_id=machine_id,
             limit=limit,
         )
+        attention_by_session = _blocked_attention_by_session(manager)
 
     if json_format:
         click.echo(json_dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
@@ -172,7 +173,6 @@ def list_sessions(
         click.echo("No sessions found.")
         return
 
-    attention_by_session = _blocked_attention_by_session(manager)
     click.echo(f"Found {len(sessions_list)} sessions:\n")
     for session in sessions_list:
         status_icon = {

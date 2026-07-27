@@ -1142,6 +1142,20 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_file_path"] == "src/app.py"
 
+    def test_heredoc_body_waits_for_logical_command_continuation(self) -> None:
+        command = (
+            "cat > first.txt <<'EOF' &&\n"
+            "printf done > visible.txt\n"
+            "body > ignored.txt\n"
+            "EOF"
+        )
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == ["first.txt", "visible.txt"]
+
     def test_quoted_heredoc_append_attributes_only_redirect_target(self) -> None:
         # Heredoc bodies are stdin data; lines like ``-> None:`` must never
         # scan as output redirections that mint fake edited-file paths.

@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.llm.sdk_utils import (
     HANDOFF_SUMMARY_INJECT_BUDGET,
+    MANDATORY_HANDOFF_SECTION_TITLES,
     allocate_section_budget,
     head_with_breadcrumb,
     split_markdown_sections,
@@ -205,7 +206,7 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
     sections = split_markdown_sections(summary)
     real_sections = [section for section in sections if section.heading]
     has_mandatory_section = any(
-        section.title in {"next steps", "current state"} for section in real_sections
+        section.title in MANDATORY_HANDOFF_SECTION_TITLES for section in real_sections
     )
     if not real_sections or not has_mandatory_section:
         return head_with_breadcrumb(

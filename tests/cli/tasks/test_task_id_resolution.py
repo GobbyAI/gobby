@@ -296,9 +296,24 @@ class TestCliCloseCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "close", "#3"])
+        with (
+            patch(
+                "gobby.cli.runtime.CliRuntime.require_database",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "gobby.cli.load_full_config_from_db",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "gobby.cli.tasks._utils.resolution.get_project_context",
+                return_value={"id": "proj-123"},
+            ),
+        ):
+            result = runner.invoke(cli, ["tasks", "close", "#3"])
         assert result.exit_code == 1
         assert "criterion-to-evidence close_task contract" in result.output
+        mock_manager.resolve_task_reference.assert_called_once_with("#3", "proj-123")
         mock_manager.close_task.assert_not_called()
 
 
