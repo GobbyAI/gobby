@@ -250,6 +250,8 @@ class Session:
     @property
     def has_terminal_liveness(self) -> bool:
         """Best-effort durable liveness signal for tmux-backed terminal sessions."""
+        if self.status not in {"active", "paused"}:
+            return False
         if not self.terminal_context:
             return False
 

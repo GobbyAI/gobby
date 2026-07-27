@@ -567,7 +567,8 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99 My Title")]
 
     @pytest.mark.asyncio
-    async def test_queued_rename_reloads_authoritative_persisted_title(self) -> None:
+    @pytest.mark.parametrize("status", ["active", "paused"])
+    async def test_queued_rename_reloads_authoritative_persisted_title(self, status: str) -> None:
         from gobby.workflows.summary_actions import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
@@ -584,6 +585,7 @@ class TestRenameTmuxWindow:
             agent_depth=0,
             ref="#99",
             title="Digest-owned title",
+            status=status,
         )
         container = _ReloadingAppContext(persisted_session)
 
@@ -596,6 +598,42 @@ class TestRenameTmuxWindow:
         assert container.calls == [(container.session_manager.get, ("session-id",))]
         manager = _RecordingTmuxManager.instances[0]
         assert manager.rename_calls == [("%42", "#99 Digest-owned title")]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    async def test_queued_rename_skips_persisted_ineligible_session(
+        self, status: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        _RecordingTmuxManager.instances = []
+        stale_session = SimpleNamespace(
+            id="session-id",
+            terminal_context={"tmux_pane": "%42"},
+            agent_depth=0,
+            ref="#99",
+            title="Queued title",
+        )
+        persisted_session = SimpleNamespace(
+            id="session-id",
+            terminal_context={"tmux_pane": "%42"},
+            agent_depth=0,
+            ref="#99",
+            title="Late digest title",
+            status=status,
+        )
+        container = _ReloadingAppContext(persisted_session)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.workflows.summary_actions"),
+            patch("gobby.app_context.get_app_context", return_value=container),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
+        ):
+            await _rename_tmux_window(stale_session, "Queued title")
+
+        assert container.calls == [(container.session_manager.get, ("session-id",))]
+        assert _RecordingTmuxManager.instances == []
+        assert not caplog.records
 
     @pytest.mark.asyncio
     async def test_successful_window_rename_log_is_debug(
@@ -622,6 +660,39 @@ class TestRenameTmuxWindow:
         ]
         assert len(rename_records) == 1
         assert rename_records[0].levelno == logging.DEBUG
+
+    @pytest.mark.asyncio
+    async def test_false_window_rename_result_logs_debug_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.workflows.summary_actions import _apply_window_rename
+
+        class MissingTargetTmuxManager(_RecordingTmuxManager):
+            async def rename_window(self, target: str, title: str) -> bool:
+                return False
+
+        session = SimpleNamespace(agent_depth=0, ref="#99", status="active")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.summary_actions"),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", MissingTargetTmuxManager),
+        ):
+            applied = await _apply_window_rename(
+                session,
+                {"tmux_pane": "%42"},
+                "%42",
+                "My Title",
+            )
+
+        outcome_records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("tmux window rename did not apply")
+        ]
+        assert applied is False
+        assert len(outcome_records) == 1
+        assert outcome_records[0].levelno == logging.DEBUG
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
     @pytest.mark.asyncio
     async def test_empty_title_falls_back_to_source_not_cwd_basename(self) -> None:
@@ -867,6 +938,33 @@ class _EnforceTmuxManager:
 
 class TestEnforceWindowNameIfUnmanaged:
     """Tests for the periodic repair-sweep rename helper."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    async def test_skips_persisted_ineligible_session(self, status: str) -> None:
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        stale_session = SimpleNamespace(id="session-id")
+        persisted_session = SimpleNamespace(
+            id="session-id",
+            terminal_context={"tmux_pane": "%42"},
+            agent_depth=0,
+            ref="#99",
+            title="Historical title",
+            status=status,
+        )
+        container = _ReloadingAppContext(persisted_session)
+
+        with (
+            patch("gobby.app_context.get_app_context", return_value=container),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager),
+        ):
+            acted = await enforce_window_name_if_unmanaged(stale_session)
+
+        assert acted is False
+        assert container.calls == [(container.session_manager.get, ("session-id",))]
+        assert _EnforceTmuxManager.instances == []
 
     @pytest.mark.asyncio
     async def test_renames_unmanaged_window_with_fallback(self) -> None:

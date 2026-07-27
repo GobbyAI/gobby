@@ -1,5 +1,7 @@
 """Focused tests for session storage behavior."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -73,7 +75,7 @@ class TestSession:
         assert d["machine_id"] == "machine-1"
         assert d["source"] == "qwen"
         assert d["title"] == "Test Session"
-        assert d["title_source"] is None
+        assert d["title_source"] == "manual"
         assert d["status"] == "active"
 
     def test_to_dict_and_brief_include_title_source(self) -> None:
@@ -91,8 +93,8 @@ class TestSession:
             summary_markdown=None,
             git_branch=None,
             parent_session_id=None,
-            created_at="2026-04-16T00:00:00Z",
-            updated_at="2026-04-16T00:05:00Z",
+            created_at=datetime(2026, 4, 16, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
         )
 
         assert session.to_dict()["title_source"] == "manual"
@@ -113,14 +115,39 @@ class TestSession:
             summary_markdown=None,
             git_branch="main",
             parent_session_id=None,
-            created_at="2026-04-16T00:00:00Z",
-            updated_at="2026-04-16T00:05:00Z",
+            created_at=datetime(2026, 4, 16, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
             terminal_context={"tmux_pane": "%12"},
             session_type="terminal",
         )
 
         assert session.can_proxy_attach is True
         assert session.to_dict()["can_proxy_attach"] is True
+
+    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    def test_ineligible_status_disables_stored_terminal_liveness(self, status: str) -> None:
+        session = Session(
+            id="sess-stale-tmux",
+            external_id="ext-stale-tmux",
+            machine_id="machine-1",
+            source="qwen",
+            project_id="proj-1",
+            title="Historical tmux session",
+            status=status,
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="main",
+            parent_session_id=None,
+            created_at=datetime(2026, 4, 16, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
+            terminal_context={"tmux_pane": "%12"},
+            session_type="terminal",
+        )
+
+        assert session.has_terminal_liveness is False
+        assert session.can_proxy_attach is False
+        assert session.to_dict()["can_proxy_attach"] is False
 
     def test_parent_pid_does_not_count_as_terminal_liveness(self) -> None:
         session = Session(
@@ -136,8 +163,8 @@ class TestSession:
             summary_markdown=None,
             git_branch="main",
             parent_session_id=None,
-            created_at="2026-04-16T00:00:00Z",
-            updated_at="2026-04-16T00:05:00Z",
+            created_at=datetime(2026, 4, 16, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
             terminal_context={"parent_pid": 12345},
             session_type="terminal",
         )

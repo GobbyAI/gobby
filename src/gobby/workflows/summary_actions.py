@@ -491,7 +491,7 @@ async def _apply_window_rename(
             resolved,
         )
     else:
-        logger.warning(
+        logger.debug(
             "tmux window rename did not apply for %s pane=%s socket=%s "
             "(target missing or tmux error)",
             ref,
@@ -541,6 +541,8 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
         if persisted_session is None:
             return
         session = persisted_session
+        if getattr(session, "status", None) not in {"active", "paused"}:
+            return
         title = getattr(session, "title", None) or ""
 
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
@@ -595,6 +597,8 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
         if persisted_session is None:
             return False
         session = persisted_session
+        if getattr(session, "status", None) not in {"active", "paused"}:
+            return False
 
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:
