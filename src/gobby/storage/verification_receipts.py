@@ -40,7 +40,7 @@ def verification_receipt_id(
 
 
 def _bounded_output(output: str | None) -> tuple[str | None, str | None, str | None, int | None]:
-    if output is None:
+    if not output:
         return None, None, None, None
     encoded = output.encode("utf-8")
     first = (
@@ -577,18 +577,15 @@ class VerificationReceiptStore:
                 if row["task_id"] is not None:
                     raise ValueError(f"verification receipt {receipt_id} is already assigned")
 
-            conn.execute(
+            assigned_rows = conn.execute(
                 """
                 UPDATE verification_receipts
                 SET task_id = %s, attribution_source = 'manual_assignment',
                     attribution_actor = %s, attributed_at = %s, updated_at = %s
                 WHERE id = ANY(%s::uuid[])
+                RETURNING *
                 """,
                 (task_id, actor, now, now, ids),
-            )
-
-        assigned_rows = self.db.fetchall(
-            "SELECT * FROM verification_receipts WHERE id = ANY(%s::uuid[]) ORDER BY id",
-            (ids,),
-        )
+            ).fetchall()
+        assigned_rows.sort(key=lambda row: str(row["id"]))
         return [VerificationReceipt.from_row(row) for row in assigned_rows]

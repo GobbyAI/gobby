@@ -233,3 +233,65 @@ In @tests/memory/test_digest.py around lines 551 - 555, Remove the nondeterminis
 ## Finding #747
 
 In @src/gobby/search/backends/embedding.py at line 137, Update the embedding-index completion log in the relevant indexing method to pass the indexed item count as structured logging context rather than interpolating it into the message arguments. Preserve the existing debug level and completion message while using the logger’s supported contextual field convention.
+
+## Disposition Ledger
+
+| Finding | Disposition | Evidence |
+| --- | --- | --- |
+| #195 | Resolved | `MemoryManager` and knowledge-graph service write fences use the shared `VectorWriteFence` protocol. |
+| #196 | Resolved | Strict project graph cleanup propagates orphan-cleanup failures while the public best-effort helper retains its fallback. |
+| #197 | Resolved | Multi-project vector batches acquire sorted per-project writer contexts; projectless batches retain global admission. |
+| #198 | Resolved | Project purge candidates run through a bounded semaphore with deterministic result aggregation. |
+| #199 | Resolved | Exclusive-drain cancellation and all pre-yield failures clear the claim and notify waiters safely. |
+| #200 | Resolved | Project lookup now completes before entering the fence condition. |
+| #218 | Resolved | Project cron parking uses one `UPDATE ... RETURNING *` statement. |
+| #220 | Resolved | Wiki prune registration uses `PERSONAL_PROJECT_ID` for global jobs. |
+| #239 | Resolved | The rebuild snapshot supplier is a named function with an explicit empty-list return. |
+| #240 | Resolved | Purge-handler tests exceed the configured ID cap and assert bounded output. |
+| #241 | Resolved | The fake transaction explicitly rejects unsupported SQL without a `FROM` clause. |
+| #242 | Resolved | Project-fence synchronization waits use bounded shared helpers or `asyncio.wait_for`. |
+| #243 | Resolved | The write-fence module has a unit-test marker. |
+| #244 | Resolved | Fence-claim waits are centralized in `tests/projects/fence_helpers.py` and reused by all four suites. |
+| #260 | Resolved | Wiki prune tests are categorized as unit tests. |
+| #273 | Resolved | Related-evidence semaphore waiting is outside the operation timeout, and timed-out tasks are canceled and awaited. |
+| #274 | Resolved | Dream dry-runs enforce a configurable candidate bound and report total actions, sampled actions, and truncation. |
+| #275 | Resolved | Vector-count fallback logs the exception with structured project context. |
+| #276 | Resolved | Local vector operations validate their timeout budget and run `to_thread` inside `asyncio.timeout`. |
+| #277 | Resolved | Rebuild strategy validation occurs before initialization or lock acquisition. |
+| #278 | Resolved | Rebuild batches reuse the initialized client through the no-reinitialization upsert path. |
+| #279 | Resolved | Stored-vector queries use `_STORED_VECTOR_BATCH_SIZE` for both range and slicing. |
+| #280 | Resolved | Project cleanup uses the vector store's public collection-name helper, preserving centralized timeout-aware client dispatch. |
+| #290 | Resolved | Dream size tests calculate payload size with `_render_candidates_json`. |
+| #291 | Resolved | Postgres-backed related-evidence tests are integration tests; genuine unit cases retain unit markers. |
+| #292 | Resolved | The vector-floor assertion derives its score from `VECTOR_EVIDENCE_MIN_SCORE`. |
+| #333 | Resolved | Contentless refresh actions advance the cursor while content-bearing refreshes stay on the fenced path. |
+| #334 | Resolved | The unreachable post-cast action membership guard was removed. |
+| #335 | Resolved | `dream_due_version` remains internal and is excluded from planner prompt dictionaries. |
+| #336 | Resolved | Dream apply and revert paths call the required `notify_memory_changed` protocol method directly. |
+| #337 | Resolved | Dream action dispatch has an explicit promote branch and rejects unsupported actions. |
+| #338 | Resolved | Refresh duplicate detection excludes soft-deleted memories. |
+| #339 | Resolved | Cross-reference revalidation performs one stored-vector batch per candidate set before the transaction. |
+| #340 | Resolved | Cross-reference rebuild deletes only source-owned edges and preserves inbound references. |
+| #341 | Resolved | Snapshot sweep reconciliation is page-sized and set-based, preserves CAS semantics, and requeues failed identities transactionally. |
+| #342 | Resolved | Reconciliation and hidden projection purge use sorted per-memory advisory locks. |
+| #343 | Resolved | Restoring indices for a missing memory catches `ValueError` and returns `False`. |
+| #348 | Resolved | Locked-row SQL documents that interpolation creates placeholders while IDs remain bound parameters. |
+| #349 | Resolved | Memory IDs and collisions resolve before one sorted advisory-lock union is acquired. |
+| #350 | Resolved | Snapshot reindex rowcount is captured inside the transaction and used after commit. |
+| #351 | Resolved | Dream storage mutation paths notify through public `notify_changed`. |
+| #352 | Resolved | Dream restore/requeue resets `graph_attempts` with the graph status fields. |
+| #353 | Resolved | Migration 334 documents the intentionally dangling session UUID contract. |
+| #354 | Resolved | Migration 335 and the baseline define `dream_due_version` as `BIGINT`. |
+| #355 | Resolved | Successful model-metadata refresh resets the stale-warning latch. |
+| #356 | Resolved | Empty receipt output follows the same all-`None` path as absent output. |
+| #357 | Resolved | Receipt upsert SQL is reflowed within the source line-length limit. |
+| #358 | Resolved | Receipt assignment returns rows directly from transactional `UPDATE ... RETURNING *`. |
+| #374 | Resolved | Supersession tests use integration markers, with slow markers on concurrency and fencing cases. |
+| #375 | Resolved | Row-lock fencing observes the blocked PostgreSQL lock before releasing the purge. |
+| #376 | Resolved | Rollback coverage expects `psycopg.errors.RaiseException` and always removes trigger artifacts. |
+| #377 | Resolved | `test_mark_memories_due` is categorized as a unit test. |
+| #379 | Resolved | Dream storage test helpers and fixtures use concrete `HubDatabase` annotations. |
+| #608 | Resolved | Secret lookup, reference resolution, config deletion, and secret removal share the mutation transaction. |
+| #620 | Resolved | Both affected knowledge-graph coroutines have asyncio markers. |
+| #721 | Resolved | Digest serialization coverage no longer relies on a scheduler checkpoint. |
+| #747 | Resolved | Embedding completion logging emits the indexed count as structured context. |

@@ -245,6 +245,17 @@ class TestDetectQueuedMessagePrompt:
         assert detector.detect_queued_message_prompt(output)
         assert not detector.detect_queued_continuation_prompt(output)
 
+    def test_qwen_plain_queued_message_is_not_a_continuation(self) -> None:
+        detector = PromptDetector(BundledDetectionRegistry(), "qwen")
+        plain_queue = "❯ Press up to edit queued messages\n"
+        continuation = (
+            "Continue working on your task. Your active Gobby step workflow is not complete.\n"
+        )
+
+        assert detector.detect_queued_message_prompt(plain_queue)
+        assert not detector.detect_queued_continuation_prompt(plain_queue)
+        assert detector.detect_queued_continuation_prompt(continuation)
+
     def test_no_match_on_normal_output(self) -> None:
         detector = make_detector()
 

@@ -182,7 +182,7 @@ instructions: |
     to re-read the final report.
   - Always use `uv run` for any Python invocation that ends up inside
     verify_in_worktree commands.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
   rule_selectors:

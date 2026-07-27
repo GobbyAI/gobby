@@ -95,7 +95,7 @@ pub(crate) fn resolve_text_generator(
         .then(|| resolve_direct_tier_targets(ctx, aggregate_profile.as_deref()));
     if direct_targets
         .as_ref()
-        .is_some_and(|targets| !targets.has_usable_target())
+        .is_some_and(|targets| !targets.all_tiers_usable())
     {
         return ResolvedTextGenerator::skipped(
             route,
@@ -230,11 +230,18 @@ pub(crate) fn resolve_text_verifier(
 pub(crate) fn generate_with_bounded_retry<T>(
     mut call: impl FnMut() -> Result<T, AiError>,
 ) -> Result<T, AiError> {
+    generate_with_bounded_retry_and_sleep(&mut call, std::thread::sleep)
+}
+
+fn generate_with_bounded_retry_and_sleep<T>(
+    mut call: impl FnMut() -> Result<T, AiError>,
+    mut sleep: impl FnMut(Duration),
+) -> Result<T, AiError> {
     let mut result = call();
     for backoff in GENERATION_RETRY_BACKOFF {
         match &result {
             Err(error) if retryable_generation_error(error) => {
-                std::thread::sleep(backoff);
+                sleep(error.retry_after().unwrap_or(backoff));
                 result = call();
             }
             _ => break,
@@ -466,6 +473,27 @@ mod tests {
 
         assert_eq!(result.expect("retry recovers"), "generated");
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn bounded_retry_prefers_server_retry_after_hint() {
+        let mut calls = 0;
+        let mut delays = Vec::new();
+        let result = generate_with_bounded_retry_and_sleep(
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Err(AiError::rate_limited(Some(Duration::from_millis(17)), None))
+                } else {
+                    Ok("generated")
+                }
+            },
+            |delay| delays.push(delay),
+        )
+        .expect("retry succeeds");
+
+        assert_eq!(result, "generated");
+        assert_eq!(delays, [Duration::from_millis(17)]);
     }
 
     #[test]

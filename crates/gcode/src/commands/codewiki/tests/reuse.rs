@@ -2350,6 +2350,16 @@ fn unchanged_stamped_page_keeps_original_commit_without_churn() {
         }));
     assert!(third.persist(&doc).expect("refresh normalized page"));
     third.finish(None).expect("third finish");
+    let refreshed_meta = io::read_codewiki_meta(&out_dir).expect("refreshed metadata");
+    let refreshed_page_meta = refreshed_meta
+        .docs
+        .get(&doc.path)
+        .expect("refreshed page metadata");
+    assert_eq!(
+        refreshed_page_meta.commit.as_deref(),
+        Some(original_stamp.sha.as_str()),
+        "normalization refresh must preserve the page's original commit"
+    );
     assert_eq!(
         std::fs::read_to_string(out_dir.join(&doc.path)).expect("refreshed page"),
         original_page,

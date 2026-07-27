@@ -12,9 +12,12 @@ from gobby.storage import model_metadata
 from gobby.storage.model_metadata import ModelMetadataStore
 
 
-def test_populate_keeps_same_model_suffix_for_different_providers() -> None:
+def test_populate_keeps_same_model_suffix_for_different_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from gobby.llm.model_registry import ModelInfo
 
+    monkeypatch.setattr(model_metadata, "_stale_warning_emitted", True)
     db = MagicMock()
     connection = db.transaction.return_value.__enter__.return_value
     models = [
@@ -41,6 +44,7 @@ def test_populate_keeps_same_model_suffix_for_different_providers() -> None:
         ("shared-model", "claude", 200_000, 8_000, "registry"),
         ("shared-model", "codex", 128_000, 4_000, "registry"),
     ]
+    assert model_metadata._stale_warning_emitted is False
 
 
 def test_empty_populate_retains_cached_metadata() -> None:

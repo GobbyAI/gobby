@@ -851,7 +851,7 @@ updated_at TIMESTAMPTZ NOT NULL,
 deleted_at TIMESTAMPTZ,
 dream_action TEXT,
 last_dreamed_at TIMESTAMPTZ,
-dream_due_version INTEGER NOT NULL DEFAULT 0,
+    dream_due_version BIGINT NOT NULL DEFAULT 0,
 CONSTRAINT memories_dream_action_check
     CHECK (dream_action IS NULL OR dream_action IN ('review', 'delete')),
 CONSTRAINT memories_dream_action_requires_deleted

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
-use gobby_core::vault::mermaid::is_valid_mermaid;
+use gobby_core::vault::mermaid::{escape_label, is_valid_mermaid};
 
 use super::super::*;
 
@@ -10,17 +10,63 @@ const MAX_MERMAID_EDGES: usize = 20;
 const MAX_CALL_SEQUENCE_PARTICIPANTS: usize = 8;
 const MAX_CALL_SEQUENCE_MESSAGES: usize = 12;
 
+pub(crate) struct ModuleDiagramContext {
+    dependency_edges: BTreeSet<(String, String)>,
+    call_edges: BTreeSet<(String, String)>,
+    component_labels: BTreeMap<String, String>,
+    component_modules: BTreeMap<String, String>,
+}
+
+pub(crate) fn module_diagram_context(
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> ModuleDiagramContext {
+    let (component_labels, component_modules) = canonical_component_metadata(files);
+    let call_edges = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Call)
+        .filter(|edge| {
+            component_modules.contains_key(&edge.source_component_id)
+                && component_modules.contains_key(&edge.target_component_id)
+        })
+        .map(|edge| {
+            (
+                edge.source_component_id.clone(),
+                edge.target_component_id.clone(),
+            )
+        })
+        .collect();
+    ModuleDiagramContext {
+        dependency_edges: collect_module_dependency_edges(files, graph_edges),
+        call_edges,
+        component_labels,
+        component_modules,
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn render_module_dependency_mermaid(
     module: &str,
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
 ) -> DiagramOutcome {
+    let context = module_diagram_context(files, graph_edges);
+    render_module_dependency_mermaid_with_context(module, &context, graph_availability)
+}
+
+pub(crate) fn render_module_dependency_mermaid_with_context(
+    module: &str,
+    context: &ModuleDiagramContext,
+    graph_availability: CodewikiGraphAvailability,
+) -> DiagramOutcome {
     // Canonicalize and deduplicate before aggregation, traversal, and capping.
     // FalkorDB result order is unstable; equivalent fact sets must still emit
     // byte-identical diagrams and captions.
-    let all_edges = collect_module_dependency_edges(files, graph_edges)
-        .into_iter()
+    let all_edges = context
+        .dependency_edges
+        .iter()
+        .cloned()
         .filter_map(|(source, target)| {
             let source = aggregate_module_for_page(module, &source);
             let target = aggregate_module_for_page(module, &target);
@@ -114,13 +160,24 @@ fn collect_module_dependency_edges(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn render_module_call_sequence(
     module: &str,
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
 ) -> DiagramOutcome {
-    let (component_labels, component_modules) = canonical_component_metadata(files);
+    let context = module_diagram_context(files, graph_edges);
+    render_module_call_sequence_with_context(module, &context, graph_availability)
+}
+
+pub(crate) fn render_module_call_sequence_with_context(
+    module: &str,
+    context: &ModuleDiagramContext,
+    graph_availability: CodewikiGraphAvailability,
+) -> DiagramOutcome {
+    let component_labels = &context.component_labels;
+    let component_modules = &context.component_modules;
     let in_page = |candidate: &str| candidate == module || module_is_ancestor(module, candidate);
     let in_page_components = component_modules
         .iter()
@@ -132,23 +189,20 @@ pub(crate) fn render_module_call_sequence(
 
     // Canonicalize before seed selection, traversal, and capping because graph
     // query order is unstable across equivalent FalkorDB result sets.
-    let all_edges = graph_edges
+    let all_edges = context
+        .call_edges
         .iter()
-        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Call)
-        .filter_map(|edge| {
-            let source_module = component_modules.get(&edge.source_component_id)?;
-            let target_module = component_modules.get(&edge.target_component_id)?;
-            (in_page(source_module) || in_page(target_module)).then(|| {
-                (
-                    edge.source_component_id.clone(),
-                    edge.target_component_id.clone(),
-                )
-            })
+        .filter_map(|(source, target)| {
+            let source_module = component_modules.get(source)?;
+            let target_module = component_modules.get(target)?;
+            (in_page(source_module) || in_page(target_module))
+                .then(|| (source.clone(), target.clone()))
         })
         .collect::<BTreeSet<_>>();
     if all_edges.is_empty() {
         return DiagramOutcome::SparseEvidence;
     }
+    let adjacency = call_adjacency(&all_edges);
 
     let incoming_from_page = all_edges
         .iter()
@@ -166,7 +220,7 @@ pub(crate) fn render_module_call_sequence(
         // fallback seed and keep the first traversal that proves two levels.
         in_page_components.iter().find_map(|seed| {
             let seeds = BTreeSet::from([seed.clone()]);
-            let distances = directed_call_distances(&seeds, &all_edges, MAX_MERMAID_HOPS);
+            let distances = directed_call_distances(&seeds, &adjacency, MAX_MERMAID_HOPS);
             distances
                 .values()
                 .any(|distance| *distance >= 2)
@@ -175,7 +229,7 @@ pub(crate) fn render_module_call_sequence(
     } else {
         Some(directed_call_distances(
             &root_seeds,
-            &all_edges,
+            &adjacency,
             MAX_MERMAID_HOPS,
         ))
     };
@@ -333,7 +387,7 @@ fn canonical_component_metadata(
 
 fn directed_call_distances(
     seeds: &BTreeSet<String>,
-    edges: &BTreeSet<(String, String)>,
+    adjacency: &BTreeMap<String, BTreeSet<String>>,
     max_hops: usize,
 ) -> BTreeMap<String, usize> {
     let mut distances = seeds
@@ -348,7 +402,7 @@ fn directed_call_distances(
         if depth >= max_hops {
             continue;
         }
-        for (_, target) in edges.iter().filter(|(source, _)| source == &current) {
+        for target in adjacency.get(&current).into_iter().flatten() {
             if distances.contains_key(target) {
                 continue;
             }
@@ -358,6 +412,17 @@ fn directed_call_distances(
         }
     }
     distances
+}
+
+fn call_adjacency(edges: &BTreeSet<(String, String)>) -> BTreeMap<String, BTreeSet<String>> {
+    let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
+    for (source, target) in edges {
+        adjacency
+            .entry(source.clone())
+            .or_default()
+            .insert(target.clone());
+    }
+    adjacency
 }
 
 /// Maps an endpoint to the page itself, one direct child, or an external
@@ -476,16 +541,7 @@ fn mermaid_label(module: &str) -> String {
     if module.is_empty() {
         "repo".to_string()
     } else {
-        module
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('[', "&#91;")
-            .replace(']', "&#93;")
-            .replace('(', "&#40;")
-            .replace(')', "&#41;")
-            .replace('{', "&#123;")
-            .replace('}', "&#125;")
-            .replace('|', "&#124;")
+        escape_label(module)
     }
 }
 

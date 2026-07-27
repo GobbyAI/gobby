@@ -24,6 +24,13 @@ from gobby._generated_tool_loop_limits import (
 )
 from gobby.config.feature_base import FeatureCandidateInput
 
+MAX_TURNS_STOP_REASON = "max_turns"
+MAX_TOOL_CALLS_STOP_REASON = "max_tool_calls"
+TIMEOUT_STOP_REASON = "timeout"
+LIMIT_STOP_REASONS = frozenset(
+    {MAX_TURNS_STOP_REASON, MAX_TOOL_CALLS_STOP_REASON, TIMEOUT_STOP_REASON}
+)
+
 if TYPE_CHECKING:
     from gobby.ai._tool_chat_builtins import BuiltinToolSpec, InvocationRecord
     from gobby.ai.registry import AIAdapterStyle, CapabilityBinding
@@ -59,7 +66,7 @@ class ToolLoopLimits:
     max_turns: int | None = DEFAULT_MAX_TURNS
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     max_bytes_per_tool_result: int = DEFAULT_MAX_BYTES_PER_TOOL_RESULT
-    tool_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT_SECONDS
+    tool_timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS
     loop_timeout_seconds: int = DEFAULT_LOOP_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
@@ -121,6 +128,10 @@ class ToolChatRequest:
     builtins: tuple[BuiltinToolSpec, ...] = ()
     allowed_adapter_styles: tuple[AIAdapterStyle, ...] | None = None
     caller: str | None = None
+
+    @property
+    def effective_limits(self) -> ToolLoopLimits:
+        return self.limits or ToolLoopLimits()
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -205,6 +205,7 @@
 - **Confidence:** high (shape); low-med (impact at default scale).
 
 ### [IMPORTANT] `subscribe_agent_completion` re-registers unconditionally — `register()` replaces the Event and drops existing waiters
+
 - **Where:** `CompletionEventRegistry.register` (`events/completion_registry.py`) now merges on collision — subscribers and continuation prompts are combined into the existing entry, and the return value reports fresh-create vs merge for callers that need it (`subscribe_agent_completion`'s `created_fresh_entry`).
 - **Failure mode:** A second subscription for an already-registered run discards the first registration's subscribers; a coroutine blocked in `wait()` on the old Event never wakes.
 - **Resolution:** Fixed in the event-driven `wait_for_agent` epic: `register()` merges instead of replacing, no waiter is dropped, and repeat `wait_for_agent` calls rely on the merge semantics plus ISM dedup for idempotency.

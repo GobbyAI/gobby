@@ -30,7 +30,7 @@ current-context lease for that server/tool pair:
 - **Known leased tool:** call `call_tool` directly.
 - **Known unleased tool:** call `get_tool_schema` directly, then `call_tool`.
 - **Unknown tool name:** call `list_tools`, then fetch the selected schema and call it.
-- **Unknown server or registry inspection:** call `list_mcp_servers`.
+- **Unknown server or registry:** call `list_mcp_servers`.
 
 Call each discovery step as its own native tool; do not invoke `list_tools` or
 `get_tool_schema` through `call_tool`.
@@ -96,7 +96,7 @@ all others are proxied to the downstream MCP server.
 
 Light metadata for tools on a single known server. Use this when the tool name
 is unknown or when explicitly inspecting inventory. Use `list_mcp_servers()`
-only when the server name is unknown or registry inspection is intended.
+only when the server or registry is unknown.
 
 #### `get_tool_schema(server_name, tool_name)`
 

@@ -13,6 +13,7 @@ vi.mock("../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: (eventType: string, handler: AgentEventHandler) => {
     if (eventType === "agent_event") websocket.handler = handler;
   },
+  useWebSocketConnected: () => true,
 }));
 
 vi.mock("../components/activity/SessionsTab.entries", () => ({
@@ -113,9 +114,6 @@ describe("session attention", () => {
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.startsWith("/api/agents/runs?")) {
-          return Promise.resolve(jsonResponse({ runs: [] }));
-        }
         if (url === "/api/attention/roster") {
           return Promise.resolve(
             jsonResponse({
@@ -159,12 +157,20 @@ describe("session attention", () => {
     render(<SessionsTab />);
 
     expect(websocket.handler).not.toBeNull();
-    expect(await screen.findByLabelText("Blocked attention: 1")).toHaveTextContent("blocked 1");
+    expect(
+      await screen.findByLabelText(
+        "Blocked attention: 1; Approval required",
+      ),
+    ).toHaveTextContent("blocked 1");
 
     act(() => {
       websocket.handler?.(attentionEvent("run:run-2", 6, "blocked", "Operator input required"));
     });
-    expect(await screen.findByLabelText("Blocked attention: 2")).toHaveTextContent("blocked 2");
+    expect(
+      await screen.findByLabelText(
+        "Blocked attention: 2; Approval required; Operator input required",
+      ),
+    ).toHaveTextContent("blocked 2");
 
     fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Blocked" }));
@@ -173,7 +179,11 @@ describe("session attention", () => {
     act(() => {
       websocket.handler?.(attentionEvent("run:run-1", 7, null, null));
     });
-    expect(await screen.findByLabelText("Blocked attention: 1")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText(
+        "Blocked attention: 1; Operator input required",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Two-run session")).toBeInTheDocument();
 
     act(() => {

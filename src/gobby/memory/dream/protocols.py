@@ -29,6 +29,7 @@ class MemoryDreamManagerProtocol(Protocol):
         redream_cutoff: str,
         scope: MemoryScope,
         memory_type: str | None = None,
+        limit: int | None = None,
     ) -> list[str]: ...
 
     def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Any]: ...

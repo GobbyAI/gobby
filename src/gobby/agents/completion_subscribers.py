@@ -41,16 +41,19 @@ def subscribe_agent_completion(
     created_fresh_entry = False
     inserted_session_ids: list[str] = []
 
+    def local_persist(target_db: HubDatabase) -> list[str]:
+        from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+
+        manager = CompletionSubscriberManager(db=target_db)
+        return manager.add_completion_subscribers(run_id, subscribers)
+
     if strict:
         if db is None:
             raise SubscriptionPersistenceError(
                 f"Cannot persist completion subscribers for run {run_id}: database unavailable"
             )
         try:
-            from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
-
-            manager = CompletionSubscriberManager(db=db)
-            inserted_session_ids = manager.add_completion_subscribers(run_id, subscribers)
+            inserted_session_ids = local_persist(db)
         except (ImportError, psycopg.DatabaseError) as exc:
             raise SubscriptionPersistenceError(
                 f"Failed to persist completion subscribers for run {run_id}"
@@ -62,19 +65,13 @@ def subscribe_agent_completion(
             created_fresh_entry = completion_registry.register(run_id, subscribers=subscribers)
         if db is not None:
             try:
-                from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
-            except ImportError:
-                logger.debug("Could not load CompletionSubscriberManager", exc_info=True)
-            else:
-                manager = CompletionSubscriberManager(db=db)
-                try:
-                    inserted_session_ids = manager.add_completion_subscribers(run_id, subscribers)
-                except psycopg.DatabaseError:
-                    logger.debug(
-                        "Failed to persist completion subscribers for run %s",
-                        run_id,
-                        exc_info=True,
-                    )
+                inserted_session_ids = local_persist(db)
+            except (ImportError, psycopg.DatabaseError):
+                logger.debug(
+                    "Failed to persist completion subscribers for run %s",
+                    run_id,
+                    exc_info=True,
+                )
 
     return AgentCompletionSubscription(
         subscribers=subscribers,

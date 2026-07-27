@@ -78,7 +78,6 @@ class DreamCandidate:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_accessed_at": self.last_accessed_at,
-            "dream_due_version": self.dream_due_version,
             "reasons": self.reasons,
         }
         if self.related:

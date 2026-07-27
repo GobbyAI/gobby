@@ -238,6 +238,15 @@ def test_recoverable_vector_store_errors(error: BaseException) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_collection_names_uses_public_initialized_accessor(
+    vector_store: VectorStore,
+) -> None:
+    names = await vector_store.list_collection_names()
+
+    assert "test_memories" in names
+
+
+@pytest.mark.asyncio
 async def test_upsert_and_count(vector_store: VectorStore) -> None:
     """upsert() should insert a point; count() should reflect it."""
     await vector_store.upsert(MEM_1, _make_embedding(1.0), {"content": "hello"})
@@ -765,10 +774,16 @@ async def test_rebuild_same_dimension_holds_lifecycle_lock_for_expensive_work() 
         embed_lock_states.append(store._collection_lifecycle_lock.locked())
         return _make_embedding()
 
-    async def batch_upsert(_items: list[tuple[str, list[float], dict[str, object]]]) -> None:
+    async def batch_upsert(
+        _items: list[tuple[str, list[float], dict[str, object]]],
+        collection_name: str | None = None,
+        *,
+        client: object | None = None,
+    ) -> None:
+        del collection_name, client
         upsert_lock_states.append(store._collection_lifecycle_lock.locked())
 
-    store.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
+    store._queries.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
 
     await store.rebuild([{"id": MEM_2, "content": "keep"}], embed_fn)
 
@@ -831,8 +846,10 @@ async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -
     async def batch_upsert(
         items: list[tuple[str, list[float], dict[str, object]]],
         collection_name: str | None = None,
+        **kwargs: object,
     ) -> None:
         nonlocal populated
+        assert kwargs["client"] is client
         assert collection_name == target_name
         assert items[0][0] == MEM_1
         client.update_collection_aliases.assert_not_called()
@@ -848,7 +865,7 @@ async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -
 
     client.create_collection.side_effect = create_collection
     client.update_collection_aliases.side_effect = update_aliases
-    store.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
+    store._queries.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
 
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding()

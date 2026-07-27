@@ -4,7 +4,8 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
-from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
+from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -25,19 +26,31 @@ class WatchdogTranscriptResolver:
         for key in stale_keys:
             del self._path_cache[key]
 
+        session_updated_at = parse_stored_datetime(session.updated_at)
+
+        def is_current_file(path: str) -> bool:
+            try:
+                if not os.path.isfile(path):
+                    return False
+                return session_updated_at is None or os.path.getmtime(path) >= (
+                    session_updated_at.timestamp()
+                )
+            except OSError:
+                return False
+
         stored_path = session.transcript_path
-        if stored_path and stored_path != "missing_transcript" and os.path.isfile(stored_path):
+        if stored_path and stored_path != MISSING_TRANSCRIPT_PATH and is_current_file(stored_path):
             return stored_path
 
         cached_path = self._path_cache.get(cache_key)
-        if cached_path and os.path.isfile(cached_path):
+        if cached_path and is_current_file(cached_path):
             return cached_path
         self._path_cache.pop(cache_key, None)
 
         if not source or not external_id:
             return None
         discovered_path = await asyncio.to_thread(
-            _find_transcript_on_disk,
+            find_transcript_on_disk,
             source,
             external_id,
         )

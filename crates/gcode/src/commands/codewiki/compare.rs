@@ -167,8 +167,9 @@ fn parse_compare_target<'a>(
 }
 
 fn normalize_explicit_git_meta(path: &str) -> anyhow::Result<String> {
+    let normalized_separators = path.replace('\\', "/");
     let mut normalized = PathBuf::new();
-    for component in Path::new(path).components() {
+    for component in Path::new(&normalized_separators).components() {
         match component {
             Component::Normal(part) => normalized.push(part),
             Component::CurDir => {}
@@ -185,7 +186,7 @@ fn normalize_explicit_git_meta(path: &str) -> anyhow::Result<String> {
     Ok(normalized
         .to_str()
         .context("codewiki --compare-to metadata path is not valid UTF-8")?
-        .replace('\\', "/"))
+        .to_string())
 }
 
 fn resolve_commit(project_root: &Path, base_ref: &str) -> anyhow::Result<String> {

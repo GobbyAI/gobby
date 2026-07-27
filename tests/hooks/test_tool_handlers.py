@@ -247,7 +247,7 @@ class TestToolHandlerEdgeCases:
                 return_value="src/gobby/example.py",
             ),
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager",
+                "gobby.hooks.event_handlers._tool.SessionVariableManager",
                 return_value=variable_manager,
             ),
         ):
@@ -291,7 +291,7 @@ class TestToolHandlerEdgeCases:
                 return_value="src/gobby/example.py",
             ),
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager",
+                "gobby.hooks.event_handlers._tool.SessionVariableManager",
                 return_value=variable_manager,
             ),
         ):

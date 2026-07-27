@@ -250,6 +250,43 @@ def test_create_message_with_attachments_links_rows_atomically(
     assert comms_store.list_attachments(persisted.id) == saved_attachments
 
 
+def test_create_message_with_attachments_rolls_back_on_attachment_failure(
+    comms_store: LocalCommunicationsStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_id = _create_test_channel(comms_store)
+    message = CommsMessage(
+        id="",
+        channel_id=channel_id,
+        direction="inbound",
+        content="document caption",
+        content_type="attachment",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="",
+        message_id="",
+        filename="report.pdf",
+        content_type="application/pdf",
+        size_bytes=17,
+        local_path="/tmp/report.pdf",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    def fail_attachment_insert(*_args: object) -> None:
+        raise RuntimeError("attachment insert failed")
+
+    monkeypatch.setattr(comms_store, "_insert_attachment", fail_attachment_insert)
+
+    with pytest.raises(RuntimeError, match="attachment insert failed"):
+        comms_store.create_message_with_attachments(message, [attachment])
+
+    assert comms_store.list_messages(channel_id=channel_id) == []
+    attachment_count = comms_store.db.fetchone("SELECT COUNT(*) AS count FROM comms_attachments")
+    assert attachment_count is not None
+    assert attachment_count["count"] == 0
+
+
 def test_attachment_list_multiple(comms_store: LocalCommunicationsStore) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)

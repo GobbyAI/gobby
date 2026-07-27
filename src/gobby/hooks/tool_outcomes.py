@@ -330,7 +330,7 @@ def normalize_tool_outcome(
         (
             field
             for field in ("tool_output", "tool_result", "tool_response", "contentItems")
-            if field in data
+            if field in data and data[field] is not None
         ),
         None,
     )

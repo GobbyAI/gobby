@@ -142,7 +142,7 @@ class CodexEndpointVisionExtractAdapter:
                 endpoint_name,
                 self._endpoint,
             ),
-            env_overrides=codex_endpoint_app_server_env(self._endpoint),
+            env_overrides=codex_endpoint_app_server_env(endpoint_name, self._endpoint),
         )
         self._start_lock = asyncio.Lock()
 
@@ -154,7 +154,8 @@ class CodexEndpointVisionExtractAdapter:
                 await self._client.start()
 
     async def stop(self) -> None:
-        await self._client.stop()
+        if self._client.is_connected:
+            await self._client.stop()
 
     async def extract(self, request: VisionExtractRequest) -> str:
         await self._ensure_started()

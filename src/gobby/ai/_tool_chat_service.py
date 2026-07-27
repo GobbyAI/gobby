@@ -18,6 +18,7 @@ from dataclasses import replace
 
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
 from gobby.ai._tool_chat_contracts import (
+    LIMIT_STOP_REASONS,
     ToolChatAdapter,
     ToolChatRequest,
     ToolChatResult,
@@ -106,7 +107,7 @@ class ToolChatService:
                     binding,
                     deadline=deadline,
                 )
-                if result.stop_reason in {"max_turns", "max_tool_calls", "timeout"}:
+                if result.stop_reason in LIMIT_STOP_REASONS:
                     logger.info(
                         "tool_chat terminated by limit",
                         extra={

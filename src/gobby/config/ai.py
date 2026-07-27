@@ -40,7 +40,7 @@ class ToolLoopConfig(BaseModel):
         default=DEFAULT_MAX_BYTES_PER_TOOL_RESULT,
         gt=0,
     )
-    tool_timeout_seconds: int = Field(default=DEFAULT_TOOL_TIMEOUT_SECONDS, gt=0)
+    tool_timeout_seconds: float = Field(default=DEFAULT_TOOL_TIMEOUT_SECONDS, gt=0)
     loop_timeout_seconds: int = Field(default=DEFAULT_LOOP_TIMEOUT_SECONDS, gt=0)
 
 

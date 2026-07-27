@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -19,6 +21,47 @@ pytestmark = pytest.mark.unit
 # EXTERNAL_SESSION_ID would fail with `invalid input syntax for type uuid`.
 EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+CLASS_INJECTION_RULE_FILES = (
+    "inject-plan-enhancer-lessons.yaml",
+    "inject-plan-reviewer-lessons.yaml",
+    "inject-planner-lessons.yaml",
+    "inject-qa-reviewer-lessons.yaml",
+)
+
+
+@pytest.mark.parametrize("filename", CLASS_INJECTION_RULE_FILES)
+def test_class_injection_rule_source_uses_canonical_schema(
+    filename: str,
+    temp_db: HubDatabase,
+) -> None:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/rules/review-learning"
+        / filename
+    )
+    source = cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
+    assert {"review-learning", "gobby", "default"} <= set(source["tags"])
+    rules = cast(dict[str, dict[str, Any]], source["rules"])
+    assert len(rules) == 1
+    rule_name, rule = next(iter(rules.items()))
+    assert rule_name.startswith("inject-")
+    assert {
+        "description",
+        "event",
+        "enabled",
+        "priority",
+        "when",
+        "effect",
+    } <= rule.keys()
+    assert rule["when"] == "True"
+    assert "effects" not in rule
+    assert rule["effect"]["type"] == "mcp_call"
+    _sync_bundled(temp_db)
+    row = LocalWorkflowDefinitionManager(temp_db).get_by_name(rule_name)
+    assert row is not None
+    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    assert body.when == "True"
+    assert body.resolved_effects[0].type == "mcp_call"
 
 
 def _sync_bundled(db: HubDatabase) -> None:

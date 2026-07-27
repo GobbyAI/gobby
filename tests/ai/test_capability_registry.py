@@ -247,7 +247,6 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert codex is not None
     assert codex.models == (
         "gpt-5.6-luna",
-        "gpt-5.4-mini",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
     )
@@ -425,7 +424,7 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
 
     assert available_providers == {"claude", "endpoint:lm-studio"}
 
-    assert registry.binding(AICapability.VISION_EXTRACT, "local") is None
+    assert registry.binding(AICapability.VISION_EXTRACT, "endpoint") is None
 
     lm_studio = registry.binding(AICapability.VISION_EXTRACT, "endpoint:lm-studio")
     assert lm_studio is not None

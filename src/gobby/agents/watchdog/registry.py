@@ -8,7 +8,7 @@ from gobby.agents.watchdog.models import KNOWN_WATCHDOG_PROVIDERS
 from gobby.agents.watchdog.qwen import QWEN_WATCHDOG_READER
 from gobby.agents.watchdog.reader import TranscriptWatchdogReader
 
-_READERS: dict[str, TranscriptWatchdogReader | None] = {
+_READERS: dict[str, TranscriptWatchdogReader] = {
     "claude": CLAUDE_WATCHDOG_READER,
     "codex": CODEX_WATCHDOG_READER,
     "droid": DROID_WATCHDOG_READER,

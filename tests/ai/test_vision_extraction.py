@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import ClassVar
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +16,7 @@ from gobby.ai import (
     VisionExtractRequest,
     VisionExtractService,
 )
+from gobby.ai.vision import CodexEndpointVisionExtractAdapter
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import VisionProviderError
 
@@ -29,6 +31,22 @@ class _FakeVisionAdapter:
     async def extract(self, request: VisionExtractRequest) -> str:
         self.requests.append(request)
         return self.text or f"extracted:{request.image_path}"
+
+
+@pytest.mark.asyncio
+async def test_codex_endpoint_vision_stop_only_stops_connected_client() -> None:
+    client = MagicMock()
+    client.is_connected = False
+    client.stop = AsyncMock()
+    adapter = object.__new__(CodexEndpointVisionExtractAdapter)
+    adapter._client = client
+
+    await adapter.stop()
+    client.stop.assert_not_awaited()
+
+    client.is_connected = True
+    await adapter.stop()
+    client.stop.assert_awaited_once_with()
 
 
 class _FakeNativeVisionProvider:

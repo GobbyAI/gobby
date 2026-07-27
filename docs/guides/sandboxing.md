@@ -22,6 +22,11 @@ Backend selection never falls back. If SRT installation, policy validation, or
 preflight fails, the agent run fails before tmux creation. If a provider has no
 provider-native renderer, selecting `provider-native` also fails closed.
 
+Operators who cannot run SRT can explicitly roll managed agents back to the
+provider sandbox with `agent_sandbox.backend: provider-native`. Daemon startup
+warns when the default SRT runtime or its Node.js 20.11+ prerequisite is
+unavailable and includes this rollback setting.
+
 ## Managed SRT Installation
 
 `gobby install` installs `@anthropic-ai/sandbox-runtime` 0.0.66 under

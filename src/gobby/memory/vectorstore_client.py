@@ -36,6 +36,7 @@ _QDRANT_CLIENT_CLOSE_ERRORS = (
     UnexpectedResponse,
     httpx.TransportError,
 )
+_QDRANT_TIMEOUT_HINT_METHODS = frozenset({"query_batch_points", "retrieve"})
 
 type QdrantClientLike = QdrantClient | AsyncQdrantClient
 
@@ -113,13 +114,16 @@ class VectorStoreClient:
     ) -> Any:
         """Execute a client operation using native remote awaits or local offload."""
         method = getattr(client, method_name)
-        if not self.is_remote:
-            return await asyncio.to_thread(method, *args, **kwargs)
-
         budget = timeout if timeout is not None else float(QDRANT_CLIENT_TIMEOUT_SECONDS)
         if budget <= 0:
             raise TimeoutError(f"Qdrant {method_name} deadline expired")
-        if timeout_hint and _accepts_timeout_kwarg(method):
+        if not self.is_remote:
+            async with asyncio.timeout(budget):
+                return await asyncio.to_thread(method, *args, **kwargs)
+
+        if timeout_hint and (
+            method_name in _QDRANT_TIMEOUT_HINT_METHODS or _accepts_timeout_kwarg(method)
+        ):
             kwargs["timeout"] = max(1, math.ceil(budget))
         async with asyncio.timeout(budget):
             result = method(*args, **kwargs)

@@ -3,7 +3,10 @@ import { StrictMode, createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createMockWebSocket, type MockWebSocketInstance } from '../../test/mocks/websocket'
-import { useTmuxSessions } from '../useTmuxSessions'
+import {
+  TMUX_REQUEST_TIMEOUT_MS,
+  useTmuxSessions,
+} from '../useTmuxSessions'
 
 type WireMessage = Record<string, unknown>
 
@@ -336,6 +339,75 @@ describe('useTmuxSessions', () => {
     expect(result.current.isLoading).toBe(false)
     expect(result.current.attachError).toBe('Create failed')
     expect(result.current.createdSession).toBeNull()
+    unmount()
+  })
+
+  it('times out correlated attach, detach, and create requests', () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions())
+    const ws = mockWs.instances[0]
+    open(ws)
+    ws.send.mockClear()
+
+    act(() => result.current.attachSession('worker', 'default'))
+    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS))
+    expect(result.current.requestPending).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.attachError).toBe('attach request timed out')
+
+    act(() => {
+      result.current.clearAttachError()
+      result.current.attachSession('worker', 'default')
+    })
+    respondToAttach(
+      ws,
+      requestId(ws, 'tmux_attach'),
+      'worker',
+      'default',
+      'stream-timeout',
+    )
+    act(() => result.current.detachSession())
+    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS))
+    expect(result.current.requestPending).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.attachError).toBe('detach request timed out')
+    expect(result.current.streamingId).toBe('stream-timeout')
+
+    act(() => {
+      result.current.clearAttachError()
+      result.current.createSession()
+    })
+    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS))
+    expect(result.current.requestPending).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.attachError).toBe('create request timed out')
+    unmount()
+  })
+
+  it('keeps loading active when list and kill results arrive during a request', () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions())
+    const ws = mockWs.instances[0]
+    open(ws)
+
+    act(() => result.current.attachSession('worker', 'default'))
+    const attachId = requestId(ws, 'tmux_attach')
+    expect(result.current.isLoading).toBe(true)
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'tmux_sessions_list',
+        sessions: [{ name: 'worker', socket: 'default' }],
+      })
+      ws.simulateMessage({
+        type: 'tmux_kill_result',
+        request_id: 'unrelated-kill',
+        success: true,
+      })
+    })
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.requestPending).toBe(true)
+
+    respondToAttach(ws, attachId, 'worker', 'default', 'stream-loaded')
+    expect(result.current.isLoading).toBe(false)
     unmount()
   })
 

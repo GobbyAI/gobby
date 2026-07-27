@@ -1,3 +1,13 @@
+use aho_corasick::AhoCorasick;
+
+use super::citations::{has_text_match_boundaries, markdown_without_fenced_code};
+use super::*;
+use std::fs::FileTimes;
+use std::time::{Duration, UNIX_EPOCH};
+
+use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
+use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+
 fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
     let needle = needle.trim();
     if needle.is_empty() {
@@ -9,16 +19,6 @@ fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
         .find_overlapping_iter(&markdown)
         .any(|matched| has_text_match_boundaries(&markdown, matched.start(), matched.end()))
 }
-
-use aho_corasick::AhoCorasick;
-
-use super::citations::{has_text_match_boundaries, markdown_without_fenced_code};
-use super::*;
-use std::fs::FileTimes;
-use std::time::{Duration, UNIX_EPOCH};
-
-use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
-use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 
 #[test]
 fn run_demotes_stale_detected_pages_to_stale_lifecycle() {
@@ -218,6 +218,7 @@ fn duplicate_concepts_detect_alias_prefix_and_distinct_pairs() {
     for (relative, title, aliases) in [
         ("knowledge/concepts/cache-a.md", "Cache", ""),
         ("knowledge/concepts/cache-b.md", "Cache", ""),
+        ("knowledge/concepts/cache-c.md", "Cache", ""),
         (
             "knowledge/concepts/alpha.md",
             "Alpha",
@@ -259,6 +260,7 @@ fn duplicate_concepts_detect_alias_prefix_and_distinct_pairs() {
                 == vec![
                     PathBuf::from("knowledge/concepts/cache-a.md"),
                     PathBuf::from("knowledge/concepts/cache-b.md"),
+                    PathBuf::from("knowledge/concepts/cache-c.md"),
                 ]
     }));
     assert!(report.duplicate_concepts.iter().any(|duplicate| {

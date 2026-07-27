@@ -43,6 +43,8 @@ class AdapterLifecycleOperations:
 
     def __init__(self, manager: CommunicationsManager) -> None:
         self._manager = manager
+        self._adapter_generations: dict[str, int] = {}
+        self._config_update_locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
@@ -112,6 +114,7 @@ class AdapterLifecycleOperations:
         if adapter_cls is None:
             raise ValueError(f"No adapter registered for channel type {channel.channel_type!r}")
         adapter = adapter_cls()
+        adapter_generation = self._adapter_generations.get(channel.id, 0)
 
         def on_rate_limit(duration: float, is_global: bool = False, cid: str = channel.id) -> None:
             if is_global:
@@ -133,9 +136,30 @@ class AdapterLifecycleOperations:
         )
 
         async def update_config(values: dict[str, Any]) -> None:
-            channel.config_json.update(values)
-            channel.updated_at = datetime.now(UTC)
-            await asyncio.to_thread(manager._store.update_channel, channel)
+            lock = self._config_update_locks.setdefault(channel.id, asyncio.Lock())
+            async with lock:
+                if self._adapter_generations.get(channel.id, 0) != adapter_generation:
+                    logger.debug(
+                        "Ignoring stale adapter configuration update",
+                        extra={
+                            "channel_id": channel.id,
+                            "channel_name": channel.name,
+                            "adapter_generation": adapter_generation,
+                        },
+                    )
+                    return
+                stored = await asyncio.to_thread(manager._store.get_channel, channel.id)
+                if stored is None:
+                    logger.warning(
+                        "Ignoring adapter configuration update for missing channel",
+                        extra={"channel_id": channel.id, "channel_name": channel.name},
+                    )
+                    return
+                stored.config_json.update(values)
+                stored.updated_at = datetime.now(UTC)
+                updated = await asyncio.to_thread(manager._store.update_channel, stored)
+                channel.config_json = dict(updated.config_json)
+                channel.updated_at = updated.updated_at
 
         adapter.set_config_update_callback(update_config)
 
@@ -309,35 +333,38 @@ class AdapterLifecycleOperations:
     ) -> ChannelConfig:
         """Update channel config and reconcile runtime adapter state."""
         manager = self._manager
-        if secrets:
-            for key, value in secrets.items():
-                if not value:
-                    continue
-                secret_name = _integration_secret_name(channel.channel_type, key, channel.name)
-                await asyncio.to_thread(
-                    manager._secret_store.set,
-                    name=secret_name,
-                    plaintext_value=str(value),
-                    category="integration",
-                    description=f"{channel.channel_type} channel '{channel.name}': {key}",
-                )
-                secret_ref = f"$secret:{secret_name}"
-                if key == "webhook_secret":
-                    channel.webhook_secret = secret_ref
-                else:
-                    channel.config_json[key] = secret_ref
+        lock = self._config_update_locks.setdefault(channel.id, asyncio.Lock())
+        async with lock:
+            self._adapter_generations[channel.id] = self._adapter_generations.get(channel.id, 0) + 1
+            if secrets:
+                for key, value in secrets.items():
+                    if not value:
+                        continue
+                    secret_name = _integration_secret_name(channel.channel_type, key, channel.name)
+                    await asyncio.to_thread(
+                        manager._secret_store.set,
+                        name=secret_name,
+                        plaintext_value=str(value),
+                        category="integration",
+                        description=f"{channel.channel_type} channel '{channel.name}': {key}",
+                    )
+                    secret_ref = f"$secret:{secret_name}"
+                    if key == "webhook_secret":
+                        channel.webhook_secret = secret_ref
+                    else:
+                        channel.config_json[key] = secret_ref
 
-        channel.updated_at = datetime.now(UTC)
-        updated = await asyncio.to_thread(manager._store.update_channel, channel)
+            channel.updated_at = datetime.now(UTC)
+            updated = await asyncio.to_thread(manager._store.update_channel, channel)
 
-        current_names = [
-            name for name, cached in manager._channel_by_name.items() if cached.id == updated.id
-        ]
-        if updated.name not in current_names:
-            current_names.append(updated.name)
+            current_names = [
+                name for name, cached in manager._channel_by_name.items() if cached.id == updated.id
+            ]
+            if updated.name not in current_names:
+                current_names.append(updated.name)
 
-        for name in current_names:
-            await self.deactivate_channel(name, updated)
+            for name in current_names:
+                await self.deactivate_channel(name, updated)
 
         if not updated.enabled:
             return updated

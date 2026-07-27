@@ -147,13 +147,7 @@ struct ResolvedEmbeddingAiContext {
 
 fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiContext> {
     if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
-        let mut source = match ai_source_for_conn(&mut conn) {
-            Ok(source) => source,
-            Err(error) => {
-                log::warn!("failed to resolve effective AI config: {error}");
-                return None;
-            }
-        };
+        let mut source = effective_ai_source(ai_source_for_conn(&mut conn))?;
         let context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
         let direct_config = gobby_core::config::resolve_embedding_config_from_binding(
             &mut source,
@@ -165,13 +159,7 @@ fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiCont
         });
     }
 
-    let mut source = match ai_source_without_primary() {
-        Ok(source) => source,
-        Err(error) => {
-            log::warn!("failed to resolve effective AI config: {error}");
-            return None;
-        }
-    };
+    let mut source = effective_ai_source(ai_source_without_primary())?;
     let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
     if let Some(embedding) = &ctx.embedding {
         context.bindings.embed.api_base = Some(embedding.api_base.clone());
@@ -187,6 +175,16 @@ fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiCont
         context,
         direct_config,
     })
+}
+
+fn effective_ai_source<T>(source: anyhow::Result<T>) -> Option<T> {
+    match source {
+        Ok(source) => Some(source),
+        Err(error) => {
+            log::warn!("failed to resolve effective AI config: {error}");
+            None
+        }
+    }
 }
 
 pub fn embedding_client(

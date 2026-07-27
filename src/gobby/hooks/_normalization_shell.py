@@ -74,6 +74,7 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
     # Heredoc delimiters awaiting their body: (delimiter, strip_leading_tabs).
     pending_heredocs: list[tuple[str, bool]] = []
     heredoc_operator: str | None = None
+    logical_continuation = False
 
     def flush() -> None:
         nonlocal quoted, heredoc_operator
@@ -119,6 +120,9 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
             continue
 
         if char == "\\":
+            if index + 1 < len(command) and command[index + 1] == "\n":
+                index += 2
+                continue
             quoted = True
             escaped = True
             index += 1
@@ -140,9 +144,13 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
         if operator:
             flush()
             tokens.append(ShellToken(operator))
-            if operator == "\n" and pending_heredocs:
-                index = _skip_heredoc_bodies(command, index + 1, pending_heredocs)
-                continue
+            if operator == "\n":
+                if pending_heredocs and not logical_continuation:
+                    index = _skip_heredoc_bodies(command, index + 1, pending_heredocs)
+                    continue
+                logical_continuation = False
+            elif operator in {"&&", "||", "|"}:
+                logical_continuation = True
             if operator in _HEREDOC_OPERATORS:
                 heredoc_operator = operator
             index += len(operator)

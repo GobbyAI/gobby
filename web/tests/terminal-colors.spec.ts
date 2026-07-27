@@ -250,7 +250,7 @@ async function openTerminalTab(page: Page): Promise<void> {
 async function chooseTerminalSession(page: Page, name: string): Promise<void> {
   const picker = page.getByRole("combobox", { name: "Terminal session" });
   await picker.click();
-  await page.getByRole("option", { name: new RegExp(name) }).click();
+  await page.getByRole("option", { name, exact: true }).click();
   await expect(picker).toContainText(name);
 }
 

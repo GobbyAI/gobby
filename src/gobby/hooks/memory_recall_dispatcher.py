@@ -8,6 +8,7 @@ import copy
 import logging
 import threading
 import time
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.memory.manager import MemoryManager
     from gobby.storage.hub.protocol import HubDatabase
+
+_MAX_DEDUPE_WATERMARKS = 4_096
 
 
 class MemoryRecallDispatcher:
@@ -40,6 +43,7 @@ class MemoryRecallDispatcher:
         self._loop = loop
         self._logger = logger
         self._tasks: dict[tuple[str, int], concurrent.futures.Future[Any]] = {}
+        self._dedupe_watermarks: OrderedDict[tuple[str, int], None] = OrderedDict()
         self._lock = threading.Lock()
         self._closing = False
 
@@ -52,6 +56,7 @@ class MemoryRecallDispatcher:
         if config is None or self._memory_manager is None or self._database is None:
             return
 
+        parent_turn_seq: int | None = None
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
@@ -67,11 +72,13 @@ class MemoryRecallDispatcher:
                     self._logger.debug("Skipping deferred memory recall during shutdown")
                     return
                 self._prune_tasks(session_id, parent_turn_seq)
-                if key in self._tasks:
+                if key in self._dedupe_watermarks:
                     self._logger.debug(
-                        "Memory recall already scheduled for session=%s parent_turn_seq=%s",
-                        session_id,
-                        parent_turn_seq,
+                        "Memory recall already scheduled",
+                        extra={
+                            "session_id": session_id,
+                            "parent_turn_seq": parent_turn_seq,
+                        },
                     )
                     return
 
@@ -85,8 +92,20 @@ class MemoryRecallDispatcher:
                 )
                 if future is not None:
                     self._tasks[key] = future
+                    self._dedupe_watermarks[key] = None
+                    self._dedupe_watermarks.move_to_end(key)
+                    self._evict_dedupe_watermarks()
         except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
-            self._logger.warning("Daemon memory recall scheduling failed: %s", exc)
+            self._logger.warning(
+                "Daemon memory recall scheduling failed",
+                extra={
+                    "session_id": session_id,
+                    "parent_turn_seq": (
+                        parent_turn_seq if isinstance(parent_turn_seq, int) else None
+                    ),
+                    "error": str(exc),
+                },
+            )
 
     def shutdown(self) -> None:
         """Cancel and drain deferred recall work from a synchronous context."""
@@ -146,9 +165,28 @@ class MemoryRecallDispatcher:
 
     def _prune_tasks(self, session_id: str, parent_turn_seq: int) -> None:
         for key, future in list(self._tasks.items()):
-            key_session_id, key_turn_seq = key
-            if key_session_id == session_id and key_turn_seq < parent_turn_seq and future.done():
+            if future.done():
                 del self._tasks[key]
+                self._logger.debug(
+                    "Pruned completed deferred memory recall",
+                    extra={
+                        "session_id": key[0],
+                        "parent_turn_seq": key[1],
+                    },
+                )
+        for key in tuple(self._dedupe_watermarks):
+            if key[0] == session_id and key[1] < parent_turn_seq and key not in self._tasks:
+                self._dedupe_watermarks.pop(key, None)
+
+    def _evict_dedupe_watermarks(self) -> None:
+        while len(self._dedupe_watermarks) > _MAX_DEDUPE_WATERMARKS:
+            removable = next(
+                (key for key in self._dedupe_watermarks if key not in self._tasks),
+                None,
+            )
+            if removable is None:
+                return
+            self._dedupe_watermarks.pop(removable, None)
 
     def _schedule_task(
         self,

@@ -8,19 +8,21 @@ import json
 import logging
 import os
 import shutil
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from gobby.agents.sandbox_policy import secure_policy_directory
 from gobby.paths import get_gobby_home
+from gobby.sync.jsonl_io import export_file_lock
 from gobby.utils.dependency_requirements import (
     SRT_RELEASE,
     node_dependency_status,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, SandboxResolver
 
@@ -102,6 +104,13 @@ def srt_install_root() -> Path:
     return get_gobby_home() / "tools" / "srt" / SRT_RELEASE.version
 
 
+@contextmanager
+def srt_install_lock() -> Iterator[None]:
+    """Serialize installation and verification of the pinned SRT version."""
+    with export_file_lock(srt_install_root()):
+        yield
+
+
 def _raise_srt_lockout(
     reason: str,
     *,
@@ -125,13 +134,13 @@ def _raise_srt_lockout(
     raise error
 
 
-def verify_srt_installation(
+def verify_srt_installation_locked(
     *,
     run_id: str | None = None,
     provider: str | None = None,
     policy_hash: str | None = None,
 ) -> SrtInstallation:
-    """Verify the pinned package, receipt, runner, and absolute Node runtime."""
+    """Verify the pinned runtime while the caller holds :func:`srt_install_lock`."""
     try:
         root = srt_install_root().resolve(strict=False)
     except OSError as exc:
@@ -216,6 +225,21 @@ def verify_srt_installation(
         )
     node = Path(node_status.path)
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
+
+
+def verify_srt_installation(
+    *,
+    run_id: str | None = None,
+    provider: str | None = None,
+    policy_hash: str | None = None,
+) -> SrtInstallation:
+    """Serialize and verify the pinned package, receipt, runner, and Node runtime."""
+    with srt_install_lock():
+        return verify_srt_installation_locked(
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
 
 
 def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:

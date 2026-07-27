@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -9,16 +10,24 @@ from typing import Any, Protocol
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.ai._tool_chat_contracts import (
+    LIMIT_STOP_REASONS,
+    MAX_TOOL_CALLS_STOP_REASON,
+    MAX_TURNS_STOP_REASON,
     ToolChatRequest,
     ToolChatResult,
-    ToolLoopLimits,
 )
-from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime, validate_policy
+from gobby.ai._tool_chat_tools import (
+    ToolPolicyError,
+    ToolRuntime,
+    tool_result_is_error,
+    validate_policy,
+)
 from gobby.ai.codex_endpoint import (
     codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
     codex_event_text,
 )
+from gobby.ai.endpoints import resolve_generation_endpoint
 from gobby.ai.registry import (
     AICapability,
     CapabilityBinding,
@@ -133,7 +142,7 @@ def _dynamic_tool_specs(runtime: ToolRuntime) -> list[dict[str, Any]]:
 
 
 def _is_tool_error(text: str) -> bool:
-    return text.startswith("[error") or '"ok":false' in text
+    return tool_result_is_error(text)
 
 
 def _capability_error(
@@ -195,12 +204,12 @@ class CodexSpawnToolChatAdapter:
         if binding.metadata.get("wire_api") == "responses":
             if self._config is None or not isinstance(endpoint_name, str):
                 raise ValueError("Responses tool_chat binding is missing endpoint configuration")
-            endpoint = self._config.ai.generation.endpoints[endpoint_name]
+            endpoint = resolve_generation_endpoint(self._config, endpoint_name)
             config_overrides = (
                 *codex_endpoint_config_overrides(endpoint_name, endpoint, model=model),
                 *_NATIVE_TOOL_DISABLE_OVERRIDES,
             )
-            env_overrides.update(codex_endpoint_app_server_env(endpoint))
+            env_overrides.update(codex_endpoint_app_server_env(endpoint_name, endpoint))
         return {
             "codex_command": self._resolve_command_path(),
             "config_overrides": config_overrides,
@@ -214,7 +223,7 @@ class CodexSpawnToolChatAdapter:
         binding: CapabilityBinding,
     ) -> ToolChatResult:
         validate_policy(request.tool_policy)
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
@@ -232,14 +241,23 @@ class CodexSpawnToolChatAdapter:
             _method: str,
             _params: dict[str, Any],
         ) -> None:
-            nonlocal turns
+            nonlocal stop_reason, turns
             turns += 1
+            if limits.max_turns is None or turns < limits.max_turns or stop_reason != "completed":
+                return
+            stop_reason = MAX_TURNS_STOP_REASON
+            current_turn_id = _params.get("turnId")
+            if thread_id and isinstance(current_turn_id, str):
+                asyncio.create_task(
+                    client.interrupt_turn(thread_id, current_turn_id),
+                    name=f"tool-chat-max-turns:{current_turn_id}",
+                )
 
         async def handle_dynamic_tool(params: dict[str, Any]) -> dict[str, Any]:
             nonlocal stop_reason
             current_turn_id = params.get("turnId")
             if limits.max_turns is not None and turns >= limits.max_turns:
-                stop_reason = "max_turns"
+                stop_reason = MAX_TURNS_STOP_REASON
                 if thread_id and isinstance(current_turn_id, str):
                     await client.interrupt_turn(thread_id, current_turn_id)
                 result_text = "[error: max_turns exhausted before tool execution]"
@@ -248,7 +266,7 @@ class CodexSpawnToolChatAdapter:
                     "success": False,
                 }
             if runtime.budget_exhausted:
-                stop_reason = "max_tool_calls"
+                stop_reason = MAX_TOOL_CALLS_STOP_REASON
                 if thread_id and isinstance(current_turn_id, str):
                     await client.interrupt_turn(thread_id, current_turn_id)
                 result_text = "[error: max_tool_calls exhausted before tool execution]"
@@ -273,11 +291,52 @@ class CodexSpawnToolChatAdapter:
                 "success": not _is_tool_error(result_text),
             }
 
-        client.register_request_handler(_DYNAMIC_TOOL_METHOD, handle_dynamic_tool)
-        client.add_notification_handler(_RAW_RESPONSE_COMPLETED, record_raw_response)
+        client_started = False
+        request_handler_registered = False
+        notification_handler_registered = False
+
+        async def cleanup_client(*, suppress_errors: bool) -> None:
+            cleanup_error: BaseException | None = None
+            if notification_handler_registered:
+                try:
+                    client.remove_notification_handler(
+                        _RAW_RESPONSE_COMPLETED,
+                        record_raw_response,
+                    )
+                except BaseException as exc:
+                    cleanup_error = exc
+            if request_handler_registered:
+                try:
+                    client.remove_request_handler(_DYNAMIC_TOOL_METHOD)
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+            if client_started:
+                try:
+                    await client.stop()
+                except BaseException as exc:
+                    cleanup_error = cleanup_error or exc
+            if cleanup_error is None:
+                return
+            if suppress_errors:
+                logger.warning(
+                    "Codex tool_chat cleanup failed while preserving the active exception",
+                    exc_info=(
+                        type(cleanup_error),
+                        cleanup_error,
+                        cleanup_error.__traceback__,
+                    ),
+                )
+                return
+            raise cleanup_error
+
         try:
             try:
                 await client.start()
+                client_started = True
+                client.register_request_handler(_DYNAMIC_TOOL_METHOD, handle_dynamic_tool)
+                request_handler_registered = True
+                client.add_notification_handler(_RAW_RESPONSE_COMPLETED, record_raw_response)
+                notification_handler_registered = True
                 thread = await client.start_thread(
                     cwd=request.project_path,
                     model=model,
@@ -303,13 +362,11 @@ class CodexSpawnToolChatAdapter:
                     candidate = codex_event_text(event)
                     if candidate:
                         text = candidate
-        finally:
-            client.remove_notification_handler(
-                _RAW_RESPONSE_COMPLETED,
-                record_raw_response,
-            )
-            client.remove_request_handler(_DYNAMIC_TOOL_METHOD)
-            await client.stop()
+        except BaseException:
+            await cleanup_client(suppress_errors=True)
+            raise
+        else:
+            await cleanup_client(suppress_errors=False)
 
         if turns == 0:
             raise _capability_error(
@@ -337,6 +394,6 @@ class CodexSpawnToolChatAdapter:
             stop_reason=stop_reason,
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,
-            budget_exhausted=stop_reason in {"max_turns", "max_tool_calls"},
+            budget_exhausted=stop_reason in LIMIT_STOP_REASONS,
             trace_available=True,
         )

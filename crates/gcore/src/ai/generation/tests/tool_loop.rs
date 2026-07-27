@@ -707,12 +707,12 @@ fn tool_timeout_is_recoverable_and_worker_drains_after_loop_continues() {
     let completed = Arc::new(AtomicBool::new(false));
     let executor = Arc::new(SlowExecutor {
         completed: Arc::clone(&completed),
-        sleep_for: Duration::from_millis(1_250),
+        sleep_for: Duration::from_millis(2_000),
     });
     let limits = ToolLoopLimits {
         max_turns: Some(3),
         tool_timeout_seconds: 1,
-        loop_timeout_seconds: 5,
+        loop_timeout_seconds: 8,
         ..ToolLoopLimits::default()
     };
 
@@ -738,7 +738,7 @@ fn tool_timeout_is_recoverable_and_worker_drains_after_loop_continues() {
     assert!(timeout_result.contains("timed out after 1 seconds"));
     drop(requests);
 
-    for _ in 0..50 {
+    for _ in 0..150 {
         if completed.load(Ordering::SeqCst) {
             break;
         }

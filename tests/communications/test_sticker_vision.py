@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -132,6 +133,42 @@ async def test_sticker_vision_failure_does_not_drop_message(tmp_path: Path) -> N
     service.extract = AsyncMock(side_effect=RuntimeError("provider unavailable"))
     message = _message()
     message.metadata_json["telegram_sticker"]["format"] = "static"
+
+    await apply_sticker_vision(
+        message,
+        [_attachment(sticker, "image/webp")],
+        service,
+    )
+
+    assert message.content == "Telegram sticker 🦡"
+    assert message.metadata_json["sticker_vision_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_sticker_vision_timeout_uses_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sticker = tmp_path / "sticker.webp"
+    sticker.write_bytes(b"image")
+    service = MagicMock()
+
+    async def slow_extract(*_args: object, **_kwargs: object) -> VisionExtractResult:
+        await asyncio.sleep(10)
+        return VisionExtractResult(
+            text="late",
+            capability=AICapability.VISION_EXTRACT,
+            provider="test",
+            model="test",
+        )
+
+    service.extract = AsyncMock(side_effect=slow_extract)
+    message = _message()
+    message.metadata_json["telegram_sticker"]["format"] = "static"
+    monkeypatch.setattr(
+        "gobby.communications.sticker_vision._STICKER_VISION_TIMEOUT_SECONDS",
+        0.001,
+    )
 
     await apply_sticker_vision(
         message,

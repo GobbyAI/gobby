@@ -101,7 +101,7 @@ class InboundCommunications:
                         )
                         reaction_dedupe_checked = True
                         if existing_reaction is not None:
-                            handled.append(message)
+                            handled.append(existing_reaction)
                             continue
                     if manager.reaction_handler and message.identity_id:
                         try:
@@ -121,7 +121,7 @@ class InboundCommunications:
                         message.platform_message_id,
                     )
                     if existing is not None:
-                        handled.append(message)
+                        handled.append(existing)
                         continue
 
                 if message.identity_id:
@@ -166,6 +166,7 @@ class InboundCommunications:
                     message,
                     downloaded_attachments,
                     manager.get_voice_transcriber(),
+                    timeout_seconds=manager.voice_transcription_timeout_seconds,
                 )
                 await apply_sticker_vision(
                     message,

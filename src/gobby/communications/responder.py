@@ -13,7 +13,9 @@ from gobby.communications.models import ChannelConfig, CommsMessage
 
 logger = logging.getLogger(__name__)
 
-_COMMANDS = frozenset({"start", "new", "reset", "stop", "status", "help"})
+_COMMANDS = frozenset({"new", "reset", "stop", "status", "help"})
+_MAX_PENDING_TURNS_PER_CONVERSATION = 8
+_BUSY_RESPONSE = "This conversation is busy. Try again after a pending response finishes."
 
 
 class CommunicationsManagerProtocol(Protocol):
@@ -72,12 +74,16 @@ class ConversationTurnQueue:
     def __init__(self) -> None:
         self._tails: dict[str, asyncio.Task[None]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._pending_counts: dict[str, int] = {}
 
     def enqueue(
         self,
         conversation_key: str,
         callback: Callable[[], Awaitable[None]],
-    ) -> asyncio.Task[None]:
+    ) -> asyncio.Task[None] | None:
+        pending_count = self._pending_counts.get(conversation_key, 0)
+        if pending_count >= _MAX_PENDING_TURNS_PER_CONVERSATION:
+            return None
         previous = self._tails.get(conversation_key)
 
         async def run_after_previous() -> None:
@@ -100,9 +106,15 @@ class ConversationTurnQueue:
         )
         self._tails[conversation_key] = task
         self._tasks.add(task)
+        self._pending_counts[conversation_key] = pending_count + 1
 
         def finish(completed: asyncio.Task[None]) -> None:
             self._tasks.discard(completed)
+            remaining = self._pending_counts.get(conversation_key, 1) - 1
+            if remaining > 0:
+                self._pending_counts[conversation_key] = remaining
+            else:
+                self._pending_counts.pop(conversation_key, None)
             if self._tails.get(conversation_key) is completed:
                 self._tails.pop(conversation_key, None)
             if completed.cancelled():
@@ -195,10 +207,13 @@ class CommunicationsResponder:
             return None
 
         conversation_key = f"{channel.id}:{context.conversation_id}"
-        return self._turn_queue.enqueue(
+        task = self._turn_queue.enqueue(
             conversation_key,
             lambda: self._run_turn(context),
         )
+        if task is None:
+            await self._deliver_response(context, _BUSY_RESPONSE)
+        return task
 
     async def drain(self) -> None:
         """Wait for all queued responder turns."""

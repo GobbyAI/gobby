@@ -161,6 +161,8 @@ class VectorStoreMaintenance:
         stale_delete_strategy: StaleDeleteStrategy = "precompute",
     ) -> None:
         """Re-embed memories, replace stale points, and activate dimension changes."""
+        if stale_delete_strategy not in ("precompute", "streaming"):
+            raise ValueError("stale_delete_strategy must be 'precompute' or 'streaming'")
         store = self._store
         async with store._rebuild_lock:
             client = await store._ensure_initialized()
@@ -173,10 +175,6 @@ class VectorStoreMaintenance:
                 try:
                     batch_size = 500
                     total = 0
-                    if stale_delete_strategy not in ("precompute", "streaming"):
-                        raise ValueError(
-                            "stale_delete_strategy must be 'precompute' or 'streaming'"
-                        )
                     incoming_ids: set[str] = (
                         {str(memory["id"]) for memory in memories}
                         if stale_delete_strategy == "precompute"
@@ -194,22 +192,21 @@ class VectorStoreMaintenance:
                         }
                         batch.append((memory_id, embedding, payload))
                         if len(batch) >= batch_size:
-                            if plan.target_name == store._collection_name:
-                                await store.batch_upsert(batch)
-                            else:
-                                await store.batch_upsert(
-                                    batch,
-                                    collection_name=plan.target_name,
-                                )
+                            await store._queries.batch_upsert(
+                                batch,
+                                collection_name=plan.target_name,
+                                client=client,
+                            )
                             total += len(batch)
                             logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
                             batch = []
 
                     if batch:
-                        if plan.target_name == store._collection_name:
-                            await store.batch_upsert(batch)
-                        else:
-                            await store.batch_upsert(batch, collection_name=plan.target_name)
+                        await store._queries.batch_upsert(
+                            batch,
+                            collection_name=plan.target_name,
+                            client=client,
+                        )
                         total += len(batch)
 
                     if not plan.target_is_empty:

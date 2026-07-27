@@ -214,7 +214,7 @@ instructions: |
     internal lane research is the only allowed subagent use.
   - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
   - Do NOT pass session_id to mcp__gobby__call_tool; ambient MCP context supplies your current session.
 
 workflows:
@@ -323,6 +323,9 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
+      - "gobby-plans:apply_plan_review_manifest"
+      - "gobby-plans:finalize_plan_review_evidence"
+      - "gobby-plans:checkpoint_plan_review_lesson_mint"
       - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"

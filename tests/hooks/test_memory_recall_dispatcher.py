@@ -18,7 +18,10 @@ from gobby.hooks.memory_recall_delivery import (
     MEMORY_RECALL_DELIVERIES_VARIABLE,
     MemoryRecallDeliveryQueue,
 )
-from gobby.hooks.memory_recall_dispatcher import MemoryRecallDispatcher
+from gobby.hooks.memory_recall_dispatcher import (
+    _MAX_DEDUPE_WATERMARKS,
+    MemoryRecallDispatcher,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.memories import Memory, MemoryType
@@ -91,17 +94,18 @@ def _event() -> HookEvent:
 
 
 def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
-    db.execute(
-        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
-        "ON CONFLICT (id) DO NOTHING",
-        (PROJECT_ID, "test-project"),
-    )
-    db.execute(
-        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, "
-        "updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
-        "ON CONFLICT (id) DO NOTHING",
-        (session_id, "external-hook-session", "machine-1", "claude", PROJECT_ID),
-    )
+    with db.transaction() as txn:
+        txn.execute(
+            "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (id) DO NOTHING",
+            (PROJECT_ID, "test-project"),
+        )
+        txn.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, "
+            "updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (id) DO NOTHING",
+            (session_id, "external-hook-session", "machine-1", "claude", PROJECT_ID),
+        )
 
 
 def _make_dispatcher(
@@ -280,6 +284,44 @@ def test_schedule_skips_duplicate_turn(
     dispatcher.schedule(_event())
 
     assert scheduled == [(SESSION_ID, 3)]
+
+
+def test_schedule_bounds_dedupe_watermarks_across_many_single_turn_sessions(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = _make_dispatcher(
+        temp_db,
+        FakeMemoryManager([]),
+        FakeLLMService({"memory_ids": []}),
+    )
+
+    monkeypatch.setattr(
+        SessionVariableManager,
+        "get_variables",
+        lambda _self, _session_id: {"parent_turn_seq": 1},
+    )
+
+    def schedule_task(
+        _key: tuple[str, int],
+        coro: Any,
+    ) -> concurrent.futures.Future[Any]:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        future.set_result(None)
+        return future
+
+    monkeypatch.setattr(dispatcher, "_schedule_task", schedule_task)
+
+    for index in range(_MAX_DEDUPE_WATERMARKS + 1):
+        event = _event()
+        event.metadata["_platform_session_id"] = f"session-{index}"
+        dispatcher.schedule(event)
+
+    assert len(dispatcher._dedupe_watermarks) == _MAX_DEDUPE_WATERMARKS
+    assert len(dispatcher._tasks) == 1
 
 
 def test_shutdown_uses_shared_deadline(

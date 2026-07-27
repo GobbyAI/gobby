@@ -461,6 +461,7 @@ class MemoryDreamStore:
                        AND project_id = %s
                        AND is_global = %s
                        AND id != %s
+                       AND deleted_at IS NULL
                      LIMIT 1
                     """,
                     (normalized_content, selected_project_id, selected_is_global, memory_id),
@@ -487,7 +488,7 @@ class MemoryDreamStore:
                         """,
                         (normalized_content, _json(tags), utc_now(), stamp, memory_id),
                     )
-            else:
+            elif action == "promote":
                 conn.execute(
                     """
                     UPDATE memories
@@ -497,6 +498,8 @@ class MemoryDreamStore:
                     """,
                     (stamp, memory_id),
                 )
+            else:
+                raise ValueError(f"Unsupported dream action: {action}")
 
             after_row = conn.execute(
                 "SELECT * FROM memories WHERE id = %s", (memory_id,)

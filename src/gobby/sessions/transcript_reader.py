@@ -44,7 +44,7 @@ from gobby.sessions.transcript_parsing import (
     _get_parser,
     _parsed_to_dicts,
 )
-from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
 from gobby.sessions.transcript_source import _resolve_effective_source
 from gobby.sessions.transcript_status import get_transcript_status_for_session
 from gobby.sessions.transcript_window import (
@@ -409,13 +409,13 @@ class TranscriptReader:
         """Return a valid transcript path, re-deriving and persisting it when needed."""
         if (
             transcript_path
-            and transcript_path != "missing_transcript"
+            and transcript_path != MISSING_TRANSCRIPT_PATH
             and os.path.isfile(transcript_path)
         ):
             return transcript_path
 
         external_id = getattr(session, "external_id", None)
-        derived = await asyncio.to_thread(_find_transcript_on_disk, source, external_id or "")
+        derived = await asyncio.to_thread(find_transcript_on_disk, source, external_id or "")
         if not derived:
             return None
 

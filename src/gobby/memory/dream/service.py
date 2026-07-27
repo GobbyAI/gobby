@@ -779,14 +779,17 @@ class MemoryDreamService:
         related_session: RelatedEvidenceSession,
     ) -> dict[str, Any]:
         scope = options.memory_scope(include_global=include_global)
+        candidate_limit = self.dream_config.dry_run_max_candidates
         candidate_ids = await asyncio.to_thread(
             self.memory_manager.list_dream_candidate_ids,
             redream_cutoff=redream_cutoff,
             scope=scope,
             memory_type=options.memory_type,
+            limit=candidate_limit + 1,
         )
+        candidates_truncated = len(candidate_ids) > candidate_limit
+        candidate_ids = candidate_ids[:candidate_limit]
         totals = _SweepTotals()
-        all_actions: list[dict[str, Any]] = []
         for offset in range(0, len(candidate_ids), page_size):
             page_ids = candidate_ids[offset : offset + page_size]
             candidates = await list_sweep_candidates(
@@ -831,12 +834,23 @@ class MemoryDreamService:
                 reconcile_after_apply=False,
             )
             totals.add_page(len(candidates), actions, page_summary, raw_plan_metadata)
-            all_actions.extend(action.to_dict() for action in actions)
+        action_count = sum(totals.action_counts.values())
         summary = totals.to_summary()
         summary["dry_run"] = True
-        summary["planned_actions"] = all_actions[:MAX_ACTION_SAMPLE]
+        summary["planned_actions"] = totals.action_sample
+        summary["planned_action_count"] = action_count
+        summary["candidates_truncated"] = candidates_truncated
+        summary["candidate_limit"] = candidate_limit
         plan = totals.to_plan()
-        plan.update({"dry_run": True, "actions": all_actions})
+        plan.update(
+            {
+                "dry_run": True,
+                "actions": totals.action_sample,
+                "action_count": action_count,
+                "candidates_truncated": candidates_truncated,
+                "candidate_limit": candidate_limit,
+            }
+        )
         completed_ts = datetime.now(UTC).isoformat()
         run = await asyncio.to_thread(
             self.store.update_run,

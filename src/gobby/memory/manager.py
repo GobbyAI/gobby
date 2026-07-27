@@ -41,6 +41,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, MemoryScope
 
 if TYPE_CHECKING:
+    from gobby.projects.fenced_vector_store import VectorWriteFence
+
+if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
@@ -81,7 +84,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
         max_graph_deterministic_attempts: int = 3,
-        project_write_fence: Any | None = None,
+        project_write_fence: VectorWriteFence | None = None,
     ):
         self.db = db
         self.config = config

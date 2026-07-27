@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 from gobby.projects.purge import (
+    PROJECT_PURGE_CONCURRENCY,
     PROJECT_PURGE_HANDLER_NAME,
     PROJECT_PURGE_JOB_NAME,
     ProjectPurgeService,
@@ -53,7 +55,11 @@ class FakeTransaction:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> SimpleNamespace:
         del params
-        table = sql.split("FROM ", 1)[1].split()[0]
+        _head, separator, tail = sql.partition("FROM ")
+        if not separator:
+            statement = sql.strip().split(maxsplit=1)[0]
+            raise AssertionError(f"Unsupported SQL statement in fake transaction: {statement}")
+        table = tail.split()[0]
         self.events.append(f"sql:{table}")
         if table == "projects":
             self.projects.hard_deleted = True
@@ -266,17 +272,28 @@ async def test_daily_handler_isolates_failures_and_bounds_id_lists() -> None:
             self.projects = SimpleNamespace(
                 list_purge_candidates=lambda _cutoff: [
                     FakeProject(f"p{i}", f"project-{i}", datetime.now(UTC) - timedelta(days=31))
-                    for i in range(13)
+                    for i in range(15)
                 ]
             )
+            self.active = 0
+            self.max_active = 0
+            self.batch_full = asyncio.Event()
 
         async def purge_project(self, project_id: str) -> PurgeOutcome:
             self.calls.append(project_id)
-            if project_id == "p5":
-                raise RuntimeError("unexpected service failure")
-            if project_id in {"p1", "p11"}:
-                return PurgeOutcome.failed(project_id, "derived cleanup failed")
-            return PurgeOutcome.purged(project_id)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if self.active == PROJECT_PURGE_CONCURRENCY:
+                self.batch_full.set()
+            try:
+                await self.batch_full.wait()
+                if project_id == "p5":
+                    raise RuntimeError("unexpected service failure")
+                if project_id in {"p1", "p11"}:
+                    return PurgeOutcome.failed(project_id, "derived cleanup failed")
+                return PurgeOutcome.purged(project_id)
+            finally:
+                self.active -= 1
 
     service = BatchService()
     handler = create_project_purge_handler(service)
@@ -284,11 +301,12 @@ async def test_daily_handler_isolates_failures_and_bounds_id_lists() -> None:
 
     assert result["success"] is False
     assert result["status"] == "failed"
-    assert result["purged_count"] == 10
+    assert result["purged_count"] == 12
     assert result["failed_count"] == 3
     assert len(result["purged"]) == 10
     assert result["failed"] == ["p1", "p5", "p11"]
-    assert service.calls[-1] == "p12"
+    assert set(service.calls) == {f"p{i}" for i in range(15)}
+    assert service.max_active == PROJECT_PURGE_CONCURRENCY
 
 
 def test_purge_cron_registration_preserves_disabled_state_and_wakes_enabled_null() -> None:

@@ -22,6 +22,7 @@ rules:
         tool: recall_review_lessons_for_files
         arguments:
           file_paths_json: "{{ event.data.get('canonical_file_paths', []) | tojson }}"
+          session_id: "{{ event.metadata.get('_platform_session_id') or event.session_id }}"
           limit: 3
         background: false
         inject_result: true

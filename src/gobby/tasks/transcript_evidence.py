@@ -17,7 +17,7 @@ from gobby.config.validation_detection import (
 )
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines, _iter_jsonl_lines
-from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_paths import find_transcript_on_disk
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
@@ -269,7 +269,7 @@ def _resolve_transcript_path(
         if Path(session.transcript_path).is_file():
             return session.transcript_path, attempted
 
-    discovered = _find_transcript_on_disk(session.source, session.external_id)
+    discovered = find_transcript_on_disk(session.source, session.external_id)
     if discovered:
         attempted.append(discovered)
         if Path(discovered).is_file():

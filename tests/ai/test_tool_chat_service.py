@@ -24,6 +24,7 @@ from gobby.ai._tool_chat_builtins import (
     BuiltinToolSpec,
 )
 from gobby.ai._tool_chat_contracts import (
+    LIMIT_STOP_REASONS,
     ToolChatRequest,
     ToolChatResult,
     ToolLoopLimits,
@@ -93,6 +94,16 @@ def _request(**overrides: Any) -> ToolChatRequest:
         ),
         **overrides,
     )
+
+
+def test_tool_chat_request_exposes_effective_limits_and_shared_stop_reasons() -> None:
+    default_request = _request()
+    custom_limits = ToolLoopLimits(max_turns=3, tool_timeout_seconds=0.25)
+    custom_request = _request(limits=custom_limits)
+
+    assert default_request.effective_limits == ToolLoopLimits()
+    assert custom_request.effective_limits is custom_limits
+    assert LIMIT_STOP_REASONS == frozenset({"max_turns", "max_tool_calls", "timeout"})
 
 
 @pytest.mark.asyncio
@@ -208,14 +219,32 @@ async def test_no_available_candidate_raises_without_fallback() -> None:
 class _SlowAdapter:
     """A tool_chat adapter that blocks past the candidate timeout."""
 
-    def __init__(self, label: str, *, delay: float = 5.0) -> None:
+    def __init__(
+        self,
+        label: str,
+        *,
+        delay: float = 5.0,
+        unavailable: bool = False,
+    ) -> None:
         self.label = label
         self.delay = delay
+        self.unavailable = unavailable
         self.calls = 0
+        self.elapsed: list[float] = []
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
         self.calls += 1
-        await asyncio.sleep(self.delay)
+        started = asyncio.get_running_loop().time()
+        try:
+            await asyncio.sleep(self.delay)
+            if self.unavailable:
+                raise CapabilityUnavailableError(
+                    AICapability.TOOL_CHAT,
+                    provider=binding.provider,
+                    reason=f"{self.label} unavailable",
+                )
+        finally:
+            self.elapsed.append(asyncio.get_running_loop().time() - started)
         return ToolChatResult(text=f"narrative::{self.label}", tool_use_count=0, turns=1)
 
 
@@ -224,11 +253,33 @@ class _FailingAdapter:
         raise RuntimeError("adapter broke")
 
 
-def test_tool_chat_service_uses_one_canonical_request_deadline() -> None:
-    limits = ToolLoopLimits(loop_timeout_seconds=600)
-    service = ToolChatService(_registry(), default_limits=limits)
+@pytest.mark.asyncio
+async def test_tool_chat_service_uses_one_canonical_request_deadline() -> None:
+    first = _SlowAdapter("first", delay=0.35, unavailable=True)
+    second = _SlowAdapter("second")
+    service = ToolChatService(
+        _registry(),
+        adapters={
+            AIAdapterStyle.LLM_PROVIDER: first,
+            AIAdapterStyle.OPENAI_COMPATIBLE: second,
+        },
+    )
+    started = asyncio.get_running_loop().time()
 
-    assert service._default_limits == limits
+    with pytest.raises(_CandidateTimeoutError, match="timed out after 1s"):
+        await service.chat_result(
+            _request(
+                candidates=("claude/haiku", "endpoint:lm-studio/gemma"),
+                limits=ToolLoopLimits(loop_timeout_seconds=1),
+            )
+        )
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert first.calls == 1
+    assert second.calls == 1
+    assert 0.8 <= elapsed < 1.3
+    assert first.elapsed[0] >= 0.3
+    assert second.elapsed[0] < 0.85
 
 
 @pytest.mark.asyncio

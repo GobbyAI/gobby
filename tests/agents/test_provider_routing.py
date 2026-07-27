@@ -11,8 +11,10 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 
+pytestmark = pytest.mark.unit
 
-class MutableRegistry:
+
+class StaticRegistry:
     def __init__(self, manifests: dict[str, str]) -> None:
         self._manifests = {
             provider: compile_manifest(content) for provider, content in manifests.items()
@@ -54,7 +56,7 @@ contains = ["{marker} idle"]
 
 
 def test_multi_and_unknown_provider(caplog: pytest.LogCaptureFixture) -> None:
-    registry = MutableRegistry(
+    registry = StaticRegistry(
         {
             "claude": _manifest("claude", "alpha"),
             "codex": _manifest("codex", "beta"),

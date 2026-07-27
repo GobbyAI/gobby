@@ -16,6 +16,7 @@ from gobby.sessions.transcript_index import (
     load_index_sidecar,
 )
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
+from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcripts import get_parser
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ class ProcessorLifecycleMixin:
             if (
                 not isinstance(transcript_path, str)
                 or not transcript_path
-                or transcript_path == "missing_transcript"
+                or transcript_path == MISSING_TRANSCRIPT_PATH
             ):
                 return SessionFlushResult(
                     flushed=False, error="Codex session transcript is unavailable"

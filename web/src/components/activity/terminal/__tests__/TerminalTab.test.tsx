@@ -65,12 +65,6 @@ vi.mock("../TerminalView", () => ({
         <button type="button" onClick={() => props.onReady?.(31, 97)}>
           Renderer ready
         </button>
-        <button type="button" onClick={() => props.onReady?.(31, 97)}>
-          Replacement renderer ready
-        </button>
-        <button type="button" onClick={() => props.onReady?.(31, 97)}>
-          Retry renderer ready
-        </button>
         <button type="button" onClick={() => props.onProtocolResponse?.("\u001b[6n")}>
           Protocol reply
         </button>
@@ -371,13 +365,16 @@ describe("attach lifecycle", () => {
 });
 
 describe("ready handshake repaint", () => {
-  it("keeps attaching until view readiness and repaints every replacement renderer", async () => {
+  it("keeps attaching until view readiness and repaints each keyed replacement", async () => {
     const user = userEvent.setup();
     const tmux = makeTmuxSession({ name: "wide" });
     hookState = makeHookState({ sessionsLoaded: true, sessions: [tmux] });
     const rendered = render(<TerminalTab />);
 
     expect(await screen.findByText("Attaching terminal…")).toBeInTheDocument();
+    const pendingMountId = screen
+      .getByRole("log", { name: "Terminal output (read-only)" })
+      .getAttribute("data-mount-id");
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).not.toHaveBeenCalled();
 
@@ -388,6 +385,10 @@ describe("ready handshake repaint", () => {
       requestPending: false,
     };
     rendered.rerender(<TerminalTab />);
+    const attachedMountId = screen
+      .getByRole("log", { name: "Terminal output (read-only)" })
+      .getAttribute("data-mount-id");
+    expect(attachedMountId).not.toBe(pendingMountId);
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
@@ -397,12 +398,18 @@ describe("ready handshake repaint", () => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "Replacement renderer ready" }));
+    hookState = {
+      ...hookState,
+      streamingId: "stream-replacement",
+    };
+    rendered.rerender(<TerminalTab />);
+    const replacementMountId = screen
+      .getByRole("log", { name: "Terminal output (read-only)" })
+      .getAttribute("data-mount-id");
+    expect(replacementMountId).not.toBe(attachedMountId);
+    expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
-    expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
-
-    await user.click(screen.getByRole("button", { name: "Retry renderer ready" }));
-    expect(hookState.resizeTerminal).toHaveBeenCalledTimes(3);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
   });
 

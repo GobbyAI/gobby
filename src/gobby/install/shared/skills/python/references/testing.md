@@ -154,5 +154,6 @@ GOBBY_TEST_PROTECT=1 uv run pytest <tests> -q
 ```
 
 Match the repo's validation gates before closing work. If you changed tests, run
-any configured test-quality audit and `gobby test-types audit` ratchet for those
-files.
+any configured test-quality audit and
+`uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new`
+ratchet for those files.

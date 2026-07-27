@@ -70,6 +70,7 @@ describe('ChatInput attachments', () => {
     vi.stubGlobal('XMLHttpRequest', originalXHR)
     vi.stubGlobal('FileReader', originalFileReader)
     vi.stubGlobal('fetch', originalFetch)
+    vi.unstubAllGlobals()
   })
 
   it('uploads selected files with multipart form data without FileReader base64', async () => {
@@ -230,5 +231,36 @@ describe('ChatInput attachments', () => {
     rerender(<ChatInput onSend={onSend} projectId="proj-1" attachmentsDisabled />)
 
     await waitFor(() => expect(abortSpy).toHaveBeenCalled())
+  })
+
+  it('removes queued images when image support is disabled and preserves other files', async () => {
+    const createObjectURL = vi.fn(() => 'blob:image-preview')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    vi.mocked(crypto.randomUUID)
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
+    const onSend = vi.fn()
+    const { container, rerender } = render(
+      <ChatInput onSend={onSend} projectId="proj-1" imagesDisabled={false} />,
+    )
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const image = new File(['image'], 'diagram.png', { type: 'image/png' })
+    const text = new File(['text'], 'notes.txt', { type: 'text/plain' })
+
+    fireEvent.change(input, { target: { files: [image, text] } })
+    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(2))
+    const imageAbort = vi.spyOn(MockXMLHttpRequest.instances[0], 'abort')
+    const textAbort = vi.spyOn(MockXMLHttpRequest.instances[1], 'abort')
+
+    rerender(<ChatInput onSend={onSend} projectId="proj-1" imagesDisabled />)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Remove diagram.png' })).toBeNull()
+    })
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument()
+    expect(imageAbort).toHaveBeenCalledOnce()
+    expect(textAbort).not.toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:image-preview')
   })
 })

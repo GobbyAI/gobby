@@ -24,6 +24,7 @@ from gobby.ai._tool_chat_codex import CodexSpawnToolChatAdapter
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
 from gobby.ai._tool_chat_droid import (
     DroidProtocolError,
+    DroidRpcClient,
     DroidSpawnToolChatAdapter,
     _request_message,
     _version_tuple,
@@ -31,6 +32,7 @@ from gobby.ai._tool_chat_droid import (
 from gobby.ai._tool_chat_mcp_server import ToolLoopController, ToolRuntimeMCPServer
 from gobby.ai._tool_chat_tools import ToolRuntime
 from gobby.ai.registry import CapabilityUnavailableError
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -179,6 +181,34 @@ class FakeCodexClient:
                 self.tool_results.append(await self.handler(payload))
 
 
+class CleanupFailingCodexClient(FakeCodexClient):
+    async def start_thread(
+        self,
+        cwd: str | None = None,
+        model: str | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
+        ephemeral: bool = False,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+        experimental_raw_events: bool = False,
+    ) -> FakeCodexThread:
+        raise RuntimeError("start-thread-primary")
+
+    def remove_notification_handler(
+        self,
+        _method: str,
+        _handler: Callable[[str, dict[str, Any]], None],
+    ) -> None:
+        raise RuntimeError("notification-cleanup-secondary")
+
+    def remove_request_handler(self, _method: str) -> None:
+        raise RuntimeError("request-cleanup-secondary")
+
+    async def stop(self) -> None:
+        raise RuntimeError("stop-cleanup-secondary")
+
+
 class FakeCodexFactory:
     def __init__(self, client: FakeCodexClient) -> None:
         self.client = client
@@ -217,7 +247,7 @@ def _codex_final(text: str) -> tuple[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_codex_allows_natural_answer_on_last_turn_and_cleans_up(
+async def test_codex_stops_at_turn_cap_and_cleans_up(
     tmp_path: Path,
 ) -> None:
     calls: list[dict[str, Any]] = []
@@ -235,7 +265,8 @@ async def test_codex_allows_natural_answer_on_last_turn_and_cleans_up(
         _binding("codex", AIAdapterStyle.DAEMON),
     )
 
-    assert result.text == "done"
+    assert result.text == ""
+    assert result.stop_reason == "max_turns"
     assert result.turns == 2
     assert result.calls_used == 1
     assert result.tools == {"lookup": 1}
@@ -253,6 +284,81 @@ async def test_codex_allows_natural_answer_on_last_turn_and_cleans_up(
     assert "features.browser_use=false" in overrides
     assert "features.multi_agent=false" in overrides
     assert "tools.web_search=false" in overrides
+
+
+@pytest.mark.asyncio
+async def test_codex_tool_free_turn_cap_interrupts_active_turn(tmp_path: Path) -> None:
+    client = FakeCodexClient(
+        [
+            (
+                "event",
+                {
+                    "type": "rawResponse/completed",
+                    "turnId": "turn-tool-free",
+                },
+            )
+        ]
+    )
+    adapter = CodexSpawnToolChatAdapter(
+        command_path="codex",
+        client_factory=FakeCodexFactory(client),
+    )
+
+    result = await adapter.chat(
+        _request(tmp_path, [], limits=ToolLoopLimits(max_turns=1)),
+        _binding("codex", AIAdapterStyle.DAEMON),
+    )
+    await asyncio.sleep(0)
+
+    assert result.stop_reason == "max_turns"
+    assert result.turns == 1
+    assert client.interrupts == [("thread-fixture", "turn-tool-free")]
+
+
+@pytest.mark.asyncio
+async def test_codex_startup_error_is_not_replaced_by_cleanup_failures(
+    tmp_path: Path,
+) -> None:
+    client = CleanupFailingCodexClient([])
+    adapter = CodexSpawnToolChatAdapter(
+        command_path="codex",
+        client_factory=FakeCodexFactory(client),
+    )
+
+    with pytest.raises(RuntimeError, match="start-thread-primary"):
+        await adapter.chat(
+            _request(tmp_path, [], limits=ToolLoopLimits()),
+            _binding("codex", AIAdapterStyle.DAEMON),
+        )
+
+
+def test_codex_responses_binding_uses_descriptive_endpoint_resolution() -> None:
+    binding = CapabilityBinding(
+        capability=AICapability.TOOL_CHAT,
+        provider="endpoint:missing",
+        adapter_style=AIAdapterStyle.DAEMON,
+        available=True,
+        models=("fixture-model",),
+        metadata={"wire_api": "responses", "endpoint": "missing"},
+    )
+    adapter = CodexSpawnToolChatAdapter(
+        command_path="codex",
+        config=DaemonConfig(),
+    )
+
+    with pytest.raises(ValueError, match="missing"):
+        adapter._client_options(binding, model="fixture-model")
+
+
+def test_spawn_module_exports_every_public_adapter() -> None:
+    from gobby.ai import _tool_chat_spawn
+
+    assert set(_tool_chat_spawn.__all__) == {
+        "CodexSpawnToolChatAdapter",
+        "DroidSpawnToolChatAdapter",
+        "GrokSpawnToolChatAdapter",
+        "QwenSpawnToolChatAdapter",
+    }
 
 
 @pytest.mark.asyncio
@@ -407,6 +513,7 @@ class FakeDroidClient:
         self.interrupts = 0
         self.stopped = False
         self.tool_results: list[dict[str, Any]] = []
+        self.mcp_ready = asyncio.Event()
         self._scenario_task: asyncio.Task[None] | None = None
         self._observer: Callable[[dict[str, Any]], None] | None = None
 
@@ -427,6 +534,7 @@ class FakeDroidClient:
             server = servers[0]
             assert isinstance(server, dict)
             self.mcp = server
+            self.mcp_ready.set()
             return {"sessionId": "fixture"}
         if method == "droid.list_tools":
             return {
@@ -483,8 +591,7 @@ class FakeDroidClient:
                         },
                     }
                 )
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
+                await self.mcp_ready.wait()
                 self.tool_results.append(await self._call_mcp(turn))
             else:
                 await self._notify(
@@ -535,6 +642,19 @@ class FakeDroidClient:
         await self.notifications.put(event)
 
 
+class HangingDroidClient(FakeDroidClient):
+    async def request(self, method: str, params: Mapping[str, object]) -> object:
+        if method == "droid.initialize_session":
+            await asyncio.Event().wait()
+        return await super().request(method, params)
+
+
+class StopFailingDroidClient(FakeDroidClient):
+    async def stop(self) -> None:
+        await super().stop()
+        raise RuntimeError("client stop failed")
+
+
 class FakeDroidFactory:
     def __init__(self, client: FakeDroidClient) -> None:
         self.client = client
@@ -568,11 +688,87 @@ async def test_droid_uses_bearer_mcp_and_disables_all_native_tools(
     assert calls == [{"query": "turn-1"}]
     assert client.native_disabled is True
     assert client.stopped is True
-    assert factory.options["cwd"] != tmp_path
+    assert Path(str(factory.options["cwd"])) != tmp_path
     assert client.mcp is not None
     headers = client.mcp["headers"]
     assert isinstance(headers, list)
     assert str(headers[0]["value"]).startswith("Bearer ")
+
+
+@pytest.mark.asyncio
+async def test_droid_unknown_server_request_receives_method_not_found(
+    tmp_path: Path,
+) -> None:
+    client = DroidRpcClient(command_path="droid", cwd=tmp_path, env={})
+
+    with patch.object(client, "_write", new_callable=AsyncMock) as write:
+        await client._dispatch(
+            {
+                "type": "request",
+                "id": "request-1",
+                "method": "future.unhandled",
+            }
+        )
+
+    await_args = write.await_args
+    assert await_args is not None
+    payload = await_args.args[0]
+    assert payload["id"] == "request-1"
+    assert payload["error"] == {
+        "code": -32601,
+        "message": "Method not found: future.unhandled",
+    }
+
+
+@pytest.mark.asyncio
+async def test_droid_loop_deadline_covers_stalled_requests(tmp_path: Path) -> None:
+    client = HangingDroidClient([])
+    adapter = DroidSpawnToolChatAdapter(
+        command_path="droid",
+        client_factory=FakeDroidFactory(client),
+    )
+    started = asyncio.get_running_loop().time()
+
+    result = await adapter.chat(
+        _request(
+            tmp_path,
+            [],
+            limits=ToolLoopLimits(loop_timeout_seconds=1),
+        ),
+        _binding("droid", AIAdapterStyle.CLI),
+    )
+
+    assert result.stop_reason == "timeout"
+    assert asyncio.get_running_loop().time() - started < 1.3
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_droid_server_stops_even_when_client_stop_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StopFailingDroidClient(["done"])
+    adapter = DroidSpawnToolChatAdapter(
+        command_path="droid",
+        client_factory=FakeDroidFactory(client),
+    )
+    server_stopped = asyncio.Event()
+    original_stop = ToolRuntimeMCPServer.stop
+
+    async def recording_stop(server: ToolRuntimeMCPServer) -> None:
+        server_stopped.set()
+        await original_stop(server)
+
+    monkeypatch.setattr(ToolRuntimeMCPServer, "stop", recording_stop)
+
+    with pytest.raises(RuntimeError, match="client stop failed"):
+        await adapter.chat(
+            _request(tmp_path, [], limits=ToolLoopLimits()),
+            _binding("droid", AIAdapterStyle.CLI),
+        )
+
+    assert server_stopped.is_set()
 
 
 @pytest.mark.asyncio
@@ -683,3 +879,34 @@ async def test_droid_mcp_server_rejects_missing_bearer_token(tmp_path: Path) -> 
             assert response.status == 401
     finally:
         await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_droid_mcp_server_closes_socket_when_runner_cleanup_raises(
+    tmp_path: Path,
+) -> None:
+    runtime = ToolRuntime(
+        ToolPolicy(cli="gcode", tools=("search",)),
+        project_path=str(tmp_path),
+        limits=ToolLoopLimits(),
+    )
+    server = ToolRuntimeMCPServer(runtime, ToolLoopController(ToolLoopLimits()))
+    await server.start()
+    socket = server._socket
+    runner = server._runner
+    assert socket is not None
+    assert runner is not None
+
+    with (
+        patch.object(
+            type(runner),
+            "cleanup",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("cleanup failed"),
+        ),
+        pytest.raises(RuntimeError, match="cleanup failed"),
+    ):
+        await server.stop()
+
+    assert socket.fileno() == -1
+    assert server._socket is None

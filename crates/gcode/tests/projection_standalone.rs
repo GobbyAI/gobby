@@ -247,7 +247,7 @@ fn run_gcode(
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_QDRANT_URL", qdrant_url)
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
-        .env("GOBBY_RUNTIME_MODE", "standalone")
+        .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
         .arg("--no-freshness")
         .arg("--format")
         .arg("json")

@@ -101,6 +101,24 @@ def test_tool_name_for_normalizes_hyphens() -> None:
     assert tool_name_for("gcode", "search-symbol") == "gcode_search_symbol"
 
 
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ("[error: policy denied]", True),
+        ('{"success": false, "error": "failed"}', True),
+        ('{"ok": false}', True),
+        ('{"error_code": "tool_failed"}', True),
+        ('{"success": true}', False),
+        ("plain output", False),
+    ],
+)
+def test_tool_result_error_classification_is_shared_and_typed(
+    result: str,
+    expected: bool,
+) -> None:
+    assert tools.tool_result_is_error(result) is expected
+
+
 def test_resolve_maps_tool_name_to_subcommand() -> None:
     runtime = ToolRuntime(ToolPolicy(cli="gcode", tools=("search-symbol",)), project_path="/tmp")
     assert runtime.resolve("gcode_search_symbol") == "search-symbol"
@@ -175,8 +193,6 @@ async def test_run_argv_caps_bytes(tmp_path: object) -> None:
     out = await run_argv(["/bin/echo", "x" * 100], cwd=str(tmp_path), timeout=5.0, byte_cap=10)
     assert out == "x" * 10
     assert len(out.encode("utf-8")) == 10
-    # 10 bytes of payload kept before the truncation marker.
-    assert out.split("\n")[0] == "x" * 10
 
 
 @pytest.mark.asyncio

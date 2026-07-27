@@ -39,6 +39,7 @@ import {
 } from "../../../lib/providerModels";
 import { formatRelativeTime } from "../../../utils/formatTime";
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
+import { showActivityTab } from "../activityEvents";
 import { Switch } from "../../ui/Switch";
 import { WikiPageReader } from "./WikiPageReader";
 import { fetchPages, type WikiFetchScope, type WikiPagesResult } from "./WikiTabData";
@@ -397,9 +398,7 @@ export function WikiResearchMode({
   };
 
   const openPipelinesTab = () => {
-    window.dispatchEvent(
-      new CustomEvent("gobby:show-activity-tab", { detail: { tab: "pipelines" } }),
-    );
+    showActivityTab("pipelines");
   };
 
   // ── Reader takeover for run reports ─────────────────────────────

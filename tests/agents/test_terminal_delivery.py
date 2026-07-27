@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -68,6 +69,39 @@ async def test_terminal_delivery_admission_close_blocks_new_scope() -> None:
     assert invoked is False
 
 
+def test_terminal_delivery_fallback_runs_off_calling_thread() -> None:
+    caller_thread = threading.get_ident()
+
+    future = terminal_delivery.submit_terminal_delivery_offload(threading.get_ident)
+
+    assert future.result(timeout=1) != caller_thread
+
+
+async def test_terminal_delivery_closed_admission_can_raise_explicit_error() -> None:
+    invoked = False
+
+    async def operation() -> str:
+        nonlocal invoked
+        invoked = True
+        return "unexpected"
+
+    terminal_delivery.close_terminal_delivery_admission()
+    try:
+        with pytest.raises(
+            terminal_delivery.TerminalDeliveryAdmissionClosedError,
+            match="run-closed-strict",
+        ):
+            await terminal_delivery.shielded_terminal_delivery(
+                "run-closed-strict",
+                operation,
+                raise_if_closed=True,
+            )
+    finally:
+        terminal_delivery.reopen_terminal_delivery_admission()
+
+    assert invoked is False
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -116,6 +150,32 @@ async def test_terminal_delivery_without_map_retains_rows_and_cleans_registry() 
 
     assert db.executed == []
     assert registry.cleaned == ["run-1"]
+
+
+class FailingCompletionRegistry(AcknowledgingCompletionRegistry):
+    async def notify(
+        self,
+        completion_id: str,
+        result: dict[str, object],
+        message: str = "",
+    ) -> dict[str, bool] | None:
+        raise RuntimeError(f"notify failed for {completion_id}: {result!r} {message}")
+
+
+async def test_terminal_delivery_notify_failure_preserves_registry_state() -> None:
+    registry = FailingCompletionRegistry(None)
+
+    delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
+        db=cast("HubDatabase", RecordingDb()),
+        completion_registry=cast(Any, registry),
+        run_id="run-1",
+        result={"status": "completed"},
+        message="Agent completed",
+        run_db=AsyncMock(),
+    )
+
+    assert delivery is None
+    assert registry.cleaned == []
 
 
 async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(

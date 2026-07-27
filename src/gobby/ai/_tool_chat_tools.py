@@ -21,6 +21,7 @@ derived from the caller's policy.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import time
@@ -154,6 +155,21 @@ _TOOL_DESCRIPTIONS: dict[tuple[str, str], str] = {
 
 class ToolPolicyError(ValueError):
     """Raised when a policy is invalid or a tool call violates the policy."""
+
+
+def tool_result_is_error(text: str) -> bool:
+    """Classify text and typed JSON tool failures consistently across adapters."""
+    if text.lstrip().lower().startswith("[error"):
+        return True
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(payload, dict) and (
+        payload.get("success") is False
+        or payload.get("ok") is False
+        or (isinstance(payload.get("error_code"), str) and bool(payload.get("error_code")))
+    )
 
 
 def _is_readonly(cli: str, subcommand: str) -> bool:

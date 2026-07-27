@@ -13,9 +13,12 @@ import logging
 import math
 import shutil
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+
+if TYPE_CHECKING:
+    from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -480,11 +483,9 @@ def _persist_embedding_config(
         )
 
 
-def _managed_embedding_collections_exist(config_store: Any) -> bool:
+def _managed_embedding_collections_exist(config_store: ConfigStore) -> bool:
     """Prove whether any managed active or staged vector collection already exists."""
     import asyncio
-
-    from qdrant_client import AsyncQdrantClient
 
     from gobby.config.app import load_config
     from gobby.memory.collection_names import CollectionNameResolver
@@ -499,14 +500,8 @@ def _managed_embedding_collections_exist(config_store: Any) -> bool:
             embedding_dim=config.embeddings.dim,
         )
         try:
-            client = await vector_store._ensure_initialized()
-            if isinstance(client, AsyncQdrantClient):
-                response = await client.get_collections()
-            else:
-                response = await asyncio.to_thread(client.get_collections)
             names = CollectionNameResolver()
-            for item in response.collections:
-                collection_name = str(item.name)
+            for collection_name in await vector_store.list_collection_names():
                 parsed = names.parse_physical_name(collection_name)
                 kind = parsed[0] if parsed is not None else collection_name
                 if kind in names.kinds:
@@ -518,6 +513,10 @@ def _managed_embedding_collections_exist(config_store: Any) -> bool:
     try:
         return asyncio.run(_inspect())
     except Exception as exc:
+        logger.exception(
+            "Failed to inspect managed embedding collections before configuration mutation",
+            extra={"operation": "managed_embedding_collection_inspection"},
+        )
         raise EmbeddingConfigMutationBlocked(
             "Unable to prove a first embedding bootstrap because managed collection state "
             "could not be inspected"

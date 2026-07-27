@@ -46,11 +46,10 @@ pub(crate) struct GenerateDocsOptions<'g, 'r> {
     /// leave `None` to omit the deprecations page, exactly like `system_model`.
     pub audit: Option<&'r AuditContext>,
     pub generate: Option<&'r mut TextGenerator<'g>>,
-    /// Tool-loop aggregate generator (#978). When present, the aggregate-tier
-    /// pages (repo overview, architecture, curated navigation/concept/
-    /// narrative) are produced by the gcode tool loop and hard-fail on a
-    /// tool-loop failure; leaf pages always use one-shot `generate`.
-    /// `None` (tests / AI off) falls the aggregates back to the one-shot path.
+    /// Tool-loop aggregate generator (#978). When present, repo overview and
+    /// architecture pages are produced by the gcode tool loop and hard-fail on
+    /// a tool-loop failure; leaf and curated pages use one-shot `generate`.
+    /// `None` (tests / AI off) falls those aggregates back to one-shot generation.
     pub tool_loop: Option<&'r mut ToolLoopGenerator<'g>>,
     pub verify: Option<&'r mut TextVerifier<'g>>,
     pub ai_depth: AiDepth,
@@ -163,6 +162,7 @@ pub(crate) fn generate_hierarchical_docs(
     let generate = &mut generate;
     let tool_loop = &mut tool_loop;
     let verify = &mut verify;
+    let reuse_enabled = reuse.is_some();
     let reuse = &mut reuse;
     let mut silent_progress;
     let progress = match progress {
@@ -181,6 +181,7 @@ pub(crate) fn generate_hierarchical_docs(
             &unscoped_doc_scope
         }
     };
+    diagram_stats.partial = reuse_enabled || !doc_scope.is_unscoped();
     let emit = &mut |doc: BuiltDoc| emit(doc.with_normalized_markdown());
     // Per-file-leaf verification dominates verify cost on large repos.
     // `VerifyScope::Aggregates` (the default) skips it; the aggregate/curated

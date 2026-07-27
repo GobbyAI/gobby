@@ -14,7 +14,7 @@ These reasons skip commit and commit-link gates. Fresh verification and memory
 review still apply, and `changes_summary` must explain the evidence supporting
 the reason.
 
-```
+```python
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#42",
     "reason": "already_implemented",

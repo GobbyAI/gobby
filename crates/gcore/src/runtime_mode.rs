@@ -17,6 +17,11 @@ pub enum RuntimeMode {
     Standalone,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StandaloneOverride {
+    Standalone,
+}
+
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum RuntimeModeError {
     #[error(
@@ -58,8 +63,7 @@ fn select_runtime_mode_with_probe(
     service_registered: impl FnOnce() -> bool,
 ) -> Result<RuntimeMode, RuntimeModeError> {
     match parse_requested_mode(requested_mode)? {
-        Some(RuntimeMode::Standalone) => return Ok(RuntimeMode::Standalone),
-        Some(RuntimeMode::Daemon) => unreachable!("daemon is not an accepted environment value"),
+        Some(StandaloneOverride::Standalone) => return Ok(RuntimeMode::Standalone),
         None => {}
     }
 
@@ -72,7 +76,9 @@ fn select_runtime_mode_with_probe(
     Ok(RuntimeMode::Standalone)
 }
 
-fn parse_requested_mode(value: Option<&OsStr>) -> Result<Option<RuntimeMode>, RuntimeModeError> {
+fn parse_requested_mode(
+    value: Option<&OsStr>,
+) -> Result<Option<StandaloneOverride>, RuntimeModeError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -81,7 +87,7 @@ fn parse_requested_mode(value: Option<&OsStr>) -> Result<Option<RuntimeMode>, Ru
     }
     match value.to_str() {
         Some("auto") => Ok(None),
-        Some("standalone") => Ok(Some(RuntimeMode::Standalone)),
+        Some("standalone") => Ok(Some(StandaloneOverride::Standalone)),
         Some(value) => Err(RuntimeModeError::InvalidValue {
             value: value.to_string(),
         }),

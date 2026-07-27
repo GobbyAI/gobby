@@ -23,3 +23,20 @@ pub fn read_local_cli_token_at(gobby_home: &Path) -> anyhow::Result<String> {
 pub fn authorization_bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
+
+#[cfg(feature = "ai")]
+pub fn apply_bearer_header(request: ureq::Request) -> ureq::Request {
+    let token = read_local_cli_token().ok();
+    apply_bearer_header_with_token(request, token.as_deref())
+}
+
+#[cfg(feature = "ai")]
+pub fn apply_bearer_header_with_token(
+    request: ureq::Request,
+    token: Option<&str>,
+) -> ureq::Request {
+    match token {
+        Some(token) => request.set(AUTHORIZATION_HEADER, &authorization_bearer(token)),
+        None => request,
+    }
+}

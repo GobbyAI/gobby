@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
+from gobby.communications.voice import apply_voice_transcription
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -68,6 +70,15 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
         (channel for channel in store.list_channels.return_value if channel.name == name),
         None,
     )
+
+    def update_channel(updated: ChannelConfig) -> ChannelConfig:
+        store.list_channels.return_value = [
+            updated if channel.id == updated.id else channel
+            for channel in store.list_channels.return_value
+        ]
+        return updated
+
+    store.update_channel.side_effect = update_channel
     store.get_routing_rules.return_value = []
     store.create_message.side_effect = lambda message: message
 
@@ -172,6 +183,7 @@ async def test_adapter_config_updates_persist_through_channel_store() -> None:
         config_json={"bot_token": "$secret:telegram-token"},
     )
     store = make_store([channel])
+    store.get_channel.return_value = channel
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
     adapter = make_adapter(channel_type="telegram")
     adapter_cls = MagicMock(return_value=adapter)
@@ -187,6 +199,60 @@ async def test_adapter_config_updates_persist_through_channel_store() -> None:
         "poll_offset": 501,
     }
     store.update_channel.assert_called_once_with(channel)
+
+
+@pytest.mark.asyncio
+async def test_stale_adapter_config_callback_cannot_overwrite_replacement() -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={"bot_token": "$secret:telegram-token"},
+    )
+    store = make_store([channel])
+    store.get_channel.return_value = channel
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    first_adapter = make_adapter(channel_type="telegram")
+    second_adapter = make_adapter(channel_type="telegram")
+    adapter_cls = MagicMock(side_effect=[first_adapter, second_adapter])
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=adapter_cls):
+        await manager._init_adapter(channel)
+        stale_callback = first_adapter.set_config_update_callback.call_args.args[0]
+        manager._adapters[channel.name] = first_adapter
+        manager._channel_by_name[channel.name] = channel
+        await manager.update_channel(channel)
+
+    store.update_channel.reset_mock()
+    await stale_callback({"poll_offset": 100})
+
+    store.update_channel.assert_not_called()
+    assert channel.config_json == {"bot_token": "$secret:telegram-token"}
+
+
+@pytest.mark.asyncio
+async def test_non_telegram_group_message_skips_telegram_group_policy() -> None:
+    channel = make_channel(channel_type="slack")
+    manager = CommunicationsManager(
+        make_config(),
+        make_store([channel]),
+        make_secret_store(),
+        MagicMock(),
+    )
+    message = CommsMessage(
+        id="message-1",
+        channel_id=channel.id,
+        direction="inbound",
+        content="hello group",
+        metadata_json={"is_group": True},
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    with patch(
+        "gobby.communications.manager.evaluate_group_message",
+        side_effect=AssertionError("telegram-only policy was called"),
+    ):
+        admitted = await manager.admit_inbound_message(channel, message)
+
+    assert admitted is True
 
 
 async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
@@ -880,6 +946,48 @@ async def test_handle_inbound_transcribes_voice_note_before_event(tmp_path: Path
         "comms.message_received",
         message=stored[0],
     )
+
+
+@pytest.mark.asyncio
+async def test_voice_transcription_timeout_preserves_message_and_marks_failed(
+    tmp_path: Path,
+) -> None:
+    audio_path = tmp_path / "voice.ogg"
+    audio_path.write_bytes(b"voice bytes")
+    message = CommsMessage(
+        id="voice-message",
+        channel_id="channel-1",
+        direction="inbound",
+        content="original caption",
+        content_type="attachment",
+        metadata_json={"voice_note": True},
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="voice-attachment",
+        message_id="voice-message",
+        filename="voice.ogg",
+        content_type="audio/ogg",
+        size_bytes=11,
+        local_path=str(audio_path),
+    )
+    transcriber = MagicMock()
+
+    async def slow_transcribe(*_args: object) -> str:
+        await asyncio.sleep(10)
+        return "late transcript"
+
+    transcriber.transcribe = AsyncMock(side_effect=slow_transcribe)
+
+    await apply_voice_transcription(
+        message,
+        [attachment],
+        transcriber,
+        timeout_seconds=0.001,
+    )
+
+    assert message.content == "original caption"
+    assert message.metadata_json["voice_transcription_status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -1768,7 +1876,7 @@ async def test_send_message_injects_conversation_reference_destination():
 
 
 @pytest.mark.asyncio
-async def test_telegram_inbound_session_reply_resolves_chat_destination():
+async def test_telegram_inbound_session_reply_resolves_chat_destination() -> None:
     """A session auto-created from Telegram inbound can send back to the originating chat."""
     channel = make_channel(
         channel_type="telegram",
@@ -1919,7 +2027,7 @@ async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_a
 
     handled = await manager.handle_inbound_messages(channel.name, [duplicate])
 
-    assert handled == [duplicate]
+    assert handled == [store.get_message_by_platform_id.return_value]
     store.get_message_by_platform_id.assert_called_once_with(
         channel.name, duplicate.platform_message_id
     )
@@ -1962,7 +2070,7 @@ async def test_handle_inbound_deduplicates_reaction_before_action_dispatch() -> 
 
     handled = await manager.handle_inbound_messages(channel.name, [duplicate])
 
-    assert handled == [duplicate]
+    assert handled == [store.get_message_by_platform_id.return_value]
     manager.reaction_handler.handle_reaction.assert_not_awaited()
     store.create_message.assert_not_called()
 

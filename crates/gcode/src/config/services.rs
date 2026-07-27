@@ -378,7 +378,6 @@ where
 pub(super) fn resolve_falkordb_config(
     conn: &mut Client,
     layers: &ConfigLayers,
-    _quiet: bool,
 ) -> anyhow::Result<Option<FalkorConfig>> {
     let mut source = ServiceSource::new(conn, layers);
     resolve_falkordb_config_from_source(&mut source)
@@ -407,7 +406,6 @@ fn resolve_falkordb_config_from_source(
 pub(super) fn resolve_qdrant_config(
     conn: &mut Client,
     layers: &ConfigLayers,
-    _quiet: bool,
 ) -> anyhow::Result<Option<QdrantConfig>> {
     let mut source = ServiceSource::new(conn, layers);
     resolve_qdrant_config_from_source(&mut source)
@@ -484,7 +482,6 @@ fn resolve_service_port(
 pub(super) fn resolve_embedding_config(
     conn: &mut Client,
     layers: &ConfigLayers,
-    _quiet: bool,
 ) -> anyhow::Result<Option<super::EmbeddingConfig>> {
     let mut source = ServiceSource::new(conn, layers);
     resolve_embedding_config_from_service_source(None, &mut source)

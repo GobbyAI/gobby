@@ -426,6 +426,19 @@ def start(ctx: click.Context, verbose: bool) -> None:
 
     config = get_cli_runtime(ctx).config
     gobby_dir = get_gobby_home()
+    sandbox = config.agent_sandbox
+    if sandbox.enabled and sandbox.backend == "srt":
+        from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+
+        try:
+            verify_srt_installation()
+        except SrtRuntimeError as exc:
+            click.secho(
+                "warning: managed SRT sandbox preflight failed: "
+                f"{exc}. Set agent_sandbox.backend = provider-native to use the "
+                "provider sandbox until SRT is available.",
+                fg="yellow",
+            )
 
     # Revive managed dependencies before launchd/systemd starts the runner.
     services_result = _services_start(gobby_dir)
@@ -565,7 +578,8 @@ def start(ctx: click.Context, verbose: bool) -> None:
             if config.ui.enabled:
                 ui_resolution = resolve_ui_mode(config)
                 ui_mode_display = ui_resolution.display
-                ui_url = f"http://localhost:{http_port}/"
+                ui_port = 60889 if ui_resolution.effective == "dev" else http_port
+                ui_url = f"http://localhost:{ui_port}/"
 
             # Compact startup summary
             click.echo("")

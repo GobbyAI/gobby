@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,10 +33,12 @@ class _FakeManager:
         supports_edit: bool,
         supports_typing: bool = False,
         attachment_status: str = "sent",
+        returns_platform_id: bool = True,
     ) -> None:
         self.supports_edit = supports_edit
         self.typing_supported = supports_typing
         self.attachment_status = attachment_status
+        self.returns_platform_id = returns_platform_id
         self.sent: list[tuple[str, str, str | None, dict[str, object] | None]] = []
         self.edited: list[tuple[str, str, str, str]] = []
         self.typing: list[tuple[str, str]] = []
@@ -68,7 +71,9 @@ class _FakeManager:
             direction="outbound",
             content=content,
             created_at=datetime.now(UTC),
-            platform_message_id=f"platform-{len(self.sent)}",
+            platform_message_id=(
+                f"platform-{len(self.sent)}" if self.returns_platform_id else None
+            ),
             session_id=session_id,
             metadata_json=metadata or {},
         )
@@ -210,6 +215,18 @@ async def test_transport_collects_stream_and_sends_one_final_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transport_does_not_resend_delivered_text_without_platform_id() -> None:
+    manager = _FakeManager(supports_edit=True, returns_platform_id=False)
+    transport = CommunicationsChatStreamTransport(manager, _context())
+    content = "This response is long enough to send immediately."
+
+    assert await transport.safe_send({"type": "chat_stream", "content": content, "done": False})
+    assert await transport.safe_send({"type": "chat_stream", "content": "", "done": True})
+
+    assert [sent[1] for sent in manager.sent] == [content]
+
+
+@pytest.mark.asyncio
 async def test_transport_throttles_edits_and_flushes_latest_text() -> None:
     manager = _FakeManager(supports_edit=True)
     clock = _Clock()
@@ -312,6 +329,20 @@ class _IncompleteChatHost(_FakeChatHost):
         )
 
 
+class _BlockingChatHost(_FakeChatHost):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def _run_chat_turn(self, **kwargs: Any) -> None:
+        transport = kwargs["transport"]
+        await transport.safe_send(
+            {"type": "chat_stream", "content": "partial reply", "done": False}
+        )
+        self.started.set()
+        await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
 async def test_backend_reuses_comms_session_key_and_propagates_provider_model() -> None:
     manager = _FakeManager(supports_edit=False)
@@ -383,6 +414,22 @@ async def test_backend_flushes_fallback_when_stream_ends_without_done_event() ->
 
     await backend.run_turn(_context())
 
+    assert [sent[1] for sent in manager.sent] == ["partial reply"]
+
+
+@pytest.mark.asyncio
+async def test_backend_cancellation_flushes_partial_stream_before_stop_returns() -> None:
+    manager = _FakeManager(supports_edit=False)
+    host = _BlockingChatHost()
+    backend = ChatSessionCommsBackend(host, manager)
+    context = _context()
+    turn = asyncio.create_task(backend.run_turn(context))
+    await host.started.wait()
+
+    result = await backend.stop_turn(context)
+
+    assert result == "Stopped the active turn."
+    assert turn.cancelled()
     assert [sent[1] for sent in manager.sent] == ["partial reply"]
 
 

@@ -699,7 +699,7 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
 
     with (
         patch(
-            "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
+            "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
             return_value=str(transcript_path),
         ) as mock_discover,
         patch.object(

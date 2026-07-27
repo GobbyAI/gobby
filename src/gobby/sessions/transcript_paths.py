@@ -7,9 +7,10 @@ from pathlib import Path
 from time import time
 
 _SECONDS_PER_DAY = 24 * 60 * 60
+MISSING_TRANSCRIPT_PATH = "missing_transcript"
 
 
-def _find_transcript_on_disk(
+def find_transcript_on_disk(
     source: str,
     external_id: str,
     source_max_days: int = 90,

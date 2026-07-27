@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
-from qdrant_client import AsyncQdrantClient
-
 from gobby.memory.collection_names import CollectionNameResolver
 from gobby.memory.vectorstore import VectorStore
 
@@ -35,12 +31,7 @@ class ProjectVectorCleaner:
                 )
 
     async def _managed_physical_collections(self) -> list[str]:
-        client = await self._vector_store._ensure_initialized()
-        if isinstance(client, AsyncQdrantClient):
-            response = await client.get_collections()
-        else:
-            response = await asyncio.to_thread(client.get_collections)
-        physical_names = {str(item.name) for item in response.collections}
+        physical_names = set(await self._vector_store.list_collection_names())
         aliases = await self._vector_store.get_aliases()
         managed: set[str] = set()
         for name in physical_names:

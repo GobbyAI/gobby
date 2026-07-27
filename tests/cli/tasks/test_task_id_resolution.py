@@ -9,6 +9,8 @@ These tests verify that CLI commands correctly accept and resolve:
 """
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,6 +26,26 @@ pytestmark = pytest.mark.unit
 def runner() -> CliRunner:
     """Create a CLI test runner."""
     return CliRunner()
+
+
+@contextmanager
+def _isolated_cli_runtime() -> Iterator[None]:
+    """Keep unit CLI invocations independent from the operator's bootstrap config."""
+    with (
+        patch(
+            "gobby.cli.runtime.CliRuntime.require_database",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gobby.cli.load_full_config_from_db",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gobby.cli.tasks._utils.resolution.get_project_context",
+            return_value={"id": "proj-123"},
+        ),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -219,7 +241,8 @@ class TestCliShowCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "show", "#1"])
+        with _isolated_cli_runtime():
+            result = runner.invoke(cli, ["tasks", "show", "#1"])
         assert result.exit_code == 0
         mock_manager.resolve_task_reference.assert_called()
         mock_manager.get_task.assert_called()
@@ -245,7 +268,8 @@ class TestCliUpdateCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "update", "#5", "--title", "Updated title"])
+        with _isolated_cli_runtime():
+            result = runner.invoke(cli, ["tasks", "update", "#5", "--title", "Updated title"])
         assert result.exit_code == 0
         mock_manager.update_task.assert_called()
         assert mock_manager.update_task.call_args.kwargs["title"] == "Updated title"
@@ -270,7 +294,8 @@ class TestCliDeleteCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "delete", "#10", "--yes"])
+        with _isolated_cli_runtime():
+            result = runner.invoke(cli, ["tasks", "delete", "#10", "--yes"])
         assert result.exit_code == 0
         mock_manager.delete_task.assert_called()
 
@@ -296,9 +321,11 @@ class TestCliCloseCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "close", "#3"])
+        with _isolated_cli_runtime():
+            result = runner.invoke(cli, ["tasks", "close", "#3"])
         assert result.exit_code == 1
         assert "criterion-to-evidence close_task contract" in result.output
+        mock_manager.resolve_task_reference.assert_called_once_with("#3", "proj-123")
         mock_manager.close_task.assert_not_called()
 
 

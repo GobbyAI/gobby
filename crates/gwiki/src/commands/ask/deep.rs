@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path};
 
@@ -366,21 +367,19 @@ fn daemon_result_completed(stop_reason: Option<&str>, content: Option<&str>) -> 
 
 fn deep_citation_check(answer: &str, vault_root: &Path) -> AskCitationCheckOutput {
     let links = wiki_links(answer);
+    let page_stems = page_stem_index(vault_root);
     let unsupported_claims = links
         .iter()
-        .filter(|link| !wiki_page_exists(vault_root, &link.target))
+        .filter(|link| !wiki_page_exists(vault_root, &link.target, &page_stems))
         .map(|link| link.rendered.clone())
         .collect::<Vec<_>>();
     let checked_claims = links.len();
-    let status = if checked_claims > 0 && unsupported_claims.is_empty() {
+    let status = if checked_claims == 0 {
+        "no_citations"
+    } else if unsupported_claims.is_empty() {
         "supported"
     } else {
         "unsupported_claims"
-    };
-    let unsupported_claims = if checked_claims == 0 {
-        vec!["answer contains no wiki citations".to_string()]
-    } else {
-        unsupported_claims
     };
     AskCitationCheckOutput {
         status,
@@ -420,7 +419,7 @@ fn wiki_links(answer: &str) -> Vec<WikiLink> {
     links
 }
 
-fn wiki_page_exists(vault_root: &Path, target: &str) -> bool {
+fn wiki_page_exists(vault_root: &Path, target: &str, page_stems: &HashSet<String>) -> bool {
     if target.is_empty() {
         return false;
     }
@@ -449,33 +448,32 @@ fn wiki_page_exists(vault_root: &Path, target: &str) -> bool {
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    page_with_stem_exists(vault_root, stem)
+    page_stems.contains(&stem.to_lowercase())
 }
 
-fn page_with_stem_exists(directory: &Path, expected_stem: &str) -> bool {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
+fn page_stem_index(directory: &Path) -> HashSet<String> {
+    let mut stems = HashSet::new();
+    let mut directories = vec![directory.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let Ok(entries) = fs::read_dir(directory) else {
             continue;
         };
-        let path = entry.path();
-        if file_type.is_dir() {
-            if page_with_stem_exists(&path, expected_stem) {
-                return true;
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                directories.push(path);
+            } else if file_type.is_file()
+                && path.extension().is_some_and(|extension| extension == "md")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                stems.insert(stem.to_lowercase());
             }
-        } else if file_type.is_file()
-            && path.extension().is_some_and(|extension| extension == "md")
-            && path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| stem.eq_ignore_ascii_case(expected_stem))
-        {
-            return true;
         }
     }
-    false
+    stems
 }
 
 #[cfg(test)]

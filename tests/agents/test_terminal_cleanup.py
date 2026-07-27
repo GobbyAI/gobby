@@ -192,7 +192,7 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
     assert db.executed == []
 
 
-async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
+async def test_post_terminal_cleanup_preserves_registry_without_notification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = RecordingDb()
@@ -206,7 +206,7 @@ async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
         _run(task_id=None), allow_parent_session_fallback=False
     )
 
-    assert registry.cleaned == ["run-1"]
+    assert registry.cleaned == []
     assert db.executed == []
 
 
@@ -355,7 +355,7 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
         notification_message="done",
     )
 
-    assert registry.cleaned == ["run-1"]
+    assert registry.cleaned == []
     session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
     assert artifact_calls == [(db, "task-1")]
     assert db.executed == []

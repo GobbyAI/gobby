@@ -28,10 +28,16 @@ async def test_warm_pane_monitor_sees_content_edit(temp_db: HubDatabase) -> None
 
     await monitor._sync_interactive_attention("session-1", "claude", "alpha trust")
     assert attention_manager.transition_async.await_count == 1
+    alpha_call = attention_manager.transition_async.await_args_list[0]
 
     replace_detection_manifest(temp_db, "claude", "beta")
     await monitor._sync_interactive_attention("session-1", "claude", "alpha trust")
+    assert attention_manager.transition_async.await_args_list == [alpha_call]
+
     await monitor._sync_interactive_attention("session-1", "claude", "beta trust")
 
     assert attention_manager.transition_async.await_count == 2
+    beta_call = attention_manager.transition_async.await_args_list[1]
+    assert beta_call.kwargs["reason"] == "trust"
+    assert beta_call.kwargs["fingerprint"] != alpha_call.kwargs["fingerprint"]
     assert monitor.detection_registry is registry

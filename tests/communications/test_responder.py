@@ -189,6 +189,7 @@ async def test_blank_attachment_content_does_not_start_responder_turn() -> None:
     assert backend.turns == []
 
 
+@pytest.mark.asyncio
 async def test_access_gate_rejects_sender_outside_allowlist(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -219,30 +220,20 @@ async def test_expected_mention_required_skip_logs_at_debug(
     responder = CommunicationsResponder(manager, backend=RecordingBackend())
     message = make_message(group=True, mentioned=False)
     logger_name = "gobby.communications.responder"
+    expected_message = "Ignoring group message for conversation chat-1: mention_required"
 
     with caplog.at_level(logging.DEBUG, logger=logger_name):
         task = await responder.handle_message(message)
 
     assert task is None
-    records = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "Ignoring group message for conversation chat-1: mention_required"
-    ]
+    records = [record for record in caplog.records if record.getMessage() == expected_message]
     assert len(records) == 1
     assert records[0].levelno == logging.DEBUG
-    assert records[0].getMessage() == (
-        "Ignoring group message for conversation chat-1: mention_required"
-    )
-
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=logger_name):
         await responder.handle_message(message)
 
-    assert not any(
-        record.getMessage() == "Ignoring group message for conversation chat-1: mention_required"
-        for record in caplog.records
-    )
+    assert not any(record.getMessage() == expected_message for record in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -319,7 +310,6 @@ async def test_group_policy_and_mention_gate(
 @pytest.mark.parametrize(
     ("command", "expected_handler"),
     [
-        ("start", "help"),
         ("new", "new"),
         ("reset", "reset"),
         ("stop", "stop"),
@@ -341,6 +331,21 @@ async def test_each_command_routes_to_its_backend_handler(
     assert task is None
     assert [name for name, _context in backend.commands] == [expected_handler]
     assert manager.sent[0]["content"] == expected_handler
+
+
+@pytest.mark.asyncio
+async def test_start_is_processed_as_a_regular_backend_turn() -> None:
+    manager = FakeManager(make_channel())
+    backend = RecordingBackend()
+    responder = CommunicationsResponder(manager, backend=backend)
+
+    task = await responder.handle_message(make_message(content="/start"))
+
+    assert task is not None
+    await task
+    assert len(backend.turns) == 1
+    assert backend.turns[0].message.content == "/start"
+    assert backend.commands == []
 
 
 @pytest.mark.asyncio
@@ -428,6 +433,39 @@ async def test_turn_queue_serializes_same_conversation() -> None:
     release_first.set()
     await asyncio.gather(first, second)
     assert second_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_turn_queue_rejects_ninth_pending_turn_with_busy_response() -> None:
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class BlockingBackend(RecordingBackend):
+        async def run_turn(self, context: ResponderContext) -> str | None:
+            self.turns.append(context)
+            if context.message.content == "message-0":
+                first_started.set()
+                await release_first.wait()
+            return None
+
+    manager = FakeManager(make_channel())
+    responder = CommunicationsResponder(manager, backend=BlockingBackend())
+    accepted: list[asyncio.Task[None]] = []
+    for index in range(8):
+        task = await responder.handle_message(make_message(content=f"message-{index}"))
+        assert task is not None
+        accepted.append(task)
+
+    await first_started.wait()
+    rejected = await responder.handle_message(make_message(content="message-8"))
+
+    assert rejected is None
+    assert manager.sent[-1]["content"] == (
+        "This conversation is busy. Try again after a pending response finishes."
+    )
+
+    release_first.set()
+    await asyncio.gather(*accepted)
 
 
 @pytest.mark.asyncio

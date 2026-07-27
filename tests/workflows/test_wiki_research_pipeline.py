@@ -141,6 +141,11 @@ class TestWikiResearchSteps:
         ):
             assert reference in description, f"description must embed {reference}"
 
+        validation_criteria = args["validation_criteria"]
+        assert 'When create_tasks is "true"' in validation_criteria
+        assert "every surviving finding has a linked task" in validation_criteria
+        assert "every triaged-away item records its reason" in validation_criteria
+
     def test_spawn_routes_to_wiki_researcher(self, pipeline: PipelineDefinition) -> None:
         step = _step(pipeline, "spawn_researcher")
         assert step.mcp is not None

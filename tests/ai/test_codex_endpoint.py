@@ -54,13 +54,16 @@ def test_endpoint_app_server_uses_isolated_codex_home(
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
-    env = codex_endpoint_app_server_env(_endpoint())
+    env = codex_endpoint_app_server_env("openrouter", _endpoint())
+    second_env = codex_endpoint_app_server_env("backup", _endpoint())
 
     assert env == {
         CODEX_ENDPOINT_API_KEY_ENV: "sk-test-secret",
-        "CODEX_HOME": str(tmp_path / "codex-endpoints"),
+        "CODEX_HOME": str(tmp_path / "codex-endpoints" / "openrouter"),
     }
-    assert (tmp_path / "codex-endpoints").is_dir()
+    assert second_env["CODEX_HOME"] == str(tmp_path / "codex-endpoints" / "backup")
+    assert (tmp_path / "codex-endpoints" / "openrouter").is_dir()
+    assert (tmp_path / "codex-endpoints" / "backup").is_dir()
 
 
 @pytest.mark.parametrize("api_key", ["", "$secret:OPENROUTER_API_KEY"])

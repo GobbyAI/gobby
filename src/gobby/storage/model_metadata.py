@@ -60,6 +60,8 @@ class ModelMetadataStore:
         Returns:
             Number of models inserted.
         """
+        global _stale_warning_emitted
+
         if models is None:
             from gobby.llm.model_registry import fetch_models_sync
 
@@ -93,6 +95,7 @@ class ModelMetadataStore:
                 rows,
             )
 
+        _stale_warning_emitted = False
         logger.info("Populated model_metadata table with %s models from registry", len(rows))
         return len(rows)
 

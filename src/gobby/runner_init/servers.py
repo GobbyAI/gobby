@@ -160,7 +160,8 @@ def init_servers(runner: GobbyRunner) -> None:
 
             runner.communications_manager.set_websocket_broadcast(runner.websocket_server.broadcast)
             runner.communications_manager.set_voice_transcriber_getter(
-                runner.websocket_server.get_voice_transcriber
+                runner.websocket_server.get_voice_transcriber,
+                timeout_seconds=runner.config.voice.transcription_timeout_seconds,
             )
             from gobby.ai.vision import build_daemon_vision_extract_service
 

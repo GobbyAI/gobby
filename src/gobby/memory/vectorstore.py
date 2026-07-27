@@ -317,6 +317,12 @@ class VectorStore:
         """Return a mapping of alias names to physical collection names."""
         return await self._client_ops.get_aliases()
 
+    async def list_collection_names(self) -> list[str]:
+        """Return every physical collection name visible to this store."""
+        client = await self._ensure_initialized()
+        response = await self._call_client(client, "get_collections")
+        return [str(item.name) for item in response.collections]
+
     async def count(self) -> int:
         """Return the number of points in the collection."""
         return await self._queries.count()

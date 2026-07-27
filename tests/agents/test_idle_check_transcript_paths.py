@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -65,12 +66,37 @@ async def test_resolve_transcript_path_accepts_valid_stored_file(tmp_path: Path)
     session = _session(transcript_path=str(transcript))
 
     with patch(
-        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk"
+        "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk"
     ) as mock_discover:
         resolved = await resolver.resolve(session, run_id="run-1")
 
     assert resolved == str(transcript)
     mock_discover.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_transcript_path_rediscovers_after_stat_race(tmp_path: Path) -> None:
+    stored = tmp_path / "stored.jsonl"
+    discovered = tmp_path / "discovered.jsonl"
+    stored.write_text("{}\n")
+    discovered.write_text("{}\n")
+    resolver = WatchdogTranscriptResolver()
+    session = _session(transcript_path=str(stored))
+
+    with (
+        patch(
+            "gobby.agents.watchdog.transcript_resolver.os.path.getmtime",
+            side_effect=OSError,
+        ),
+        patch(
+            "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
+            return_value=str(discovered),
+        ) as mock_discover,
+    ):
+        resolved = await resolver.resolve(session, run_id="run-1")
+
+    assert resolved == str(discovered)
+    mock_discover.assert_called_once_with("codex", "external-1")
 
 
 @pytest.mark.asyncio
@@ -93,7 +119,7 @@ async def test_resolve_transcript_path_discovers_for_invalid_stored_path(
     updated_at = session.updated_at
 
     with patch(
-        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
         return_value=str(discovered),
     ) as mock_discover:
         resolved = await resolver.resolve(session, run_id="run-1")
@@ -114,7 +140,7 @@ async def test_resolve_transcript_path_revalidates_cached_file(tmp_path: Path) -
     session = _session(transcript_path=None)
 
     with patch(
-        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
         side_effect=[str(first), str(second)],
     ) as mock_discover:
         assert await resolver.resolve(session, run_id="run-1") == str(first)
@@ -122,6 +148,28 @@ async def test_resolve_transcript_path_revalidates_cached_file(tmp_path: Path) -
         assert await resolver.resolve(session, run_id="run-1") == str(second)
 
     assert mock_discover.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_transcript_path_rediscovers_when_cache_predates_session_update(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text("{}\n")
+    second.write_text("{}\n")
+    resolver = WatchdogTranscriptResolver()
+    session = _session(transcript_path=str(first))
+
+    with patch(
+        "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
+        return_value=str(second),
+    ) as mock_discover:
+        assert await resolver.resolve(session, run_id="run-1") == str(first)
+        session.updated_at = datetime(2100, 1, 1, tzinfo=UTC)
+        assert await resolver.resolve(session, run_id="run-1") == str(second)
+
+    mock_discover.assert_called_once_with("codex", "external-1")
 
 
 @pytest.mark.asyncio
@@ -136,7 +184,7 @@ async def test_resolve_transcript_path_invalidates_cache_on_identity_change(
     session = _session(transcript_path=None, external_id="external-1")
 
     with patch(
-        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
         side_effect=[str(first), str(second)],
     ):
         assert await resolver.resolve(session, run_id="run-1") == str(first)

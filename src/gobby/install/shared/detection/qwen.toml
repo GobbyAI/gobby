@@ -79,7 +79,6 @@ priority = 650
 region = "whole_recent"
 line_regex = [
   '(?i)(?:Continue working on your task|active Gobby step workflow is not complete)',
-  '(?i)(?:queued messages|Press up to edit queued messages)',
 ]
 
 [[rules]]

@@ -33,6 +33,8 @@ const NEAR_DUPLICATE_UPDATE_COSINE: f64 = 0.90;
 const NEAR_DUPLICATE_REVIEW_COSINE: f64 = 0.80;
 /// Semantic hits requested per near-duplicate probe.
 const NEAR_DUPLICATE_SEARCH_LIMIT: usize = 8;
+/// Reserve roughly 20 minutes for tail work; below this threshold the first
+/// cluster check defers every remaining cluster instead of starting new work.
 const MIN_CLUSTER_REMAINING_SECONDS: u64 = 1210;
 
 /// Durable registry of concept mentions the heal pass unwrapped from digest
@@ -220,7 +222,8 @@ pub(super) fn run_with_clock(
 
     // Match keys for existing knowledge pages (concepts and topics; source
     // digests are excluded so an entity name never "matches" a digest stub).
-    let existing_pages: Vec<(PathBuf, BTreeSet<String>)> = lint::collect_pages(&vault_root)?
+    let pages = lint::collect_pages(&vault_root)?;
+    let existing_pages: Vec<(PathBuf, BTreeSet<String>)> = pages
         .iter()
         .filter(|page| {
             page.relative_path.starts_with("knowledge/concepts")
@@ -451,7 +454,7 @@ pub(super) fn run_with_clock(
     // Discover before candidate governance so dry-run and applied reports
     // agree even when governance archives an orphaned junk candidate. The
     // lifecycle transition itself remains a post-govern step below.
-    let unworthy_concepts = find_unworthy_concepts(&vault_root)?;
+    let unworthy_concepts = find_unworthy_concepts(&pages);
     let (candidates_promoted, candidates_discarded) = if options.dry_run {
         (Vec::new(), Vec::new())
     } else {

@@ -505,3 +505,18 @@ def test_release_envelope_processing_claim_allows_retry(tmp_path: Path) -> None:
     assert release_envelope_processing_claim(envelope_id, processed_dir=processed_dir) is True
     assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
     assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+
+
+def test_release_envelope_processing_claim_preserves_finalized_or_absent_marker(
+    tmp_path: Path,
+) -> None:
+    processed_dir = tmp_path / "processed"
+    envelope_id = "n-0000000000001-finalized"
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+
+    assert release_envelope_processing_claim(envelope_id, processed_dir=processed_dir) is False
+    marker = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    assert marker is not None
+    assert marker["status"] == "processed"
+    assert release_envelope_processing_claim("", processed_dir=processed_dir) is False

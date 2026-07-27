@@ -184,17 +184,23 @@ def delete_project(project_ref: str, confirm: str) -> None:
 
 @projects.command("purge")
 @click.argument("project_ref")
-@click.option("--yes", is_flag=True, help="Confirm permanent deletion.")
-def purge_project(project_ref: str, yes: bool) -> None:
+@click.option(
+    "--confirm",
+    required=True,
+    help="Confirm permanent deletion by entering the project name.",
+)
+def purge_project(project_ref: str, confirm: str) -> None:
     """Permanently purge a project through the running daemon."""
-    if not yes:
-        click.echo("Permanent purge requires --yes.", err=True)
-        raise SystemExit(1)
-
     manager = get_project_manager()
     project = manager.get(project_ref) or manager.get_by_name(project_ref, include_deleted=True)
     if project is None:
         click.echo(f"Project not found: {project_ref}", err=True)
+        raise SystemExit(1)
+    if confirm != project.name:
+        click.echo(
+            f"Confirmation mismatch. Enter the exact project name: {project.name}",
+            err=True,
+        )
         raise SystemExit(1)
 
     from gobby.cli.utils_config import get_daemon_client
@@ -204,10 +210,20 @@ def purge_project(project_ref: str, yes: bool) -> None:
         method="POST",
         timeout=300.0,
     )
-    payload = response.json()
     if response.status_code >= 400:
-        click.echo(f"Purge failed: {payload.get('detail', response.text)}", err=True)
+        try:
+            error_payload = response.json()
+        except ValueError:
+            detail = response.text
+        else:
+            detail = (
+                error_payload.get("detail", response.text)
+                if isinstance(error_payload, dict)
+                else response.text
+            )
+        click.echo(f"Purge failed: {detail}", err=True)
         raise SystemExit(1)
+    payload = response.json()
     click.echo(json_dumps(payload, indent=2, sort_keys=True))
 
 

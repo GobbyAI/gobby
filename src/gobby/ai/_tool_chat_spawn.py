@@ -49,12 +49,16 @@ from gobby.ai._tool_chat_codex import CodexSpawnToolChatAdapter
 from gobby.ai._tool_chat_contracts import (
     ToolChatRequest,
     ToolChatResult,
-    ToolLoopLimits,
 )
 from gobby.ai._tool_chat_droid import DroidSpawnToolChatAdapter
 from gobby.ai._tool_chat_tools import validate_policy
 
-__all__ = ["CodexSpawnToolChatAdapter", "DroidSpawnToolChatAdapter"]
+__all__ = [
+    "CodexSpawnToolChatAdapter",
+    "DroidSpawnToolChatAdapter",
+    "GrokSpawnToolChatAdapter",
+    "QwenSpawnToolChatAdapter",
+]
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -375,7 +379,7 @@ class GrokSpawnToolChatAdapter:
         return path
 
     def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         command = [
             self._resolve_command_path(),
             "--single",
@@ -496,7 +500,7 @@ class QwenSpawnToolChatAdapter:
         path = self._command_path or shutil.which("qwen")
         if not path:
             raise FileNotFoundError("Qwen CLI not found in PATH")
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         command = [
             path,
             "--bare",

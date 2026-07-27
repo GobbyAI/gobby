@@ -684,7 +684,7 @@ fn upkeep_dry_run_leaves_vault_bytes_unchanged() {
     assert_eq!(report.clusters.len(), 1);
     assert_eq!(report.clusters[0].action, "planned_create");
     assert_eq!(report.pending_after, report.pending_before);
-    assert!(report.reconciled_no_synthesis.is_empty() || report.pending_after == 2);
+    assert!(report.reconciled_no_synthesis.is_empty());
 }
 
 #[test]
@@ -1090,6 +1090,9 @@ fn time_budget_checkpoints_completed_clusters_and_defers_pending_work() {
         research_scope(root),
         scope(),
         &Options {
+            // The 1320-second budget leaves 1209 seconds after the clock's
+            // 111-second jump, one second below the 1210-second per-cluster
+            // reservation, so the second cluster must be deferred.
             time_budget_seconds: Some(1320),
             ..Options::default()
         },

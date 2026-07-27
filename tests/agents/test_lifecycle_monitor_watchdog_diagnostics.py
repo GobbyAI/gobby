@@ -5,12 +5,13 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.watchdog import WatchdogReaderRegistry, WatchdogTranscriptSnapshot
 from gobby.agents.watchdog.recovery import REASONING_WATCHDOG_CONTINUATION
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -294,6 +295,50 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         and "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd1003" in event.reason
         for event in events
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["claude", "droid", "grok", "qwen"])
+async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
+    provider: str,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        session_manager=session_manager,
+        check_interval_seconds=1.0,
+        tmux_config=TmuxConfig(
+            reasoning_watchdog_interrupt_enabled=True,
+            reasoning_watchdog_settle_seconds=0,
+        ),
+    )
+    reader = WatchdogReaderRegistry().for_provider(provider)
+    assert reader is not None
+    assert reader.supports_reasoning_interrupt is False
+    run = MagicMock(spec=AgentRun)
+    run.id = f"{provider}-run"
+    run.provider = provider
+    snapshot = WatchdogTranscriptSnapshot(
+        provider=provider,
+        latest_activity_kind="reasoning",
+    )
+
+    with patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as send_keys:
+        recovered = await monitor._idle_check_handler._recovery._recover_reasoning_idle(
+            run,
+            tmux_name=f"gobby-{provider}",
+            session=None,
+            session_id=None,
+            reader=reader,
+            snapshot=snapshot,
+        )
+
+    assert recovered is False
+    send_keys.assert_not_awaited()
 
 
 @pytest.mark.asyncio

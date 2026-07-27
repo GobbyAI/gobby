@@ -30,6 +30,27 @@ def _event(tmp_path: Path, *, session_id: str = "platform-session") -> HookEvent
     )
 
 
+@pytest.mark.asyncio
+async def test_http_adapter_uses_fail_closed_verification_receipts() -> None:
+    hook_manager = MagicMock()
+    hook_manager.handle.return_value = {"decision": "allow"}
+    adapter = MagicMock()
+    adapter.handle_native.side_effect = lambda _payload, manager: manager.handle("event")
+
+    response = await _run_adapter_hook(
+        adapter,
+        {},
+        hook_manager,
+        timeout_seconds=1.0,
+    )
+
+    assert response == {"decision": "allow"}
+    hook_manager.handle.assert_called_once_with(
+        "event",
+        fail_closed_verification_receipts=True,
+    )
+
+
 def _handler(
     evaluate: Any,
     *,

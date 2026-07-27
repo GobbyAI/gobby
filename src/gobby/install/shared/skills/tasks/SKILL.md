@@ -15,7 +15,9 @@ metadata:
 
 Use `call_tool("gobby-tasks", ...)` for task lifecycle operations. Fetch a known
 unleased tool schema with `get_tool_schema("gobby-tasks", "<tool>")` before its
-first call. Use `gobby-tasks-ops` for autonomous review transitions.
+first call. Use `gobby-tasks-ops` for autonomous review transitions, fetching a
+known unleased schema with `get_tool_schema("gobby-tasks-ops", "<tool>")`
+before the first call.
 
 `session_id` belongs to the outer `call_tool`, alongside `server_name`,
 `tool_name`, and `arguments`. Pass the current Gobby session ref explicitly.
@@ -37,7 +39,7 @@ Required creation fields:
 
 Create and claim in one call when starting new work:
 
-```
+```python
 call_tool("gobby-tasks", "create_task", {
     "title": "Fix session cleanup on missing transcripts",
     "category": "code",
@@ -53,7 +55,7 @@ call_tool("gobby-tasks", "create_task", {
 
 Claim existing work with:
 
-```
+```python
 call_tool(
     "gobby-tasks",
     "claim_task",
@@ -124,7 +126,7 @@ git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 
 Preview after validation and commit:
 
-```
+```python
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#42",
     "commit_sha": "abc1234",
@@ -153,6 +155,6 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
 memory cleanup. Bugs and errors belong in tasks. When nothing is worth changing:
 
-```
+```python
 set_variable(name="memory_review_completed", value=true, session_id="#2333")
 ```

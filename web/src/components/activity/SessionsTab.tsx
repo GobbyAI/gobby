@@ -1,7 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 import { useSessionDetail } from "../../hooks/useSessionDetail";
-import { useAgentRuns } from "../../hooks/useAgentRuns";
+import { useSessionAttention } from "../../hooks/useSessionAttention";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
 import {
@@ -123,7 +123,7 @@ export const SessionsTab = memo(function SessionsTab({
   onSwapSession,
 }: SessionsTabProps) {
   const { agents, agentsLoading, fetchError } = useRunningAgents();
-  const { attentionBySession } = useAgentRuns();
+  const { attentionBySession } = useSessionAttention();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");

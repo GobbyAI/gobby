@@ -126,25 +126,15 @@ fn run_search_attached(
             detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
         }
     })?;
+    let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for gwiki search: {error}"),
+    })?;
     let embedding = {
-        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve AI config for gwiki search: {error}"),
-        })?;
         let ai_context = AiContext::resolve(None, &mut source);
         crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
     };
-    let qdrant = {
-        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve Qdrant config for gwiki search: {error}"),
-        })?;
-        resolve_qdrant_config(&mut source)
-    };
-    let falkor = {
-        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve FalkorDB config for gwiki search: {error}"),
-        })?;
-        resolve_falkordb_config(&mut source)
-    };
+    let qdrant = resolve_qdrant_config(&mut source);
+    let falkor = resolve_falkordb_config(&mut source);
     let embedding = embedding.ok_or_else(|| required_search_config("embedding endpoint"))?;
     let qdrant = qdrant
         .filter(qdrant_config_has_url)
@@ -254,12 +244,17 @@ where
         }
         let fusion_key = result.fusion_key()?;
         let page_path = input.vault_root.join(&result.path);
-        let current_markdown =
-            std::fs::read_to_string(&page_path).map_err(|source| WikiError::Io {
-                action: "read current wiki search evidence",
-                path: Some(page_path),
-                source,
-            })?;
+        let current_markdown = match std::fs::read_to_string(&page_path) {
+            Ok(markdown) => markdown,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(WikiError::Io {
+                    action: "read current wiki search evidence",
+                    path: Some(page_path),
+                    source,
+                });
+            }
+        };
         let content_hash = crate::page_version::content_hash(&current_markdown);
         let body_start = frontmatter_body_start(&current_markdown).unwrap_or(0);
         let evidence_body = &current_markdown[body_start..];
@@ -515,6 +510,37 @@ mod tests {
             retrieval.evidence[0].content_hash,
             crate::page_version::content_hash(&markdown)
         );
+    }
+
+    #[test]
+    fn stale_search_hit_for_missing_page_is_skipped() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut bm25_backend = search_support::StoreBm25Backend {
+            hits: vec![store_hit("knowledge/concepts/missing.md")].into(),
+        };
+        let mut semantic_backend = search_support::UnavailableSemanticBackend;
+        let graph = crate::graph::MemoryWikiGraph::default();
+        let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
+
+        let retrieval = run_search_with_backends(
+            &mut bm25_backend,
+            &mut semantic_backend,
+            &mut graph_backend,
+            SearchExecutionInput {
+                output_scope: ScopeIdentity::project("project-1"),
+                search_scope: wiki_search::SearchScope::project("project-1"),
+                vault_root: temp.path().to_path_buf(),
+                query: "missing".to_string(),
+                limit: 10,
+                include_semantic: false,
+                include_candidates: false,
+                token_budget: None,
+            },
+        )
+        .expect("stale hit is ignored");
+
+        assert!(retrieval.output.results.is_empty());
+        assert!(retrieval.evidence.is_empty());
     }
 
     #[test]

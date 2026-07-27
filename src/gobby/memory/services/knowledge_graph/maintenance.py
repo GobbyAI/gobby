@@ -109,6 +109,25 @@ class KnowledgeGraphMaintenance:
         project_id: str | None = None,
     ) -> int:
         """Delete entities with neither memory nor code-symbol backing edges."""
+        try:
+            return await self._remove_orphaned_entities_strict(
+                scope=scope,
+                project_id=project_id,
+            )
+        except FalkorConnectionError as e:
+            logger.warning("FalkorDB unreachable during orphan entity cleanup: %s", e)
+            return 0
+        except Exception as e:
+            logger.warning("Failed to remove orphaned entities: %s", e)
+            return 0
+
+    async def _remove_orphaned_entities_strict(
+        self,
+        *,
+        scope: str,
+        project_id: str | None,
+    ) -> int:
+        """Delete orphan entities while propagating graph failures."""
         orphan_predicate = (
             "NOT (e)-[:MENTIONED_IN]->(:Memory) AND NOT (e)-[:RELATES_TO_CODE]->(:CodeSymbol)"
         )
@@ -128,24 +147,17 @@ class KnowledgeGraphMaintenance:
         else:
             raise ValueError(f"Unsupported orphan cleanup scope: {scope}")
 
-        try:
-            count_records = await self._falkor.query(
-                f"MATCH (e:_Entity) WHERE {where_clause} RETURN count(e) AS total",
+        count_records = await self._falkor.query(
+            f"MATCH (e:_Entity) WHERE {where_clause} RETURN count(e) AS total",
+            params,
+        )
+        total = int(count_records[0]["total"]) if count_records else 0
+        if total > 0:
+            await self._falkor.query(
+                f"MATCH (e:_Entity) WHERE {where_clause} DETACH DELETE e",
                 params,
             )
-            total = int(count_records[0]["total"]) if count_records else 0
-            if total > 0:
-                await self._falkor.query(
-                    f"MATCH (e:_Entity) WHERE {where_clause} DETACH DELETE e",
-                    params,
-                )
-            return total
-        except FalkorConnectionError as e:
-            logger.warning("FalkorDB unreachable during orphan entity cleanup: %s", e)
-            return 0
-        except Exception as e:
-            logger.warning("Failed to remove orphaned entities: %s", e)
-            return 0
+        return total
 
     async def clear_graph(self, project_id: str | None = None) -> dict[str, int]:
         """Delete all KG projection nodes for a project or all scopes."""
@@ -215,7 +227,7 @@ class KnowledgeGraphMaintenance:
             {"project_id": project_id},
         )
         memories_deleted = int(records[0]["deleted"]) if records else 0
-        entities_deleted = await self.remove_orphaned_entities(
+        entities_deleted = await self._remove_orphaned_entities_strict(
             scope="project",
             project_id=project_id,
         )

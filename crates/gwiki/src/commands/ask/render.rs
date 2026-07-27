@@ -21,7 +21,9 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
             "Answer for \"{query}\"\nScope: {scope}\n\n{}",
             synthesis.answer
         );
-        if synthesis.citation_check.status != CITATION_CHECK_SUPPORTED {
+        if synthesis.citation_check.status == "no_citations" {
+            text.push_str("\n\n[warning] The synthesized answer contains no wiki citations.");
+        } else if synthesis.citation_check.status != CITATION_CHECK_SUPPORTED {
             text.push_str(&format!(
                 "\n\n[unverified] {} claim(s) lack citation support in the retrieved evidence.",
                 synthesis.citation_check.unsupported_claims.len()

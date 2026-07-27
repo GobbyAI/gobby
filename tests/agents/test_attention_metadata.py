@@ -143,6 +143,26 @@ def test_expiry_without_followup_event() -> None:
     assert len(events) == 1
 
 
+def test_clear_removes_entry_and_publishes_cursor_ordered_tombstone() -> None:
+    events: list[dict[str, object]] = []
+    store = AttentionMetadataStore(
+        AttentionOrderingCoordinator(epoch="epoch-1"),
+        event_publisher=events.append,
+    )
+    store.set("run:1", "retrying provider", 1_000)
+
+    assert store.clear("run:1") is True
+    assert store.get("run:1") is None
+    assert events[-1] == {
+        "entry_id": "run:1",
+        "epoch": "epoch-1",
+        "seq": 2,
+        "metadata": None,
+    }
+    assert store.clear("run:1") is False
+    assert len(events) == 2
+
+
 @pytest.mark.asyncio
 async def test_live_emit_and_validation() -> None:
     clock = _Clock()
@@ -254,8 +274,12 @@ async def test_attention_tracker_sets_stall_and_dismissal_metadata(
     await tracker.sync(run, "503 service unavailable")
     await tracker.sync(run, "503 service unavailable")
     assert store.get("run:run-1")["text"] == "retrying provider"
+    await tracker.clear(run)
+    assert store.get("run:run-1") is None
 
     approval = "Permission required: press Enter to approve this command"
     prompt_detector.for_provider(run.provider).mark_approval_prompt_dismissed(run.id, approval)
     await tracker.sync(run, approval)
     assert store.get("run:run-1")["text"] == "needs attention"
+    await tracker.clear_after_injection(run)
+    assert store.get("run:run-1") is None

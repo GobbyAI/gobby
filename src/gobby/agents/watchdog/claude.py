@@ -74,7 +74,6 @@ def _assistant_payload_type(
         "tool": "tool_use",
         "message": "text",
         "other": "other",
-        "user_input": "other",
     }[activity_kind]
 
 
@@ -155,10 +154,11 @@ def _read_claude_snapshot(path: str) -> WatchdogTranscriptSnapshot:
                 payload_type="tool_result" if "tool_result" in block_types else "message",
             )
             tail.append(summary)
-            turn_started_event = summary
-            latest_turn_event = summary
-            latest_turn_kind = "started"
-            latest_activity_kind = "user_input"
+            if "tool_result" not in block_types:
+                turn_started_event = summary
+                latest_turn_event = summary
+                latest_turn_kind = "started"
+                latest_activity_kind = "user_input"
             return ScanVerdict.VALID
 
         subtype = data.get("subtype")

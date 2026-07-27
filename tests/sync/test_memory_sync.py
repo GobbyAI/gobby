@@ -1,25 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
-from gobby.memory.dream.models import RelatedMemoryEvidence
+from gobby.memory.dream.models import DreamCandidate, RelatedMemoryEvidence
 from gobby.memory.manager import MemoryManager
 from gobby.memory.services import lifecycle as lifecycle_module
+from gobby.memory.write_result import MemoryWriteResult
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_models import PERSONAL_PROJECT_ID
 from gobby.sync.memories import MemoryBackupManager
 
 
 @pytest.mark.asyncio
 async def test_import_created_reactivated_marks_older_due(
-    hub_db,
-    tmp_path,
-    monkeypatch,
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Public JSONL restore awaits shared hooks for fresh and reactivated knowledge."""
     manager = MemoryManager(db=hub_db, config=MemoryConfig(enabled=True))
@@ -43,7 +48,10 @@ async def test_import_created_reactivated_marks_older_due(
     manager.storage.mark_dreamed(older.id, when=intervening_at)
     completed_hooks: list[str] = []
 
-    async def related(candidates, **kwargs):
+    async def related(
+        candidates: list[DreamCandidate],
+        **kwargs: Any,
+    ) -> list[DreamCandidate]:
         candidate = candidates[0]
         if candidate.content == "reactivated import":
             assert kwargs["anchor_at"] == candidate.updated_at
@@ -109,9 +117,9 @@ async def test_import_created_reactivated_marks_older_due(
 
 @pytest.mark.asyncio
 async def test_import_updated_unchanged_deduped_no_mark_due(
-    hub_db,
-    tmp_path,
-    monkeypatch,
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only new active knowledge owns the import-time wakeup hook."""
     manager = MemoryManager(db=hub_db, config=MemoryConfig(enabled=True))
@@ -132,7 +140,10 @@ async def test_import_updated_unchanged_deduped_no_mark_due(
     assert manager.schedule_write_mark_due(duplicate, "deduped") is None
     calls = 0
 
-    async def should_not_run(candidates, **_kwargs):
+    async def should_not_run(
+        candidates: list[DreamCandidate],
+        **_kwargs: Any,
+    ) -> list[DreamCandidate]:
         nonlocal calls
         calls += 1
         return candidates
@@ -182,8 +193,8 @@ async def test_import_updated_unchanged_deduped_no_mark_due(
 
 @pytest.mark.asyncio
 async def test_import_fresh_and_winning_writes_reconcile_before_result(
-    hub_db,
-    tmp_path,
+    hub_db: HubDatabase,
+    tmp_path: Path,
 ) -> None:
     vector_store = MagicMock()
     vector_store.upsert = AsyncMock()
@@ -232,8 +243,8 @@ async def test_import_fresh_and_winning_writes_reconcile_before_result(
 
 @pytest.mark.asyncio
 async def test_export_canonicalizes_oversized_tombstone_project_id(
-    hub_db,
-    tmp_path,
+    hub_db: HubDatabase,
+    tmp_path: Path,
 ) -> None:
     """Backup export never re-emits retired merge-sync tombstone records."""
     backup_path = tmp_path / "memories.jsonl"
@@ -258,3 +269,87 @@ async def test_export_canonicalizes_oversized_tombstone_project_id(
 
     assert await backup.backup() == 0
     assert backup_path.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.asyncio
+async def test_restore_reconciliation_is_bounded_and_concurrent(
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup_path = tmp_path / "memories.jsonl"
+    backup_path.write_text("{}\n", encoding="utf-8")
+    manager = MagicMock()
+    active = 0
+    peak_active = 0
+
+    async def reconcile_memory_indices(_memory_id: str) -> None:
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        await asyncio.sleep(0.001)
+        active -= 1
+
+    manager.reconcile_memory_indices = AsyncMock(side_effect=reconcile_memory_indices)
+    manager.schedule_write_mark_due.return_value = None
+    outcomes = [
+        MemoryWriteResult(memory=MagicMock(id=f"memory-{index}"), outcome="created")
+        for index in range(20)
+    ]
+    backup = MemoryBackupManager(
+        db=hub_db,
+        memory_manager=manager,
+        config=MemoryBackupConfig(enabled=True, backup_path=backup_path),
+    )
+    monkeypatch.setattr(
+        backup,
+        "_restore_memories_with_outcomes_sync",
+        lambda _path: (len(outcomes), outcomes),
+    )
+
+    assert await backup.restore() == 20
+    assert 1 < peak_active <= 8
+
+
+@pytest.mark.asyncio
+async def test_restore_cancellation_waits_for_owned_reconciliation(
+    hub_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup_path = tmp_path / "memories.jsonl"
+    backup_path.write_text("{}\n", encoding="utf-8")
+    manager = MagicMock()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def reconcile_memory_indices(_memory_id: str) -> None:
+        started.set()
+        await release.wait()
+        finished.set()
+
+    manager.reconcile_memory_indices = AsyncMock(side_effect=reconcile_memory_indices)
+    manager.schedule_write_mark_due.return_value = None
+    outcome = MemoryWriteResult(memory=MagicMock(id="memory-1"), outcome="created")
+    backup = MemoryBackupManager(
+        db=hub_db,
+        memory_manager=manager,
+        config=MemoryBackupConfig(enabled=True, backup_path=backup_path),
+    )
+    monkeypatch.setattr(
+        backup,
+        "_restore_memories_with_outcomes_sync",
+        lambda _path: (1, [outcome]),
+    )
+    caller = asyncio.create_task(backup.restore())
+    await started.wait()
+
+    caller.cancel()
+    await asyncio.sleep(0)
+    assert not finished.is_set()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert finished.is_set()

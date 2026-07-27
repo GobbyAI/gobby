@@ -58,6 +58,31 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
     completion_registry.cleanup.assert_called_once_with("run-123")
 
 
+@pytest.mark.asyncio
+async def test_complete_and_notify_normalizes_a_copy_of_notify_result() -> None:
+    runner = MagicMock()
+    runner.complete_run.return_value = True
+    runner.get_run.return_value = SimpleNamespace(status="success")
+    completion_registry = MagicMock()
+    completion_registry.notify = AsyncMock(return_value={})
+    notify_result = {"status": "success", "run_id": "stale-run", "error": None}
+
+    completed = await run_completion.complete_and_notify_agent_run(
+        runner,
+        "run-current",
+        completion_registry=completion_registry,
+        notify_result=notify_result,
+    )
+
+    assert completed is True
+    assert notify_result == {"status": "success", "run_id": "stale-run", "error": None}
+    completion_registry.notify.assert_awaited_once_with(
+        "run-current",
+        result={"status": "success", "run_id": "run-current"},
+        message="",
+    )
+
+
 async def test_complete_and_notify_settles_delivery_before_cancellation() -> None:
     runner = MagicMock()
     runner.complete_run.return_value = True

@@ -124,6 +124,16 @@ async def test_qwen_system_diagnostics_never_become_turn_or_error_signals(
 
 
 @pytest.mark.asyncio
+async def test_qwen_tool_result_preserves_record_event_type(tmp_path: Path) -> None:
+    path = tmp_path / "tool-result.jsonl"
+    _write(path, [_record("tool_result", [{"type": "text", "text": "result"}])])
+
+    snapshot = await QwenTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.tail[0].event_type == "tool_result"
+
+
+@pytest.mark.asyncio
 async def test_qwen_tail_is_bounded_and_structurally_redacted(tmp_path: Path) -> None:
     path = tmp_path / "redacted.jsonl"
     records = [_record("assistant", [{"text": str(index)}]) for index in range(12)]

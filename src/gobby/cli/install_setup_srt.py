@@ -16,8 +16,9 @@ from urllib.request import Request, urlopen
 
 from gobby.agents.srt_runtime import (
     SrtRuntimeError,
+    srt_install_lock,
     srt_install_root,
-    verify_srt_installation,
+    verify_srt_installation_locked,
 )
 from gobby.utils.dependency_requirements import SRT_RELEASE, node_dependency_status
 
@@ -51,77 +52,78 @@ def install_srt_runtime() -> SrtInstallResult:
 
 def _install_srt_runtime() -> SrtInstallResult:
     """Install the immutable SRT dependency graph, or reuse a verified copy."""
-    try:
-        existing = verify_srt_installation()
-    except SrtRuntimeError:
-        existing = None
-    if existing is not None:
-        return SrtInstallResult(existing.root, SRT_RELEASE.version, installed=False)
-
-    node = _require_node()
-    npm_raw = shutil.which("npm")
-    if not npm_raw:
-        raise SrtRuntimeError("npm is required to install Gobby's managed SRT runtime")
-    npm = Path(npm_raw).resolve(strict=True)
-
     target = srt_install_root()
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{SRT_RELEASE.version}-", dir=target.parent))
-    try:
-        tarball = staging / "sandbox-runtime.tgz"
-        _download_verified_tarball(tarball)
-        _write_json(staging / "package.json", _PACKAGE_JSON)
-        lock_source = Path(__file__).parents[1] / "install" / "srt-package-lock.json"
-        lock_target = staging / "package-lock.json"
-        shutil.copyfile(lock_source, lock_target)
-        if _sha256(lock_target) != SRT_RELEASE.lockfile_sha256:
-            raise SrtRuntimeError("bundled SRT lockfile checksum mismatch")
+    with srt_install_lock():
+        try:
+            existing = verify_srt_installation_locked()
+        except SrtRuntimeError:
+            existing = None
+        if existing is not None:
+            return SrtInstallResult(existing.root, SRT_RELEASE.version, installed=False)
 
-        result = subprocess.run(
-            [
-                str(npm),
-                "ci",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-                "--omit=dev",
-            ],
-            cwd=staging,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=180,
-        )
-        if result.returncode != 0:
-            raise SrtRuntimeError(f"npm failed to install managed SRT: {result.stderr.strip()}")
+        node = _require_node()
+        npm_raw = shutil.which("npm")
+        if not npm_raw:
+            raise SrtRuntimeError("npm is required to install Gobby's managed SRT runtime")
+        npm = Path(npm_raw).resolve(strict=True)
 
-        installed_package = (
-            staging / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
-        )
-        package = json.loads(installed_package.read_text(encoding="utf-8"))
-        if (
-            package.get("name") != SRT_RELEASE.package
-            or package.get("version") != SRT_RELEASE.version
-        ):
-            raise SrtRuntimeError("npm installed an unexpected Sandbox Runtime package")
+        staging = Path(tempfile.mkdtemp(prefix=f".{SRT_RELEASE.version}-", dir=target.parent))
+        try:
+            tarball = staging / "sandbox-runtime.tgz"
+            _download_verified_tarball(tarball)
+            _write_json(staging / "package.json", _PACKAGE_JSON)
+            lock_source = Path(__file__).parents[1] / "install" / "srt-package-lock.json"
+            lock_target = staging / "package-lock.json"
+            shutil.copyfile(lock_source, lock_target)
+            if _sha256(lock_target) != SRT_RELEASE.lockfile_sha256:
+                raise SrtRuntimeError("bundled SRT lockfile checksum mismatch")
 
-        runner_source = Path(__file__).parents[1] / "agents" / "srt_runner.mjs"
-        runner_target = staging / "runner.mjs"
-        shutil.copyfile(runner_source, runner_target)
-        os.chmod(runner_target, 0o700)
-        if _sha256(runner_target) != SRT_RELEASE.runner_sha256:
-            raise SrtRuntimeError("bundled SRT runner checksum mismatch")
-        _write_json(
-            staging / "receipt.json",
-            SRT_RELEASE.receipt_fields() | {"node": str(node)},
-        )
-        _promote_install(staging, target)
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+            result = subprocess.run(
+                [
+                    str(npm),
+                    "ci",
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                    "--omit=dev",
+                ],
+                cwd=staging,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=180,
+            )
+            if result.returncode != 0:
+                raise SrtRuntimeError(f"npm failed to install managed SRT: {result.stderr.strip()}")
 
-    verify_srt_installation()
-    return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
+            installed_package = (
+                staging / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
+            )
+            package = json.loads(installed_package.read_text(encoding="utf-8"))
+            if (
+                package.get("name") != SRT_RELEASE.package
+                or package.get("version") != SRT_RELEASE.version
+            ):
+                raise SrtRuntimeError("npm installed an unexpected Sandbox Runtime package")
+
+            runner_source = Path(__file__).parents[1] / "agents" / "srt_runner.mjs"
+            runner_target = staging / "runner.mjs"
+            shutil.copyfile(runner_source, runner_target)
+            os.chmod(runner_target, 0o700)
+            if _sha256(runner_target) != SRT_RELEASE.runner_sha256:
+                raise SrtRuntimeError("bundled SRT runner checksum mismatch")
+            _write_json(
+                staging / "receipt.json",
+                SRT_RELEASE.receipt_fields() | {"node": str(node)},
+            )
+            _promote_install(staging, target)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+
+        verify_srt_installation_locked()
+        return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
 
 
 def _require_node() -> Path:

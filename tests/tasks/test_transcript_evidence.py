@@ -480,7 +480,7 @@ async def test_missing_transcript_reports_attempted_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "gobby.tasks.transcript_evidence._find_transcript_on_disk",
+        "gobby.tasks.transcript_evidence.find_transcript_on_disk",
         lambda *_args, **_kwargs: None,
     )
     missing = tmp_path / "missing.jsonl"

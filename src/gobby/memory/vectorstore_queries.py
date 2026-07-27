@@ -9,12 +9,15 @@ from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStru
 
 from gobby.memory.vectorstore_client import (
     QDRANT_CLIENT_TIMEOUT_SECONDS,
+    QdrantClientLike,
     VectorStoreUnavailableError,
 )
 from gobby.memory.vectorstore_filters import payload_filter
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
+
+STORED_VECTOR_BATCH_SIZE = 50
 
 
 class VectorStoreQueries:
@@ -135,8 +138,8 @@ class VectorStoreQueries:
             )
             stored = [(str(record.id), record.vector) for record in records if record.vector]
             result: dict[str, list[tuple[str, float]]] = {}
-            for start in range(0, len(stored), 50):
-                batch = stored[start : start + 50]
+            for start in range(0, len(stored), STORED_VECTOR_BATCH_SIZE):
+                batch = stored[start : start + STORED_VECTOR_BATCH_SIZE]
                 requests = [
                     QueryRequest(
                         query=vector,
@@ -240,12 +243,15 @@ class VectorStoreQueries:
         self,
         items: list[tuple[str, list[float], dict[str, Any]]],
         collection_name: str | None = None,
+        *,
+        client: QdrantClientLike | None = None,
     ) -> None:
         """Insert or update multiple points at once."""
         if not items:
             return
         store = self._store
-        client = await store._ensure_initialized()
+        if client is None:
+            client = await store._ensure_initialized()
         points = [
             PointStruct(id=memory_id, vector=embedding, payload=payload)
             for memory_id, embedding, payload in items

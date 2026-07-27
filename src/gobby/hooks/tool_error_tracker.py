@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -12,10 +13,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+logger = logging.getLogger(__name__)
+
 MAX_IDENTITY_COMPONENT_CHARS = 130
 MAX_ERROR_CHARS = 300
 MAX_OPEN_TOOL_ERRORS = 10
 MAX_TOOL_ERROR_COUNT = 999_999
+MAX_HASH_NORMALIZATION_DEPTH = 16
+MAX_ERROR_MAPPING_DEPTH = 16
 
 _DIGEST_CHARS = 8
 _IDENTITY_SEPARATOR = "…#"
@@ -94,20 +99,57 @@ def _bounded_identity(value: object) -> str:
     return render_bounded_identity(sanitize_record_text(value))
 
 
-def _normalize_hash_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {
-            str(key): _normalize_hash_value(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [_normalize_hash_value(item) for item in value]
-    if isinstance(value, set | frozenset):
-        normalized = [_normalize_hash_value(item) for item in value]
-        return sorted(normalized, key=lambda item: _canonical_json(item))
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    return f"{type(value).__module__}.{type(value).__qualname__}:{value}"
+def _stable_type_marker(value: object) -> dict[str, str]:
+    return {"__type__": f"{type(value).__module__}.{type(value).__qualname__}"}
+
+
+def _normalize_hash_value(
+    value: object,
+    *,
+    depth: int = 0,
+    seen: set[int] | None = None,
+) -> object:
+    if depth >= MAX_HASH_NORMALIZATION_DEPTH:
+        return _stable_type_marker(value)
+    if seen is None:
+        seen = set()
+    is_container = (
+        isinstance(value, Mapping)
+        or isinstance(value, set | frozenset)
+        or (isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray))
+    )
+    if is_container and id(value) in seen:
+        return _stable_type_marker(value)
+    if is_container:
+        seen.add(id(value))
+    next_depth = depth + 1
+    try:
+        if isinstance(value, Mapping):
+            return {
+                str(key): _normalize_hash_value(item, depth=next_depth, seen=seen)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            }
+        if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+            return [_normalize_hash_value(item, depth=next_depth, seen=seen) for item in value]
+        if isinstance(value, set | frozenset):
+            normalized = [
+                _normalize_hash_value(item, depth=next_depth, seen=seen) for item in value
+            ]
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        return f"{type(value).__module__}.{type(value).__qualname__}:{value}"
+    finally:
+        if is_container:
+            seen.remove(id(value))
 
 
 def _canonical_json(value: object) -> str:
@@ -187,7 +229,14 @@ def is_wrapper_echo_event(event: ToolEventLike) -> bool:
     return isinstance(tool_name, str) and tool_name.lower() in _WRAPPER_TOOL_NAMES
 
 
-def _mapping_error_text(value: Mapping[str, Any]) -> str | None:
+def _mapping_error_text(
+    value: Mapping[str, Any],
+    *,
+    depth: int = 0,
+) -> str | None:
+    if depth >= MAX_ERROR_MAPPING_DEPTH:
+        return None
+    next_depth = depth + 1
     for key in ("error", "errors"):
         if key not in value:
             continue
@@ -195,7 +244,7 @@ def _mapping_error_text(value: Mapping[str, Any]) -> str | None:
         if isinstance(nested, str) and nested:
             return nested
         if isinstance(nested, Mapping):
-            found = _mapping_error_text(nested)
+            found = _mapping_error_text(nested, depth=next_depth)
             if found:
                 return found
             message = nested.get("message")
@@ -216,7 +265,7 @@ def _mapping_error_text(value: Mapping[str, Any]) -> str | None:
     for key in ("tool_output", "tool_response", "tool_result", "structuredContent"):
         nested = value.get(key)
         if isinstance(nested, Mapping):
-            found = _mapping_error_text(nested)
+            found = _mapping_error_text(nested, depth=next_depth)
             if found:
                 return found
         elif isinstance(nested, str) and nested:
@@ -367,7 +416,14 @@ def track_proxy_outcome(
         )
         return
     if outcome_class != "executed":
-        raise ValueError(f"Unknown proxy outcome class: {outcome_class}")
+        logger.warning(
+            "Ignoring unknown proxy outcome class",
+            extra={
+                "outcome_class": outcome_class,
+                "session_id": session_id,
+            },
+        )
+        return
 
     from gobby.hooks.tool_outcomes import classify_raw_tool_result
 

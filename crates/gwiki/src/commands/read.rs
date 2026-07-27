@@ -101,6 +101,15 @@ pub(crate) fn read_document_text(
 }
 
 fn read_title(root: &Path, scope: ScopeIdentity, title: String) -> Result<ReadOutput, WikiError> {
+    read_title_with_max_bytes(root, scope, title, configured_read_max_bytes())
+}
+
+fn read_title_with_max_bytes(
+    root: &Path,
+    scope: ScopeIdentity,
+    title: String,
+    max_bytes: usize,
+) -> Result<ReadOutput, WikiError> {
     let requested = ReadRequested::title(title.clone());
     if title.trim().is_empty() {
         return Ok(ReadOutput::invalid_request(
@@ -122,13 +131,7 @@ fn read_title(root: &Path, scope: ScopeIdentity, title: String) -> Result<ReadOu
         )),
         Ordering::Equal => {
             let candidate = candidates.remove(0);
-            read_existing_path(
-                root,
-                scope,
-                requested,
-                candidate.wiki_path,
-                configured_read_max_bytes(),
-            )
+            read_existing_path(root, scope, requested, candidate.wiki_path, max_bytes)
         }
         Ordering::Greater => Ok(ReadOutput::ambiguous(scope, requested, candidates)),
     }
@@ -632,6 +635,26 @@ mod tests {
                 gobby_core::indexing::content_hash("# Large\n0123456789abcdef".as_bytes()).as_str()
             )
         );
+    }
+
+    #[test]
+    fn read_title_accepts_an_explicit_byte_limit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("knowledge/topics/large.md");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("topic dir");
+        std::fs::write(&path, "# Large\n0123456789abcdef").expect("large markdown");
+
+        let output = read_title_with_max_bytes(
+            temp.path(),
+            ScopeIdentity::topic("field-work"),
+            "Large".to_string(),
+            12,
+        )
+        .expect("read title");
+
+        assert_eq!(output.status, "found");
+        assert!(output.truncated);
+        assert_eq!(output.content.as_deref(), Some("# Large\n0123"));
     }
 
     #[test]

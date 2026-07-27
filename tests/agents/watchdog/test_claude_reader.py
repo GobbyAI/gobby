@@ -88,7 +88,7 @@ async def test_claude_reader_extracts_completed_turn_and_reasoning_activity(
     assert len(snapshot.tail) == 3
 
 
-async def test_user_tool_result_supersedes_obsolete_completion(tmp_path: Path) -> None:
+async def test_user_tool_result_preserves_completed_turn_bookkeeping(tmp_path: Path) -> None:
     path = tmp_path / "next-turn.jsonl"
     _write(
         path,
@@ -110,9 +110,9 @@ async def test_user_tool_result_supersedes_obsolete_completion(tmp_path: Path) -
     snapshot = await ClaudeTranscriptWatchdogReader().read(str(path))
 
     assert snapshot.latest_turn_event is not None
-    assert snapshot.latest_turn_event.line_num == 2
-    assert snapshot.latest_turn_event.event_type == "user"
-    assert snapshot.latest_turn_kind == "started"
+    assert snapshot.latest_turn_event.line_num == 1
+    assert snapshot.latest_turn_event.event_type == "system"
+    assert snapshot.latest_turn_kind == "completed"
     assert snapshot.has_conclusive_turn_completed is False
 
 

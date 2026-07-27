@@ -111,6 +111,7 @@ def test_loads_required_skills_before_review() -> None:
     assert agent["step_variables"]["required_skills"] == [
         "code-index",
         "epic-review",
+        "review-learning",
         "tech-writer",
         "tasks",
         "proportionality",
@@ -120,15 +121,47 @@ def test_loads_required_skills_before_review() -> None:
         assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
+            "to": "closed_review",
+            "when": (
+                "vars.closed_epic and all(skill in vars.get('loaded_skills', []) "
+                "for skill in vars.required_skills)"
+            ),
+        },
+        {
             "to": "review",
-            "when": "all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)",
-        }
+            "when": (
+                "not vars.closed_epic and all(skill in vars.get('loaded_skills', []) "
+                "for skill in vars.required_skills)"
+            ),
+        },
     ]
 
     success = load_step["on_mcp_success"][0]
     assert success["server"] == "gobby-skills"
     assert success["tool"] == "get_skill"
     assert success["variable"] == "required_skills_loaded"
+
+
+def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
+    agent = _agent()
+    steps = {step["name"]: step for step in agent["steps"]}
+    claim = steps["claim"]
+    closed_review = steps["closed_review"]
+
+    closed_detection = next(
+        hook
+        for hook in claim["on_mcp_success"]
+        if hook["server"] == "gobby-tasks" and hook["tool"] == "get_task"
+    )
+    assert "state" in closed_detection["when"]
+    assert "is_closed" in closed_detection["when"]
+    assert closed_detection["variable"] == "closed_epic"
+    assert claim["transitions"] == [
+        {"to": "load_skill", "when": "vars.task_claimed or vars.closed_epic"}
+    ]
+    assert "gobby-tasks:reopen_task" not in closed_review["blocked_mcp_tools"]
+    assert "gobby-tasks:close_task" in closed_review["blocked_mcp_tools"]
+    assert "Call reopen_task only" in agent["instructions"]
 
 
 def test_tdd_audit_evidence_is_language_aware() -> None:

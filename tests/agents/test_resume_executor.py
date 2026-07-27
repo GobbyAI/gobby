@@ -350,6 +350,67 @@ async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
     assert 'model="moonshotai/kimi-k3"' in launch_updates["config_overrides"]
 
 
+@pytest.mark.parametrize(
+    ("provider", "base_env", "token_env"),
+    [
+        ("droid", "FACTORY_API_BASE_URL", "FACTORY_API_KEY"),
+        ("grok", "GROK_API_BASE", "XAI_API_KEY"),
+        ("qwen", "QWEN_API_BASE", "QWEN_API_KEY"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_resume_non_codex_endpoint_uses_provider_specific_environment(
+    provider: str,
+    base_env: str,
+    token_env: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = provider
+    metadata["model"] = "endpoint:resume-test/provider-model"
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    monkeypatch.setattr(
+        "gobby.agents.resume_executor.shutil.which",
+        lambda _command: "/usr/bin/provider",
+    )
+    monkeypatch.setattr(
+        resume_executor,
+        "build_cli_command",
+        MagicMock(return_value=([provider, "resume"], {})),
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider=provider),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "resume-test": {
+                            "protocol": "openai-compatible",
+                            "wire_api": "chat-completions",
+                            "api_base": "https://resume.example/v1",
+                            "api_key": "resume-secret",
+                            "model": "provider-model",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env[base_env] == "https://resume.example/v1"
+    assert spawn_env[token_env] == "resume-secret"
+
+
 @pytest.mark.asyncio
 async def test_resume_reuses_persisted_claude_mcp_config(
     monkeypatch: pytest.MonkeyPatch,

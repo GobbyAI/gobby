@@ -55,7 +55,8 @@ pub fn resolve_direct_generation_target(
     let configured_api_key = profile_or_base(source, profile, ai_keys::PROFILE_API_KEY);
     let model = profile_or_base(source, profile, ai_keys::PROFILE_MODEL);
     let provider = profile_or_base(source, profile, ai_keys::PROFILE_PROVIDER);
-    let api_key = configured_api_key.or_else(|| default_env_api_key(provider.as_deref()));
+    let api_key = configured_api_key
+        .or_else(|| default_env_api_key(provider.as_deref(), api_base.as_deref()));
 
     DirectGenerationTarget {
         api_base,
@@ -66,12 +67,18 @@ pub fn resolve_direct_generation_target(
     }
 }
 
-fn default_env_api_key(provider: Option<&str>) -> Option<String> {
+fn default_env_api_key(provider: Option<&str>, api_base: Option<&str>) -> Option<String> {
+    let provider = provider.map(str::trim);
+    let api_base = api_base.and_then(|value| reqwest::Url::parse(value.trim()).ok())?;
+    if api_base.scheme() != "https" {
+        return None;
+    }
+    let host = api_base.host_str()?;
     let env_name = match provider.map(str::trim) {
-        Some("anthropic") => "ANTHROPIC_API_KEY",
-        Some("openai") => "OPENAI_API_KEY",
-        Some("openrouter") => "OPENROUTER_API_KEY",
-        Some("groq") => "GROQ_API_KEY",
+        Some("anthropic") if host == "api.anthropic.com" => "ANTHROPIC_API_KEY",
+        Some("openai") if host == "api.openai.com" => "OPENAI_API_KEY",
+        Some("openrouter") if host == "openrouter.ai" => "OPENROUTER_API_KEY",
+        Some("groq") if host == "api.groq.com" => "GROQ_API_KEY",
         _ => return None,
     };
     std::env::var(env_name)

@@ -585,14 +585,19 @@ class ConfigStore:
         or both roll back.
         """
         _validate_storage_config_key(key)
-        stored_value = self.get(key)
-        if isinstance(stored_value, str) and stored_value.startswith("$secret:"):
-            secret_name = stored_value.removeprefix("$secret:") or config_key_to_secret_name(key)
-        else:
-            secret_name = config_key_to_secret_name(key)
-        with self._mutation_context():
-            transaction = self.db
+        with self._mutation_context() as transaction:
             self._assert_embedding_mutation_allowed((key,), transaction)
+            row = transaction.execute(
+                "SELECT value FROM config_store WHERE key = %s FOR UPDATE",
+                (key,),
+            ).fetchone()
+            stored_value = _decode_value(key, row["value"]) if row else None
+            if isinstance(stored_value, str) and stored_value.startswith("$secret:"):
+                secret_name = stored_value.removeprefix("$secret:") or config_key_to_secret_name(
+                    key
+                )
+            else:
+                secret_name = config_key_to_secret_name(key)
             transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
             secret_store.delete(secret_name)
 

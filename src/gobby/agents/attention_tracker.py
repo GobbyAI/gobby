@@ -117,16 +117,22 @@ class AgentAttentionTracker:
 
     async def clear_after_injection(self, run: AgentRun) -> None:
         """Clear the exact attention episode resolved by successful injection."""
-        await self._clear_if_current(run_attention_entry_id(run.id))
+        entry_id = run_attention_entry_id(run.id)
+        await self._clear_if_current(entry_id)
+        if self._attention_metadata_store is not None:
+            self._attention_metadata_store.clear(entry_id)
 
     async def clear(self, run: AgentRun) -> None:
         """Authoritatively clear attention when a run becomes terminal."""
+        entry_id = run_attention_entry_id(run.id)
         if self._attention_manager is not None:
             await self._attention_manager.transition_async(
                 self._run_db,
-                run_attention_entry_id(run.id),
+                entry_id,
                 state=None,
             )
+        if self._attention_metadata_store is not None:
+            self._attention_metadata_store.clear(entry_id)
         self._stall_classifier.clear(run.id)
 
     async def _clear_if_current(self, entry_id: str) -> None:

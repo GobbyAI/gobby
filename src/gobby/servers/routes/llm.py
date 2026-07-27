@@ -134,7 +134,7 @@ class ToolLoopLimitsPayload(BaseModel):
     max_turns: int | None = Field(gt=0)
     max_tool_calls: int = Field(gt=0)
     max_bytes_per_tool_result: int = Field(gt=0)
-    tool_timeout_seconds: int = Field(gt=0)
+    tool_timeout_seconds: float = Field(gt=0)
     loop_timeout_seconds: int = Field(gt=0)
 
 

@@ -6,6 +6,10 @@ on:
   issue_comment:
     types: [created]
 
+concurrency:
+  group: cla-signatures
+  cancel-in-progress: false
+
 permissions:
   actions: write
   contents: write

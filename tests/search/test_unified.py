@@ -740,9 +740,10 @@ class TestEmbeddingBackend:
             records = [
                 record
                 for record in caplog.records
-                if record.getMessage() == "Embedding index built with 2 items"
+                if record.getMessage() == "Embedding index built"
             ]
             assert len(records) == 1
+            assert records[0].__dict__["indexed_item_count"] == 2
             assert records[0].levelno == logging.DEBUG
 
             caplog.clear()

@@ -76,12 +76,17 @@ A new dedicated module that owns all `git` shell-out logic for project-root dete
 
 ### PostgreSQL Bootstrap
 
-`src/db.rs` asks the local daemon broker for PostgreSQL DSNs first using
+`src/db.rs` resolves PostgreSQL DSNs according to the process-lifetime runtime
+mode. Daemon mode checks `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN`, then asks
+the local daemon broker for its effective configuration through
 `POST /api/local/runtime/database-url` with `X-Gobby-Local-Token` from
-`local_cli_token` and a 3s timeout. If the broker is unavailable, gcode falls
-back to explicit fallback sources: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
-`$GOBBY_HOME/gcore.yaml` `databases.postgres.dsn`, then
-`$GOBBY_HOME/bootstrap.yaml` inline `database_url`. Bootstrap still requires
+`local_cli_token` and a 3s timeout, then checks `$GOBBY_HOME/bootstrap.yaml`
+`database_url`. A daemon broker failure is a daemon-mode error; it never falls
+back to full `gcore.yaml` or standalone resolution.
+
+Standalone mode checks `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN`, then
+`$GOBBY_HOME/bootstrap.yaml` `database_url`, then full
+`$GOBBY_HOME/gcore.yaml` `databases.postgres.dsn`. Bootstrap requires
 `hub_backend: postgres` when used.
 `connect_readwrite()` and `connect_readonly()` both return a synchronous
 `postgres::Client`; PostgreSQL permissions decide actual access.

@@ -65,6 +65,21 @@ def test_list_jobs_filters_by_is_system(cron_storage: CronJobStorage) -> None:
     assert [job.id for job in jobs] == [system.id]
 
 
+def test_disable_project_jobs_returns_post_update_rows(
+    cron_storage: CronJobStorage,
+) -> None:
+    job = _job(cron_storage, is_system=False)
+    assert job.enabled is True
+    assert job.next_run_at is not None
+
+    parked = cron_storage.disable_project_jobs(PROJECT_ID)
+
+    assert [row.id for row in parked] == [job.id]
+    assert parked[0].enabled is False
+    assert parked[0].next_run_at is None
+    assert cron_storage.get_job(job.id) == parked[0]
+
+
 def test_mark_as_system_job_sets_system_flag(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=False)
 

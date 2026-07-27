@@ -127,24 +127,26 @@ pub fn push_blank(out: &mut Vec<String>) {
 /// TOML (`+++`) frontmatter block, or `None` when the document does not open
 /// with a properly closed frontmatter block.
 pub fn frontmatter_body_start(markdown: &str) -> Option<usize> {
-    delimiter_content_start(markdown, "---")
-        .and_then(|content_start| find_closing_delimiter(markdown, "---", content_start))
-        .or_else(|| {
-            delimiter_content_start(markdown, "+++")
-                .and_then(|content_start| find_closing_delimiter(markdown, "+++", content_start))
-        })
+    delimiter_bounds(markdown, "---")
+        .or_else(|| delimiter_bounds(markdown, "+++"))
         .map(|(_, body_start)| body_start)
 }
 
+pub fn yaml_frontmatter_closing_delimiter_start(markdown: &str) -> Option<usize> {
+    delimiter_bounds(markdown, "---").map(|(closing_start, _)| closing_start)
+}
+
+fn delimiter_bounds(markdown: &str, marker: &str) -> Option<(usize, usize)> {
+    delimiter_content_start(markdown, marker)
+        .and_then(|content_start| find_closing_delimiter(markdown, marker, content_start))
+}
+
 fn delimiter_content_start(markdown: &str, marker: &str) -> Option<usize> {
-    let rest = markdown.strip_prefix(marker)?;
-    if rest.starts_with("\r\n") {
-        Some(marker.len() + 2)
-    } else if rest.starts_with('\n') {
-        Some(marker.len() + 1)
-    } else {
-        None
-    }
+    let line_end = markdown.find('\n')?;
+    let line_content_end = markdown[..line_end]
+        .strip_suffix('\r')
+        .map_or(line_end, |line| line.len());
+    (markdown[..line_content_end].trim() == marker).then_some(line_end + 1)
 }
 
 fn find_closing_delimiter(

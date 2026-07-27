@@ -1,10 +1,11 @@
 from datetime import UTC, datetime
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.sessions import sessions
+from gobby.cli.sessions import _blocked_attention_by_session, sessions
 from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
@@ -27,6 +28,25 @@ MOCK_SESSION = Session(
     updated_at=datetime.now(UTC).isoformat(),
     seq_num=42,
 )
+
+
+def test_blocked_attention_deduplicates_and_sorts_reasons() -> None:
+    manager = MagicMock()
+    snapshot = SimpleNamespace(
+        states=[
+            SimpleNamespace(state="blocked", session_id="session-1", reason="reason-b"),
+            SimpleNamespace(state="blocked", session_id="session-1", reason="reason-a"),
+            SimpleNamespace(state="blocked", session_id="session-1", reason="reason-b"),
+            SimpleNamespace(state="active", session_id="session-2", reason="ignored"),
+        ]
+    )
+
+    with patch("gobby.cli.sessions.AttentionStateManager") as attention_manager:
+        attention_manager.return_value.snapshot.return_value = snapshot
+        result = _blocked_attention_by_session(manager)
+
+    assert result == {"session-1": (2, "reason-a; reason-b")}
+    attention_manager.assert_called_once_with(manager.db)
 
 
 @pytest.fixture

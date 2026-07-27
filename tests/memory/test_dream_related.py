@@ -31,8 +31,6 @@ from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import render_get_memories_statement
 from gobby.storage.memories_models import Memory
 
-pytestmark = pytest.mark.unit
-
 _NOW = datetime(2026, 7, 22, tzinfo=UTC)
 _PROJECT_A = "11111111-1111-4111-8111-111111111111"
 _PROJECT_B = "22222222-2222-4222-8222-222222222222"
@@ -80,6 +78,7 @@ def _memory(
     )
 
 
+@pytest.mark.unit
 def test_distinctive_terms_priorities() -> None:
     content = (
         "The sandwich TEST IMPL REF expansion for #15008 uses execute_expansion "
@@ -116,6 +115,7 @@ def test_distinctive_terms_priorities() -> None:
         (DreamRunOptions(), True, None),
     ],
 )
+@pytest.mark.unit
 def test_dream_run_options_retrieval_scope(
     options: DreamRunOptions,
     include_global: bool,
@@ -124,6 +124,7 @@ def test_dream_run_options_retrieval_scope(
     assert options.retrieval_scope(include_global=include_global) == expected
 
 
+@pytest.mark.unit
 async def test_regression_sandwich_pair_attaches_via_keyword() -> None:
     candidate = _candidate()
     older = _memory("older", created_at=_NOW - timedelta(days=2))
@@ -163,6 +164,7 @@ async def test_regression_sandwich_pair_attaches_via_keyword() -> None:
     assert result[0].related[0].content == newer.content
 
 
+@pytest.mark.unit
 async def test_total_retrieval_failure_returns_original() -> None:
     candidate = _candidate()
     session = RelatedEvidenceSession()
@@ -188,6 +190,7 @@ async def test_total_retrieval_failure_returns_original() -> None:
     assert not session._tasks
 
 
+@pytest.mark.unit
 async def test_vector_unavailable_degrades() -> None:
     candidate = _candidate()
     newer = _memory("keyword-hit", created_at=_NOW + timedelta(days=1))
@@ -231,6 +234,7 @@ async def test_vector_unavailable_degrades() -> None:
         (RetrievalScope.global_only(), ["global-hit"]),
     ],
 )
+@pytest.mark.unit
 async def test_scope_isolation_matrix(scope: RetrievalScope, expected: list[str]) -> None:
     candidate = _candidate()
     hydrated = [
@@ -296,6 +300,7 @@ async def test_scope_isolation_matrix(scope: RetrievalScope, expected: list[str]
         assert "value': False" in rendered
 
 
+@pytest.mark.unit
 async def test_vector_floor_boundaries() -> None:
     store = MagicMock()
     store.supports_stored_vector_search = True
@@ -316,7 +321,7 @@ async def test_vector_floor_boundaries() -> None:
         fetch_limit=10,
     )
 
-    assert result == {"candidate": [("above", 0.39999999999999997)]}
+    assert result == {"candidate": [("above", VECTOR_EVIDENCE_MIN_SCORE + 0.05)]}
 
 
 @pytest.mark.parametrize(
@@ -328,6 +333,7 @@ async def test_vector_floor_boundaries() -> None:
         ("older", _NOW - timedelta(days=2), []),
     ],
 )
+@pytest.mark.unit
 def test_temporal_direction(
     direction: str,
     anchor: datetime | None,
@@ -367,6 +373,7 @@ def test_temporal_direction(
         ),
     ],
 )
+@pytest.mark.integration
 def test_keyword_scope_sql_contract(
     scope: RetrievalScope,
     predicate: str,
@@ -434,6 +441,7 @@ def test_keyword_scope_sql_contract(
         RetrievalScope.project_and_global("project-a"),
     ],
 )
+@pytest.mark.unit
 def test_rendered_statement_parity(scope: RetrievalScope) -> None:
     db = MagicMock()
     db.fetchall.return_value = []
@@ -465,6 +473,7 @@ def test_rendered_statement_parity(scope: RetrievalScope) -> None:
     assert rendered_hydration == db.fetchall.call_args.args
 
 
+@pytest.mark.integration
 async def test_async_keyword_and_hydration_use_dedicated_statements(postgres_db: Any) -> None:
     postgres_db.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s), (%s, %s)",
@@ -498,6 +507,7 @@ async def test_async_keyword_and_hydration_use_dedicated_statements(postgres_db:
     assert hydrated[0].project_id == _PROJECT_A
 
 
+@pytest.mark.unit
 async def test_blocking_channel_deadline(caplog: pytest.LogCaptureFixture) -> None:
     blocker = asyncio.Event()
 
@@ -532,6 +542,7 @@ async def test_blocking_channel_deadline(caplog: pytest.LogCaptureFixture) -> No
     assert "channels=keyword" in caplog.text
 
 
+@pytest.mark.unit
 async def test_persistent_blocker_bounded_connections() -> None:
     blocker = asyncio.Event()
     candidate = _candidate()
@@ -592,6 +603,7 @@ async def test_persistent_blocker_bounded_connections() -> None:
     await fresh_session.aclose()
 
 
+@pytest.mark.unit
 async def test_session_caller_owned() -> None:
     candidate = _candidate()
     session = RelatedEvidenceSession()
@@ -629,6 +641,7 @@ async def test_session_caller_owned() -> None:
     await session.aclose()
 
 
+@pytest.mark.unit
 async def test_qdrant_timeout_integer_contract() -> None:
     store = VectorStore(url="http://qdrant:6333", collection_name="timeout-contract")
     client = MagicMock()
@@ -647,6 +660,7 @@ async def test_qdrant_timeout_integer_contract() -> None:
     assert client.query_batch_points.await_args.kwargs["timeout"] == 1
 
 
+@pytest.mark.unit
 async def test_trickling_response_aborted_at_absolute_deadline() -> None:
     store = VectorStore(url="http://qdrant:6333", collection_name="absolute-deadline")
     blocker = asyncio.Event()
@@ -670,6 +684,7 @@ async def test_trickling_response_aborted_at_absolute_deadline() -> None:
     client.close.assert_awaited_once()
 
 
+@pytest.mark.unit
 async def test_uninitialized_client_blocking_init() -> None:
     store = VectorStore(url="http://qdrant:6333", collection_name="blocking-init")
     blocker = asyncio.Event()
@@ -710,6 +725,7 @@ async def test_uninitialized_client_blocking_init() -> None:
     client.close.assert_awaited_once()
 
 
+@pytest.mark.unit
 async def test_local_mode_keyword_only_degradation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -758,6 +774,7 @@ async def test_local_mode_keyword_only_degradation(
     "scope",
     [RetrievalScope.global_only(), RetrievalScope.project_and_global(_PROJECT_A)],
 )
+@pytest.mark.integration
 def test_keyword_global_not_starved(scope: RetrievalScope, postgres_db: Any) -> None:
     postgres_db.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s), (%s, %s)",
@@ -798,6 +815,7 @@ def test_keyword_global_not_starved(scope: RetrievalScope, postgres_db: Any) -> 
     assert result_ids == {global_memory.id}
 
 
+@pytest.mark.unit
 async def test_statement_timeout_server_hygiene() -> None:
     db = SimpleNamespace(conninfo="postgresql://evidence")
     bounded = AsyncMock(return_value=[])
@@ -816,6 +834,7 @@ async def test_statement_timeout_server_hygiene() -> None:
     }
 
 
+@pytest.mark.unit
 async def test_blocked_first_set_local_bounded_release() -> None:
     blocker = asyncio.Event()
 
@@ -831,6 +850,7 @@ async def test_blocked_first_set_local_bounded_release() -> None:
     assert not session._tasks
 
 
+@pytest.mark.unit
 async def test_cancel_failure_no_accumulation() -> None:
     baseline_threads = threading.active_count()
     for page in range(3):
@@ -849,6 +869,7 @@ async def test_cancel_failure_no_accumulation() -> None:
     assert threading.active_count() == baseline_threads
 
 
+@pytest.mark.unit
 async def test_hub_pool_independence() -> None:
     class PoolGuard:
         conninfo = "postgresql://dedicated"

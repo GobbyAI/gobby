@@ -12,7 +12,7 @@ import pytest
 
 from gobby.sessions.gzip_seek_index import load_gzip_block_index
 from gobby.sessions.transcript_index import clear_index_cache, get_or_build_index
-from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
+from gobby.sessions.transcript_paths import _is_recent_file, find_transcript_on_disk
 from gobby.sessions.transcript_reader import (
     TranscriptReader,
     _collect_flat_from_file,
@@ -84,8 +84,8 @@ def test_codex_transcript_scan_respects_exact_max_days(
     target = sessions / "2026" / "05" / "01" / "rollout-ext-abc.jsonl"
     target.write_text("{}\n", encoding="utf-8")
 
-    assert _find_transcript_on_disk("codex", "ext-abc", max_days=2) is None
-    assert _find_transcript_on_disk("codex", "ext-abc", max_days=3) == str(target)
+    assert find_transcript_on_disk("codex", "ext-abc", max_days=2) is None
+    assert find_transcript_on_disk("codex", "ext-abc", max_days=3) == str(target)
 
 
 def test_transcript_scan_respects_file_age_for_claude(
@@ -99,8 +99,8 @@ def test_transcript_scan_respects_file_age_for_claude(
     old_mtime = time() - (3 * 24 * 60 * 60)
     os.utime(target, (old_mtime, old_mtime))
 
-    assert _find_transcript_on_disk("claude", "ext-old", max_days=2) is None
-    assert _find_transcript_on_disk("claude", "ext-old", max_days=4) == str(target)
+    assert find_transcript_on_disk("claude", "ext-old", max_days=2) is None
+    assert find_transcript_on_disk("claude", "ext-old", max_days=4) == str(target)
 
 
 def test_transcript_scan_ignores_os_errors_during_traversal(
@@ -111,7 +111,7 @@ def test_transcript_scan_ignores_os_errors_during_traversal(
     (tmp_path / ".claude" / "projects").mkdir(parents=True)
 
     with patch.object(Path, "iterdir", side_effect=OSError("permission denied")):
-        assert _find_transcript_on_disk("claude", "ext-any", max_days=7) is None
+        assert find_transcript_on_disk("claude", "ext-any", max_days=7) is None
 
 
 def test_codex_transcript_scan_treats_external_id_as_literal(
@@ -126,7 +126,7 @@ def test_codex_transcript_scan_treats_external_id_as_literal(
     literal.write_text("{}\n", encoding="utf-8")
     wildcard_match.write_text("{}\n", encoding="utf-8")
 
-    assert _find_transcript_on_disk("codex", "ext[abc]", max_days=1) == str(literal)
+    assert find_transcript_on_disk("codex", "ext[abc]", max_days=1) == str(literal)
 
 
 def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
@@ -752,7 +752,7 @@ class TestTranscriptReaderRendered:
 
         with (
             patch(
-                "gobby.sessions.transcript_reader._find_transcript_on_disk",
+                "gobby.sessions.transcript_reader.find_transcript_on_disk",
                 return_value="/tmp/derived.jsonl",
             ) as find_transcript,
             patch("gobby.sessions.transcript_reader.asyncio.to_thread", new=to_thread),

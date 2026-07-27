@@ -35,6 +35,7 @@ class ProjectWriteFence:
         if task is None:
             raise RuntimeError("Project writer admission requires an asyncio task")
 
+        project = self._project_lookup(project_id)
         admitted_by_global = False
         async with self._condition:
             task_writers = self._task_writers.get(task)
@@ -46,7 +47,6 @@ class ProjectWriteFence:
             else:
                 if project_id in self._exclusive:
                     raise ProjectWriteRejected(f"Project {project_id} is being purged")
-                project = self._project_lookup(project_id)
                 if project is None or project.deleted_at is not None:
                     raise ProjectWriteRejected(f"Project {project_id} is absent or deleted")
                 if task_writers is None:
@@ -104,16 +104,20 @@ class ProjectWriteFence:
             try:
                 await asyncio.wait_for(self._wait_until_drained(project_id), timeout=timeout)
             except TimeoutError as exc:
-                self._exclusive.remove(project_id)
+                self._exclusive.discard(project_id)
                 self._condition.notify_all()
                 raise ProjectWriteDrainTimeout(
                     f"Timed out draining derived writers for project {project_id}"
                 ) from exc
+            except BaseException:
+                self._exclusive.discard(project_id)
+                self._condition.notify_all()
+                raise
         try:
             yield
         finally:
             async with self._condition:
-                self._exclusive.remove(project_id)
+                self._exclusive.discard(project_id)
                 self._condition.notify_all()
 
     async def _wait_until_drained(self, project_id: str) -> None:

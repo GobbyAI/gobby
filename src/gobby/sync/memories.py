@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -228,12 +229,19 @@ class MemoryBackupManager:
                 self._restore_memories_with_outcomes_sync,
                 path,
             )
-            mark_due_tasks: list[asyncio.Task[None]] = []
-            for result in outcomes:
-                await memory_manager.reconcile_memory_indices(result.memory.id)
-                task = memory_manager.schedule_write_mark_due(result.memory, result.outcome)
-                if task is not None:
-                    mark_due_tasks.append(task)
+            semaphore = asyncio.Semaphore(8)
+
+            async def reconcile(
+                result: MemoryWriteResult[Memory],
+            ) -> asyncio.Task[None] | None:
+                async with semaphore:
+                    await memory_manager.reconcile_memory_indices(result.memory.id)
+                    return memory_manager.schedule_write_mark_due(result.memory, result.outcome)
+
+            reconciliation_results = await asyncio.gather(
+                *(reconcile(result) for result in outcomes)
+            )
+            mark_due_tasks = [task for task in reconciliation_results if task is not None]
             if mark_due_tasks:
                 await asyncio.gather(*mark_due_tasks)
             return restored_count
@@ -242,7 +250,15 @@ class MemoryBackupManager:
         try:
             return await asyncio.shield(owned_task)
         except asyncio.CancelledError:
-            await asyncio.shield(owned_task)
+            while not owned_task.done():
+                try:
+                    await asyncio.shield(owned_task)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
+            with suppress(BaseException):
+                owned_task.result()
             raise
         except MemoryRestoreError:
             raise

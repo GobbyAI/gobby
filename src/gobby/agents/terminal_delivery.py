@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
-from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class _TerminalRunStorage(Protocol):
-    db: Any
+    db: HubDatabase
 
     def get(self, run_id: str) -> Any | None: ...
 
@@ -36,6 +36,10 @@ async def _default_terminal_delivery_offload[T](
 
 _terminal_delivery_offload: Callable[..., Awaitable[Any]] = _default_terminal_delivery_offload
 _terminal_delivery_submit: Callable[..., Future[Any]] | None = None
+_terminal_delivery_fallback_executor = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="gobby-terminal-delivery",
+)
 
 
 def configure_terminal_delivery_offload(
@@ -73,12 +77,7 @@ def submit_terminal_delivery_offload[T](
     """Submit terminal storage work from a synchronous hook thread."""
     if _terminal_delivery_submit is not None:
         return cast(Future[T], _terminal_delivery_submit(callback, *args, **kwargs))
-    future: Future[T] = Future()
-    try:
-        future.set_result(callback(*args, **kwargs))
-    except BaseException as exc:
-        future.set_exception(exc)
-    return future
+    return _terminal_delivery_fallback_executor.submit(callback, *args, **kwargs)
 
 
 def close_terminal_delivery_admission() -> None:
@@ -95,13 +94,41 @@ def reopen_terminal_delivery_admission() -> None:
     _terminal_delivery_admission_open = True
 
 
+class TerminalDeliveryAdmissionClosedError(RuntimeError):
+    """Raised when terminal delivery cannot be admitted during shutdown."""
+
+
+@overload
 async def shielded_terminal_delivery[T](
     run_id: str,
     operation: Callable[[], Coroutine[Any, Any, T]],
+    *,
+    raise_if_closed: Literal[True],
+) -> T: ...
+
+
+@overload
+async def shielded_terminal_delivery[T](
+    run_id: str,
+    operation: Callable[[], Coroutine[Any, Any, T]],
+    *,
+    raise_if_closed: bool = False,
+) -> T | None: ...
+
+
+async def shielded_terminal_delivery[T](
+    run_id: str,
+    operation: Callable[[], Coroutine[Any, Any, T]],
+    *,
+    raise_if_closed: bool = False,
 ) -> T | None:
     """Settle one owned terminal transition-and-delivery operation under cancellation."""
     if not _terminal_delivery_admission_open:
         logger.info("Terminal delivery admission is closed for agent %s", run_id)
+        if raise_if_closed:
+            raise TerminalDeliveryAdmissionClosedError(
+                f"Terminal delivery admission is closed for agent {run_id}"
+            )
         return None
 
     owned: asyncio.Task[T] = asyncio.create_task(
@@ -165,10 +192,12 @@ async def deliver_and_cleanup_terminal_run(
         return None
 
     delivery: dict[str, bool] | None = None
+    notification_succeeded = False
     if result is not None:
         payload = result if "run_id" in result else {**result, "run_id": run_id}
         try:
             delivery = await completion_registry.notify(run_id, result=payload, message=message)
+            notification_succeeded = True
         except Exception:
             logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
 
@@ -198,7 +227,7 @@ async def deliver_and_cleanup_terminal_run(
             run_id,
             exc_info=True,
         )
-    finally:
+    if notification_succeeded:
         completion_registry.cleanup(run_id)
     return delivery
 

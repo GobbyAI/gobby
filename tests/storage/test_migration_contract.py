@@ -305,7 +305,7 @@ def test_memory_dream_due_version_schema_contract() -> None:
         SRC_ROOT / "storage" / "migrations" / "335_memories_dream_due_version.sql"
     ).read_text()
 
-    expected = "dream_due_version INTEGER NOT NULL DEFAULT 0"
+    expected = "dream_due_version BIGINT NOT NULL DEFAULT 0"
     assert expected in baseline
     assert expected in migration
 
