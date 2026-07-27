@@ -249,7 +249,7 @@ class TmuxPaneMonitor:
             )
 
             try:
-                self._callback(event)
+                await asyncio.to_thread(self._callback, event)
             except Exception:
                 logger.exception("TmuxPaneMonitor: callback error for session %s", child_sid)
 

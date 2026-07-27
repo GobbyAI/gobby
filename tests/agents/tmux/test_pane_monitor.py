@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -176,7 +177,11 @@ async def test_alive_tmux_reused_pid_triggers_callback() -> None:
 @pytest.mark.asyncio
 async def test_dead_session_triggers_callback() -> None:
     """When a tmux session is gone, callback is called with correct HookEvent."""
-    callback = MagicMock()
+    callback_thread_ids: list[int] = []
+    callback = MagicMock(
+        side_effect=lambda _event: callback_thread_ids.append(threading.get_ident())
+    )
+    event_loop_thread_id = threading.get_ident()
     agent = _make_agent_run(child_session_id="sess-dead", tmux_session_name="gobby-dead")
     session_obj = _make_session_obj(session_id="sess-dead", external_id="ext-dead", source="claude")
     monitor = _make_monitor_with_db(callback)
@@ -200,6 +205,7 @@ async def test_dead_session_triggers_callback() -> None:
     assert event.session_id == "ext-dead"
     assert event.metadata["_platform_session_id"] == "sess-dead"
     assert event.metadata["_tmux_pane_death"] is True
+    assert callback_thread_ids != [event_loop_thread_id]
 
 
 @pytest.mark.asyncio
