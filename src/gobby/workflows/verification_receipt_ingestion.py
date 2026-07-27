@@ -178,6 +178,7 @@ def ingest_verification_receipt(
         project_id=project_id,
         session_id=session_id,
         active_task_ref=active_task_ref if isinstance(active_task_ref, str) else None,
+        explicit_task_ref=event.task_id,
     )
     validation_epoch: int | None = None
     if task_id is not None:
