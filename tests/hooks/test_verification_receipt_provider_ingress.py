@@ -147,6 +147,7 @@ def test_provider_adapter_terminal_outcomes_are_durably_ingested(
         sample_project["id"],
         f"Provider ingress {adapter.source.value} {expected_outcome}",
         claimed_by_session_id=session.id,
+        validation_criteria="The provider terminal outcome is persisted and projected.",
     )
     SessionVariableManager(temp_db).set_variable(session.id, "active_task_id", task.id)
     event = adapter.translate_to_hook_event(payload_factory(session.external_id))
@@ -266,6 +267,7 @@ async def test_provider_ingress_retries_retained_envelope_without_duplicates(
         sample_project["id"],
         f"Provider retry {adapter.source.value} {failure_stage}",
         claimed_by_session_id=session.id,
+        validation_criteria="Inbox replay persists exactly one receipt and projection.",
     )
     SessionVariableManager(temp_db).set_variable(session.id, "active_task_id", task.id)
     server = create_http_server(
