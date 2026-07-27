@@ -112,9 +112,8 @@ Follow this order exactly:
 6. Set `memory_review_completed=true`.
 7. Call `close_task` with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`.
-8. Repair every blocker and repeat the preview until `can_close=true`.
-9. Repeat the same `close_task` call without `preview` to reevaluate, link the
-commit, and close the task.
+8. Repair every blocker and repeat the conditional close until `closed=true`.
+   A ready call reevaluates current state, links the commit, and closes the task.
 
 Stage and commit only the files for this task:
 
@@ -134,10 +133,10 @@ call_tool("gobby-tasks", "close_task", {
 }, session_id="#2333")
 ```
 
-Then close with the same arguments and `preview` omitted. Pass
-`evidence_receipt_ids` when preview requests specific assigned receipts. Never
-call `link_commit` merely to close; `close_task(..., commit_sha=...)` links and
-closes atomically.
+Blocked calls remain read-only and return repair actions. Pass
+`evidence_receipt_ids` when the response requests specific assigned receipts.
+Never call `link_commit` merely to close; the successful conditional
+`close_task(..., commit_sha=..., preview=true)` call links and closes atomically.
 
 ## Review and Non-Work Paths
 

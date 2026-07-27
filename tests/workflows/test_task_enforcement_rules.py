@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
@@ -54,10 +54,17 @@ def _sync_bundled(db):
     return result
 
 
-def _close_task_event(task_id: str = "#1", *, commit_sha: str | None = "abc123") -> HookEvent:
-    arguments: dict[str, str] = {"task_id": task_id}
+def _close_task_event(
+    task_id: str = "#1",
+    *,
+    commit_sha: str | None = "abc123",
+    preview: bool = False,
+) -> HookEvent:
+    arguments: dict[str, object] = {"task_id": task_id}
     if commit_sha is not None:
         arguments["commit_sha"] = commit_sha
+    if preview:
+        arguments["preview"] = True
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=SESSION_ID,
@@ -104,11 +111,19 @@ def _status_gate_variables(
     }
 
 
-async def _evaluate_close_event(db: HubDatabase, variables: dict[str, object]) -> object:
+async def _evaluate_close_event(
+    db: HubDatabase,
+    variables: dict[str, object],
+    *,
+    commit_sha: str | None = "abc123",
+    preview: bool = False,
+) -> HookResponse:
     _sync_bundled(db)
     SessionVariableManager(db).merge_variables(SESSION_ID, variables)
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
-    return await handler._evaluate_rules(_close_task_event("#1"))
+    return await handler._evaluate_rules(
+        _close_task_event("#1", commit_sha=commit_sha, preview=preview)
+    )
 
 
 TASK_ENFORCEMENT_RULES = {
@@ -868,7 +883,7 @@ class TestRequireCleanTreeBeforeStatus:
 
         assert body.when is not None
         assert "has_target_task_dirty_files" in body.when
-        assert "preview" in body.when
+        assert "preview" not in body.when
         assert "has_dirty_files" not in body.when
         assert "task_has_commits" not in body.when
 
@@ -884,7 +899,7 @@ class TestRequireCleanTreeBeforeStatus:
             "gobby.workflows.git_utils.get_dirty_files_categorized",
             return_value=DirtyFiles({"src/owned.py"}, set()),
         ):
-            response = await _evaluate_close_event(db, variables)
+            response = await _evaluate_close_event(db, variables, preview=True)
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -990,7 +1005,26 @@ class TestRequireCommitBeforeStatus:
         assert body.when is not None
         assert "task_has_commits" in body.when
         assert "commit_sha" in body.when
-        assert "preview" in body.when
+        assert "preview" not in body.when
+
+    @pytest.mark.asyncio
+    async def test_conditional_close_preview_requires_commit_for_edits(self, db) -> None:
+        variables = _status_gate_variables(
+            active_task_id="task-1",
+            task_edited_files={"task-1": ["src/owned.py"]},
+        )
+        variables["task_has_commits"] = False
+
+        response = await _evaluate_close_event(
+            db,
+            variables,
+            commit_sha=None,
+            preview=True,
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "no commit linked" in response.reason.lower()
 
     def test_when_checks_target_task_edits(self, db, manager) -> None:
         """Should only require commit when the target task has edits."""
@@ -1495,7 +1529,11 @@ class TestTaskLifecycleSkillGates:
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_transition_gate_exempts_pipeline_sessions(self, db, manager) -> None:
+    async def test_transition_gate_exempts_pipeline_sessions(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Deterministic pipeline executors cannot load skills; transition gate must not fire."""
         _sync_bundled(db)
         event = HookEvent(

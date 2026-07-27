@@ -1,13 +1,14 @@
 """MCP task lifecycle regressions for task/worktree decoupling."""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -52,12 +53,18 @@ async def test_close_task_does_not_mutate_worktree_status(
 
         registry = create_task_registry(mock_task_manager)
 
-        mock_task = MagicMock()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = ["abc123"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
-        mock_task.requires_user_review = False
+        now = datetime.now(UTC)
+        mock_task = Task(
+            id="550e8400-e29b-41d4-a716-446655440000",
+            project_id="11111111-1111-4111-8111-111111110001",
+            title="Worktree lifecycle",
+            priority=2,
+            task_type="epic",
+            created_at=now,
+            updated_at=now,
+            commits=["abc123"],
+            seq_num=123,
+        )
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -71,7 +78,7 @@ async def test_close_task_does_not_mutate_worktree_status(
             },
         )
 
-    assert result == {"success": True}
+    assert result == {"success": True, "closed": True}
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)
     assert mock_task_manager.close_task.call_args.kwargs["reason"] == reason

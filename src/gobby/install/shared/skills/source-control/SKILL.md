@@ -40,10 +40,10 @@ Template examples use `[<project_name>-#<task_number>]`; replace both
 placeholders with the real project name and task number before committing.
 The hyphen before `#` is required.
 
-### Step 3: Task Transitions (close preview, close_task, review, validation)
+### Step 3: Task Transitions (conditional close, review, validation)
 
 After committing, follow the `tasks` skill for the correct task lifecycle
-action (read-only close preview before `close_task`, `submit_for_review`, review approval, validation gates, and
+action (conditional `close_task`, `submit_for_review`, review approval, validation gates, and
 memory review).
 
 ## Commit Message Format

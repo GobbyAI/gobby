@@ -103,16 +103,20 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     if inner_tool == "close_task":
         tool_input = event.data.get("tool_input", {}) or {}
         arguments = tool_input.get("arguments", {}) or {}
-        if arguments.get("preview") or not arguments.get("commit_sha"):
+        if not arguments.get("commit_sha"):
             return
 
     tool_output = event.data.get("tool_output") or {}
     if isinstance(tool_output, dict):
         if tool_output.get("error") or tool_output.get("status") == "error":
             return
-        result = tool_output.get("result", {})
+        result = tool_output.get("result")
         if isinstance(result, dict) and result.get("error"):
             return
+        if inner_tool == "close_task":
+            close_result = result if isinstance(result, dict) else tool_output
+            if close_result.get("closed") is not True:
+                return
 
     variables["task_has_commits"] = True
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)

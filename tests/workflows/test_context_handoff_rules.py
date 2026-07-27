@@ -544,11 +544,11 @@ class TestAutoCompactAfterTaskClose:
         assert "tool_call_succeeded()" in body.when
         assert "task_type_in" in body.when
         assert "claimed_tasks" in body.when
-        assert "preview" in body.when
+        assert "closed" in body.when
         assert "_auto_compact_after_task_close_queued_for" in body.when
 
     @pytest.mark.asyncio
-    async def test_close_task_preview_does_not_queue_compaction(self, db) -> None:
+    async def test_blocked_close_task_preview_does_not_queue_compaction(self, db) -> None:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
@@ -562,7 +562,12 @@ class TestAutoCompactAfterTaskClose:
                     "tool_name": "close_task",
                     "arguments": {"task_id": "#123", "preview": True},
                 },
-                "tool_output": {"success": True, "preview": True, "can_close": True},
+                "tool_output": {
+                    "success": True,
+                    "preview": True,
+                    "can_close": False,
+                    "closed": False,
+                },
             },
             metadata={"session_type": "terminal"},
         )
@@ -576,7 +581,7 @@ class TestAutoCompactAfterTaskClose:
         assert response.metadata.get("mcp_calls", []) == []
 
     @pytest.mark.asyncio
-    async def test_terminal_close_task_queues_compact_self_once(self, db) -> None:
+    async def test_terminal_conditional_close_queues_compact_self_once(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
@@ -595,9 +600,20 @@ class TestAutoCompactAfterTaskClose:
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "close_task",
-                    "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+                    "arguments": {
+                        "task_id": "#123",
+                        "commit_sha": "abc123",
+                        "preview": True,
+                    },
                 },
-                "tool_output": {"success": True},
+                "tool_output": {
+                    "success": True,
+                    "result": {
+                        "preview": True,
+                        "can_close": True,
+                        "closed": True,
+                    },
+                },
             },
             metadata={"session_type": "terminal"},
         )

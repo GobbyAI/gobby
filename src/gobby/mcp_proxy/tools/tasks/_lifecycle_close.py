@@ -72,7 +72,7 @@ def _has_committable_edits(paths: set[str], cwd: str) -> bool:
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the close_task tool on the given registry."""
 
-    async def close_task(
+    async def _close_task_once(
         task_id: str,
         reason: str = "completed",
         changes_summary: str | None = None,
@@ -103,7 +103,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             project_path: Repository path that contains the commit. Optional; defaults to the
                 task project's repository. Absolute paths are allowed when they resolve to an
                 accessible task/project/worktree/clone repository directory.
-            preview: Evaluate current close readiness without mutating task or validation state.
+            preview: Run the pass without mutating task or validation state.
             response_detail: Preview response detail level.
             evidence_receipt_ids: Receipt IDs to prioritize for detailed validation context.
 
@@ -682,14 +682,73 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except Exception as e:
                 logger.debug("Best-effort had_edits reset failed: %s", e)
 
-        return {"success": True, **close_extra}
+        return {"success": True, "closed": True, **close_extra}
+
+    async def close_task(
+        task_id: str,
+        reason: str = "completed",
+        changes_summary: str | None = None,
+        skip_validation: bool = False,
+        override_justification: str | None = None,
+        commit_sha: str | None = None,
+        project_path: str | None = None,
+        preview: bool = False,
+        response_detail: Literal["concise", "diagnostic"] = "concise",
+        evidence_receipt_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate close readiness and close ready tasks in one preview call."""
+        async def run_once(*, read_only: bool) -> dict[str, Any]:
+            return await _close_task_once(
+                task_id=task_id,
+                reason=reason,
+                changes_summary=changes_summary,
+                skip_validation=skip_validation,
+                override_justification=override_justification,
+                commit_sha=commit_sha,
+                project_path=project_path,
+                preview=read_only,
+                response_detail=response_detail,
+                evidence_receipt_ids=evidence_receipt_ids,
+            )
+
+        if not preview:
+            return await run_once(read_only=False)
+
+        preview_result = await run_once(read_only=True)
+        if preview_result.get("can_close") is not True:
+            return {
+                **preview_result,
+                "success": preview_result.get("success", True),
+                "preview": True,
+                "can_close": False,
+                "closed": False,
+            }
+
+        close_result = await run_once(read_only=False)
+        if close_result.get("closed") is not True:
+            return {
+                **preview_result,
+                **close_result,
+                "success": False,
+                "preview": True,
+                "can_close": False,
+                "closed": False,
+            }
+        return {
+            **preview_result,
+            **close_result,
+            "success": True,
+            "preview": True,
+            "can_close": True,
+            "closed": True,
+        }
 
     registry.register(
         name="close_task",
         description=(
-            "Preview or close a task. Agent-driven leaf closes should call preview=true first, "
-            "repair any blocking reasons, then call again with preview=false. Pass commit_sha "
-            "to link and close in one call: "
+            "Evaluate and conditionally close a task. Agent-driven leaf closes should call "
+            "preview=true; blocked evaluations return actionable reasons, while ready tasks "
+            "close in the same call. Pass commit_sha to link and close in one call: "
             "close_task(task_id, commit_sha='abc123'). Or include "
             "[<project_name>-#<task_number>] in commit message for auto-linking, "
             "e.g. [gobby-#123]. Parent tasks require all children closed. "
@@ -745,9 +804,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "preview": {
                     "type": "boolean",
                     "description": (
-                        "Read-only close evaluation. Returns a concise result with prospective "
-                        "commits and any actionable failure details without task, claim, counter, "
-                        "backoff, or validation-history mutation."
+                        "Evaluate and close when ready. Blocked evaluations return a concise "
+                        "result with prospective commits and actionable failure details without "
+                        "task, claim, counter, backoff, or validation-history mutation."
                     ),
                     "default": False,
                 },

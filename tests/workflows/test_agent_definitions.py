@@ -49,7 +49,7 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
     return set(value)
 
 
-def test_close_task_success_handlers_ignore_preview_calls() -> None:
+def test_close_task_success_handlers_require_closed_output() -> None:
     close_handlers: list[tuple[str, str, dict[str, Any]]] = []
     for path in sorted(AGENTS_DIR.glob("*.yaml")):
         agent = _load_yaml(path)
@@ -60,7 +60,9 @@ def test_close_task_success_handlers_ignore_preview_calls() -> None:
 
     assert close_handlers
     for path_name, step_name, handler in close_handlers:
-        assert "preview" in str(handler.get("when")), f"{path_name}:{step_name}"
+        condition = str(handler.get("when"))
+        assert "tool_output" in condition, f"{path_name}:{step_name}"
+        assert "closed" in condition, f"{path_name}:{step_name}"
 
 
 def test_agent_success_handlers_do_not_fabricate_verification_evidence() -> None:

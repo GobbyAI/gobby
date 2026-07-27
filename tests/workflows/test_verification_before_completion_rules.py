@@ -158,7 +158,7 @@ async def test_completion_readiness_blocks_without_evidence(
 
 
 @pytest.mark.asyncio
-async def test_completion_readiness_allows_read_only_close_preview_without_evidence(
+async def test_completion_readiness_blocks_conditional_close_preview_without_evidence(
     db: HubDatabase,
 ) -> None:
     _sync_bundled(db)
@@ -169,7 +169,7 @@ async def test_completion_readiness_allows_read_only_close_preview_without_evide
         variables=_ready_variables(verification_evidence=[], verification_evidence_recorded=False),
     )
 
-    assert response.decision == "allow"
+    assert response.decision == "block"
 
 
 @pytest.mark.asyncio

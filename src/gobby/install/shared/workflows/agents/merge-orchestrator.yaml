@@ -153,9 +153,10 @@ instructions: |
     is explicitly unsafe.
   - Report: record the campaign result with
     gobby-tasks-ops:record_merge_result. If the merge survey/plan is empty
-    because the campaign work is already landed, preview
-    gobby-tasks:close_task(reason="already_implemented", preview=true), then
-    repeat it with preview=false instead of recording a failed merge result.
+    because the campaign work is already landed, call
+    gobby-tasks:close_task(reason="already_implemented", preview=true) and repair
+    any blocker until that call closes the task instead of recording a failed
+    merge result.
   - After a successful merge result is recorded, call
     gobby-tasks-ops:close_linked_github_issue with the assigned task id and
     merge_sha. The tool comments on the linked issue, applies `gobby:resolved`,
@@ -302,7 +303,12 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('reason') == 'already_implemented'
         action: set_variable
         variable: report_complete
         value: true
@@ -346,7 +352,12 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('reason') == 'already_implemented'
         action: set_variable
         variable: report_complete
         value: true
@@ -541,13 +552,23 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('reason') == 'already_implemented'
         action: set_variable
         variable: execution_complete
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('reason') == 'already_implemented'
         action: set_variable
         variable: report_complete
         value: true
@@ -631,7 +652,12 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('reason') == 'already_implemented'
         action: set_variable
         variable: report_complete
         value: true

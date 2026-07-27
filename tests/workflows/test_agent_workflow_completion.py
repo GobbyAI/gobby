@@ -669,6 +669,7 @@ class TestAgentWorkflowCompletion:
         task = LocalTaskManager(db).create_task(
             project_id=PROJECT_ID,
             title="Workflow-owned task",
+            validation_criteria="Workflow termination cleanup is verified.",
         )
         mutex = TaskDispatchMutexManager(db)
         mutex.acquire_mutex(

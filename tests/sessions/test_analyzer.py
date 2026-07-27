@@ -754,7 +754,7 @@ class TestFormatToolDescription:
             analyzer._format_tool_description(block) == "Closed task #789: Completed implementation"
         )
 
-    def test_mcp_call_tool_close_task_preview_is_not_described_as_closed(self) -> None:
+    def test_mcp_call_tool_close_task_preview_is_described_as_conditional_close(self) -> None:
         analyzer = TranscriptAnalyzer()
         block = {
             "name": "mcp__gobby__call_tool",
@@ -765,7 +765,7 @@ class TestFormatToolDescription:
             },
         }
 
-        assert analyzer._format_tool_description(block) == "Previewed close for task #789"
+        assert analyzer._format_tool_description(block) == "Conditionally closed task #789"
 
     def test_mcp_call_tool_claim_task(self) -> None:
         """Test gobby-tasks claim_task shows task ID."""

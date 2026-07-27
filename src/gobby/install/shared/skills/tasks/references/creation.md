@@ -41,8 +41,8 @@ Write criteria so another engineer can verify the result independently:
 
 Good:
 
-> `close_task` tests pass, preview reports the exact commit set, and the real
-> close links that commit.
+> `close_task` tests pass, a blocked conditional close stays read-only, and a
+> ready conditional close reports and links the exact commit set.
 
 Weak:
 

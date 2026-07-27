@@ -133,16 +133,11 @@ def detect_task_claim(
 
     if inner_tool_name == "close_task":
         arguments = tool_input.get("arguments", {}) or {}
-        if arguments.get("preview"):
+        if not isinstance(tool_output, dict):
             return
-        if not tool_output:
+        close_result = tool_output.get("result", tool_output)
+        if not isinstance(close_result, dict) or close_result.get("closed") is not True:
             return
-        if isinstance(tool_output, dict):
-            if tool_output.get("error") or tool_output.get("status") == "error":
-                return
-            result = tool_output.get("result", {})
-            if isinstance(result, dict) and result.get("error"):
-                return
 
         closed_task_id: str | None = None
         raw_close_id = arguments.get("task_id")

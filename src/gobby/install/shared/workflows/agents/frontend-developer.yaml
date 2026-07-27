@@ -54,7 +54,7 @@ instructions: |
   HANDOFF:
   Inspect the assigned task's stage manifest. If the current development row has
   no review gate, commit the implementation, run close_task with preview=true,
-  repair every blocker, then self-close with the same commit_sha. If review is
+  and repair every blocker until that call closes the task. If review is
   enabled, commit the implementation and call
   submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
 
@@ -174,8 +174,8 @@ steps:
     description: "Implement, validate, and hand off or close"
     status_message: |
       Implement the frontend leaf. Commit changes, then inspect the assigned
-      task manifest. If development review is disabled, preview close_task with
-      commit_sha, repair every blocker, then run the real close_task call;
+      task manifest. If development review is disabled, call close_task with
+      preview=true and commit_sha, then repair every blocker until it closes;
       otherwise submit_for_review(stage_name="development") for QA.
     allowed_tools: "all"
     blocked_mcp_tools:
@@ -187,7 +187,9 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False)"
+        when: >-
+            tool_output.get('closed') is True
+            or tool_output.get('result', {}).get('closed') is True
         action: set_variable
         variable: implementation_complete
         value: true

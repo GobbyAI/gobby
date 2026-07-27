@@ -140,8 +140,8 @@ steps:
       compile with an explicit topic and full source list, append idempotent
       finding entries to the central review backlog plus compact topic
       backlinks, optionally triage and file linked tasks when create_tasks is
-      true, write the run report, preview close_task, repair every blocker, then
-      call close_task with preview=false and a changes_summary — pass task_id
+      true, write the run report, call close_task with preview=true and a
+      changes_summary, then repair every blocker until it closes — pass task_id
       set to your assigned_task_id EXACTLY as given; closing any other task does
       not complete this workflow. Escalate only for blocking missing decisions.
     allowed_tools: "all"
@@ -168,7 +168,12 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False) and tool_input.get('task_id') == vars.get('assigned_task_id')"
+        when: >-
+            (
+              tool_output.get('closed') is True
+              or tool_output.get('result', {}).get('closed') is True
+            )
+            and tool_input.get('task_id') == vars.get('assigned_task_id')
         action: set_variable
         variable: task_closed
         value: true

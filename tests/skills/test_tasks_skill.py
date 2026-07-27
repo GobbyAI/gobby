@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.skills.scenario_runner import run_recorded_skill_scenario
+
 pytestmark = pytest.mark.unit
 
 SKILL_DIR = (
@@ -19,6 +21,12 @@ SKILL_DIR = (
 )
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 EVIDENCE_REFERENCE_PATH = SKILL_DIR / "references" / "evidence-provider-recovery.md"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TASKS_GUIDE_PATH = REPO_ROOT / "docs" / "guides" / "tasks.md"
+MCP_GUIDE_PATH = REPO_ROOT / "docs" / "guides" / "mcp-tools.md"
+LIFECYCLE_SCENARIO_PATH = (
+    REPO_ROOT / "tests" / "skills" / "scenarios" / "tasks" / "complete-task-lifecycle.yaml"
+)
 
 
 def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
@@ -49,8 +57,33 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         "5. Review session memories"
     )
     assert content.index("5. Review session memories") < content.index("7. Call `close_task`")
+    assert "repeat the conditional close until `closed=true`" in content
+    assert "Repeat the same `close_task` call without `preview`" not in content
     assert "references/creation.md" in content
     assert "references/evidence-provider-recovery.md" in content
     assert "references/no-work-closures.md" in content
     assert "references/review-flows.md" in content
     assert "```python" not in content
+
+
+def test_guides_document_single_call_conditional_close() -> None:
+    for path in (TASKS_GUIDE_PATH, MCP_GUIDE_PATH):
+        content = path.read_text()
+        assert "preview=true" in content
+        assert "closed=true" in content
+        assert "preview=false" not in content
+
+
+def test_lifecycle_scenario_closes_with_one_conditional_call() -> None:
+    result = run_recorded_skill_scenario(LIFECYCLE_SCENARIO_PATH)
+
+    assert result.loaded.action_names == (
+        "create_task",
+        "edit",
+        "run_validation",
+        "commit",
+        "review_memory",
+        "preview_close",
+        "respond",
+    )
+    assert "conditionally closed" in result.loaded.combined_text

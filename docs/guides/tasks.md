@@ -114,12 +114,12 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
 })
 ```
 
-Preview is read-only. It returns the prospective commit set, canonical selected
+The conditional call returns the prospective commit set, canonical selected
 receipt IDs, evidence-completeness disclosure, unassigned-receipt diagnostics,
-blocking reasons, and exact repair actions. Repair every blocker, then repeat
-the same call with `preview=false`. Real close reevaluates current state and
-links `commit_sha` during that call. Validation runs when the task has validation
-criteria. Skip-style reasons such as `duplicate`,
+blocking reasons, and exact repair actions. Blocked calls remain read-only.
+Repair every blocker and repeat the same `preview=true` call until `closed=true`;
+a ready call reevaluates current state and links `commit_sha` while closing.
+Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
 
@@ -305,7 +305,7 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "changes_summary": "Updated the task guide against current MCP and stage behavior.",
     "preview": True,
 })
-# After can_close=true, repeat with preview=false.
+# Blocked calls return repair actions; repeat until closed=true.
 ```
 
 Related MCP tools:

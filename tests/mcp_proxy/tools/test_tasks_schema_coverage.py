@@ -154,6 +154,9 @@ class TestToolSchemas:
         for prop in expected_props:
             assert prop in props, f"Missing property: {prop}"
 
+        assert "evaluate and close when ready" in props["preview"]["description"].lower()
+        assert "close in the same call" in schema["description"].lower()
+
     def test_close_task_schema_requires_changes_summary(self, task_registry) -> None:
         """Test close_task schema has changes_summary in properties (enforced at runtime)."""
         schema = task_registry.get_schema("close_task")

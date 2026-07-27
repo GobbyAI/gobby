@@ -1,4 +1,4 @@
-"""Read-only planning and response helpers for task closure."""
+"""Planning and response helpers for conditional task closure."""
 
 from __future__ import annotations
 
@@ -66,6 +66,7 @@ class CloseEvaluationReport:
             "success": True,
             "preview": True,
             "can_close": can_close,
+            "closed": False,
             "task_id": self.task_id,
             "commit_shas": list(self.commit_shas),
         }

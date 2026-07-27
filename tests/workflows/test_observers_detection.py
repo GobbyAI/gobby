@@ -334,7 +334,7 @@ class TestDetectPlanModeFromContext:
 
 
 class TestDetectTaskClaimCloseTaskBehavior:
-    def test_successful_close_task_removes_from_claimed_tasks(
+    def test_successful_conditional_close_removes_from_claimed_tasks(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
         mock_task = MagicMock()
@@ -349,9 +349,17 @@ class TestDetectTaskClaimCloseTaskBehavior:
             tool_input={
                 "server_name": "gobby-tasks",
                 "tool_name": "close_task",
-                "arguments": {"task_id": "task-123"},
+                "arguments": {"task_id": "task-123", "preview": True},
             },
-            tool_output={"success": True, "result": {"id": "task-123", "status": "done"}},
+            tool_output={
+                "success": True,
+                "result": {
+                    "id": "task-123",
+                    "preview": True,
+                    "can_close": True,
+                    "closed": True,
+                },
+            },
         )
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
@@ -376,7 +384,10 @@ class TestDetectTaskClaimCloseTaskBehavior:
                 "tool_name": "close_task",
                 "arguments": {"task_id": "task-123"},
             },
-            tool_output={"success": True, "result": {"id": "task-123", "status": "done"}},
+            tool_output={
+                "success": True,
+                "result": {"id": "task-123", "status": "done", "closed": True},
+            },
         )
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
@@ -384,7 +395,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
 
-    def test_successful_close_preview_preserves_claimed_task(
+    def test_blocked_close_preview_preserves_claimed_task(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
         variables["task_claimed"] = True
@@ -396,7 +407,12 @@ class TestDetectTaskClaimCloseTaskBehavior:
                 "tool_name": "close_task",
                 "arguments": {"task_id": "#1", "preview": True},
             },
-            tool_output={"success": True, "preview": True, "can_close": True},
+            tool_output={
+                "success": True,
+                "preview": True,
+                "can_close": False,
+                "closed": False,
+            },
         )
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
@@ -431,7 +447,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
                 "tool_name": "close_task",
                 "arguments": {"task_id": "#15126"},
             },
-            tool_output={"success": True, "result": {}},
+            tool_output={"success": True, "result": {"closed": True}},
         )
 
         with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
@@ -524,7 +540,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
                 "tool_name": "close_task",
                 "arguments": {"task_id": "#404"},
             },
-            tool_output={"success": True, "result": {}},
+            tool_output={"success": True, "result": {"closed": True}},
         )
 
         with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
@@ -850,7 +866,7 @@ class TestDetectTaskClaimClaimOperations:
                 "tool_name": "claim_task",
                 "arguments": {"task_id": "task-123"},
             },
-            tool_output={"success": True, "result": {}},
+            tool_output={"success": True, "result": {"closed": True}},
         )
 
         detect_task_claim(event, variables, SESSION_ID)
@@ -1211,14 +1227,14 @@ class TestDetectCommitLink:
                 "tool_name": "close_task",
                 "arguments": {"task_id": "#123", "commit_sha": "abc123"},
             },
-            tool_output={"success": True, "result": {}},
+            tool_output={"success": True, "result": {"closed": True}},
         )
 
         detect_commit_link(event, variables, SESSION_ID)
 
         assert variables["task_has_commits"] is True
 
-    def test_close_task_preview_does_not_set_task_has_commits(
+    def test_blocked_close_task_preview_does_not_set_task_has_commits(
         self, variables, make_after_tool_event
     ) -> None:
         event = make_after_tool_event(
@@ -1232,12 +1248,43 @@ class TestDetectCommitLink:
                     "preview": True,
                 },
             },
-            tool_output={"success": True, "preview": True, "can_close": True},
+            tool_output={
+                "success": True,
+                "preview": True,
+                "can_close": False,
+                "closed": False,
+            },
         )
 
         detect_commit_link(event, variables, SESSION_ID)
 
         assert "task_has_commits" not in variables
+
+    def test_successful_close_task_preview_sets_task_has_commits(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {
+                    "task_id": "#123",
+                    "commit_sha": "abc123",
+                    "preview": True,
+                },
+            },
+            tool_output={
+                "success": True,
+                "preview": True,
+                "can_close": True,
+                "closed": True,
+            },
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
 
     def test_close_task_without_commit_sha_does_not_set(
         self, variables, make_after_tool_event

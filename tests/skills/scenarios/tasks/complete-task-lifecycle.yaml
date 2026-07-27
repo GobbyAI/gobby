@@ -24,9 +24,8 @@ runs:
       - action: commit
       - action: review_memory
       - action: preview_close
-      - action: close_task
       - action: respond
-        text: "Verified, committed, memory-reviewed, previewed, and closed."
+        text: "Verified, committed, memory-reviewed, and conditionally closed."
 assertions:
   baseline_action_order:
     - create_task
@@ -40,9 +39,8 @@ assertions:
     - commit
     - review_memory
     - preview_close
-    - close_task
     - respond
   baseline_text_contains:
     - Task closed.
   loaded_text_contains:
-    - "Verified, committed, memory-reviewed, previewed, and closed."
+    - "Verified, committed, memory-reviewed, and conditionally closed."

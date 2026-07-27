@@ -352,8 +352,7 @@ async def _preview_and_close_with_receipts(
     receipts: list[VerificationReceipt],
     *,
     expected_successes: int,
-    mutate: bool,
-) -> tuple[dict[str, Any], dict[str, Any] | None, list[str]]:
+) -> tuple[dict[str, Any], list[str]]:
     task = _task(
         id="t1",
         title="Canonical receipt close",
@@ -436,10 +435,9 @@ async def _preview_and_close_with_receipts(
             "commit_sha": "a1",
             "changes_summary": "Implemented canonical receipt reconciliation.",
         }
-        preview_result = await registry.call("close_task", {**close_args, "preview": True})
-        close_result = await registry.call("close_task", close_args) if mutate else None
+        result = await registry.call("close_task", {**close_args, "preview": True})
 
-    return preview_result, close_result, packets
+    return result, packets
 
 
 # ============================================================================
@@ -1422,7 +1420,7 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
 
 @pytest.mark.asyncio
-async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts(
+async def test_close_task_blocked_preview_is_read_only_and_ready_preview_closes(
     mock_task_manager: MagicMock,
     mock_task_validator: AsyncMock,
     repo_path: str,
@@ -1513,6 +1511,17 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
                 "evidence_receipt_ids": ["missing-receipt"],
             },
         )
+        assert missing_result["preview"] is True
+        assert missing_result["can_close"] is False
+        assert missing_result["closed"] is False
+        mock_task_manager.link_commit.assert_not_called()
+        mock_task_manager.close_task.assert_not_called()
+        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.increment_validation_failure.assert_not_called()
+        receipt_store_cls.return_value.upsert.assert_not_called()
+        mock_svm_cls.return_value.merge_variables.assert_not_called()
+        record_iteration.assert_not_called()
+
         result = await registry.call(
             "close_task",
             {
@@ -1535,6 +1544,7 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
     assert result["success"] is True
     assert result["preview"] is True
     assert result["can_close"] is True
+    assert result["closed"] is True
     assert result["commit_shas"] == ["a1", "a2", "a3"]
     assert "receipt-020" in result["selected_evidence"]["detailed_receipt_ids"]
     assert "receipt-019" in result["selected_evidence"]["catalogued_receipt_ids"]
@@ -1546,15 +1556,17 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
     receipt_text = mock_task_validator.validate_task.await_args.kwargs["verification_receipt_text"]
     assert "receipt-020" in receipt_text
     assert "receipt-021" not in receipt_text
-    mock_task_manager.link_commit.assert_not_called()
-    mock_task_manager.close_task.assert_not_called()
+    assert mock_task_manager.link_commit.call_count > 0
+    mock_task_manager.close_task.assert_called_once()
     mock_task_manager.update_task.assert_not_called()
     mock_task_manager.increment_validation_failure.assert_not_called()
-    record_iteration.assert_not_called()
+    receipt_store_cls.return_value.upsert.assert_called_once()
+    mock_svm_cls.return_value.merge_variables.assert_called_once()
+    record_iteration.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_real_close_reevaluates_after_successful_preview(
+async def test_conditional_close_reevaluates_and_reports_latest_failure(
     mock_task_manager: MagicMock,
     mock_task_validator: AsyncMock,
     repo_path: str,
@@ -1582,12 +1594,6 @@ async def test_real_close_reevaluates_after_successful_preview(
         ValidationResult(
             status="invalid",
             feedback="Evidence changed.",
-            blocking_reasons=["Focused tests no longer pass."],
-            failure_category=FailureCategory.TEST,
-        ),
-        ValidationResult(
-            status="invalid",
-            feedback="Evidence still invalid.",
             blocking_reasons=["Focused tests no longer pass."],
             failure_category=FailureCategory.TEST,
         ),
@@ -1628,43 +1634,22 @@ async def test_real_close_reevaluates_after_successful_preview(
             task_validator=mock_task_validator,
         )
 
-        preview_result = await registry.call(
+        result = await registry.call(
             "close_task",
             {
                 "task_id": "t1",
                 "changes_summary": "Implemented reevaluation.",
                 "preview": True,
-            },
-        )
-        blocked_preview_result = await registry.call(
-            "close_task",
-            {
-                "task_id": "t1",
-                "changes_summary": "Implemented reevaluation.",
-                "preview": True,
-            },
-        )
-        mock_task_manager.increment_validation_failure.assert_not_called()
-        mock_task_manager.update_task.assert_not_called()
-        record_iteration.assert_not_called()
-        close_result = await registry.call(
-            "close_task",
-            {
-                "task_id": "t1",
-                "changes_summary": "Implemented reevaluation.",
             },
         )
 
-    assert preview_result["can_close"] is True
-    assert blocked_preview_result["can_close"] is False
-    assert blocked_preview_result["error"] == "validation_failed"
-    assert blocked_preview_result["blocking_reasons"]
-    assert "mechanical_gates" not in blocked_preview_result
-    assert "selected_evidence" not in blocked_preview_result
-    assert "diagnostics" not in blocked_preview_result
-    assert close_result["success"] is False
-    assert close_result["error"] == "validation_failed"
-    assert mock_task_validator.validate_task.await_count == 3
+    assert result["success"] is False
+    assert result["preview"] is True
+    assert result["can_close"] is False
+    assert result["closed"] is False
+    assert result["error"] == "validation_failed"
+    assert result["blocking_reasons"]
+    assert mock_task_validator.validate_task.await_count == 2
     mock_task_manager.increment_validation_failure.assert_called_once()
     record_iteration.assert_called_once()
     mock_task_manager.close_task.assert_not_called()
@@ -1682,19 +1667,19 @@ async def test_close_task_reconciles_paired_codex_receipts_for_preview_and_mutat
         "uv run mypy src/gobby/tasks",
     ]
     receipts = _paired_codex_receipts(commands)
-    preview_result, close_result, packets = await _preview_and_close_with_receipts(
+    result, packets = await _preview_and_close_with_receipts(
         mock_task_manager,
         mock_task_validator,
         repo_path,
         receipts,
         expected_successes=len(commands),
-        mutate=True,
     )
 
-    assert preview_result["can_close"] is True
-    assert preview_result["validation_status"] == "valid"
-    assert close_result is not None
-    assert close_result["success"] is True
+    assert result["success"] is True
+    assert result["preview"] is True
+    assert result["can_close"] is True
+    assert result["closed"] is True
+    assert result["validation_status"] == "valid"
     assert len(packets) == 2
     assert packets[0] == packets[1]
     packet_payload = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
@@ -1721,19 +1706,19 @@ async def test_close_task_keeps_unknown_only_required_command_pending(
         outcome_provenance="before_tool",
         output="",
     )
-    result, close_result, packets = await _preview_and_close_with_receipts(
+    result, packets = await _preview_and_close_with_receipts(
         mock_task_manager,
         mock_task_validator,
         repo_path,
         [unknown_receipt],
         expected_successes=1,
-        mutate=False,
     )
 
     assert result["success"] is True
+    assert result["preview"] is True
     assert result["can_close"] is False
+    assert result["closed"] is False
     assert result["validation_status"] == "pending"
-    assert close_result is None
     packet = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
     projection = packet["canonical_outcome_projection"]
     assert projection["per_outcome"] == {"success": 1}

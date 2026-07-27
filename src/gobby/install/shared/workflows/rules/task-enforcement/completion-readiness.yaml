@@ -8,7 +8,6 @@ rules:
     priority: 50
     when: >
       not variables.get('plan_mode')
-      and not tool_input.get('preview', False)
       and not completion_evidence_ready(variables, tool_input.get('task_id'))
       and (variables.get('target_task_has_edits') or variables.get('task_has_commits'))
     effects:

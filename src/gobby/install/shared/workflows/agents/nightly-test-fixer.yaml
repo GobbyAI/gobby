@@ -30,7 +30,8 @@ instructions: |
      `gobby-review-learning.record_review_lesson` with
      `source_kind=test_failure` and evidence containing the fix commit or
      verified fix ref. Do not record raw failures without a verified fix.
-  8. Preview `close_task` with `preview=true`, repair every blocker, then repeat the same call with `preview=false` and a `changes_summary` describing what you fixed.
+  8. Call `close_task` with `preview=true` and a `changes_summary` describing
+     what you fixed; repair every blocker until that call closes the task.
   9. Call `end_agent_run` to signal completion
 
   LIFECYCLE MODEL:
@@ -92,8 +93,8 @@ steps:
     description: "Read pytest report, fix test failures, run targeted tests, commit"
     status_message: |
       Read pytest report from ./reports/, fix root causes, run targeted tests
-      to verify, then commit, preview close_task, repair every blocker, and run
-      the real close_task call.
+      to verify, then commit and call close_task with preview=true, repairing
+      blockers until it closes.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:de_escalate_task"
@@ -106,7 +107,9 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
-        when: "not tool_input.get('preview', False)"
+        when: >-
+            tool_output.get('closed') is True
+            or tool_output.get('result', {}).get('closed') is True
         action: set_variable
         variable: task_closed
         value: true

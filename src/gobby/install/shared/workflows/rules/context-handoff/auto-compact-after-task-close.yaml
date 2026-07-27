@@ -11,8 +11,11 @@ rules:
     when: >
       event.data.get('mcp_server') == 'gobby-tasks'
       and event.data.get('mcp_tool') == 'close_task'
-      and not tool_input.get('preview', False)
       and tool_call_succeeded()
+      and (
+        event.data.get('tool_output', {}).get('closed') is True
+        or event.data.get('tool_output', {}).get('result', {}).get('closed') is True
+      )
       and variables.get('claimed_tasks')
       and (
         len(variables.get('claimed_tasks', {})) > 1
