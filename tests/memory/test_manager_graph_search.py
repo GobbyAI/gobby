@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
 from gobby.memory.services.knowledge_graph.reader import RelatedMemoryTraversal
 from gobby.memory.write_result import MemoryWriteResult
+from gobby.storage.memories_models import MemoryType
 from gobby.storage.memories_scope import MemoryScope, memory_matches_scope
 from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
 
@@ -36,7 +38,7 @@ def _make_manager(
 
     config = config if config is not None else MemoryConfig()
 
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "db": db,
         "config": config,
         "llm_service": llm_service,
@@ -666,7 +668,7 @@ class TestCreateMemoryPassesMemoryId:
 
         mock_record = MemoryRecord(
             id="test-mem-id",
-            memory_type="fact",
+            memory_type=MemoryType.FACT,
             content="test content",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),

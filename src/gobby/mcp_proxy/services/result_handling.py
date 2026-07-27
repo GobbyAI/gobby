@@ -14,9 +14,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.mcp.server")
 
-_CODEX_RECONCILE_TIMEOUT_SECONDS = 60.0
-_CODEX_RECONCILE_TASKS: dict[str, asyncio.Task[Any]] = {}
-
 BeforeToolOutcome = Literal["policy_denied", "failed_pre_dispatch"]
 
 
@@ -32,80 +29,6 @@ async def _evaluate_workflow_handler(workflow_handler: Any, event: "HookEvent") 
     if app_context is not None and app_context.db_executor is not None:
         return await app_context.run_db(workflow_handler.evaluate, event)
     return await asyncio.to_thread(workflow_handler.evaluate, event)
-
-
-def _cleanup_codex_reconcile_task(session_id: str, task: asyncio.Task[Any]) -> None:
-    if _CODEX_RECONCILE_TASKS.get(session_id) is task:
-        _CODEX_RECONCILE_TASKS.pop(session_id, None)
-    if task.cancelled():
-        return
-    exception = task.exception()
-    if exception is not None:
-        logger.warning(
-            "Codex transcript reconciliation failed",
-            extra={"session_id": session_id},
-            exc_info=(type(exception), exception, exception.__traceback__),
-        )
-
-
-async def _reconcile_codex_close_transcript(
-    hook_manager: Any,
-    event: Any,
-    *,
-    server_name: str,
-    tool_name: str,
-    effective_session_id: str,
-) -> bool:
-    """Bound terminal Codex catch-up so close rules see the latest shell result."""
-    source = getattr(event.source, "value", event.source)
-    if source != "codex" or server_name != "gobby-tasks" or tool_name != "close_task":
-        return True
-
-    processor = getattr(hook_manager, "_message_processor", None)
-    reconcile = getattr(processor, "reconcile_codex_transcript", None)
-    if not callable(reconcile):
-        return False
-    platform_session_id = event.metadata.get("_platform_session_id")
-    if not isinstance(platform_session_id, str) or not platform_session_id:
-        platform_session_id = effective_session_id
-
-    task = _CODEX_RECONCILE_TASKS.get(platform_session_id)
-    if task is None or task.done():
-        task = asyncio.create_task(reconcile(platform_session_id))
-        _CODEX_RECONCILE_TASKS[platform_session_id] = task
-        task.add_done_callback(
-            lambda completed: _cleanup_codex_reconcile_task(platform_session_id, completed)
-        )
-
-    try:
-        result = await asyncio.wait_for(
-            asyncio.shield(task),
-            timeout=_CODEX_RECONCILE_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning(
-            "Timed out reconciling Codex transcript before task closure",
-            extra={"session_id": platform_session_id},
-        )
-        return False
-    except OSError:
-        logger.warning(
-            "Failed to reconcile Codex transcript before task closure",
-            extra={"session_id": platform_session_id},
-            exc_info=True,
-        )
-        return False
-
-    if not getattr(result, "flushed", False):
-        logger.debug(
-            "Codex transcript reconciliation did not flush before task closure",
-            extra={
-                "session_id": platform_session_id,
-                "error": getattr(result, "error", None),
-            },
-        )
-        return False
-    return True
 
 
 def build_before_tool_event(
@@ -219,28 +142,6 @@ async def apply_before_tool_enforcement(
             logger=logger,
         )
         logger.debug("Session activation reconciliation result: %s", activation_result)
-    reconciled = await _reconcile_codex_close_transcript(
-        hook_manager,
-        event,
-        server_name=server_name,
-        tool_name=tool_name,
-        effective_session_id=effective_session_id,
-    )
-    if not reconciled:
-        return (
-            server_name,
-            tool_name,
-            arguments,
-            {
-                "success": False,
-                "error": "Codex transcript reconciliation did not complete; retry task closure.",
-                "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
-                "server_name": server_name,
-                "tool_name": tool_name,
-                "retryable": True,
-            },
-            "failed_pre_dispatch",
-        )
     workflow_handler = getattr(hook_manager, "_workflow_handler", None) if hook_manager else None
     if workflow_handler is None:
         return server_name, tool_name, arguments, None, None

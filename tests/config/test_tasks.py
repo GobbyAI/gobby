@@ -291,12 +291,7 @@ class TestTaskValidationConfigDefaults:
         assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
         assert config.prompt_path is None
         assert config.max_iterations == 10
-        assert config.max_consecutive_errors == 3
-        assert config.recurring_issue_threshold == 3
         assert config.close_validation_escalation_threshold == 5
-        assert config.issue_similarity_threshold == 0.8
-        assert config.run_build_first is True
-        assert config.build_command is None
         assert config.escalation_enabled is True
         assert config.escalation_notify == "none"
         assert config.auto_generate_on_create is True
@@ -312,13 +307,6 @@ class TestTaskValidationConfigCustom:
 
         config = TaskValidationConfig(max_iterations=5)
         assert config.max_iterations == 5
-
-    def test_custom_build_command(self) -> None:
-        """Test setting custom build command."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        config = TaskValidationConfig(build_command="uv run pytest")
-        assert config.build_command == "uv run pytest"
 
     def test_escalation_webhook(self) -> None:
         """Test escalation with webhook."""
@@ -354,46 +342,6 @@ class TestTaskValidationConfigValidation:
         with pytest.raises(ValidationError) as exc_info:
             TaskValidationConfig(close_validation_escalation_threshold=value)
         assert "positive" in str(exc_info.value).lower()
-
-    def test_max_consecutive_errors_must_be_positive(self) -> None:
-        """Test that max_consecutive_errors must be positive."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(max_consecutive_errors=0)
-        assert "positive" in str(exc_info.value).lower()
-
-    def test_recurring_issue_threshold_must_be_positive(self) -> None:
-        """Test that recurring_issue_threshold must be positive."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(recurring_issue_threshold=0)
-        assert "positive" in str(exc_info.value).lower()
-
-    def test_issue_similarity_threshold_range(self) -> None:
-        """Test that issue_similarity_threshold must be between 0 and 1."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        # Too low
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(issue_similarity_threshold=-0.1)
-        assert "0" in str(exc_info.value) and "1" in str(exc_info.value)
-
-        # Too high
-        with pytest.raises(ValidationError) as exc_info:
-            TaskValidationConfig(issue_similarity_threshold=1.1)
-        assert "0" in str(exc_info.value) and "1" in str(exc_info.value)
-
-    def test_issue_similarity_threshold_boundaries(self) -> None:
-        """Test issue_similarity_threshold at valid boundary values."""
-        from gobby.config.tasks import TaskValidationConfig
-
-        config = TaskValidationConfig(issue_similarity_threshold=0.0)
-        assert config.issue_similarity_threshold == 0.0
-
-        config = TaskValidationConfig(issue_similarity_threshold=1.0)
-        assert config.issue_similarity_threshold == 1.0
 
     def test_invalid_escalation_notify(self) -> None:
         """Test that invalid escalation_notify raises ValidationError."""

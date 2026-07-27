@@ -99,15 +99,6 @@ def _status_gate_variables(
         "task_edited_files": task_edited_files or {},
         "task_has_commits": True,
         "memory_review_completed": True,
-        "verification_evidence_recorded": True,
-        "verification_evidence": [
-            {
-                "evidence_type": "validation_command",
-                "success": True,
-                "command": "uv run pytest tests/workflows/test_task_enforcement_rules.py",
-                "outcome_provenance": "tool_outcome.status",
-            }
-        ],
     }
 
 

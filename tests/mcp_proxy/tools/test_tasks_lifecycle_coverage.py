@@ -11,7 +11,7 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import Task
-from gobby.tasks.validation_verdict import ValidationResult
+from gobby.tasks.close_verdict import CloseVerdict
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -40,8 +40,9 @@ def create_task_registry(
 ) -> Any:
     if not args and "task_validator" not in kwargs:
         validator = AsyncMock()
-        validator.validate_task.return_value = ValidationResult(
+        validator.validate_task.return_value = CloseVerdict(
             status="valid",
+            criteria=(),
             feedback="Every criterion is satisfied by admissible evidence.",
         )
         kwargs["task_validator"] = validator
@@ -68,7 +69,19 @@ class TestCloseTaskTool:
 
     @pytest.fixture(autouse=True)
     def _set_session_context(self) -> Iterator[None]:
-        with session_context_for_test("test-session"):
+        with (
+            session_context_for_test("test-session"),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
+                return_value=(
+                    "diff --git a/src/example.py b/src/example.py\n"
+                    "--- a/src/example.py\n"
+                    "+++ b/src/example.py\n"
+                    "@@ -0,0 +1 @@\n"
+                    "+example\n"
+                ),
+            ),
+        ):
             yield
 
     @pytest.mark.asyncio
@@ -83,7 +96,7 @@ class TestCloseTaskTool:
         )
 
         assert "error" in result
-        assert "not found" in result["error"]
+        assert result["error"] == "task_not_found"
 
     @pytest.mark.asyncio
     async def test_close_task_no_commits_error(self, mock_task_manager: MagicMock) -> None:
@@ -198,7 +211,7 @@ class TestCloseTaskTool:
             )
 
             assert "error" in result
-            assert result["error"] == "validation_failed"
+            assert result["error"] == "children_open"
             assert "open_children" in result
 
     @pytest.mark.asyncio
@@ -322,10 +335,10 @@ class TestCloseTaskTool:
         assert result["mismatches"] == ["A8:A8.7 expected leaves ['x'], manifest has []"]
 
     @pytest.mark.asyncio
-    async def test_close_task_with_commit_sha_links_first(
+    async def test_close_task_with_commit_sha_links_after_evaluation(
         self, mock_task_manager: MagicMock, tmp_path: Path
     ) -> None:
-        """Test close_task with commit_sha links the commit first."""
+        """A prospective commit is linked only after the checklist passes."""
         mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
@@ -357,7 +370,7 @@ class TestCloseTaskTool:
             # the mocked LocalProjectManager.
             registry = create_task_registry(mock_task_manager)
 
-            await registry.call(
+            result = await registry.call(
                 "close_task",
                 {
                     "task_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -366,7 +379,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            # link_commit is called with cwd kwarg resolved from the project repo
+            assert result["closed"] is True
             call_args = mock_task_manager.link_commit.call_args
             assert call_args[0] == ("550e8400-e29b-41d4-a716-446655440000", "new-commit")
             assert call_args.kwargs["cwd"] == expected_repo_path
@@ -376,59 +389,6 @@ class TestCloseTaskTool:
             assert close_call.kwargs["closed_commit_sha"] == "new-commit"
 
     @pytest.mark.asyncio
-    async def test_close_task_with_skip_validation(self, mock_task_manager: MagicMock) -> None:
-        """Leaf criterion-to-evidence validation cannot be bypassed."""
-        mock_task = _contract_task()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_task.commits = ["abc123"]
-        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = "Must pass tests"
-        mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.close_task.return_value = mock_task
-        mock_task_manager.list_tasks.return_value = []
-
-        with (
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager"
-            ) as MockSessionVarManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
-            patch(
-                "gobby.utils.git.normalize_commit_sha",
-                side_effect=lambda sha, cwd=None: sha,
-            ),
-        ):
-            mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
-            MockProjManager.return_value = mock_proj_instance
-            MockSessionVarManager.return_value.get_variables.return_value = {
-                "verification_evidence": [
-                    {
-                        "evidence_type": "manual_diff_review",
-                        "success": True,
-                        "summary": "Reviewed exact linked commit",
-                        "supports": "completion readiness for task",
-                    }
-                ]
-            }
-            mock_git.return_value = "abc123"
-            registry = create_task_registry(mock_task_manager)
-
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "skip_validation": True,
-                    "override_justification": "Manually verified",
-                    "changes_summary": "test changes",
-                },
-            )
-
-            assert result["success"] is False
-            assert result["error"] == "validation_contract_not_skippable"
-            mock_task_manager.close_task.assert_not_called()
-            mock_task_manager.escalate_task.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_close_task_fails_when_commit_sha_cannot_be_resolved(
         self, mock_task_manager: MagicMock
@@ -498,14 +458,9 @@ class TestCloseTaskTool:
                 },
             )
 
-        assert result == {
-            "success": False,
-            "error": "task_repo_path_unavailable",
-            "message": (
-                "close_task requires a resolvable task repository path for commit operations. "
-                "Configure the task project's repo_path or pass project_path."
-            ),
-        }
+        assert result["success"] is False
+        assert result["error"] == "task_repo_path_unavailable"
+        assert result["message"] == "close_task requires a registered repository path."
         assert mock_task_manager.link_commit.call_count == 0
         assert mock_run_git.call_count == 0
         mock_task_manager.link_commit.assert_not_called()
@@ -651,7 +606,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result.get("error") == "missing_commits_for_edits"
+            assert result.get("error") == "no_commits_linked"
             mock_task_manager.close_task.assert_not_called()
             assert mock_task_manager.close_task.call_count == 0
             assert not mock_task_manager.close_task.called
@@ -1199,7 +1154,19 @@ class TestSessionVariableMirroring:
 
     @pytest.fixture(autouse=True)
     def _set_session_context(self) -> Iterator[None]:
-        with session_context_for_test("test-session"):
+        with (
+            session_context_for_test("test-session"),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
+                return_value=(
+                    "diff --git a/src/example.py b/src/example.py\n"
+                    "--- a/src/example.py\n"
+                    "+++ b/src/example.py\n"
+                    "@@ -0,0 +1 @@\n"
+                    "+example\n"
+                ),
+            ),
+        ):
             yield
 
     @pytest.mark.asyncio

@@ -368,11 +368,11 @@ def test_merge_variables_sanitizes_scalar_nul_and_preserves_ordinary_values(db: 
     assert variables["ordinary"] == ordinary
 
 
-def test_rule_evidence_persistence_sanitizes_nested_nul_delimited_output(db: Any) -> None:
+def test_bounded_list_persistence_sanitizes_nested_nul_delimited_output(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    evidence = {
+    audit_event = {
         "command": "git status --porcelain=v1 -z",
         "output": " M tracked.py\x00?? untracked.py\x00",
         "details": {
@@ -382,15 +382,15 @@ def test_rule_evidence_persistence_sanitizes_nested_nul_delimited_output(db: Any
 
     count = mgr.append_to_bounded_list_variable(
         S1,
-        "verification_evidence",
-        evidence,
+        "audit_events",
+        audit_event,
         max_items=5,
-        updates={"verification_evidence_recorded": True},
+        updates={"audit_ready": True},
     )
 
     assert count == 1
     variables = mgr.get_variables(S1)
-    assert variables["verification_evidence"] == [
+    assert variables["audit_events"] == [
         {
             "command": "git status --porcelain=v1 -z",
             "output": " M tracked.py\ufffd?? untracked.py\ufffd",
@@ -399,7 +399,7 @@ def test_rule_evidence_persistence_sanitizes_nested_nul_delimited_output(db: Any
             },
         }
     ]
-    assert variables["verification_evidence_recorded"] is True
+    assert variables["audit_ready"] is True
 
 
 # --- append_to_set_variable tests ---
@@ -692,8 +692,8 @@ def test_open_tool_error_sanitized_raw_identity_resolves_canonical_record(db: An
     assert mgr.get_variables(S1)["open_tool_errors"] == []
 
 
-def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:
-    """Edited-file tracking and verification reset happen in one atomic update."""
+def test_append_to_set_variable_and_conditional_merge_applies_updates(db: Any) -> None:
+    """Set append and conditional updates happen in one atomic write."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
@@ -701,8 +701,8 @@ def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -
         S1,
         {
             "session_edited_files": ["b.py"],
-            "verification_evidence_recorded": True,
-            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+            "refresh_required": True,
+            "audit_events": [{"event": "old"}],
             "kept": "value",
         },
     )
@@ -711,15 +711,15 @@ def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -
         S1,
         "session_edited_files",
         ["a.py", "b.py"],
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+        condition_name="refresh_required",
+        updates={"refresh_required": False, "audit_events": []},
     )
 
     assert result is True
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["a.py", "b.py"]
-    assert variables["verification_evidence_recorded"] is False
-    assert variables["verification_evidence"] == []
+    assert variables["refresh_required"] is False
+    assert variables["audit_events"] == []
     assert variables["kept"] == "value"
 
 
@@ -733,14 +733,14 @@ def test_conditional_append_persists_installed_default_entries(db: Any) -> None:
         S1,
         "listed_servers",
         ["gobby-memory"],
-        condition_name="verification_evidence_recorded",
+        condition_name="refresh_required",
         updates={},
     )
 
     assert _stored_variables(db, S1)["listed_servers"] == ["gobby-memory", "gobby-tasks"]
 
 
-def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evidence(
+def test_append_to_set_variable_and_conditional_merge_skips_updates_when_guard_false(
     db: Any,
 ) -> None:
     """Conditional updates are skipped when the guard variable is false."""
@@ -750,8 +750,8 @@ def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evide
     mgr.merge_variables(
         S1,
         {
-            "verification_evidence_recorded": False,
-            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+            "refresh_required": False,
+            "audit_events": [{"event": "old"}],
         },
     )
 
@@ -759,15 +759,13 @@ def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evide
         S1,
         "session_edited_files",
         ["a.py"],
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+        condition_name="refresh_required",
+        updates={"refresh_required": False, "audit_events": []},
     )
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["a.py"]
-    assert variables["verification_evidence"] == [
-        {"command": "uv run pytest old.py", "success": True}
-    ]
+    assert variables["audit_events"] == [{"event": "old"}]
 
 
 def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
@@ -856,7 +854,7 @@ def test_record_edited_file_does_not_guess_with_multiple_claims(db: Any) -> None
     assert "task_edited_files" not in variables
 
 
-def test_upsert_bounded_list_variable_replaces_identity_and_updates_readiness(
+def test_upsert_bounded_list_variable_replaces_identity_and_updates_companion(
     db: Any,
 ) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
@@ -865,41 +863,41 @@ def test_upsert_bounded_list_variable_replaces_identity_and_updates_readiness(
     mgr.merge_variables(
         S1,
         {
-            "verification_evidence": [
+            "audit_events": [
                 {
-                    "evidence_type": "receipt_projection",
+                    "event_type": "snapshot",
                     "task_id": "task-1",
-                    "receipt_count": 1,
+                    "item_count": 1,
                 },
                 {
-                    "evidence_type": "manual_diff_review",
+                    "event_type": "manual_note",
                     "task_id": "task-1",
                 },
             ],
-            "verification_evidence_recorded": False,
+            "audit_ready": False,
         },
     )
 
     mgr.upsert_bounded_list_variable(
         S1,
-        "verification_evidence",
+        "audit_events",
         {
-            "evidence_type": "receipt_projection",
+            "event_type": "snapshot",
             "task_id": "task-1",
-            "receipt_count": 2,
+            "item_count": 2,
         },
-        identity={"evidence_type": "receipt_projection", "task_id": "task-1"},
+        identity={"event_type": "snapshot", "task_id": "task-1"},
         max_items=50,
-        updates={"verification_evidence_recorded": True},
+        updates={"audit_ready": True},
     )
 
     variables = mgr.get_variables(S1)
-    assert variables["verification_evidence"] == [
-        {"evidence_type": "manual_diff_review", "task_id": "task-1"},
+    assert variables["audit_events"] == [
+        {"event_type": "manual_note", "task_id": "task-1"},
         {
-            "evidence_type": "receipt_projection",
+            "event_type": "snapshot",
             "task_id": "task-1",
-            "receipt_count": 2,
+            "item_count": 2,
         },
     ]
-    assert variables["verification_evidence_recorded"] is True
+    assert variables["audit_ready"] is True

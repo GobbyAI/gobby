@@ -13,7 +13,6 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows import observers as observers_module
 from gobby.workflows.observers import (
     _extract_shell_output_text,
@@ -25,7 +24,6 @@ from gobby.workflows.observers import (
     detect_mcp_call,
     detect_plan_mode_from_context,
     detect_task_claim,
-    detect_verification_evidence,
     reconcile_claimed_tasks,
 )
 
@@ -1683,149 +1681,6 @@ class TestDetectBashCommit:
         assert "task_has_commits" not in variables
 
 
-class TestDetectVerificationEvidence:
-    @pytest.mark.parametrize(
-        ("command", "is_error", "expected_success"),
-        [
-            ("custom verifier --selector value", False, True),
-            ("custom verifier --selector value", True, False),
-            ("custom verifier --selector value", None, None),
-        ],
-    )
-    def test_shell_command_records_canonical_outcome(
-        self,
-        variables: dict[str, Any],
-        command: str,
-        is_error: bool | None,
-        expected_success: bool | None,
-    ) -> None:
-        event = _make_bash_event(
-            "machine output",
-            command=command,
-            is_error=is_error,
-            cwd="/repo",
-        )
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["evidence_type"] == "shell_command"
-        assert evidence["command"] == command
-        assert evidence["cwd"] == "/repo"
-        assert evidence["output"] == "machine output"
-        assert evidence["success"] is expected_success
-        assert variables["verification_evidence_recorded"] is (expected_success is True)
-        assert "matcher_id" not in evidence
-        assert "categories" not in evidence
-        assert "evidence_requires_confirmation" not in evidence
-
-    def test_selector_arguments_do_not_weaken_trusted_success(
-        self,
-        variables: dict[str, Any],
-    ) -> None:
-        command = "uv run pytest tests/workflows -k selector --maxfail=1"
-        event = _make_bash_event("1 passed", command=command, is_error=False)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["command"] == command
-        assert evidence["success"] is True
-        assert variables["verification_evidence_recorded"] is True
-
-    def test_shell_output_is_bounded_while_command_remains_complete(
-        self,
-        variables: dict[str, Any],
-    ) -> None:
-        command = "custom verifier " + ("--selector exact-value " * 100)
-        output = "first-" + ("x" * 10_000) + "-last"
-        event = _make_bash_event(output, command=command)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["command"] == command
-        assert evidence["output"].startswith("first-")
-        assert evidence["output"].endswith("-last")
-        assert len(evidence["output"]) < len(output)
-
-    def test_provider_output_wrapper_is_preserved(self, variables: dict[str, Any]) -> None:
-        event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            source=SessionSource.DROID,
-            session_id=AGENT_SESSION_ID,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "Bash",
-                "tool_input": {"command": "custom verifier"},
-                "tool_response": {"stdout": "provider output"},
-                "is_error": False,
-            },
-        )
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence"][-1]["output"] == "provider output"
-
-    def test_non_shell_tool_is_ignored(self, variables: dict[str, Any]) -> None:
-        event = _make_bash_event(
-            "content",
-            tool_name="Read",
-            command="custom verifier",
-        )
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert "verification_evidence" not in variables
-
-    def test_shell_without_command_is_ignored(self, variables: dict[str, Any]) -> None:
-        event = _make_bash_event("content", command="")
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert "verification_evidence" not in variables
-
-    def test_evidence_keeps_latest_fifty_items(self, variables: dict[str, Any]) -> None:
-        variables["verification_evidence"] = [
-            {
-                "evidence_type": "shell_command",
-                "command": f"custom verifier old-{index}",
-                "success": True,
-            }
-            for index in range(55)
-        ]
-        event = _make_bash_event("passed", command="custom verifier latest")
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        evidence = variables["verification_evidence"]
-        assert len(evidence) == 50
-        assert evidence[0]["command"] == "custom verifier old-6"
-        assert evidence[-1]["command"] == "custom verifier latest"
-
-    def test_durable_success_semantics_survive_later_failure(
-        self,
-        variables: dict[str, Any],
-    ) -> None:
-        detect_verification_evidence(
-            _make_bash_event("passed", command="custom verifier first"),
-            variables,
-            SESSION_ID,
-        )
-        detect_verification_evidence(
-            _make_bash_event(
-                "failed",
-                command="custom verifier second",
-                is_error=True,
-            ),
-            variables,
-            SESSION_ID,
-        )
-
-        assert variables["verification_evidence"][-1]["success"] is False
-        assert variables["verification_evidence_recorded"] is True
-
-
 def _make_bash_event_dict(
     tool_output: dict[str, object],
     *,
@@ -1849,31 +1704,6 @@ def _make_bash_event_dict(
         data=data,
         metadata={"_platform_session_id": SESSION_ID},
     )
-
-
-def test_tracking_edited_file_clears_recorded_verification_evidence(
-    temp_db: HubDatabase,
-) -> None:
-    from gobby.hooks.event_handlers._tool import ToolEventHandlerMixin
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    manager = SessionVariableManager(temp_db)
-    manager.merge_variables(
-        SESSION_ID,
-        {
-            "verification_evidence_recorded": True,
-            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
-        },
-    )
-    handler = ToolEventHandlerMixin()
-    handler._session_manager = SimpleNamespace(db=temp_db)
-
-    handler._track_session_edited_file(SESSION_ID, "src/new_change.py", cwd=None)
-
-    variables = manager.get_variables(SESSION_ID)
-    assert variables["verification_evidence_recorded"] is False
-    assert variables["verification_evidence"] == []
-    assert variables["session_edited_files"] == ["src/new_change.py"]
 
 
 # =============================================================================

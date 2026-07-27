@@ -2369,39 +2369,6 @@ class TestInlineMcpCallDispatch:
         assert variables.get("injected") is True
 
     @pytest.mark.asyncio
-    async def test_success_variable_cannot_write_runtime_managed_variable(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        _insert_rule(
-            manager,
-            "untrusted-success-variable",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[
-                    RuleEffect(
-                        type="mcp_call",
-                        server="gobby-skills",
-                        tool="list_hubs",
-                        inject_result=True,
-                        success_variable="verification_evidence_recorded",
-                    )
-                ],
-            ),
-            tags=["gobby", "user"],
-        )
-
-        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
-            return {"success": True, "result": {"hubs": []}}
-
-        variables: dict[str, Any] = {"verification_evidence_recorded": False}
-        await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
-            _make_event(data={"tool_name": "Read"}),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert variables["verification_evidence_recorded"] is False
-
     @pytest.mark.asyncio
     async def test_inline_dispatch_failure_honors_block_on_failure(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager

@@ -32,6 +32,7 @@ from gobby.workflows.state_manager import (
 
 logger = logging.getLogger(__name__)
 
+
 def _coerce_value(
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
 ) -> str | int | float | bool | list[Any] | dict[str, Any] | None:

@@ -27,9 +27,6 @@ from gobby.memory.context import format_memory_metadata_suffix
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.verification_receipt_ingestion import (
-    VerificationReceiptIngestionError,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -60,55 +57,6 @@ def make_event() -> Callable[..., HookEvent]:
 
 
 # ─── Tests for handle() method ──────────────────────────────────────────
-
-
-def test_handle_verification_receipt_failure_is_fail_open_by_default(
-    manager_with_mocks: HookManager,
-    make_event: Callable[..., HookEvent],
-) -> None:
-    error = VerificationReceiptIngestionError("receipt-1")
-    with patch.object(manager_with_mocks, "_handle_internal", side_effect=error):
-        response = manager_with_mocks.handle(make_event())
-
-    assert response.decision == "allow"
-
-    with (
-        patch.object(manager_with_mocks, "_handle_internal", side_effect=error),
-        pytest.raises(VerificationReceiptIngestionError),
-    ):
-        manager_with_mocks.handle(
-            make_event(),
-            fail_closed_verification_receipts=True,
-        )
-
-
-@pytest.mark.asyncio
-async def test_handle_async_verification_receipt_failure_is_fail_open_by_default(
-    manager_with_mocks: HookManager,
-    make_event: Callable[..., HookEvent],
-) -> None:
-    error = VerificationReceiptIngestionError("receipt-1")
-    with patch.object(
-        manager_with_mocks,
-        "_handle_internal_async",
-        AsyncMock(side_effect=error),
-    ):
-        response = await manager_with_mocks.handle_async(make_event())
-
-    assert response.decision == "allow"
-
-    with (
-        patch.object(
-            manager_with_mocks,
-            "_handle_internal_async",
-            AsyncMock(side_effect=error),
-        ),
-        pytest.raises(VerificationReceiptIngestionError),
-    ):
-        await manager_with_mocks.handle_async(
-            make_event(),
-            fail_closed_verification_receipts=True,
-        )
 
 
 def test_record_machine_ingress_upserts_payload_metadata(

@@ -216,28 +216,17 @@ class TestToolHandlerEdgeCases:
             tool_result="1 passed",
         )
 
-    def test_edit_tracking_failure_clears_verification_freshness(
+    def test_edit_tracking_failure_logs_warning(
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A failed edit append still invalidates previously recorded evidence."""
+        """A failed edited-file write remains visible at warning level."""
         import logging
-
-        from gobby.workflows.verification_evidence import (
-            VERIFICATION_EVIDENCE_RESET_UPDATES,
-        )
 
         handlers = EventHandlers(**mock_dependencies)
         variable_manager = MagicMock()
         variable_manager.record_edited_file.side_effect = RuntimeError("primary write failed")
-        variables = {"verification_evidence_recorded": True}
-
-        def merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
-            variables.update(updates)
-            return True
-
-        variable_manager.merge_variables.side_effect = merge_variables
 
         with (
             caplog.at_level(logging.WARNING),
@@ -257,57 +246,14 @@ class TestToolHandlerEdgeCases:
                 None,
             )
 
-        variable_manager.merge_variables.assert_called_once_with(
-            "sess-123",
-            VERIFICATION_EVIDENCE_RESET_UPDATES,
-        )
-        assert variables["verification_evidence_recorded"] is False
         warning = next(
             record
             for record in caplog.records
-            if "resetting verification evidence" in record.getMessage()
+            if "Failed to track session edited file" in record.getMessage()
         )
         assert warning.levelno == logging.WARNING
         assert warning.exc_info is not None
-
-    def test_edit_tracking_fallback_failure_logs_error(
-        self,
-        mock_dependencies: dict,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """A failed fallback evidence reset is visible at error level."""
-        import logging
-
-        handlers = EventHandlers(**mock_dependencies)
-        variable_manager = MagicMock()
-        variable_manager.record_edited_file.side_effect = RuntimeError("primary write failed")
-        variable_manager.merge_variables.side_effect = RuntimeError("fallback write failed")
-
-        with (
-            caplog.at_level(logging.WARNING),
-            patch.object(
-                handlers,
-                "_resolve_repo_relative_edit_path",
-                return_value="src/gobby/example.py",
-            ),
-            patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager",
-                return_value=variable_manager,
-            ),
-        ):
-            handlers._track_session_edited_file(
-                "sess-123",
-                "src/gobby/example.py",
-                None,
-            )
-
-        error = next(
-            record
-            for record in caplog.records
-            if "Failed to reset verification evidence" in record.getMessage()
-        )
-        assert error.levelno == logging.ERROR
-        assert error.exc_info is not None
+        variable_manager.merge_variables.assert_not_called()
 
     def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""

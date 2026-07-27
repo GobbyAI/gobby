@@ -17,6 +17,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._validation_backoff import (
     MAX_CONSECUTIVE_INFRA_FAILURES,
     TaskValidationBackoffStore,
+    compute_next_retry_at,
 )
 from gobby.tasks.close_verdict import (
     CloseCriterionVerdict,
@@ -27,6 +28,12 @@ from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_history import ValidationHistoryManager
 
 pytestmark = pytest.mark.integration
+
+
+def test_backoff_caps_retry_at_120_seconds() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    assert compute_next_retry_at(100, now) - now == timedelta(seconds=120)
 
 
 class _ScriptedValidator:

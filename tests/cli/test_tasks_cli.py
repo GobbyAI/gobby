@@ -8,6 +8,7 @@ Tests use Click's CliRunner and mock external dependencies.
 """
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -20,8 +21,6 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.tasks._utils import config as task_config_utils
 from gobby.config import DaemonConfig
-from gobby.failure_categories import FailureCategory
-from gobby.tasks.validation_verdict import ValidationResult
 
 pytestmark = pytest.mark.unit
 
@@ -47,9 +46,19 @@ def _set_task_state(task: MagicMock, state: str = "ready") -> None:
 
 
 @pytest.fixture
-def runner() -> CliRunner:
-    """Create a CLI test runner."""
-    return CliRunner()
+def runner() -> Iterator[CliRunner]:
+    """Create a CLI runner isolated from operator bootstrap state."""
+    with (
+        patch(
+            "gobby.cli.runtime.CliRuntime.require_database",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gobby.cli.load_full_config_from_db",
+            return_value=DaemonConfig(),
+        ),
+    ):
+        yield CliRunner()
 
 
 @pytest.fixture
@@ -1632,7 +1641,7 @@ class TestValidateCommand:
 
         assert result.exit_code == 0
         assert "VALID" in result.output
-        mock_manager.close_task.assert_called()
+        mock_manager.close_task.assert_not_called()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -1658,7 +1667,7 @@ class TestValidateCommand:
 
         assert result.exit_code == 0
         assert "INVALID" in result.output
-        assert "still open" in result.output
+        assert "remain open" in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -1869,7 +1878,8 @@ class TestValidateCommandExtended:
 
         assert result.exit_code == 0
         assert "INVALID" in result.output
-        assert "10 of 10" in result.output
+        assert "10 child tasks remain open" in result.output
+        assert "... and 5 more" in result.output
         assert "more" in result.output  # Should show truncation
 
     @patch("gobby.llm.LLMService")
@@ -1889,6 +1899,7 @@ class TestValidateCommandExtended:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []  # No children
         mock_get_manager.return_value = mock_manager
+        mock_task.validation_criteria = "The requested behavior is implemented."
 
         # Create temp file with summary
         summary_file = tmp_path / "summary.txt"
@@ -1929,136 +1940,6 @@ class TestValidateCommandExtended:
             assert result.exit_code == 0
             assert "Iteration 1: invalid" in result.output
             assert "Bad code" in result.output
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_validate_recurring(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validate --recurring."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.db = MagicMock()
-        mock_get_manager.return_value = mock_manager
-
-        with patch("gobby.tasks.validation_history.ValidationHistoryManager") as MockHistory:
-            history_mock = MockHistory.return_value
-            history_mock.get_recurring_issue_summary.return_value = {
-                "total_iterations": 3,
-                "recurring_issues": [{"title": "Lint Error", "count": 2}],
-            }
-            history_mock.has_recurring_issues.return_value = True
-
-            result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--recurring"])
-
-            assert result.exit_code == 0
-            assert "Lint Error (count: 2)" in result.output
-            assert "Total iterations: 3" in result.output
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_validate_max_retries_exceeded(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validation failure exceeding max retries."""
-        mock_task.validation_fail_count = 2  # Already failed 2 times
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-
-        with patch("gobby.tasks.validation.TaskValidator") as MockValidator:
-            validator_mock = MockValidator.return_value
-            # Mock async validation result
-            future = MagicMock()
-            future.status = "invalid"
-            future.feedback = "Still broken"
-
-            async def async_result(*args: Any, **kwargs: Any) -> Any:
-                return future
-
-            validator_mock.validate_task.side_effect = async_result
-
-            # With 2 failures + 1 new failure = 3, --max-iterations 3 is exceeded.
-
-            with (
-                patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()),
-                patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-            ):
-                result = runner.invoke(
-                    cli,
-                    [
-                        "tasks",
-                        "validate",
-                        "gt-abc123",
-                        "--max-iterations",
-                        "3",
-                        "--summary",
-                        "fix",
-                    ],
-                )
-
-            assert result.exit_code == 0
-            assert "Exceeded max retries" in result.output
-            mock_manager.update_task.assert_called()
-            call_kwargs = mock_manager.update_task.call_args.kwargs
-            assert "Exceeded max retries (3)" in call_kwargs["validation_feedback"]
-            mock_manager.escalate_task.assert_called_once_with(
-                mock_task.id,
-                reason="exceeded_validation_retries (3)",
-            )
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_validate_persists_infrastructure_failure_as_error(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        verdict = ValidationResult(
-            status="invalid",
-            feedback="provider returned status 429",
-            failure_category=FailureCategory.PROVIDER,
-        )
-
-        async def validate_task(*args: Any, **kwargs: Any) -> ValidationResult:
-            return verdict
-
-        with (
-            patch("gobby.tasks.validation.TaskValidator") as validator_class,
-            patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()),
-            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
-        ):
-            validator_class.return_value.validate_task.side_effect = validate_task
-            result = runner.invoke(
-                cli,
-                ["tasks", "validate", "gt-abc123", "--summary", "fix"],
-            )
-
-        assert result.exit_code == 0
-        assert "Validation Status: INVALID" in result.output
-        assert "provider returned status 429" in result.output
-        mock_manager.update_task.assert_called_once_with(
-            mock_task.id,
-            validation_status="error",
-            validation_feedback=verdict.feedback,
-        )
-        mock_manager.create_task.assert_not_called()
-        mock_manager.escalate_task.assert_not_called()
 
 
 class TestSuggestCommandExtended:

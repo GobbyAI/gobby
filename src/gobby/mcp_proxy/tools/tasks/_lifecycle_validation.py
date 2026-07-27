@@ -80,7 +80,10 @@ def validate_parent_task(ctx: RegistryContext, task_id: str) -> ValidationResult
     open_children = [child for child in children if not is_task_closed(child)]
     if not open_children:
         return ValidationResult(can_close=True)
-    refs = [f"#{child.seq_num}" if child.seq_num else child.id for child in open_children[:5]]
+    refs = [
+        f"#{seq_num}" if (seq_num := getattr(child, "seq_num", None)) else child.id
+        for child in open_children[:5]
+    ]
     suffix = f" and {len(open_children) - 5} more" if len(open_children) > 5 else ""
     return ValidationResult(
         can_close=False,

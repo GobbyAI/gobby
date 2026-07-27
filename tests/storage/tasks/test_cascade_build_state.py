@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
     Isolation,
     LocalTaskManager,
@@ -296,8 +299,8 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
 
 
 def test_cascade_never_forces_merge_onto_an_expansion_only_parent(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,7 +18,7 @@ from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphStatus,
 )
 from gobby.memory.write_result import MemoryWriteResult
-from gobby.storage.memories import Memory
+from gobby.storage.memories import LocalMemoryManager, Memory
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -539,8 +539,8 @@ class TestKnowledgeGraphRebuildService:
                 id=f"mem-{index}",
                 memory_type="fact",
                 content=f"Memory {index}",
-                created_at="2026-01-01T00:00:00+00:00",
-                updated_at="2026-01-01T00:00:00+00:00",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
                 project_id="proj-1",
             )
             for index in range(3)
@@ -579,7 +579,7 @@ class TestKnowledgeGraphRebuildService:
         kg_service = MagicMock()
         kg_service.add_to_graph = AsyncMock(side_effect=add_to_graph)
         service = KnowledgeGraphRebuildService(
-            storage_provider=Storage,
+            storage_provider=cast(Callable[[], LocalMemoryManager], Storage),
             kg_service_provider=lambda: kg_service,
             falkor_client_provider=lambda: None,
             run_db=run_db,

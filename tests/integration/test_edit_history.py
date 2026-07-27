@@ -106,7 +106,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     assert not session.had_edits
 
 
-def test_shell_edit_history_invalidates_verification_evidence(temp_db, tmp_path) -> None:
+def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     session_manager = SessionManager(temp_db)
@@ -131,13 +131,7 @@ def test_shell_edit_history_invalidates_verification_evidence(temp_db, tmp_path)
     task_manager.claim_task(task.id, session.id)
     session_var_manager.merge_variables(
         session.id,
-        {
-            **add_claimed_task({}, task.id, f"#{task.seq_num}"),
-            "verification_evidence_recorded": True,
-            "verification_evidence": [
-                {"evidence_type": "validation_command", "command": "uv run pytest"}
-            ],
-        },
+        add_claimed_task({}, task.id, f"#{task.seq_num}"),
     )
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
     event = HookEvent(
@@ -161,8 +155,6 @@ def test_shell_edit_history_invalidates_verification_evidence(temp_db, tmp_path)
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["docs/edited.md", "src/edited.py"]
     assert variables["task_edited_files"] == {task.id: ["docs/edited.md", "src/edited.py"]}
-    assert variables["verification_evidence_recorded"] is False
-    assert variables["verification_evidence"] == []
 
 
 def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:

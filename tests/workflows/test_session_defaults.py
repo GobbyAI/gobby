@@ -212,8 +212,6 @@ variables:
             "task_edited_files",
             "require_task_before_edit",
             "require_commit_before_status",
-            "verification_evidence_recorded",
-            "verification_evidence",
             "enforce_tool_schema_check",
             "auto_inject_handoff",
             "servers_listed",

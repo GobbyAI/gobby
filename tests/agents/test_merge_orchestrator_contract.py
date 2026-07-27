@@ -708,13 +708,6 @@ async def test_report_success_record_merge_result_can_terminate(db: HubDatabase)
     manager = _install_workflow(db, current_step="report")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {
-        "verification_evidence": [
-            {
-                "evidence_type": "validation_command",
-                "success": True,
-                "command": "cargo test -p gobby-core search::tests",
-            }
-        ],
         "session_edited_files": ["crates/gcore/src/search.rs"],
     }
 

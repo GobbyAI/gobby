@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -265,3 +266,109 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
     assert result["error"] == "stale_task_state"
     assert result["closed"] is False
     cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_lock_change_returns_stale_without_close() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    cast(MagicMock, ctx.task_manager.get_task).return_value = replace(
+        task,
+        updated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+    )
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.commit_shas = ["abc123"]
+    evaluation.pass_gate(10, "criteria_review", "Passed.")
+
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha=None,
+    )
+
+    assert result["error"] == "stale_task_state"
+    assert result["closed"] is False
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    transcript = AsyncMock()
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(lifecycle, "_has_committable_edits", return_value=True),
+        patch.object(
+            lifecycle,
+            "resolve_close_commit_shas",
+            return_value=(["abc123"], None),
+        ),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch(
+            "gobby.workflows.task_claim_state.target_task_has_edits",
+            return_value=True,
+        ),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/a.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "uncommitted_task_edits"
+    assert evaluation.gates[-1].item == 8
+    transcript.assert_not_awaited()
+    review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_epic_skips_leaf_gates_without_llm() -> None:
+    task = replace(_task(), task_type="epic")
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary=None,
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.ready is True
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 11))
+    assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
+    review.assert_not_awaited()

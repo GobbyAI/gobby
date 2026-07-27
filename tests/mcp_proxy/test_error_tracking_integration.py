@@ -367,31 +367,6 @@ async def test_session_tool_filter_denial_is_policy_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_codex_reconciliation_is_failed_pre_dispatch() -> None:
-    workflow_handler = MagicMock()
-    workflow_handler.evaluate.return_value = HookResponse(decision="allow")
-    proxy, mcp_manager, _ = _proxy(result={"success": True}, workflow_handler=workflow_handler)
-
-    with (
-        patch(
-            "gobby.mcp_proxy.services.result_handling._reconcile_codex_close_transcript",
-            new=AsyncMock(return_value=False),
-        ),
-        patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking,
-    ):
-        result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {},
-            session_id="session-1",
-        )
-
-    assert result["success"] is False
-    assert tracking.call_args.args[-1] == "failed_pre_dispatch"
-    mcp_manager.call_tool.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_invalid_rule_rewrite_is_failed_pre_dispatch() -> None:
     workflow_handler = MagicMock()
     workflow_handler.evaluate.return_value = HookResponse(
