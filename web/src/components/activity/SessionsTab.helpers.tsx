@@ -151,7 +151,10 @@ export function renderBadges(entry: WatchingSessionEntry) {
       {(entry.blockedCount ?? 0) > 0 && (
         <span
           className="chip gap-1 border border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]"
-          aria-label={`Blocked attention: ${entry.blockedCount}`}
+          aria-label={[
+            `Blocked attention: ${entry.blockedCount}`,
+            ...(entry.attentionReasons ?? []),
+          ].join("; ")}
           title={entry.attentionReasons?.join("; ")}
         >
           <span aria-hidden="true">!</span>

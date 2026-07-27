@@ -6,7 +6,7 @@ CREATE TABLE tool_results (
     tool_name TEXT NOT NULL,
     content TEXT NOT NULL,
     content_kind TEXT NOT NULL CHECK (content_kind IN ('json', 'text')),
-    total_chars INTEGER NOT NULL,
+    total_chars BIGINT NOT NULL,
     stored_chars INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

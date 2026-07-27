@@ -75,7 +75,7 @@ Apply category-appropriate evidence:
 Actor attestation is sufficient only when the criterion explicitly accepts it.
 
 Treat `Omitted Evidence` entries and explicit shortened/omitted notices as
-neutral. Omitted content does not block closure by itself. Return `pending` only when
+neutral. Omitted content does not block closure by itself. Return `invalid` only when
 a stated criterion specifically depends on omitted content; name the criterion and
 the specific omitted file, hunk, or shortened context.
 

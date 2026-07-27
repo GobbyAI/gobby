@@ -15,6 +15,7 @@ export function useChatInputAttachments({
 }: UseChatInputAttachmentsOptions) {
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const imagesDisabledRef = useRef(imagesDisabled)
   const mountedRef = useRef(true)
   const queuedFilesRef = useRef(queuedFiles)
   const deletedUploadedAttachmentIdsRef = useRef<Set<string>>(new Set())
@@ -27,6 +28,10 @@ export function useChatInputAttachments({
   useEffect(() => {
     attachmentsDisabledRef.current = attachmentsDisabled
   }, [attachmentsDisabled])
+
+  useEffect(() => {
+    imagesDisabledRef.current = imagesDisabled
+  }, [imagesDisabled])
 
   useEffect(() => {
     return () => {
@@ -86,6 +91,26 @@ export function useChatInputAttachments({
     }
   }, [attachmentsDisabled, clearQueuedFiles])
 
+  useEffect(() => {
+    if (!imagesDisabled) return
+    setQueuedFiles((prev) => {
+      const retained: QueuedFile[] = []
+      for (const queuedFile of prev) {
+        if (!queuedFile.file.type.startsWith('image/')) {
+          retained.push(queuedFile)
+          continue
+        }
+        if (queuedFile.previewUrl) URL.revokeObjectURL(queuedFile.previewUrl)
+        queuedFile.uploadAbort?.()
+        if (queuedFile.attachment) {
+          deleteUploadedAttachment(queuedFile.attachment.id)
+        }
+      }
+      queuedFilesRef.current = retained
+      return retained
+    })
+  }, [deleteUploadedAttachment, imagesDisabled])
+
   const uploadQueuedFile = useCallback(
     async (id: string, file: File) => {
       const disabledAtStart = attachmentsDisabledRef.current
@@ -113,7 +138,14 @@ export function useChatInputAttachments({
         }
         setQueuedFiles((prev) => {
           const stillQueued = prev.some((queuedFile) => queuedFile.id === id)
-          if (!stillQueued || disabledAtStart || attachmentsDisabledRef.current) {
+          const imageBecameDisabled =
+            file.type.startsWith('image/') && imagesDisabledRef.current
+          if (
+            !stillQueued
+            || disabledAtStart
+            || attachmentsDisabledRef.current
+            || imageBecameDisabled
+          ) {
             deleteUploadedAttachment(attachment.id)
             return prev
           }
@@ -198,7 +230,10 @@ export function useChatInputAttachments({
   const retryFile = useCallback(
     (id: string) => {
       const queued = queuedFilesRef.current.find((queuedFile) => queuedFile.id === id)
-      if (!queued) return
+      if (
+        !queued
+        || (imagesDisabledRef.current && queued.file.type.startsWith('image/'))
+      ) return
       setQueuedFiles((prev) =>
         prev.map((queuedFile) =>
           queuedFile.id === id

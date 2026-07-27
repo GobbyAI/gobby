@@ -1,12 +1,13 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useAgentRuns } from "../hooks/useAgentRuns";
+import { useSessionAttention } from "../hooks/useSessionAttention";
 
 type AgentEventHandler = (data: Record<string, unknown>) => void;
 
 const websocket = vi.hoisted(() => ({
   handler: null as AgentEventHandler | null,
+  connected: true,
   order: [] as string[],
 }));
 
@@ -17,6 +18,7 @@ vi.mock("../hooks/useWebSocketEvent", () => ({
       if (!websocket.order.includes("subscribe")) websocket.order.push("subscribe");
     }
   },
+  useWebSocketConnected: () => websocket.connected,
 }));
 
 function jsonResponse(body: unknown): Response {
@@ -55,9 +57,10 @@ function attentionEvent(overrides: Record<string, unknown>): Record<string, unkn
   };
 }
 
-describe("useAgentRuns attention reconciliation", () => {
+describe("useSessionAttention reconciliation", () => {
   beforeEach(() => {
     websocket.handler = null;
+    websocket.connected = true;
     websocket.order = [];
   });
 
@@ -71,9 +74,6 @@ describe("useAgentRuns attention reconciliation", () => {
     let rosterRequests = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.startsWith("/api/agents/runs?")) {
-        return Promise.resolve(jsonResponse({ runs: [] }));
-      }
       if (url === "/api/attention/roster") {
         rosterRequests += 1;
         websocket.order.push(`roster-${rosterRequests}`);
@@ -111,7 +111,7 @@ describe("useAgentRuns attention reconciliation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { result } = renderHook(() => useAgentRuns());
+    const { result } = renderHook(() => useSessionAttention());
 
     expect(websocket.handler).not.toBeNull();
     await waitFor(() => expect(rosterRequests).toBe(1));
@@ -161,5 +161,91 @@ describe("useAgentRuns attention reconciliation", () => {
         reasons: ["Operator input required"],
       });
     });
+  });
+
+  it("refetches the roster after a WebSocket reconnect", async () => {
+    let rosterRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        rosterRequests += 1;
+        return Promise.resolve(
+          jsonResponse({
+            epoch: `epoch-${rosterRequests}`,
+            seq: 1,
+            entries:
+              rosterRequests === 1
+                ? [
+                    {
+                      entry_id: "run:run-1",
+                      session_id: "session-1",
+                      attention: {
+                        state: "blocked",
+                        reason: "Approval required",
+                      },
+                    },
+                  ]
+                : [],
+          }),
+        );
+      }),
+    );
+
+    const { result, rerender } = renderHook(() => useSessionAttention());
+    await waitFor(() => {
+      expect(result.current.attentionBySession.get("session-1")?.count).toBe(1);
+    });
+
+    websocket.connected = false;
+    rerender();
+    websocket.connected = true;
+    rerender();
+
+    await waitFor(() => expect(rosterRequests).toBe(2));
+    await waitFor(() => {
+      expect(result.current.attentionBySession.has("session-1")).toBe(false);
+    });
+  });
+
+  it("drops stale-epoch events after one delayed resync", async () => {
+    const initialRoster = deferredResponse();
+    let rosterRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        rosterRequests += 1;
+        if (rosterRequests === 1) return initialRoster.promise;
+        return Promise.resolve(
+          jsonResponse({
+            epoch: "epoch-a",
+            seq: 10,
+            entries: [],
+          }),
+        );
+      }),
+    );
+
+    const { result } = renderHook(() => useSessionAttention());
+    await waitFor(() => expect(rosterRequests).toBe(1));
+    act(() => {
+      websocket.handler?.(
+        attentionEvent({
+          epoch: "stale-epoch",
+          seq: 1,
+        }),
+      );
+    });
+    initialRoster.resolve(
+      jsonResponse({
+        epoch: "epoch-a",
+        seq: 10,
+        entries: [],
+      }),
+    );
+
+    await waitFor(() => expect(rosterRequests).toBe(2));
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    expect(rosterRequests).toBe(2);
+    expect(result.current.attentionBySession.size).toBe(0);
   });
 });

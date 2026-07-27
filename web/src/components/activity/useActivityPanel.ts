@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDirtyGuardController } from './dirtyGuard'
 import { ACTIVITY_PANEL_TABS, type ActivityTab } from './ActivityPanelTabs'
+import {
+  SHOW_ACTIVITY_TAB_EVENT,
+  type ShowActivityTabDetail,
+} from './activityEvents'
 
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
 const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
@@ -190,7 +194,7 @@ export function useActivityPanel(isMobile: boolean) {
   // threading `showTab` through every panel surface.
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ tab?: string; sessionId?: unknown }>).detail
+      const detail = (event as CustomEvent<Partial<ShowActivityTabDetail>>).detail
       const normalized = normalizeStoredTab(detail?.tab ?? null)
       if (!normalized) return
       if (normalized === 'terminal' && typeof detail?.sessionId === 'string') {
@@ -198,8 +202,8 @@ export function useActivityPanel(isMobile: boolean) {
       }
       showTab(normalized)
     }
-    window.addEventListener('gobby:show-activity-tab', handler)
-    return () => window.removeEventListener('gobby:show-activity-tab', handler)
+    window.addEventListener(SHOW_ACTIVITY_TAB_EVENT, handler)
+    return () => window.removeEventListener(SHOW_ACTIVITY_TAB_EVENT, handler)
   }, [showTab])
 
   const clearTerminalSessionRequest = useCallback(() => {

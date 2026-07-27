@@ -78,6 +78,28 @@ def test_save_chunks_on_line_boundaries_and_hard_splits_long_lines(
     ]
 
 
+def test_save_persists_total_chars_above_signed_32_bit_range(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    store = ToolResultStore(temp_db, _config())
+    total_chars = 2**31 + 17
+
+    result_id = _save(
+        store,
+        project_id=sample_project["id"],
+        content="stored excerpt",
+        total_chars=total_chars,
+    )
+
+    result = temp_db.fetchone(
+        "SELECT total_chars FROM tool_results WHERE id = %s",
+        (result_id,),
+    )
+    assert result is not None
+    assert result["total_chars"] == total_chars
+
+
 def test_save_runs_cleanup_with_configured_retention(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

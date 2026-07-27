@@ -57,7 +57,7 @@ instructions: |
     or workspace-wide `cargo test --no-default-features`; use
     `cargo test -p <package>` or `cargo test <name> -p <package>`.
   - Always use `uv run` for Python commands.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
   rule_selectors:
@@ -148,8 +148,12 @@ steps:
       - server: gobby-tasks
         tool: close_task
         when: >-
+          not tool_input.get('preview', False)
+          and tool_input.get('task_id') == vars.get('assigned_task_id')
+          and (
             tool_output.get('closed') is True
             or tool_output.get('result', {}).get('closed') is True
+          )
         action: set_variable
         variable: implementation_complete
         value: true

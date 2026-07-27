@@ -52,7 +52,7 @@ Weak:
 
 Bug:
 
-```
+```python
 call_tool("gobby-tasks", "create_task", {
     "title": "Fix null handling in session cleanup",
     "category": "code",
@@ -67,7 +67,7 @@ call_tool("gobby-tasks", "create_task", {
 
 Feature created and claimed:
 
-```
+```python
 call_tool("gobby-tasks", "create_task", {
     "title": "Add pipeline completion webhooks",
     "category": "code",

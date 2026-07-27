@@ -31,7 +31,7 @@ summaries. Manual `validation_command` evidence is prohibited.
 Use manual evidence only for a non-command artifact such as diff review or PR
 state:
 
-```
+```python
 call_tool("gobby-sessions", "record_verification_evidence", {
     "summary": "Reviewed the final diff against the task acceptance criteria.",
     "evidence_type": "manual_diff_review",

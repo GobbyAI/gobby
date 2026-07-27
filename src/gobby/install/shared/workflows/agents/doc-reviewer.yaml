@@ -69,7 +69,7 @@ instructions: |
     switch to a focused file/filter command, and never retry that blocked command.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
   - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
     or get_agent_definition. Only load skills from gobby-skills until the
     workflow advances to REVIEW.

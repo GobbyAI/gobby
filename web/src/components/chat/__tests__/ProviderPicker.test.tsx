@@ -42,7 +42,7 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
   };
 }
 
-function buildLocalCatalog() {
+function buildEndpointCatalog() {
   const catalog = buildCatalog();
   return {
     providers: catalog.providers.map((provider) =>
@@ -218,7 +218,7 @@ describe("ProviderPicker", () => {
     const onSelect = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => buildLocalCatalog(),
+      json: async () => buildEndpointCatalog(),
     }) as typeof fetch;
 
     render(
@@ -249,7 +249,7 @@ describe("ProviderPicker", () => {
   it("marks a selected Responses endpoint as active in the Codex group", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => buildLocalCatalog(),
+      json: async () => buildEndpointCatalog(),
     }) as typeof fetch;
 
     render(
@@ -282,7 +282,7 @@ describe("ProviderPicker", () => {
     const onSwitchProvider = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => buildLocalCatalog(),
+      json: async () => buildEndpointCatalog(),
     }) as typeof fetch;
 
     render(
@@ -344,7 +344,7 @@ describe("ProviderPicker", () => {
     const onSwitchProvider = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => buildLocalCatalog(),
+      json: async () => buildEndpointCatalog(),
     }) as typeof fetch;
 
     render(
@@ -379,7 +379,7 @@ describe("ProviderPicker", () => {
     const onSelect = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => buildLocalCatalog(),
+      json: async () => buildEndpointCatalog(),
     }) as typeof fetch;
 
     render(

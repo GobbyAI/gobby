@@ -5,6 +5,7 @@ import type { ChatState, VoiceProps } from "../../types/chat";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { VoiceInputMode } from "../../hooks/useSettings";
 import { modelSupportsImageInput } from "../../lib/providerModels";
+import { showActivityTab } from "../activity/activityEvents";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
@@ -168,16 +169,11 @@ export function ChatMainColumn({
           onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
           onOpenTerminal={
             viewingMeta?.sessionType === "terminal" && chat.dbSessionId
-              ? () => {
-                  window.dispatchEvent(
-                    new CustomEvent("gobby:show-activity-tab", {
-                      detail: {
-                        tab: "terminal",
-                        sessionId: chat.dbSessionId,
-                      },
-                    }),
-                  );
-                }
+              ? () =>
+                  showActivityTab(
+                    "terminal",
+                    chat.dbSessionId ?? undefined,
+                  )
               : undefined
           }
           onNewChat={() => onNewChat()}

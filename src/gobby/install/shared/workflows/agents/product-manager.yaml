@@ -58,7 +58,7 @@ instructions: |
   - Do NOT call complete_stage.
   - Do NOT spawn other agents.
   - Always use `uv run` for Python commands.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:
   rule_selectors:

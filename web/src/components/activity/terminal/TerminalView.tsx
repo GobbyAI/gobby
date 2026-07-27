@@ -101,7 +101,6 @@ function TerminalInstance({
 }: TerminalInstanceProps) {
   useLayoutEffect(() => {
     let disposed = false;
-    let destroyed = false;
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const mountElement = document.createElement("div");
     applyGobbyTheme(mountElement);
@@ -157,10 +156,7 @@ function TerminalInstance({
       if (resizeTimer !== null) clearTimeout(resizeTimer);
       if (terminalRef.current === terminal) terminalRef.current = null;
       sizeRef.current = null;
-      if (!destroyed) {
-        destroyed = true;
-        terminal.destroy();
-      }
+      terminal.destroy();
       mountElement.remove();
     };
   }, [

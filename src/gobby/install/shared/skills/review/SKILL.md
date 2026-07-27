@@ -83,6 +83,8 @@ review verdict and terminates through its agent workflow.
 
 ## Boundaries
 
-- Do not approve, reject, or escalate directly from this skill.
+- In delegated mode, the launcher does not approve, reject, or escalate; the
+  spawned reviewer owns the verdict. In-line mode executes the verdict contract
+  directly in the current session.
 - Do not call `close_task`; lifecycle dispatch owns closure.
 - Do not replace the `epic-reviewer` or `epic-review` methodology here.

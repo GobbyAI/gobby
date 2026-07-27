@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
+export const TMUX_REQUEST_TIMEOUT_MS = 10_000
+
 export interface TmuxSession {
   name: string
   socket: string
@@ -88,6 +90,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const connectionGenerationRef = useRef(0)
   const requestCounterRef = useRef(0)
   const pendingRequestRef = useRef<PendingRequest | null>(null)
+  const pendingRequestTimeoutRef = useRef<number | null>(null)
   const connectRef = useRef<() => void>(() => {})
 
   const updateAttachment = useCallback((target: TmuxTarget | null, streamId: string | null) => {
@@ -98,9 +101,34 @@ export function useTmuxSessions(): TmuxSessionsResult {
   }, [])
 
   const clearPendingRequest = useCallback(() => {
+    if (pendingRequestTimeoutRef.current !== null) {
+      clearTimeout(pendingRequestTimeoutRef.current)
+      pendingRequestTimeoutRef.current = null
+    }
     pendingRequestRef.current = null
     setRequestPending(false)
     setIsLoading(false)
+  }, [])
+
+  const schedulePendingRequestTimeout = useCallback((request: PendingRequest) => {
+    if (pendingRequestTimeoutRef.current !== null) {
+      clearTimeout(pendingRequestTimeoutRef.current)
+    }
+    pendingRequestTimeoutRef.current = window.setTimeout(() => {
+      pendingRequestTimeoutRef.current = null
+      const pending = pendingRequestRef.current
+      if (
+        pending?.requestId !== request.requestId
+        || pending.generation !== request.generation
+        || pending.kind !== request.kind
+      ) {
+        return
+      }
+      pendingRequestRef.current = null
+      setRequestPending(false)
+      setIsLoading(false)
+      setAttachError(`${request.kind} request timed out`)
+    }, TMUX_REQUEST_TIMEOUT_MS)
   }, [])
 
   const dismissEndedSession = useCallback(() => {
@@ -122,7 +150,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
     const generation = connectionGenerationRef.current
     const requestId = `attach-${generation}-${++requestCounterRef.current}`
-    pendingRequestRef.current = { kind: 'attach', requestId, generation, target }
+    const request: PendingRequest = { kind: 'attach', requestId, generation, target }
+    pendingRequestRef.current = request
     setRequestPending(true)
     setIsLoading(true)
     setSessionEnded(false)
@@ -133,8 +162,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
       session_name: target.name,
       socket: target.socket,
     }))
+    schedulePendingRequestTimeout(request)
     return true
-  }, [])
+  }, [schedulePendingRequestTimeout])
 
   const beginDetachRequest = useCallback((nextTarget: TmuxTarget | null): boolean => {
     const ws = wsRef.current
@@ -148,7 +178,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
     const generation = connectionGenerationRef.current
     const requestId = `detach-${generation}-${++requestCounterRef.current}`
-    pendingRequestRef.current = { kind: 'detach', requestId, generation, nextTarget }
+    const request: PendingRequest = { kind: 'detach', requestId, generation, nextTarget }
+    pendingRequestRef.current = request
     setRequestPending(true)
     setIsLoading(true)
     setAttachError(null)
@@ -157,8 +188,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
       request_id: requestId,
       streaming_id: currentStreamingId,
     }))
+    schedulePendingRequestTimeout(request)
     return true
-  }, [])
+  }, [schedulePendingRequestTimeout])
 
   const handleMessage = useCallback((data: Record<string, unknown>) => {
     switch (data.type) {
@@ -176,7 +208,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
         ) {
           setSessionEnded(true)
         }
-        setIsLoading(false)
+        if (pendingRequestRef.current === null) setIsLoading(false)
         break
       }
 
@@ -257,7 +289,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
       case 'tmux_kill_result':
         refreshSessions()
-        setIsLoading(false)
+        if (pendingRequestRef.current === null) setIsLoading(false)
         break
 
       case 'tmux_session_event':
@@ -313,6 +345,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
       setConnected(false)
       setSessionsLoaded(false)
       updateAttachment(null, null)
+      if (pendingRequestTimeoutRef.current !== null) {
+        clearTimeout(pendingRequestTimeoutRef.current)
+        pendingRequestTimeoutRef.current = null
+      }
       pendingRequestRef.current = null
       setRequestPending(false)
       setIsLoading(false)
@@ -378,7 +414,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
     const generation = connectionGenerationRef.current
     const requestId = `create-${generation}-${++requestCounterRef.current}`
-    pendingRequestRef.current = { kind: 'create', requestId, generation }
+    const request: PendingRequest = { kind: 'create', requestId, generation }
+    pendingRequestRef.current = request
     setRequestPending(true)
     setIsLoading(true)
     setAttachError(null)
@@ -389,7 +426,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
       name,
       socket: socket || 'default',
     }))
-  }, [])
+    schedulePendingRequestTimeout(request)
+  }, [schedulePendingRequestTimeout])
 
   const killSession = useCallback((sessionName: string, socket: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
@@ -439,6 +477,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
         reconnectTimeoutRef.current = null
+      }
+      if (pendingRequestTimeoutRef.current !== null) {
+        clearTimeout(pendingRequestTimeoutRef.current)
+        pendingRequestTimeoutRef.current = null
       }
       pendingRequestRef.current = null
       const ws = wsRef.current

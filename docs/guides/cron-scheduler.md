@@ -52,7 +52,6 @@ uv run gobby cron runs <job-id>
 Use MCP when an agent creates or manages jobs:
 
 ```text
-list_tools(server_name="gobby-cron")
 get_tool_schema(server_name="gobby-cron", tool_name="create_cron_job")
 call_tool(server_name="gobby-cron", tool_name="create_cron_job", ...)
 ```

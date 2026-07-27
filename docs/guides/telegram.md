@@ -11,8 +11,8 @@ and [bot FAQ][telegram-faq].
 
 ## Quick path: a private DM bot
 
-This path produces a polling bot whose first trusted direct message becomes the
-owner.
+This path produces a polling bot that enrolls its owner only after receiving
+the exact private `/start` command.
 
 ### 1. Enable communications
 

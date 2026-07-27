@@ -1,5 +1,6 @@
 import { SessionInteractionModal } from "./SessionInteractionModal";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
+import { showActivityTab } from "./activityEvents";
 import type {
   SessionContextMenu,
   WatchingSessionEntry,
@@ -58,13 +59,7 @@ export function SessionsContextMenu({
   if (entry.hasTmux) {
     items.push({
       label: "Open Terminal",
-      onSelect: () => {
-        window.dispatchEvent(
-          new CustomEvent("gobby:show-activity-tab", {
-            detail: { tab: "terminal", sessionId: entry.id },
-          }),
-        );
-      },
+      onSelect: () => showActivityTab("terminal", entry.id),
     });
   }
   if (canResume && onResumeSession) {

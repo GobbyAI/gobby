@@ -55,7 +55,11 @@ export function TerminalKeysBar({ sendInput }: TerminalKeysBarProps) {
           Send
         </button>
       </div>
-      <div className="flex flex-wrap gap-1.5" aria-label="Terminal quick keys">
+      <div
+        className="flex flex-wrap gap-1.5"
+        role="group"
+        aria-label="Terminal quick keys"
+      >
         {QUICK_KEYS.map(({ label, accessibleLabel, data }) => (
           <button
             key={label}

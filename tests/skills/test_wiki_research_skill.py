@@ -33,6 +33,15 @@ def test_backlog_entry_contract_is_detailed_and_idempotent() -> None:
     assert "Preserve the compiled page's source evidence" in normalized
 
 
+def test_custom_output_contract_requires_a_stable_finding_slug() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "A custom contract must still provide a stable kebab-case" in body
+    assert "`finding_slug` for every kept item" in body
+    assert "derive one from its guaranteed source/item identifier" in body
+    assert "Use the same slug on every retry" in body
+
+
 def test_investigation_tasks_require_opt_in_and_link_to_backlog() -> None:
     """Step 9 gates task filing and keeps the backlog canonical."""
     body = parse_skill_file(SKILL_PATH).content

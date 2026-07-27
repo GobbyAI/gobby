@@ -45,6 +45,7 @@ export function useSessionProviderOptions(): {
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("Failed to load session provider registry", { error });
         setRegistryLoaded(false);
       });
 

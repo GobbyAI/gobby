@@ -6,7 +6,7 @@ live on `gobby-tasks-ops` and require an explicit stage such as `planning`,
 
 Autonomous agents must submit work for review:
 
-```
+```python
 call_tool("gobby-tasks-ops", "submit_for_review", {
     "task_id": "#42",
     "stage_name": "development",
@@ -16,7 +16,7 @@ call_tool("gobby-tasks-ops", "submit_for_review", {
 
 QA approves a reviewed stage:
 
-```
+```python
 call_tool("gobby-tasks-ops", "approve_review", {
     "task_id": "#42",
     "stage_name": "development",
@@ -26,7 +26,7 @@ call_tool("gobby-tasks-ops", "approve_review", {
 
 Reject a stage back to ready:
 
-```
+```python
 call_tool("gobby-tasks-ops", "reject_review", {
     "task_id": "#42",
     "stage_name": "development",

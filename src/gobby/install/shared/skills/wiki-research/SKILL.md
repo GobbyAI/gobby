@@ -108,7 +108,9 @@ conflict: <claim that contradicts another kept source, if any>
 
 Then `wiki_ingest` with the note file paths so the notes become vault sources
 too. Skip this template only when the question carries its own output
-contract.
+contract. A custom contract must still provide a stable kebab-case
+`finding_slug` for every kept item, or a guaranteed source/item identifier
+from which that slug can be deterministically derived.
 
 ## 7. Compile the topic page
 
@@ -145,9 +147,11 @@ entries are authoritative and must be preserved by later research runs.
 ## Findings
 ```
 
-Append one entry per kept item. The finding slug is the kebab-cased accepted
-note basename, which is stable across retries. Derive both hidden markers from
-the canonical compiled topic path and that finding slug. Use this exact shape:
+Append one entry per kept item. With the default contract, the finding slug is
+the kebab-cased accepted-note basename. With a custom contract, use its explicit
+stable `finding_slug`, or derive one from its guaranteed source/item identifier.
+Use the same slug on every retry. Derive both hidden markers from the canonical
+compiled topic path and that finding slug. Use this exact shape:
 
 ```markdown
 <!-- wiki-research-backlog:knowledge/topics/<topic>.md#<finding-slug> -->

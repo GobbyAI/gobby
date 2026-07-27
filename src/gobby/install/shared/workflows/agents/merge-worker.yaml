@@ -124,7 +124,7 @@ instructions: |
   - Do NOT push. Remote publication is allowed only through explicit PR delivery.
   - Do NOT terminate or exit the agent process without first transitioning to
     the terminate step and then calling end_agent_run.
-  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 step_variables:
   merge_result_recorded: false

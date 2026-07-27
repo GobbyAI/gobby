@@ -13,7 +13,8 @@ rules:
         command_pattern: "\\bpytest\\b"
         command_not_pattern: "\\bpytest\\s+\\S+\\.py\\b|\\bpytest\\s+\\S*tests/\\w+[/\\s]|\\bpytest\\s.*-k\\s"
         reason: >-
-          Run targeted tests: `pytest tests/path/test_file.py` or `-k 'pattern'`
+          Run targeted tests: `GOBBY_TEST_PROTECT=1 pytest tests/path/test_file.py`
+          or `GOBBY_TEST_PROTECT=1 pytest -k 'pattern'`
           — full-suite runs are reserved for the user.
 
   no-full-vitest-suite:
