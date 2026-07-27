@@ -20,6 +20,7 @@ from gobby.ai.embedding_switch import SwitchAlreadyActiveError
 from gobby.ai.embedding_switch_service import EmbeddingSwitchTaskActive
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 from gobby.servers.responses import JSONResponse
+from gobby.storage.config_store import EmbeddingConfigMutationBlocked
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -127,7 +128,11 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
         coordinator = _embedding_switch_coordinator(server)
         try:
             result = await coordinator.start(payload.catalog_key, payload.provider)
-        except (EmbeddingSwitchTaskActive, SwitchAlreadyActiveError) as exc:
+        except (
+            EmbeddingSwitchTaskActive,
+            SwitchAlreadyActiveError,
+            EmbeddingConfigMutationBlocked,
+        ) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -137,13 +142,16 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
     async def embedding_switch_resume() -> dict[str, object]:
         try:
             result = await _embedding_switch_coordinator(server).resume()
-        except EmbeddingSwitchTaskActive as exc:
+        except (EmbeddingSwitchTaskActive, EmbeddingConfigMutationBlocked) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
 
     @router.post("/switch/abort")
     async def embedding_switch_abort() -> dict[str, object]:
-        result = await _embedding_switch_coordinator(server).abort()
+        try:
+            result = await _embedding_switch_coordinator(server).abort()
+        except EmbeddingConfigMutationBlocked as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if result.status == "too_late":
             raise HTTPException(status_code=409, detail=asdict(result))
         return asdict(result)

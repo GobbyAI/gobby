@@ -57,6 +57,9 @@ _CONSECUTIVE_THRESHOLD = 2
 # Minimum seconds between checks that should elapse (prevents false positives
 # from two rapid checks seeing the same error)
 _MIN_CHECK_INTERVAL_SECONDS = 30.0
+_PANE_SCAN_LINE_LIMIT = 50
+_PROVIDER_ERROR_LABEL = "provider error"
+_PANE_PROVIDER_ERROR_LABEL = "provider error in pane output"
 
 
 class StallClassifier:
@@ -110,7 +113,8 @@ class StallClassifier:
         state = self._states.setdefault(run_id, _RunState())
         now = time.monotonic()
 
-        if self._manifest() is None:
+        manifest = self._manifest()
+        if manifest is None:
             state.consecutive_provider_hits = 0
             state.last_status = StallStatus.UNKNOWN
             state.last_check_at = now
@@ -124,9 +128,9 @@ class StallClassifier:
             state.last_check_at = now
             return StallClassification(status=StallStatus.HEALTHY)
 
-        matched_reason = self._match_provider_error(error or "")
+        matched_reason = self._match_provider_error(manifest, error or "")
         if matched_reason is None:
-            matched_reason = self._match_pane_provider_error(pane_output or "")
+            matched_reason = self._match_pane_provider_error(manifest, pane_output or "")
 
         if matched_reason:
             # First hit always counts; subsequent hits require enough elapsed time
@@ -176,7 +180,10 @@ class StallClassifier:
         """
         if not error_string:
             return False
-        return self._match_provider_error(error_string) is not None
+        manifest = self._manifest()
+        if manifest is None:
+            return False
+        return self._match_provider_error(manifest, error_string) is not None
 
     def is_bootstrap_stall(self, error_string: str | None) -> bool:
         """Check if an error string is Gobby bootstrap/accounting containment."""
@@ -190,20 +197,19 @@ class StallClassifier:
             classifier.clear(run_id)
         self._states.pop(run_id, None)
 
-    def _match_provider_error(self, text: str) -> str | None:
+    @staticmethod
+    def _match_provider_error(manifest: CompiledManifest, text: str) -> str | None:
         """Return the first matching provider error reason, or None."""
-        manifest = self._manifest()
-        if manifest is None:
-            return None
         match = manifest.match_rule("provider_error", text).match
-        return text if match is not None else None
+        return _PROVIDER_ERROR_LABEL if match is not None else None
 
-    def _match_pane_provider_error(self, pane_output: str) -> str | None:
+    def _match_pane_provider_error(
+        self,
+        manifest: CompiledManifest,
+        pane_output: str,
+    ) -> str | None:
         """Return provider error evidence from live pane output, or None."""
-        manifest = self._manifest()
-        if manifest is None:
-            return None
-        for raw_line in pane_output.splitlines():
+        for raw_line in pane_output.splitlines()[-_PANE_SCAN_LINE_LIMIT:]:
             line = self._normalize_pane_line(raw_line)
             if not line:
                 continue
@@ -211,7 +217,7 @@ class StallClassifier:
                 continue
             match = manifest.match_rule("pane_provider_error", line).match
             if match is not None:
-                return line
+                return _PANE_PROVIDER_ERROR_LABEL
         return None
 
     @staticmethod

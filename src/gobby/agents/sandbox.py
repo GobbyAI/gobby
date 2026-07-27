@@ -649,7 +649,7 @@ def compute_sandbox_paths(
         [*sensitive_write_roots(), *config.extra_deny_write_paths],
         base=workspace,
     )
-    domains = allowed_domains(config, provider, api_base) if provider else []
+    domains = allowed_domains(config, provider, api_base)
 
     return ResolvedSandboxPaths(
         workspace_path=str(workspace),

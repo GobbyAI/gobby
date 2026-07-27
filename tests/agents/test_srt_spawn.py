@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,21 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from gobby.agents.tmux.spawner import _infer_auth_cli
+
+pytestmark = pytest.mark.unit
+
+
+def test_srt_runner_uses_portable_preflight_and_finally_cleanup() -> None:
+    runner = (
+        Path(__file__).resolve().parents[2] / "src" / "gobby" / "agents" / "srt_runner.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert "[process.execPath, '--version']" in runner
+    assert "/usr/bin/true" not in runner
+    cleanup = runner.split("} finally {", maxsplit=1)[1]
+    assert "process.off(signal, handler)" in cleanup
+    assert "unsubscribe()" in cleanup
+    assert "await SandboxManager.reset()" in cleanup
 
 
 @pytest.mark.parametrize(
@@ -87,7 +103,7 @@ async def test_pane_pid_identity_accepts_provider_inside_srt_argv() -> None:
 @pytest.mark.asyncio
 async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
     session_manager = MagicMock()
-    session_manager._storage = SimpleNamespace(db=MagicMock())
+    run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",
         cwd="/workspace",
@@ -97,6 +113,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         parent_session_id="parent",
         project_id="project",
         session_manager=session_manager,
+        run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
     )
     spawn_context = SimpleNamespace(
@@ -162,7 +179,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
 @pytest.mark.asyncio
 async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
     session_manager = MagicMock()
-    session_manager._storage = SimpleNamespace(db=MagicMock())
+    run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",
         cwd="/workspace",
@@ -172,6 +189,7 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
         parent_session_id="parent",
         project_id="project",
         session_manager=session_manager,
+        run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
     )
     spawn_context = SimpleNamespace(
@@ -188,7 +206,6 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
             "gobby.agents.spawn_executor.prepare_sandbox_launch",
             side_effect=SrtRuntimeError("invalid policy"),
         ),
-        patch("gobby.storage.agents.LocalAgentRunManager"),
         patch("gobby.agents.spawn_executor._tmux_spawner_for_request", return_value=spawner),
     ):
         result = await execute_spawn(request)
@@ -196,4 +213,8 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
     assert result.success is False
     assert result.status == "failed"
     assert "failed closed" in (result.error or "")
+    run_manager.fail.assert_called_once_with(
+        "actual-run",
+        "Sandbox startup failed closed for droid: invalid policy",
+    )
     spawner.spawn.assert_not_called()

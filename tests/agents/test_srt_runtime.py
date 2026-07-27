@@ -7,13 +7,17 @@ import json
 import os
 import shutil
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gobby.agents import srt_runtime
-from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv, compute_sandbox_paths
+from gobby.agents.sandbox import (
+    ResolvedSandboxPaths,
+    SandboxConfig,
+    SandboxCredentialEnv,
+    compute_sandbox_paths,
+)
 from gobby.agents.sandbox_policy import _nearest_package_root
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -28,9 +32,15 @@ from gobby.utils.dependency_requirements import (
     DependencyStatus,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_render_settings_uses_srt_credential_schema() -> None:
-    paths = SimpleNamespace(
+    paths = ResolvedSandboxPaths(
+        workspace_path="/workspace",
+        read_paths=["/workspace"],
+        write_paths=["/workspace"],
+        allow_external_network=False,
         credential_env_vars=[
             SandboxCredentialEnv(
                 name="OPENAI_API_KEY",
@@ -42,8 +52,6 @@ def test_render_settings_uses_srt_credential_schema() -> None:
         denied_domains=[],
         allow_unix_sockets=[],
         deny_read_paths=["/home/user/.ssh"],
-        read_paths=["/workspace"],
-        write_paths=["/workspace"],
         deny_write_paths=[],
     )
 
@@ -231,10 +239,42 @@ def test_git_and_package_network_are_separate_capabilities(tmp_path: Path) -> No
     assert len(capable_paths.write_paths) > len(default_paths.write_paths)
 
 
+def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    paths = compute_sandbox_paths(
+        SandboxConfig(
+            enabled=True,
+            backend="srt",
+            allow_network=False,
+            allowed_domains=["operator.example"],
+            denied_domains=["BLOCKED.EXAMPLE"],
+            allow_git_network=True,
+            allow_package_registries=True,
+        ),
+        str(workspace),
+        provider=None,
+        env={"PATH": ""},
+    )
+
+    assert "operator.example" in paths.allowed_domains
+    assert "github.com" in paths.allowed_domains
+    assert "registry.npmjs.org" in paths.allowed_domains
+    assert paths.denied_domains == ["blocked.example"]
+    assert paths.loopback_ports == [60887, 60888]
+
+
+@pytest.mark.parametrize(
+    ("provider", "temp_env_name"),
+    [("claude", "CLAUDE_CODE_TMPDIR"), ("codex", "TMPDIR")],
+)
 @pytest.mark.asyncio
 async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    provider: str,
+    temp_env_name: str,
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
@@ -246,7 +286,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     package_json = runtime / "package.json"
     for path in (node, runner, package_json):
         path.write_text("test", encoding="utf-8")
-    provider_root = tmp_path / "claude"
+    provider_root = tmp_path / provider
     provider_target = provider_root / "versions" / "2.1.220"
     provider_target.parent.mkdir(parents=True)
     provider_target.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -254,14 +294,14 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     (provider_root / "package.json").write_text("{}", encoding="utf-8")
     shim_dir = tmp_path / "bin"
     shim_dir.mkdir()
-    provider_shim = shim_dir / "claude"
+    provider_shim = shim_dir / provider
     provider_shim.symlink_to(provider_target)
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-    monkeypatch.setattr(
-        srt_runtime,
-        "verify_srt_installation",
-        lambda: SrtInstallation(runtime, node, runner, package_json),
-    )
+
+    def verified_installation(**_context: str | None) -> SrtInstallation:
+        return SrtInstallation(runtime, node, runner, package_json)
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", verified_installation)
     preflights: list[tuple[SandboxLaunch, str, dict[str, str]]] = []
 
     async def fake_preflight(
@@ -281,7 +321,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
         path: str | None = None,
     ) -> str | None:
         nonlocal provider_lookups
-        if command == "claude":
+        if command == provider:
             provider_lookups += 1
             return str(provider_shim)
         result = original_which(command, mode=mode, path=path)
@@ -291,7 +331,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
 
     launch = await prepare_sandbox_launch(
         config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
-        provider="claude",
+        provider=provider,
         workspace_path=str(workspace),
         run_id="run/unsafe id",
         resolver=None,
@@ -311,7 +351,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert policy_path.parent == expected_parent
     assert violation_path.parent == expected_parent
     temp_path = expected_parent / "tmp"
-    assert launch.provider_env == {"CLAUDE_CODE_TMPDIR": str(temp_path)}
+    assert launch.provider_env == {temp_env_name: str(temp_path)}
     assert temp_path.stat().st_mode & 0o777 == 0o700
     assert workspace not in policy_path.parents
     assert policy_path.stat().st_mode & 0o777 == 0o600
@@ -323,7 +363,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
             str(workspace),
             {
                 "PATH": str(shim_dir),
-                "CLAUDE_CODE_TMPDIR": str(temp_path),
+                temp_env_name: str(temp_path),
             },
         )
     ]
@@ -333,7 +373,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert str(provider_root.resolve()) in allowed_reads
     assert str(provider_shim.absolute()) not in allowed_reads
     assert str(shim_dir.resolve()) not in allowed_reads
-    wrapped = launch.wrap(["claude", "--version"])
+    wrapped = launch.wrap([provider, "--version"])
     assert wrapped[wrapped.index("--") + 1] == str(provider_target.resolve())
     assert launch.metadata()["provider_executable"] == str(provider_target.resolve())
     assert provider_lookups == 1
@@ -434,6 +474,7 @@ async def test_prepare_srt_launch_rejects_unrestricted_network_without_fallback(
 def test_verify_srt_installation_wraps_missing_lockfile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     root = tmp_path / "runtime"
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
@@ -458,8 +499,21 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     monkeypatch.setattr(srt_runtime, "srt_install_root", lambda: root)
     monkeypatch.setattr(srt_runtime, "__file__", str(tmp_path / "srt_runtime.py"))
 
-    with pytest.raises(SrtRuntimeError, match="missing or invalid"):
-        verify_srt_installation()
+    with (
+        caplog.at_level("WARNING"),
+        pytest.raises(SrtRuntimeError, match="missing or invalid"),
+    ):
+        verify_srt_installation(
+            run_id="run-lockout",
+            provider="codex",
+            policy_hash="policy-hash",
+        )
+
+    record = caplog.records[-1]
+    assert record.message == "Managed SRT validation failed closed"
+    assert vars(record)["run_id"] == "run-lockout"
+    assert vars(record)["provider"] == "codex"
+    assert vars(record)["policy_hash"] == "policy-hash"
 
 
 def _write_valid_srt_install(root: Path) -> None:

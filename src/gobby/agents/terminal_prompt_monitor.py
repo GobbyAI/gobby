@@ -131,8 +131,7 @@ class TerminalPromptMonitor:
                     if sent:
                         self.mark_enter_sent(run.id)
                         detector.mark_dismissed(run.id)
-                        if self._on_prompt_injected is not None:
-                            await self._on_prompt_injected(run)
+                        await self._notify_prompt_injected(run)
                         logger.info(
                             "Auto-dismissed trust prompt for agent %s (trust folder)",
                             run.id,
@@ -200,7 +199,7 @@ class TerminalPromptMonitor:
                         run.id,
                         count,
                     )
-                    await self._handle_looping_agent(run)
+                    await self._notify_looping_agent(run)
             except Exception as e:
                 _log_prompt_probe_error(
                     operation="loop",
@@ -240,8 +239,7 @@ class TerminalPromptMonitor:
                 if sent:
                     self.mark_enter_sent(run.id)
                     detector.mark_approval_prompt_dismissed(run.id, pane_output)
-                    if self._on_prompt_injected is not None:
-                        await self._on_prompt_injected(run)
+                    await self._notify_prompt_injected(run)
                     logger.info("Auto-entered approval prompt for agent %s", run.id)
                     handled += 1
             except Exception as e:
@@ -344,6 +342,29 @@ class TerminalPromptMonitor:
                 )
 
         return handled
+
+    async def _notify_prompt_injected(self, run: AgentRun) -> None:
+        callback = self._on_prompt_injected
+        if callback is None:
+            return
+        try:
+            await callback(run)
+        except Exception:
+            logger.warning(
+                "Prompt-injection callback failed for agent %s",
+                run.id,
+                exc_info=True,
+            )
+
+    async def _notify_looping_agent(self, run: AgentRun) -> None:
+        try:
+            await self._handle_looping_agent(run)
+        except Exception:
+            logger.warning(
+                "Loop-escalation callback failed for agent %s",
+                run.id,
+                exc_info=True,
+            )
 
     def _should_skip_periodic_enter_for_dialog(
         self,

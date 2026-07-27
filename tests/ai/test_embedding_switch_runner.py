@@ -26,14 +26,21 @@ pytestmark = pytest.mark.unit
 class FakeConfigStore:
     def __init__(self) -> None:
         self.values: dict[str, Any] = {}
-        self.operations: list[tuple[str, Any]] = []
+        self.operations: list[tuple[Any, ...]] = []
 
     def get(self, key: str) -> Any:
+        return self.values.get(key)
+
+    def get_internal_lifecycle(self, key: str) -> Any:
         return self.values.get(key)
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         self.values[key] = value
         self.operations.append(("set", key, source))
+
+    def set_internal_lifecycle(self, key: str, value: Any) -> None:
+        self.values[key] = value
+        self.operations.append(("lifecycle_set", key))
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         self.values.update(entries)
@@ -48,6 +55,11 @@ class FakeConfigStore:
     def delete(self, key: str) -> None:
         self.values.pop(key, None)
         self.operations.append(("delete", key))
+
+    def delete_internal_lifecycle(self, key: str, run_id: str) -> bool:
+        existed = self.values.pop(key, None) is not None
+        self.operations.append(("lifecycle_delete", key, run_id))
+        return existed
 
 
 class FakeVectorStore:
@@ -159,7 +171,7 @@ async def test_flip_records_old_targets_before_config_write(
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
 
     assert journal.phase == PHASE_ACTIVE
-    assert store.operations[0][0] == "set"
+    assert store.operations[0][0] == "lifecycle_set"
     assert store.operations[1][0] == "owner_set"
     config_entries = store.operations[1][1]
     assert config_entries == journal.run_id
@@ -302,3 +314,26 @@ async def test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry(
         "tool_embeddings@4096-run",
         "gobby_github_issues@4096-run",
     }
+
+
+async def test_abort_cleanup_refuses_to_delete_alias_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore({"memories": "memories@4096-run"})
+    control = EmbeddingSwitchControl()
+    control.abort_requested.set()
+    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
+
+    result = await runner.run(_journal(PHASE_BUILDING))
+
+    assert result.failed is True
+    assert result.journal is not None
+    assert result.journal.phase == PHASE_ABORTED
+    assert result.journal.error is not None
+    assert "still targeted by an alias" in result.journal.error
+    assert ("delete", "memories@4096-run", None) not in vector_store.operations
+    persisted = get_switch_status(store)
+    assert persisted is not None
+    assert persisted.phase == PHASE_ABORTED

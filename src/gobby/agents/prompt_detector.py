@@ -129,22 +129,37 @@ class PromptDetector:
             return self.prompt_payload(pane_output, kind="approval")
         if self.detect_trust_prompt(pane_output):
             return self.prompt_payload(pane_output, kind="trust")
-        if len(self._enumerated_options(pane_output)) >= 2:
+        if len(self._enumerated_options(self._prompt_excerpt(pane_output))) >= 2:
             return self.prompt_payload(pane_output, kind="question")
         return None
 
     def prompt_payload(self, pane_output: str, *, kind: PromptKind) -> DetectedPrompt:
         """Build a bounded structured payload for a known prompt kind."""
-        lines = pane_output.splitlines()[-self.PROMPT_EXCERPT_LINES :]
-        excerpt = "\n".join(lines).strip()
-        if len(excerpt) > self.PROMPT_EXCERPT_CHARS:
-            excerpt = excerpt[-self.PROMPT_EXCERPT_CHARS :]
+        excerpt = self._prompt_excerpt(pane_output)
         return DetectedPrompt(
             kind=kind,
             excerpt=excerpt,
             options=self._enumerated_options(excerpt),
             fingerprint=self.pane_fingerprint(pane_output),
         )
+
+    def classification_payload(self, *, kind: PromptKind, label: str) -> DetectedPrompt:
+        """Build a stable payload for a classification not tied to pane chrome."""
+        excerpt = " ".join(label.split())[: self.PROMPT_EXCERPT_CHARS]
+        fingerprint = hashlib.sha256(f"{kind}\0{excerpt}".encode()).hexdigest()
+        return DetectedPrompt(
+            kind=kind,
+            excerpt=excerpt,
+            options=(),
+            fingerprint=fingerprint,
+        )
+
+    def _prompt_excerpt(self, pane_output: str) -> str:
+        lines = pane_output.splitlines()[-self.PROMPT_EXCERPT_LINES :]
+        excerpt = "\n".join(lines).strip()
+        if len(excerpt) > self.PROMPT_EXCERPT_CHARS:
+            excerpt = excerpt[-self.PROMPT_EXCERPT_CHARS :]
+        return excerpt
 
     def _enumerated_options(self, pane_output: str) -> tuple[dict[str, object], ...]:
         options: dict[int, str] = {}
@@ -155,7 +170,9 @@ class PromptDetector:
                 label = match.group("label").strip(" │")
                 if label:
                     options.setdefault(option, label)
-        return tuple({"option": option, "label": label} for option, label in options.items())
+        return tuple(
+            {"option": option, "label": label} for option, label in sorted(options.items())
+        )
 
     def record_loop_dismiss(self, run_id: str) -> int:
         """Record loop prompt dismissal. Returns the new count."""

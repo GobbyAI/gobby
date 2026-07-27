@@ -84,6 +84,7 @@ class IdleCheckHandler:
             run_db=self._run_db,
             task_manager=task_manager,
         )
+        self._attention_panes_for_idle: dict[str, str] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -97,15 +98,23 @@ class IdleCheckHandler:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
             self._recovery.clear()
+            self._attention_panes_for_idle.clear()
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
+        attention_panes = self._attention_panes_for_idle
+        self._attention_panes_for_idle = {}
         self._recovery.prune({run.id for run in runs})
 
         handled = 0
         for run in runs:
             try:
-                handled += await self._handle_idle_check(run)
+                pane_output = attention_panes.get(run.id)
+                handled += await self._handle_idle_check(
+                    run,
+                    pane_output=pane_output,
+                    attention_synced=run.id in attention_panes,
+                )
             except Exception as e:
                 logger.warning(
                     "Error checking idle state for agent %s: %s",
@@ -115,8 +124,9 @@ class IdleCheckHandler:
                 )
         return handled
 
-    async def check_attention_agents(self) -> int:
+    async def check_attention_agents(self, *, reuse_for_idle: bool = False) -> int:
         """Scan active panes for attention without waiting for idle eligibility."""
+        self._attention_panes_for_idle.clear()
         if not self._attention_tracker.enabled:
             return 0
         runs = await self._run_db(self._get_active_terminal_runs)
@@ -130,6 +140,8 @@ class IdleCheckHandler:
                 if pane_output is None:
                     continue
                 await self._attention_tracker.sync(run, pane_output)
+                if reuse_for_idle:
+                    self._attention_panes_for_idle[run.id] = pane_output
                 checked += 1
             except Exception:
                 logger.warning(
@@ -158,7 +170,13 @@ class IdleCheckHandler:
             self._idle_timeout_seconds_for_run(run),
         )
 
-    async def _handle_idle_check(self, run: AgentRun) -> int:
+    async def _handle_idle_check(
+        self,
+        run: AgentRun,
+        *,
+        pane_output: str | None = None,
+        attention_synced: bool = False,
+    ) -> int:
         """Handle idle check for a single agent."""
         latest_run = await self._run_db(self._agent_run_manager.get, run.id)
         idle_detector = self._idle_detector.for_provider((latest_run or run).provider)
@@ -211,14 +229,18 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
-        pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
+        if pane_output is None:
+            pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
         if pane_output is None:
             return 0
-        await self._attention_tracker.sync(run, pane_output)
+        if not attention_synced:
+            await self._attention_tracker.sync(run, pane_output)
         capacity_candidate = self._recovery._pane_has_capacity_message(pane_output, reader)
 
         status = idle_detector.detect(pane_output)
-        queued_message_prompt_visible = prompt_detector.detect_queued_message_prompt(pane_output)
+        if status == "unknown":
+            idle_detector.reset_idle(run.id)
+            return 0
 
         if status == "context_full":
             logger.info("Agent %s hit context window limit - failing", run.id)
@@ -274,6 +296,7 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
+        queued_message_prompt_visible = prompt_detector.detect_queued_message_prompt(pane_output)
         if idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
                 logger.info(

@@ -9,6 +9,9 @@ import pytest
 from gobby.agents.stall_classifier import (
     _CONSECUTIVE_THRESHOLD,
     _MIN_CHECK_INTERVAL_SECONDS,
+    _PANE_PROVIDER_ERROR_LABEL,
+    _PANE_SCAN_LINE_LIMIT,
+    _PROVIDER_ERROR_LABEL,
     StallClassifier,
     StallStatus,
 )
@@ -151,6 +154,50 @@ class TestClassify:
         result = classifier.classify("run-1", pane_output="Error: 429 rate limit exceeded")
         assert result.status == StallStatus.UNKNOWN
         assert result.consecutive_hits == 1
+
+    def test_classification_resolves_manifest_once(self) -> None:
+        classifier = make_classifier()
+
+        with patch.object(classifier, "_manifest", wraps=classifier._manifest) as manifest:
+            result = classifier.classify("run-1", pane_output="429 rate limit exceeded")
+
+        manifest.assert_called_once_with()
+        assert result.status is StallStatus.UNKNOWN
+        assert result.consecutive_hits == 1
+
+    def test_ignores_provider_error_outside_bounded_pane_tail(self) -> None:
+        classifier = make_classifier()
+        pane_output = "\n".join(
+            [
+                "429 rate limit exceeded",
+                *(f"healthy output {index}" for index in range(_PANE_SCAN_LINE_LIMIT)),
+            ]
+        )
+
+        result = classifier.classify("run-1", pane_output=pane_output)
+
+        assert result.status is StallStatus.HEALTHY
+
+    def test_returns_stable_provider_error_labels(self) -> None:
+        classifier = make_classifier()
+
+        with patch("gobby.agents.stall_classifier.time") as mock_time:
+            mock_time.monotonic.return_value = 0.0
+            first = classifier.classify(
+                "pane-run",
+                pane_output="429 rate limit exceeded request id=one",
+            )
+            field = classifier.classify("field-run", error="overloaded_error request id=two")
+
+            mock_time.monotonic.return_value = _MIN_CHECK_INTERVAL_SECONDS + 1
+            confirmed = classifier.classify(
+                "pane-run",
+                pane_output="429 rate limit exceeded request id=three",
+            )
+
+        assert first.reason == f"possible provider issue: {_PANE_PROVIDER_ERROR_LABEL}"
+        assert field.reason == f"possible provider issue: {_PROVIDER_ERROR_LABEL}"
+        assert confirmed.reason == _PANE_PROVIDER_ERROR_LABEL
 
     @pytest.mark.parametrize(
         "pane_output",

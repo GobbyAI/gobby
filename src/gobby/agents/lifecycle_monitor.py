@@ -372,7 +372,7 @@ class AgentLifecycleMonitor:
                 await self.check_approval_prompts()
                 await self.check_queued_continuation_prompts()
                 await self.check_periodic_enters()
-                await self.check_attention_agents()
+                await self.check_attention_agents(reuse_for_idle=True)
                 await self.check_unhealthy_agents()
                 await self.check_agent_memory()
                 await self.reap_daemon_stop_orphans()
@@ -535,9 +535,11 @@ class AgentLifecycleMonitor:
         """Check for idle agents and reprompt or fail them."""
         return await self._idle_check_handler.check_idle_agents()
 
-    async def check_attention_agents(self) -> int:
+    async def check_attention_agents(self, *, reuse_for_idle: bool = False) -> int:
         """Check active terminal panes for prompts and sustained provider stalls."""
-        return await self._idle_check_handler.check_attention_agents()
+        return await self._idle_check_handler.check_attention_agents(
+            reuse_for_idle=reuse_for_idle,
+        )
 
     async def check_initialization_timeout(self) -> int:
         """Detect agents that never initialized (provider hung on connect)."""

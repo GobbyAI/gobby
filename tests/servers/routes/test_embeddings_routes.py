@@ -14,6 +14,7 @@ from gobby.ai.embedding_switch_service import SwitchOperationStatus
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.servers.routes.embeddings import create_embeddings_router
+from gobby.storage.config_store import EmbeddingConfigMutationBlocked
 
 pytestmark = pytest.mark.unit
 
@@ -253,9 +254,82 @@ def test_embedding_switch_routes_delegate_to_daemon_coordinator() -> None:
         json={"catalog_key": "qwen3-8b-q8", "provider": "ollama"},
     )
     status = client.get("/api/embeddings/switch/status")
+    resume = client.post("/api/embeddings/switch/resume")
     abort = client.post("/api/embeddings/switch/abort")
 
     assert start.json()["status"] == "started"
     assert status.json()["status"] == "running"
+    assert resume.json()["status"] == "resumed"
     assert abort.json()["status"] == "aborted"
     assert calls == [("qwen3-8b-q8", "ollama")]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/api/embeddings/switch/status", None),
+        (
+            "POST",
+            "/api/embeddings/switch/start",
+            {"catalog_key": "qwen3-8b-q8", "provider": "ollama"},
+        ),
+        ("POST", "/api/embeddings/switch/resume", None),
+        ("POST", "/api/embeddings/switch/abort", None),
+    ],
+)
+def test_embedding_switch_routes_report_unavailable_coordinator(
+    method: str,
+    path: str,
+    payload: dict[str, str] | None,
+) -> None:
+    server = MagicMock()
+    server.config = _config()
+    server.get_runner.return_value = SimpleNamespace()
+    app = FastAPI()
+    app.include_router(create_embeddings_router(server))
+    client = TestClient(app)
+
+    response = client.request(method, path, json=payload)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Embedding switch service is unavailable"
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/api/embeddings/switch/start",
+            {"catalog_key": "qwen3-8b-q8", "provider": "ollama"},
+        ),
+        ("/api/embeddings/switch/resume", None),
+        ("/api/embeddings/switch/abort", None),
+    ],
+)
+def test_embedding_switch_mutation_contention_returns_conflict(
+    path: str,
+    payload: dict[str, str] | None,
+) -> None:
+    class ContendedCoordinator:
+        async def start(self, _catalog_key: str, _provider: str | None) -> SwitchOperationStatus:
+            raise EmbeddingConfigMutationBlocked("switch journal is locked")
+
+        async def resume(self) -> SwitchOperationStatus:
+            raise EmbeddingConfigMutationBlocked("switch journal is locked")
+
+        async def abort(self) -> SwitchOperationStatus:
+            raise EmbeddingConfigMutationBlocked("switch journal is locked")
+
+    server = MagicMock()
+    server.config = _config()
+    server.get_runner.return_value = SimpleNamespace(
+        embedding_switch_coordinator=ContendedCoordinator()
+    )
+    app = FastAPI()
+    app.include_router(create_embeddings_router(server))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "switch journal is locked"

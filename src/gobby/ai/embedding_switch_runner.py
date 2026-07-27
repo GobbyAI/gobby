@@ -498,7 +498,15 @@ class EmbeddingSwitchRunner:
 
     async def _cleanup_staged_collections(self, journal: SwitchJournal) -> None:
         vector_store = self._vector_store(journal)
-        for collection_name in build_physical_names(journal).values():
+        staged_names = tuple(build_physical_names(journal).values())
+        aliases = await vector_store.get_aliases()
+        protected_names = set(staged_names).intersection(aliases.values())
+        if protected_names:
+            rendered_names = ", ".join(sorted(protected_names))
+            raise EmbeddingSwitchRunError(
+                f"Refusing to delete {rendered_names}; it is still targeted by an alias"
+            )
+        for collection_name in staged_names:
             await _delete_collection_if_present(vector_store, collection_name)
 
     async def _finish_aborted_cleanup(

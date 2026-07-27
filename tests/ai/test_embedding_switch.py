@@ -106,7 +106,7 @@ class TestSwitchStateMachine:
 
     def _mock_store(self) -> MagicMock:
         store = MagicMock()
-        store.get.return_value = None
+        store.get_internal_lifecycle.return_value = None
         return store
 
     def test_start_switch_creates_journal(self) -> None:
@@ -123,7 +123,7 @@ class TestSwitchStateMachine:
         assert journal.phase == PHASE_STAGING
         assert journal.old_dim == 768
         assert journal.old_catalog_id == "nomic-v1.5-f16"
-        store.set.assert_called_once()
+        store.set_internal_lifecycle.assert_called_once()
 
     def test_start_switch_can_clear_target_api_base(self) -> None:
         store = self._mock_store()
@@ -145,8 +145,8 @@ class TestSwitchStateMachine:
         store = self._mock_store()
         # First switch starts fine
         start_switch(store, "qwen3-8b-q8", "ollama")
-        # Second switch should fail — store.get returns the journal JSON
-        store.get.return_value = SwitchJournal(
+        # Second switch should fail — the lifecycle store returns the journal JSON
+        store.get_internal_lifecycle.return_value = SwitchJournal(
             "4096-abc",
             "qwen3-8b-q8",
             target_dim=4096,
@@ -163,14 +163,14 @@ class TestSwitchStateMachine:
 
     def test_start_switch_rejects_invalid_journal_type(self) -> None:
         store = self._mock_store()
-        store.get.return_value = {"run_id": "bad"}
+        store.get_internal_lifecycle.return_value = {"run_id": "bad"}
 
         with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal type"):
             start_switch(store, "qwen3-8b-q8", "ollama")
 
     def test_get_switch_status_rejects_malformed_journal(self) -> None:
         store = self._mock_store()
-        store.get.return_value = "{not json"
+        store.get_internal_lifecycle.return_value = "{not json"
 
         with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal"):
             get_switch_status(store)
@@ -182,7 +182,7 @@ class TestSwitchStateMachine:
         journal = advance_phase(store, journal, PHASE_BUILDING)
         assert journal.phase == PHASE_BUILDING
         assert journal.error is None
-        store.set.assert_called()
+        store.set_internal_lifecycle.assert_called()
 
     def test_record_switch_error_persists_error_without_advancing(self) -> None:
         store = self._mock_store()
@@ -190,31 +190,31 @@ class TestSwitchStateMachine:
         failed = record_switch_error(store, journal, "boom")
         assert failed.phase == PHASE_STAGING
         assert failed.error == "boom"
-        store.set.assert_called()
+        store.set_internal_lifecycle.assert_called()
 
     def test_complete_switch_deletes_journal(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
         complete_switch(store, journal)
         assert journal.phase == PHASE_GC
-        store.delete.assert_called_once()
+        store.delete_internal_lifecycle.assert_called_once()
 
     def test_abort_switch_returns_journal(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
-        store.get.return_value = journal.to_json()
+        store.get_internal_lifecycle.return_value = journal.to_json()
         aborted = abort_switch(store)
         assert aborted is not None
         assert aborted.phase == PHASE_ABORTED
 
     def test_abort_switch_returns_none_when_no_active(self) -> None:
         store = self._mock_store()
-        store.get.return_value = None
+        store.get_internal_lifecycle.return_value = None
         assert abort_switch(store) is None
 
     def test_get_switch_status_returns_none_when_no_journal(self) -> None:
         store = self._mock_store()
-        store.get.return_value = None
+        store.get_internal_lifecycle.return_value = None
         assert get_switch_status(store) is None
 
     def test_build_physical_names(self) -> None:

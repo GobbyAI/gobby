@@ -48,6 +48,7 @@ class AgentAttentionTracker:
         stall_classifier = self._stall_classifier.for_provider(run.provider)
         reason: PromptKind | None = None
         kind: AttentionKind | None = None
+        classification_reason: str | None = None
         detected = prompt_detector.detect_prompt(pane_output)
         approval_dismissed = (
             detected is not None
@@ -81,6 +82,7 @@ class AgentAttentionTracker:
             if classification.status is StallStatus.PROVIDER_STALL:
                 reason = "stall"
                 kind = "non_actionable"
+                classification_reason = classification.reason
 
         entry_id = run_attention_entry_id(run.id)
         if self._attention_metadata_store is not None:
@@ -96,7 +98,10 @@ class AgentAttentionTracker:
         prompt_payload = (
             detected
             if detected is not None and detected.kind == reason
-            else prompt_detector.prompt_payload(pane_output, kind=reason)
+            else prompt_detector.classification_payload(
+                kind=reason,
+                label=classification_reason or reason,
+            )
         )
         await manager.transition_async(
             self._run_db,

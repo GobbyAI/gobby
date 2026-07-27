@@ -17,7 +17,7 @@ import json
 import logging
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
 from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
@@ -25,6 +25,17 @@ from gobby.memory.collection_names import CollectionNameResolver
 from gobby.storage.config_store import EmbeddingConfigMutationBlocked
 
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingSwitchLifecycleStore(Protocol):
+    """Storage contract for the private embedding-switch journal."""
+
+    def get_internal_lifecycle(self, key: str) -> Any | None: ...
+
+    def set_internal_lifecycle(self, key: str, value: Any) -> None: ...
+
+    def delete_internal_lifecycle(self, key: str, run_id: str) -> bool: ...
+
 
 # Phase names in order.
 PHASE_STAGING = "staging"
@@ -95,18 +106,9 @@ class SwitchAlreadyActiveError(SwitchError):
         )
 
 
-def _read_journal(config_store: Any) -> SwitchJournal | None:
+def _read_journal(config_store: EmbeddingSwitchLifecycleStore) -> SwitchJournal | None:
     """Read the current switch journal from ConfigStore."""
-    internal_get = (
-        config_store.get_internal_lifecycle
-        if callable(getattr(type(config_store), "get_internal_lifecycle", None))
-        else None
-    )
-    raw = (
-        internal_get(EMBEDDING_SWITCH_JOURNAL_KEY)
-        if callable(internal_get)
-        else config_store.get(EMBEDDING_SWITCH_JOURNAL_KEY)
-    )
+    raw = config_store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY)
     if raw is None:
         return None
     if not isinstance(raw, str):
@@ -120,42 +122,28 @@ def _read_journal(config_store: Any) -> SwitchJournal | None:
         raise SwitchJournalStateError("Invalid embedding switch journal") from exc
 
 
-def _write_journal(config_store: Any, journal: SwitchJournal) -> None:
+def _write_journal(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+) -> None:
     """Write the switch journal to ConfigStore."""
-    internal_set = (
-        config_store.set_internal_lifecycle
-        if callable(getattr(type(config_store), "set_internal_lifecycle", None))
-        else None
-    )
-    if callable(internal_set):
-        internal_set(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_json())
-    else:
-        config_store.set(
-            EMBEDDING_SWITCH_JOURNAL_KEY,
-            journal.to_json(),
-            source="embedding_switch",
-        )
+    config_store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_json())
 
 
-def _delete_journal(config_store: Any, journal: SwitchJournal) -> None:
+def _delete_journal(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+) -> None:
     """Delete the switch journal from ConfigStore."""
-    internal_delete = (
-        config_store.delete_internal_lifecycle
-        if callable(getattr(type(config_store), "delete_internal_lifecycle", None))
-        else None
-    )
-    if callable(internal_delete):
-        internal_delete(EMBEDDING_SWITCH_JOURNAL_KEY, journal.run_id)
-    else:
-        config_store.delete(EMBEDDING_SWITCH_JOURNAL_KEY)
+    config_store.delete_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.run_id)
 
 
-def get_switch_status(config_store: Any) -> SwitchJournal | None:
+def get_switch_status(config_store: EmbeddingSwitchLifecycleStore) -> SwitchJournal | None:
     """Return the current switch journal, or None if no active switch."""
     return _read_journal(config_store)
 
 
-def abort_switch(config_store: Any) -> SwitchJournal | None:
+def abort_switch(config_store: EmbeddingSwitchLifecycleStore) -> SwitchJournal | None:
     """Mark the current switch as awaiting staged-artifact cleanup."""
     journal = _read_journal(config_store)
     if journal is None:
@@ -163,7 +151,10 @@ def abort_switch(config_store: Any) -> SwitchJournal | None:
     return advance_phase(config_store, journal, PHASE_ABORTED)
 
 
-def complete_aborted_switch(config_store: Any, journal: SwitchJournal) -> None:
+def complete_aborted_switch(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+) -> None:
     """Delete an aborted journal only after all staged artifacts are gone."""
     if journal.phase != PHASE_ABORTED:
         raise SwitchJournalStateError("Only an aborted switch journal may be completed")
@@ -266,7 +257,11 @@ def _start_switch_unlocked(
     return journal, spec
 
 
-def advance_phase(config_store: Any, journal: SwitchJournal, phase: str) -> SwitchJournal:
+def advance_phase(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+    phase: str,
+) -> SwitchJournal:
     """Advance the journal to a new phase and persist it."""
     if phase not in _VALID_PHASES:
         raise ValueError(f"Invalid phase: {phase}")
@@ -280,7 +275,7 @@ def advance_phase(config_store: Any, journal: SwitchJournal, phase: str) -> Swit
 
 
 def record_switch_error(
-    config_store: Any,
+    config_store: EmbeddingSwitchLifecycleStore,
     journal: SwitchJournal,
     error: str,
     *,
@@ -299,7 +294,10 @@ def record_switch_error(
     return journal
 
 
-def persist_journal(config_store: Any, journal: SwitchJournal) -> SwitchJournal:
+def persist_journal(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+) -> SwitchJournal:
     """Persist journal metadata without changing phase."""
     from datetime import UTC, datetime
 
@@ -308,7 +306,10 @@ def persist_journal(config_store: Any, journal: SwitchJournal) -> SwitchJournal:
     return journal
 
 
-def complete_switch(config_store: Any, journal: SwitchJournal) -> None:
+def complete_switch(
+    config_store: EmbeddingSwitchLifecycleStore,
+    journal: SwitchJournal,
+) -> None:
     """Mark the switch as complete and clean up the journal."""
     advance_phase(config_store, journal, PHASE_GC)
     _delete_journal(config_store, journal)

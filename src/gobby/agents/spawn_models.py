@@ -10,6 +10,7 @@ from gobby.agents.sandbox import SandboxConfig
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
     from gobby.config.app import DaemonConfig
+    from gobby.storage.agents import LocalAgentRunManager
 
 
 @dataclass
@@ -36,6 +37,7 @@ class SpawnRequest:
     agent_depth: int = 0
     max_agent_depth: int = 5
     session_manager: ChildSessionManager | None = None
+    run_manager: LocalAgentRunManager | None = None
     machine_id: str | None = None
     model: str | None = None
     is_local: bool = False

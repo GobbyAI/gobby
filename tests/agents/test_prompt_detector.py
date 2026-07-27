@@ -205,6 +205,26 @@ class TestStructuredPromptDetection:
             "fingerprint": detected.fingerprint,
         }
 
+    def test_ignores_enumerated_history_outside_prompt_excerpt(self) -> None:
+        detector = make_detector()
+        pane_output = "\n".join(
+            [
+                "1. Historical step one",
+                "2. Historical step two",
+                *(f"ordinary output {index}" for index in range(detector.PROMPT_EXCERPT_LINES)),
+            ]
+        )
+
+        assert detector.detect_prompt(pane_output) is None
+
+    def test_sorts_enumerated_options_numerically(self) -> None:
+        detector = make_detector()
+
+        detected = detector.detect_prompt("Choose a response:\n10. Later\n2. Soon\n1. Now\n")
+
+        assert detected is not None
+        assert [option["option"] for option in detected.options] == [1, 2, 10]
+
 
 class TestDetectQueuedMessagePrompt:
     """Tests for queued-message prompt detection."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
@@ -16,7 +15,6 @@ async def test_warm_pane_monitor_sees_content_edit(temp_db: HubDatabase) -> None
     replace_detection_manifest(temp_db, "claude", "alpha")
     registry = DetectionManifestRegistry(temp_db, staleness_seconds=0.0)
     session_manager = Mock()
-    session_manager.get.return_value = SimpleNamespace(source="claude")
     attention_manager = Mock()
     attention_manager.get.return_value = None
     attention_manager.transition_async = AsyncMock()
@@ -28,12 +26,12 @@ async def test_warm_pane_monitor_sees_content_edit(temp_db: HubDatabase) -> None
         detection_registry=registry,
     )
 
-    await monitor._sync_interactive_attention("session-1", "alpha trust")
+    await monitor._sync_interactive_attention("session-1", "claude", "alpha trust")
     assert attention_manager.transition_async.await_count == 1
 
     replace_detection_manifest(temp_db, "claude", "beta")
-    await monitor._sync_interactive_attention("session-1", "alpha trust")
-    await monitor._sync_interactive_attention("session-1", "beta trust")
+    await monitor._sync_interactive_attention("session-1", "claude", "alpha trust")
+    await monitor._sync_interactive_attention("session-1", "claude", "beta trust")
 
     assert attention_manager.transition_async.await_count == 2
     assert monitor.detection_registry is registry

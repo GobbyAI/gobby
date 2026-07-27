@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Protocol
 
 from gobby.ai.embedding_switch import (
@@ -25,6 +27,10 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_DIM_KEY,
 )
+
+logger = logging.getLogger(__name__)
+
+ABORT_WAIT_TIMEOUT_SECONDS = 30.0
 
 
 class EmbeddingSwitchTaskActive(RuntimeError):
@@ -129,9 +135,33 @@ class EmbeddingSwitchCoordinator:
                 )
             self.control.abort_requested.set()
             task = self._task
-            assert task is not None
-        await asyncio.shield(task)
-        result = task.result()
+            if task is None:
+                return SwitchOperationStatus(
+                    run_id,
+                    "failed",
+                    "Embedding switch task disappeared before abort",
+                )
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=ABORT_WAIT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Timed out waiting for embedding switch abort",
+                extra={"run_id": run_id},
+            )
+            return SwitchOperationStatus(
+                run_id,
+                "timeout",
+                "Embedding switch cleanup is still running",
+            )
+        except Exception as exc:
+            logger.exception(
+                "Embedding switch abort failed",
+                extra={"run_id": run_id},
+            )
+            return SwitchOperationStatus(run_id, "failed", str(exc))
         error = getattr(result, "error", None)
         if error:
             return SwitchOperationStatus(run_id, "failed", str(error))
@@ -156,9 +186,26 @@ class EmbeddingSwitchCoordinator:
         if str(journal.phase) in (PHASE_FLIPPING, PHASE_ACTIVE, PHASE_GC):
             self.control.mark_flipping_started()
         runner = self._runner_factory(self.config_store, self.db, self.control, self.fence)
-        self._run_id = str(journal.run_id)
-        self._task = asyncio.create_task(runner.run(journal))
-        return SwitchOperationStatus(self._run_id, status, f"Embedding switch {status}")
+        run_id = str(journal.run_id)
+        self._run_id = run_id
+        task = asyncio.create_task(runner.run(journal))
+        task.add_done_callback(partial(self._observe_task_result, run_id=run_id))
+        self._task = task
+        return SwitchOperationStatus(run_id, status, f"Embedding switch {status}")
+
+    def _observe_task_result(self, task: asyncio.Task[Any], *, run_id: str) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.info(
+                "Embedding switch background task was cancelled",
+                extra={"run_id": run_id},
+            )
+        except Exception:
+            logger.exception(
+                "Embedding switch background task failed",
+                extra={"run_id": run_id},
+            )
 
     def _raise_if_active(self) -> None:
         run_id = self.active_run_id

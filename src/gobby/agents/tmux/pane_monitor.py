@@ -24,7 +24,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_se
 from gobby.storage.attention import session_attention_entry_id
 
 if TYPE_CHECKING:
-    from gobby.storage.agents import AgentRun
+    from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # How long (seconds) a session_id stays in the recently-ended set
 _RECENTLY_ENDED_TTL = 60.0
+_AGENT_RUN_PAGE_SIZE = 100
+_INTERACTIVE_SESSION_PAGE_SIZE = 100
 
 
 class TmuxPaneMonitor:
@@ -177,7 +179,7 @@ class TmuxPaneMonitor:
             return
         try:
             arm = LocalAgentRunManager(self._session_manager.db)
-            all_runs = arm.list_active()
+            all_runs = await self._list_active_runs(arm)
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
             return
@@ -226,7 +228,7 @@ class TmuxPaneMonitor:
             )
 
             # Look up the session to get external_id and source
-            session = self._lookup_session(child_sid)
+            session = await asyncio.to_thread(self._lookup_session, child_sid)
             if session is None:
                 logger.warning(
                     "Cannot synthesize session_end: session %s not found in DB", child_sid
@@ -263,11 +265,7 @@ class TmuxPaneMonitor:
             return
 
         try:
-            sessions = session_manager.list(
-                statuses=["active", "paused"],
-                modes=["interactive"],
-                limit=500,
-            )
+            sessions = await self._list_interactive_sessions()
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list interactive sessions", exc_info=True)
             return
@@ -276,7 +274,7 @@ class TmuxPaneMonitor:
             run.child_session_id for run in active_runs if run.child_session_id is not None
         }
         active_interactive_ids = {session.id for session in sessions}
-        for attention in manager.list_blocked():
+        for attention in await asyncio.to_thread(manager.list_blocked):
             if (
                 attention.run_id is None
                 and attention.session_id is not None
@@ -313,18 +311,26 @@ class TmuxPaneMonitor:
                 continue
             if pane_output is None:
                 continue
-            await self._sync_interactive_attention(session.id, pane_output)
+            await self._sync_interactive_attention(
+                session.id,
+                session.source or "",
+                pane_output,
+            )
 
-    async def _sync_interactive_attention(self, session_id: str, pane_output: str) -> None:
+    async def _sync_interactive_attention(
+        self,
+        session_id: str,
+        provider: str,
+        pane_output: str,
+    ) -> None:
         manager = self._attention_manager
         if manager is None:
             return
-        session = self._lookup_session(session_id)
-        provider = session.source if session is not None else ""
         prompt_detector = self._prompt_detector.for_provider(provider)
         stall_classifier = self._stall_classifier.for_provider(provider)
         reason: PromptKind | None = None
         kind: AttentionKind | None = None
+        classification_reason: str | None = None
         detected = prompt_detector.detect_prompt(pane_output)
         if detected is not None:
             reason = detected.kind
@@ -334,6 +340,7 @@ class TmuxPaneMonitor:
             if classification.status is StallStatus.PROVIDER_STALL:
                 reason = "stall"
                 kind = "non_actionable"
+                classification_reason = classification.reason
 
         if reason is None or kind is None:
             await self._clear_attention_if_current(session_attention_entry_id(session_id))
@@ -341,7 +348,10 @@ class TmuxPaneMonitor:
         prompt_payload = (
             detected
             if detected is not None and detected.kind == reason
-            else prompt_detector.prompt_payload(pane_output, kind=reason)
+            else prompt_detector.classification_payload(
+                kind=reason,
+                label=classification_reason or reason,
+            )
         )
         await manager.transition_async(
             asyncio.to_thread,
@@ -358,7 +368,7 @@ class TmuxPaneMonitor:
         manager = self._attention_manager
         if manager is None:
             return
-        current = manager.get(entry_id)
+        current = await asyncio.to_thread(manager.get, entry_id)
         if current is None or current.state is None:
             return
         await manager.transition_async(
@@ -368,6 +378,45 @@ class TmuxPaneMonitor:
             expected_attention_id=current.attention_id,
             expected_fingerprint=current.fingerprint,
         )
+
+    async def _list_active_runs(
+        self,
+        manager: LocalAgentRunManager,
+    ) -> list[AgentRun]:
+        runs: list[AgentRun] = []
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(
+                manager.list_active,
+                limit=_AGENT_RUN_PAGE_SIZE,
+                offset=offset,
+            )
+            runs.extend(page)
+            if len(page) < _AGENT_RUN_PAGE_SIZE:
+                return runs
+            offset += len(page)
+
+    async def _list_interactive_sessions(self) -> list[Session]:
+        session_manager = self._session_manager
+        if session_manager is None:
+            return []
+        sessions: list[Session] = []
+        cursor_updated_at: str | None = None
+        cursor_id: str | None = None
+        while True:
+            page = await asyncio.to_thread(
+                session_manager.list,
+                statuses=["active", "paused"],
+                modes=["interactive"],
+                limit=_INTERACTIVE_SESSION_PAGE_SIZE,
+                cursor_updated_at=cursor_updated_at,
+                cursor_id=cursor_id,
+            )
+            sessions.extend(page)
+            if len(page) < _INTERACTIVE_SESSION_PAGE_SIZE:
+                return sessions
+            cursor_updated_at = page[-1].updated_at.isoformat()
+            cursor_id = page[-1].id
 
     def _lookup_session(self, session_id: str) -> Session | None:
         """Look up a session from the database."""

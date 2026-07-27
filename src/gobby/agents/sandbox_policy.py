@@ -255,9 +255,14 @@ def package_cache_paths() -> list[str]:
     )
 
 
-def allowed_domains(config: SandboxConfig, provider: str, api_base: str | None) -> list[str]:
+def allowed_domains(
+    config: SandboxConfig,
+    provider: str | None,
+    api_base: str | None,
+) -> list[str]:
     """Resolve provider, local endpoint, Git, registry, and operator domain grants."""
-    domains = [*_PROVIDER_DOMAINS.get(provider, ()), *config.allowed_domains]
+    provider_domains = _PROVIDER_DOMAINS.get(provider, ()) if provider else ()
+    domains = [*provider_domains, *config.allowed_domains]
     if api_base:
         parsed = urlparse(api_base)
         if parsed.hostname:

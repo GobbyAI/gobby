@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from gobby.ai.embedding_switch import (
@@ -125,3 +127,19 @@ def test_real_config_store_persists_phase_error_and_abort_cleanup_lifecycle(
 
     complete_aborted_switch(store, aborted)
     assert get_switch_status(store) is None
+
+
+def test_malformed_switch_journal_is_discarded_before_embedding_mutation(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, '{"run_id":"run-1"}')
+    temp_db.execute(
+        "UPDATE config_store SET value = %s WHERE key = %s",
+        (json.dumps("{not json"), EMBEDDING_SWITCH_JOURNAL_KEY),
+    )
+
+    store.set(AI_EMBEDDING_MODEL_KEY, "recovered-model")
+
+    assert store.get(AI_EMBEDDING_MODEL_KEY) == "recovered-model"
+    assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is None

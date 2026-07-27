@@ -497,8 +497,27 @@ class ConfigStore:
         ).fetchone()
         if row is None:
             return None
-        raw = _decode_value(EMBEDDING_SWITCH_JOURNAL_KEY, row["value"])
-        return _journal_run_id(raw)
+        try:
+            raw = _decode_value(EMBEDDING_SWITCH_JOURNAL_KEY, row["value"])
+        except ValueError:
+            logger.warning(
+                "Discarding malformed embedding switch journal",
+                exc_info=True,
+            )
+            transaction.execute(
+                "DELETE FROM config_store WHERE key = %s",
+                (EMBEDDING_SWITCH_JOURNAL_KEY,),
+            )
+            return None
+        run_id = _journal_run_id(raw)
+        if run_id == "unknown":
+            logger.warning("Discarding malformed embedding switch journal")
+            transaction.execute(
+                "DELETE FROM config_store WHERE key = %s",
+                (EMBEDDING_SWITCH_JOURNAL_KEY,),
+            )
+            return None
+        return run_id
 
     # -----------------------------------------------------------------
     # Secret-aware methods

@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from gobby.agents.sandbox_policy import secure_policy_directory
 from gobby.paths import get_gobby_home
@@ -21,7 +22,9 @@ from gobby.utils.dependency_requirements import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from gobby.agents.sandbox import SandboxConfig, SandboxResolver
+    from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, SandboxResolver
+
+logger = logging.getLogger(__name__)
 
 
 class SrtRuntimeError(RuntimeError):
@@ -99,9 +102,46 @@ def srt_install_root() -> Path:
     return get_gobby_home() / "tools" / "srt" / SRT_RELEASE.version
 
 
-def verify_srt_installation() -> SrtInstallation:
+def _raise_srt_lockout(
+    reason: str,
+    *,
+    run_id: str | None,
+    provider: str | None,
+    policy_hash: str | None,
+    cause: BaseException | None = None,
+) -> NoReturn:
+    logger.warning(
+        "Managed SRT validation failed closed",
+        extra={
+            "run_id": run_id,
+            "provider": provider,
+            "policy_hash": policy_hash,
+            "lockout_reason": reason,
+        },
+    )
+    error = SrtRuntimeError(reason)
+    if cause is not None:
+        raise error from cause
+    raise error
+
+
+def verify_srt_installation(
+    *,
+    run_id: str | None = None,
+    provider: str | None = None,
+    policy_hash: str | None = None,
+) -> SrtInstallation:
     """Verify the pinned package, receipt, runner, and absolute Node runtime."""
-    root = srt_install_root().resolve(strict=False)
+    try:
+        root = srt_install_root().resolve(strict=False)
+    except OSError as exc:
+        _raise_srt_lockout(
+            f"managed SRT {SRT_RELEASE.version} install root is invalid; rerun `gobby install`",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+            cause=exc,
+        )
     receipt_path = root / "receipt.json"
     runner = root / "runner.mjs"
     bundled_runner = Path(__file__).with_name("srt_runner.mjs")
@@ -113,31 +153,72 @@ def verify_srt_installation() -> SrtInstallation:
         bundled_runner_bytes = bundled_runner.read_bytes()
         lockfile_bytes = (root / "package-lock.json").read_bytes()
     except (OSError, json.JSONDecodeError) as exc:
-        raise SrtRuntimeError(
-            f"managed SRT {SRT_RELEASE.version} is missing or invalid; rerun `gobby install`"
-        ) from exc
+        _raise_srt_lockout(
+            f"managed SRT {SRT_RELEASE.version} is missing or invalid; rerun `gobby install`",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+            cause=exc,
+        )
+    if not isinstance(receipt, dict) or not isinstance(package, dict):
+        _raise_srt_lockout(
+            f"managed SRT {SRT_RELEASE.version} receipt or package metadata is invalid",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
 
     expected_receipt = SRT_RELEASE.receipt_fields()
     if any(receipt.get(key) != value for key, value in expected_receipt.items()):
-        raise SrtRuntimeError("managed SRT receipt does not match Gobby's pinned runtime")
+        _raise_srt_lockout(
+            "managed SRT receipt does not match Gobby's pinned runtime",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     if package.get("name") != SRT_RELEASE.package or package.get("version") != SRT_RELEASE.version:
-        raise SrtRuntimeError("managed SRT package identity does not match its receipt")
+        _raise_srt_lockout(
+            "managed SRT package identity does not match its receipt",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     runner_sha256 = hashlib.sha256(runner_bytes).hexdigest()
     if runner_sha256 != SRT_RELEASE.runner_sha256:
-        raise SrtRuntimeError("managed SRT runner checksum mismatch")
+        _raise_srt_lockout(
+            "managed SRT runner checksum mismatch",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     if hashlib.sha256(bundled_runner_bytes).hexdigest() != SRT_RELEASE.runner_sha256:
-        raise SrtRuntimeError("managed SRT runner does not match this Gobby installation")
+        _raise_srt_lockout(
+            "managed SRT runner does not match this Gobby installation",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     if hashlib.sha256(lockfile_bytes).hexdigest() != SRT_RELEASE.lockfile_sha256:
-        raise SrtRuntimeError("managed SRT lockfile checksum mismatch")
+        _raise_srt_lockout(
+            "managed SRT lockfile checksum mismatch",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
 
     node_status = node_dependency_status()
     if node_status.state != "healthy" or node_status.path is None:
-        raise SrtRuntimeError(node_status.error or "Node.js version could not be verified")
+        _raise_srt_lockout(
+            node_status.error or "Node.js version could not be verified",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     node = Path(node_status.path)
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
 
 
-def render_srt_settings(paths: Any) -> dict[str, Any]:
+def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
     """Render canonical resolved policy to SRT's validated settings schema."""
     credentials = [
         {
@@ -202,9 +283,20 @@ async def prepare_sandbox_launch(
         return SandboxLaunch(backend=config.backend, enforced=False)
 
     if config.backend == "srt" and config.allow_network:
-        raise SrtRuntimeError(
+        rejected_policy = json.dumps(
+            {
+                "provider": provider,
+                "sandbox": config.model_dump(mode="json"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        _raise_srt_lockout(
             "SRT does not accept unrestricted network access; configure explicit "
-            "allowed_domains or enable a scoped Git/package capability"
+            "allowed_domains or enable a scoped Git/package capability",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=hashlib.sha256(rejected_policy).hexdigest(),
         )
 
     provider_executable = (
@@ -233,7 +325,6 @@ async def prepare_sandbox_launch(
             provider_env=provider_env,
         )
 
-    installation = verify_srt_installation()
     policy_dir = secure_policy_directory(run_id)
     temp_dir = policy_dir / "tmp"
     temp_dir.mkdir(mode=0o700, exist_ok=True)
@@ -244,6 +335,11 @@ async def prepare_sandbox_launch(
     settings = render_srt_settings(paths)
     policy_bytes = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
     policy_hash = hashlib.sha256(policy_bytes).hexdigest()
+    installation = verify_srt_installation(
+        run_id=run_id,
+        provider=provider,
+        policy_hash=policy_hash,
+    )
     policy_path = policy_dir / "settings.json"
     violation_path = policy_dir / "violations.jsonl"
     _write_private_file(policy_path, policy_bytes)
@@ -255,12 +351,26 @@ async def prepare_sandbox_launch(
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),
-        provider_env={"CLAUDE_CODE_TMPDIR": temp_path},
+        provider_env={
+            "CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR": temp_path,
+        },
         provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),
     )
-    await _preflight_srt(launch, workspace_path, {**env, **launch.provider_env})
+    try:
+        await _preflight_srt(launch, workspace_path, {**env, **launch.provider_env})
+    except SrtRuntimeError as exc:
+        logger.warning(
+            "Managed SRT preflight failed closed",
+            extra={
+                "run_id": run_id,
+                "provider": provider,
+                "policy_hash": policy_hash,
+                "lockout_reason": str(exc),
+            },
+        )
+        raise
     return launch
 
 
@@ -299,19 +409,24 @@ async def _preflight_srt(
     launch: SandboxLaunch, workspace_path: str, env: Mapping[str, str]
 ) -> None:
     command = launch.wrap([])[:-1] + ["--preflight"]
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        cwd=workspace_path,
-        env=dict(env),
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=workspace_path,
+            env=dict(env),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise SrtRuntimeError("managed SRT preflight could not start") from exc
     try:
         _, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
     except TimeoutError as exc:
         process.kill()
         await process.wait()
         raise SrtRuntimeError("managed SRT preflight timed out") from exc
+    except OSError as exc:
+        raise SrtRuntimeError("managed SRT preflight execution failed") from exc
     if process.returncode != 0:
         detail = stderr.decode(errors="replace").strip()
         raise SrtRuntimeError(f"managed SRT preflight failed: {detail or 'unknown error'}")

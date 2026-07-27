@@ -52,55 +52,81 @@ async function main() {
     throw new Error(`SRT does not support platform ${process.platform}`)
   }
 
-  await SandboxManager.initialize(parsed.data, undefined, true)
   let seenViolations = 0
-  const unsubscribe = SandboxManager.getSandboxViolationStore().subscribe(violations => {
-    seenViolations = appendViolations(options.violationsPath, violations, seenViolations)
-  })
-
-  const command = options.preflight
-    ? [process.platform === 'win32' ? process.execPath : '/usr/bin/true']
-    : options.command
-  if (command.length === 0) throw new Error('missing provider command after --')
-  if (options.preflight && process.platform === 'win32') command.push('--version')
-
-  const commandText = command.map(shellQuote).join(' ')
-  const wrapped = await SandboxManager.wrapWithSandboxArgv(
-    commandText,
-    undefined,
-    undefined,
-    undefined,
-    process.cwd(),
-  )
-  const child = spawn(wrapped.argv[0], wrapped.argv.slice(1), {
-    cwd: process.cwd(),
-    env: { ...process.env, ...wrapped.env },
-    stdio: 'inherit',
-  })
-
+  let unsubscribe = () => {}
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGWINCH']
   const signalHandlers = new Map()
-  for (const signal of signals) {
-    const handler = () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal)
-    }
-    signalHandlers.set(signal, handler)
-    process.on(signal, handler)
-  }
-  const outcome = await new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      resolve({ code: code ?? 1, signal })
+  let outcome
+  let failure
+  try {
+    await SandboxManager.initialize(parsed.data, undefined, true)
+    unsubscribe = SandboxManager.getSandboxViolationStore().subscribe(violations => {
+      seenViolations = appendViolations(options.violationsPath, violations, seenViolations)
     })
-  })
-  for (const [signal, handler] of signalHandlers) process.off(signal, handler)
-  unsubscribe()
-  seenViolations = appendViolations(
-    options.violationsPath,
-    SandboxManager.getSandboxViolationStore().getViolations(),
-    seenViolations,
-  )
-  await SandboxManager.reset()
+
+    const command = options.preflight ? [process.execPath, '--version'] : options.command
+    if (command.length === 0) throw new Error('missing provider command after --')
+
+    const commandText = command.map(shellQuote).join(' ')
+    const wrapped = await SandboxManager.wrapWithSandboxArgv(
+      commandText,
+      undefined,
+      undefined,
+      undefined,
+      process.cwd(),
+    )
+    const child = spawn(wrapped.argv[0], wrapped.argv.slice(1), {
+      cwd: process.cwd(),
+      env: { ...process.env, ...wrapped.env },
+      stdio: 'inherit',
+    })
+
+    for (const signal of signals) {
+      const handler = () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill(signal)
+      }
+      signalHandlers.set(signal, handler)
+      process.on(signal, handler)
+    }
+    outcome = await new Promise((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', (code, signal) => {
+        resolve({ code: code ?? 1, signal })
+      })
+    })
+  } catch (error) {
+    failure = error
+  } finally {
+    for (const [signal, handler] of signalHandlers) {
+      try {
+        process.off(signal, handler)
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    try {
+      unsubscribe()
+    } catch (error) {
+      failure ??= error
+    }
+    try {
+      seenViolations = appendViolations(
+        options.violationsPath,
+        SandboxManager.getSandboxViolationStore().getViolations(),
+        seenViolations,
+      )
+    } catch (error) {
+      failure ??= error
+    }
+    try {
+      await SandboxManager.reset()
+    } catch (error) {
+      failure ??= error
+    }
+  }
+
+  if (failure) throw failure
+  if (!outcome) throw new Error('provider process completed without an outcome')
   if (outcome.signal) {
     process.kill(process.pid, outcome.signal)
     return 128
@@ -111,11 +137,6 @@ async function main() {
 try {
   process.exitCode = await main()
 } catch (error) {
-  try {
-    await SandboxManager.reset()
-  } catch {
-    // Preserve the original fail-closed error.
-  }
   console.error(`gobby-srt: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 1
 }

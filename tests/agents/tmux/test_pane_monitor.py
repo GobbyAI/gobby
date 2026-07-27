@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -87,6 +88,74 @@ async def test_no_tmux_agents_noop() -> None:
     callback.assert_not_called()
     assert callback.call_count == 0
     assert not callback.called
+
+
+@pytest.mark.asyncio
+async def test_active_runs_are_paginated_on_worker_thread() -> None:
+    callback = MagicMock()
+    monitor = _make_monitor_with_db(callback)
+    runs = [_make_agent_run(run_id=f"run-{index}", tmux_session_name=None) for index in range(101)]
+    calls: list[tuple[int, int]] = []
+    worker_threads: set[int] = set()
+    main_thread = threading.get_ident()
+
+    def list_active(*, limit: int, offset: int) -> list[AgentRun]:
+        calls.append((limit, offset))
+        worker_threads.add(threading.get_ident())
+        return runs[offset : offset + limit]
+
+    with (
+        patch(
+            "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+            return_value=[],
+        ),
+        patch("gobby.storage.agents.LocalAgentRunManager") as mock_arm_cls,
+        patch.object(monitor, "_check_attention_panes", new_callable=AsyncMock),
+    ):
+        mock_arm_cls.return_value.list_active.side_effect = list_active
+        await monitor._check_panes()
+
+    assert calls == [(100, 0), (100, 100)]
+    assert worker_threads
+    assert main_thread not in worker_threads
+
+
+@pytest.mark.asyncio
+async def test_interactive_sessions_use_cursor_pagination_on_worker_thread() -> None:
+    callback = MagicMock()
+    session_manager = MagicMock()
+    session_manager.db = MagicMock()
+    monitor = TmuxPaneMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        session_end_callback=callback,
+        session_manager=session_manager,
+    )
+    sessions = [MagicMock() for _ in range(101)]
+    for index, session in enumerate(sessions):
+        session.id = f"session-{index}"
+        session.updated_at = datetime(2026, 1, 1, 12, index % 60, tzinfo=UTC)
+    pages = [sessions[:100], sessions[100:]]
+    calls: list[dict[str, object]] = []
+    worker_threads: set[int] = set()
+    main_thread = threading.get_ident()
+
+    def list_sessions(**kwargs: object) -> list[MagicMock]:
+        calls.append(kwargs)
+        worker_threads.add(threading.get_ident())
+        return pages.pop(0)
+
+    session_manager.list.side_effect = list_sessions
+
+    result = await monitor._list_interactive_sessions()
+
+    assert result == sessions
+    assert len(calls) == 2
+    assert calls[0]["cursor_updated_at"] is None
+    assert calls[0]["cursor_id"] is None
+    assert calls[1]["cursor_updated_at"] == sessions[99].updated_at.isoformat()
+    assert calls[1]["cursor_id"] == sessions[99].id
+    assert worker_threads
+    assert main_thread not in worker_threads
 
 
 @pytest.mark.asyncio

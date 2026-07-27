@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -296,6 +296,13 @@ async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
     assert stalled.reason == "stall"
     assert stalled.kind == "non_actionable"
     assert stalled.payload["kind"] == "stall"
+    assert stalled.payload["excerpt"] == "provider error in pane output"
+
+    await tracker.sync(run, "503 service unavailable request-id=changed")
+    repeated_stall = manager.get(f"run:{run.id}")
+    assert repeated_stall.attention_id == stalled.attention_id
+    assert repeated_stall.fingerprint == stalled.fingerprint
+    assert repeated_stall.payload == stalled.payload
 
     await tracker.clear(run)
     assert manager.get(f"run:{run.id}").state is None
@@ -345,6 +352,66 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     assert attention.payload["kind"] == "approval"
 
 
+async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
+    temp_db: HubDatabase,
+) -> None:
+    manager = _attention_manager(temp_db)
+    run = _agent_run()
+    run_manager = MagicMock()
+    run_manager.list_active.return_value = [run]
+    run_manager.get.return_value = run
+    tmux = MagicMock()
+    tmux.capture_pane = AsyncMock(
+        return_value="Permission required: press Enter to approve this command"
+    )
+    config = MagicMock()
+    config.auto_enter_approval_prompts = False
+    config.idle_check_enabled = True
+    config.idle_timeout_seconds = 60
+
+    bound_idle_detector = MagicMock()
+    bound_idle_detector.detect.return_value = "unknown"
+    idle_detector = MagicMock()
+    idle_detector.for_provider.return_value = bound_idle_detector
+
+    async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    handler = IdleCheckHandler(
+        agent_run_manager=run_manager,
+        db=temp_db,
+        get_session_manager=lambda: None,
+        tmux=tmux,
+        idle_detector=idle_detector,
+        prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
+        watchdog_readers=WatchdogReaderRegistry(),
+        cleanup_handler=MagicMock(),
+        tmux_config=config,
+        run_db=run_db,
+        attention_manager=manager,
+    )
+
+    with patch.object(
+        handler._attention_tracker,
+        "sync",
+        wraps=handler._attention_tracker.sync,
+    ) as sync_attention:
+        await handler.check_attention_agents(reuse_for_idle=True)
+        result = await handler.check_idle_agents()
+
+    assert result == 0
+    attention = manager.get(f"run:{run.id}")
+    assert attention is not None
+    assert attention.state == "blocked"
+    assert attention.reason == "approval"
+    tmux.capture_pane.assert_awaited_once_with(run.tmux_session_name, lines=15)
+    sync_attention.assert_awaited_once()
+    bound_idle_detector.reset_idle.assert_called_once_with(run.id)
+    bound_idle_detector.has_unsubmitted_input.assert_not_called()
+    bound_idle_detector.should_fail.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     temp_db: HubDatabase,
@@ -358,7 +425,7 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     )
     session_manager = MagicMock()
     session_manager.db = temp_db
-    session_manager.get.return_value = session
+    session_manager.get.side_effect = AssertionError("provider must come from listed session")
     session_manager.list.return_value = [session]
     tmux = MagicMock()
     tmux.capture_pane = AsyncMock(

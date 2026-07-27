@@ -69,12 +69,12 @@ async def _prepare_provider_sandbox(
     spawn_context: PreparedSpawn,
     provider: str,
     env: dict[str, str],
-) -> tuple[SandboxLaunch | None, SpawnResult | None]:
+) -> SandboxLaunch | SpawnResult:
     config = _sandbox_config_for_spawn(request.sandbox_config, env)
     if config is None:
         launch = SandboxLaunch(backend="provider-native", enforced=False)
         _record_actual_sandbox_enforcement(request, spawn_context, launch)
-        return launch, None
+        return launch
     resolver = None
     if config.enabled and config.backend == "provider-native":
         resolver = get_sandbox_resolver(provider)
@@ -95,13 +95,9 @@ async def _prepare_provider_sandbox(
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         error = f"Sandbox startup failed closed for {provider}: {exc}"
-        storage = getattr(request.session_manager, "_storage", None)
-        db = getattr(storage, "db", None)
-        if db is not None:
-            from gobby.storage.agents import LocalAgentRunManager
-
-            LocalAgentRunManager(db).fail(spawn_context.agent_run_id, error)
-        return None, SpawnResult(
+        if request.run_manager is not None:
+            request.run_manager.fail(spawn_context.agent_run_id, error)
+        return SpawnResult(
             success=False,
             run_id=spawn_context.agent_run_id,
             child_session_id=spawn_context.session_id,
@@ -110,7 +106,7 @@ async def _prepare_provider_sandbox(
         )
     env.update(launch.provider_env)
     _record_actual_sandbox_enforcement(request, spawn_context, launch)
-    return launch, None
+    return launch
 
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
@@ -227,10 +223,10 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "claude", env)
-    if sandbox_failure is not None:
-        return sandbox_failure
-    assert launch is not None
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "claude", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
     if launch.enforced and launch.backend == "srt":
         # Claude's own Bash sandbox cannot nest inside the SRT seatbelt;
         # CLI --settings outranks user settings, so pin it off regardless
@@ -342,10 +338,10 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "qwen", env)
-    if sandbox_failure is not None:
-        return sandbox_failure
-    assert launch is not None
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "qwen", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
 
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
@@ -442,10 +438,10 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "grok", env)
-    if sandbox_failure is not None:
-        return sandbox_failure
-    assert launch is not None
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "grok", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
 
     cmd, _cmd_env = build_cli_command(
         cli="grok",
@@ -555,10 +551,10 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "codex", env)
-    if sandbox_failure is not None:
-        return sandbox_failure
-    assert launch is not None
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "codex", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
 
     config_overrides = [
         *_codex_mcp_config_overrides(request.project_path),
@@ -676,10 +672,10 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "droid", env)
-    if sandbox_failure is not None:
-        return sandbox_failure
-    assert launch is not None
+    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "droid", env)
+    if isinstance(sandbox_result, SpawnResult):
+        return sandbox_result
+    launch = sandbox_result
     cmd, _cmd_env = build_cli_command(
         cli="droid",
         prompt=request.prompt,
