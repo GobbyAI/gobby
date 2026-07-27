@@ -11,9 +11,11 @@ text_generate, vision_extract, tool_chat, and Droid web_chat, selected by new
 `ai.agent_sdk_routes.{codex,droid}.{capability}` config (`legacy|sdk`, all
 defaults legacy). A daemon-owned `AgentSDKRuntime` eagerly initializes
 providers with ≥1 sdk route before HTTP readiness (non-fatally), exposes
-sanitized diagnostics, and owns all SDK child processes. No fallback, no
-shadowing: an unavailable SDK route raises the existing
-`CapabilityUnavailableError`. Every legacy path is preserved, and rollback is a
+sanitized diagnostics, and is the single owner of every SDK child's lifecycle —
+directly for the droid transport it spawns itself, and through the vendor
+client's own bounded close for the Codex child, which the pinned SDK spawns and
+never exposes (2.2). No fallback, no shadowing: an unavailable SDK route raises
+the existing `CapabilityUnavailableError`. Every legacy path is preserved, and rollback is a
 config change for every capability **except droid web chat**: conversations
 already pinned `sdk` keep requiring the SDK runtime after a rollback, because
 the pin is immutable and there is no fallback. Section 7.3 specifies that
@@ -27,9 +29,13 @@ branch and its operator remediation.
   spawning stays tmux/CLI. Endpoint-scoped providers (Responses/OSS
   `endpoint:*` bindings) always stay legacy.
 - **Auth**: ChatGPT-subscription account required for Codex SDK (inspect
-  `account()`; reject API-key accounts; never invoke SDK login). Droid SDK
-  paths never consult `FACTORY_API_KEY`; they OAuth-seed isolated state via the
-  existing `_droid_isolated_env` / `_seed_droid_factory_state` helpers.
+  `account()`; reject API-key accounts; never invoke SDK login). That check is
+  the enforcement point, not a diagnostic: the pinned SDK cannot delete an
+  inherited `OPENAI_API_KEY` from its child, so "never bill an API account" is
+  guaranteed by rejecting the account rather than by shaping the environment
+  (2.2). Droid SDK paths never consult `FACTORY_API_KEY`; they OAuth-seed
+  isolated state via the existing `_droid_isolated_env` /
+  `_seed_droid_factory_state` helpers.
 - **No fallback / no shadow / no duplicate requests.** Exactly one **dispatch**
   resolution per request, taken from live config and snapshotted at the
   request's single entry point, so a mid-flight config flip can neither move nor
@@ -40,6 +46,24 @@ branch and its operator remediation.
   web-chat backend is pinned in `sessions.web_chat_backend` after the first
   session successfully starts — `NULL` until then — and is authoritative on
   every reconnect and immutable thereafter.
+- **What "no fallback" scopes to, precisely.** It forbids **same-provider
+  backend substitution**: a request that resolved to `codex`/`sdk` must never
+  be served by the legacy codex transport, and the routing wrappers (4.3, 6.3)
+  are what guarantee that. It does **not** redefine what an unavailable
+  provider means to the layer above. `ToolChatService.chat_result`
+  (`src/gobby/ai/_tool_chat_service.py:87-152`) and its text-generation
+  counterpart already catch `CapabilityUnavailableError`, record it, and try
+  the next configured candidate — that is how *every* unavailable provider has
+  always behaved, including a codex with no CLI installed. A routed-SDK
+  provider that is unready surfaces as unavailable and participates in that
+  pre-existing candidate loop unchanged. Making SDK unavailability terminal in
+  those loops was considered and rejected: it would change dispatch semantics
+  for legacy providers this plan promises to leave byte-identical, and it would
+  fail a whole request that the operator explicitly configured a second
+  candidate to serve. A candidate list cannot smuggle a same-provider fallback
+  in through this door, because a provider resolves to exactly one binding per
+  `(provider, model)` and the route decision lives inside that binding's
+  wrapper.
 - **Live config is read through a getter, and the getter must dereference the
   object that actually gets rebound.**
   `ConfigurationRouteContext.set_runtime_config`
@@ -96,7 +120,7 @@ later phase can build against them.
 ### 1.1 Add subscription SDK dependencies [category: config]
 `kind: deliverable`
 
-Target: `pyproject.toml`, `tests/ai/agent_sdk/test_sdk_surface.py`
+Target: `pyproject.toml`, `uv.lock`, `tests/ai/agent_sdk/test_sdk_surface.py`
 
 Add to `[project].dependencies`:
 
@@ -126,16 +150,37 @@ shape via `inspect.signature` / attribute presence:
 A range bump that drops or renames any of these fails at P1, before adapter
 work begins.
 
+**The distribution name is not the import name.** The `openai-codex`
+distribution installs the `openai_codex` package (`AsyncCodex` is re-exported
+from `openai_codex.api` through `openai_codex.__init__`). `import codex`
+resolves to nothing in this distribution, so every import in P2-P7 and in the
+surface test reads `from openai_codex import ...`.
+
+**Pin the two launch properties 2.2 depends on.** `CodexConfig` exposes
+`codex_bin` and `launch_args_override` but no environment-replacement or
+process-session control, and the client builds its child environment by
+overlaying `CodexConfig.env` onto a copy of `os.environ`. 2.2's auth contract
+is written against exactly that behavior. Assert both properties here — the
+presence of `codex_bin`/`launch_args_override` and the overlay-not-replace
+env semantics — so a patch bump that changes either fails at P1 rather than
+silently invalidating 2.2's reasoning.
+
 **Acceptance:**
 
-- 1.1.1 - Both SDKs declared with the pinned ranges and `uv lock` resolves
-  cleanly. file: `pyproject.toml`.
-- 1.1.2 - `import codex` (openai-codex) and `import droid_sdk` succeed in the
-  project venv; embeddings/local tests pass against the resolved `openai`.
-  test: `tests/ai/test_endpoints.py`.
+- 1.1.1 - Both SDKs declared with the pinned ranges, `uv lock` resolves
+  cleanly, and the resulting `uv.lock` change is committed with the manifest.
+  file: `pyproject.toml`. file: `uv.lock`.
+- 1.1.2 - `import openai_codex` (exposing `AsyncCodex`) and `import droid_sdk`
+  succeed in the project venv; embeddings/local tests pass against the
+  resolved `openai`. test: `tests/ai/test_endpoints.py`.
 - 1.1.3 - The offline surface test asserts every SDK symbol, method parameter,
   and event class consumed by P2-P7, runs without credentials or child
   processes, and fails on removal or rename. file:
+  `tests/ai/agent_sdk/test_sdk_surface.py`.
+- 1.1.4 - The surface test asserts `CodexConfig` carries `codex_bin` and
+  `launch_args_override` and that the client's child environment is an overlay
+  onto inherited environment rather than a replacement, so a bump that changes
+  either fails here instead of inside 2.2. test:
   `tests/ai/agent_sdk/test_sdk_surface.py`.
 
 ### 1.2 Agent SDK routes config model [category: code]
@@ -251,7 +296,8 @@ Target: `src/gobby/storage/session_models.py`,
 `src/gobby/storage/sessions/_crud.py`,
 `src/gobby/storage/sessions/_web_chat_crud.py`,
 `src/gobby/storage/sessions/_bulk_update.py`,
-`src/gobby/storage/sessions/_upsert.py`
+`src/gobby/storage/sessions/_upsert.py`,
+`tests/storage/test_sessions_import.py`
 
 Follow the `sandbox_policy_hash` precedent trail (also a nullable TEXT column):
 
@@ -289,6 +335,18 @@ re-resolves from live config.
 The field stays `NULL` for non-web-chat sessions; no changes to agent-spawn or
 terminal-session registration call sites.
 
+**Both changes here are pinned by an existing exact-signature test.**
+`tests/storage/test_sessions_import.py` holds
+`EXPECTED_PUBLIC_METHOD_SIGNATURES` and asserts in
+`test_session_manager_public_method_signatures_are_stable` that
+`SessionManager`'s public method set and each literal signature match it
+exactly — its `_normalized_signature` helper even renders `UNSET` defaults, so
+the new `web_chat_backend: str | None | UnsetType = UNSET` parameter on
+`update` is compared verbatim. Adding that parameter and adding
+`pin_web_chat_backend` therefore both fail this test until the expected mapping
+is updated, and updating it is a deliberate step of this section rather than
+incidental fallout discovered during implementation.
+
 **Acceptance:**
 
 - 1.4.1 - `Session` round-trips `web_chat_backend` through register →
@@ -309,6 +367,10 @@ terminal-session registration call sites.
   writes SQL `NULL` so the next connect re-resolves, and an invalid value is
   rejected. file: `src/gobby/storage/sessions/_bulk_update.py`. test:
   `tests/storage/sessions/test_registration.py`.
+- 1.4.6 - `EXPECTED_PUBLIC_METHOD_SIGNATURES` is updated for `update`'s new
+  `UNSET`-defaulted parameter and for the added `pin_web_chat_backend`, and
+  `test_session_manager_public_method_signatures_are_stable` passes. file:
+  `tests/storage/test_sessions_import.py`.
 
 ## P2: Agent SDK Runtime
 `kind: framing`
@@ -356,27 +418,65 @@ Target: `src/gobby/ai/agent_sdk/codex_client.py` (new)
 
 `CodexSdkClient` owning one shared AsyncCodex process:
 
-- `start()`: env = ambient minus `OPENAI_API_KEY`, plus
-  `GOBBY_HOOKS_DISABLED="1"`; start AsyncCodex; then verify auth by
-  inspecting `account()` — require a ChatGPT-subscription account; API-key or
-  absent account raises a fixed-message auth error (no detail leak). Never
-  invoke SDK login methods.
+- `start()`: build `CodexConfig.env` with `GOBBY_HOOKS_DISABLED="1"` and
+  `OPENAI_API_KEY=""`; start AsyncCodex; then verify auth by inspecting
+  `account()` — require a ChatGPT-subscription account; API-key or absent
+  account raises a fixed-message auth error (no detail leak) and the client is
+  torn down. Never invoke SDK login methods.
 - `thread()` async context manager yielding an ephemeral thread for one-shot
   use; concurrent threads supported on the single shared process.
-- `close()`: SDK aclose, then process-group SIGTERM→SIGKILL backstop.
+- `close()`: `await AsyncCodex.close()` under a bounded timeout, executed off
+  the event loop because the underlying implementation is blocking.
 - Coexists with `runner.codex_client` (`CodexAppServerClient`) and the
   per-endpoint clients — none of those change.
 
+**`account()` is the enforcement; the environment is only defense in depth.**
+The pinned client builds its child environment as `os.environ.copy()` overlaid
+with `CodexConfig.env`. An overlay can overwrite a key but cannot delete one,
+so an ambient `OPENAI_API_KEY` in the daemon's environment cannot be removed
+from the child through the public surface. The invariant that actually matters
+is not "the variable is absent" but **"Gobby never issues a Codex SDK request
+under API-key auth"**, and `account()` enforces that directly and fail-closed:
+if the account is API-key-backed or absent, `start()` fails, the client is torn
+down, and the provider is unavailable — the same outcome an absent credential
+produces. Setting the key to the empty string is retained as best-effort
+narrowing and must not be described anywhere as deletion. If a later round
+demonstrates that an empty value is itself load-bearing, `CodexConfig.codex_bin`
+plus a Gobby-owned exec shim is the escape hatch; it is deliberately not built
+now, because it adds an installed artifact to harden a path `account()` already
+closes.
+
+**Do not signal the process group.** The pinned client calls `subprocess.Popen`
+without `start_new_session`, so the Codex child lives in the **daemon's own
+process group** — the SIGTERM→SIGKILL group escalation that 2.1 performs for
+the droid transport would terminate the daemon itself. The SDK owns this
+child's lifecycle instead, and its `close()` already performs the equivalent
+escalation against the single PID (close stdin, `terminate()`, `wait(timeout=2)`,
+`kill()` on failure). Gobby's contribution is to bound that call and record its
+outcome, not to reimplement it. This is a per-provider difference, not an
+inconsistency: 2.1 spawns the droid child itself and therefore owns its session,
+while nothing in the pinned Codex surface exposes the child at all. Because the
+Codex child is configured with no tools and a read-only sandbox on every route
+(4.1, 5.1, 6.1), it has no descendants for a group kill to reach.
+
 **Acceptance:**
 
-- 2.2.1 - Child env excludes `OPENAI_API_KEY` and sets
-  `GOBBY_HOOKS_DISABLED=1`. symbol: `CodexSdkClient`. file:
+- 2.2.1 - Child env sets `GOBBY_HOOKS_DISABLED=1` and an empty
+  `OPENAI_API_KEY`, and no code path claims or asserts that the variable is
+  absent from the child. symbol: `CodexSdkClient`. file:
   `src/gobby/ai/agent_sdk/codex_client.py`.
 - 2.2.2 - API-key accounts are rejected with a fixed sanitized message and no
   SDK login method is ever invoked. test:
   `tests/ai/agent_sdk/test_codex_client.py`.
 - 2.2.3 - Concurrent ephemeral threads run on one shared process; `close()`
   is idempotent. test: `tests/ai/agent_sdk/test_codex_client.py`.
+- 2.2.4 - An `account()` rejection tears down the client and leaves no
+  surviving child, and `start()` reports the provider unavailable rather than
+  returning a usable client. test: `tests/ai/agent_sdk/test_codex_client.py`.
+- 2.2.5 - Cleanup never signals a process group and never calls `os.killpg`;
+  it delegates to the SDK's own close under a bounded off-loop call. behavior:
+  "SDK-owned Codex child lifecycle" in
+  `src/gobby/ai/agent_sdk/codex_client.py`.
 
 ### 2.3 Droid SDK worker pool [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -433,8 +533,8 @@ plus the narrow consumer Protocols (`AgentSDKRuntimeHandle` with
 `DroidWorkerPool`, `DroidWebChatClientFactory`) that later phases fake in
 tests.
 
-`runtime.py` — `AgentSDKRuntime(config_getter, max_concurrency,
-timeout_seconds)`:
+`runtime.py` — `AgentSDKRuntime(config_getter, main_loop_getter,
+shutdown_getter, max_concurrency, timeout_seconds)`:
 
 - `start()`: eager init of every provider with ≥1 sdk route; never raises;
   per-provider sanitized failure capture; bounded by `asyncio.timeout(30)`
@@ -494,14 +594,24 @@ timeout_seconds)`:
   that adds and discards `agent_sdk_<provider>` entries on the runner's existing
   set. One narrow callback, no second degradation registry.
 
-**One provider lifecycle state, one config generation.** `start()`,
+**One provider lifecycle state, one per-provider generation.** `start()`,
 `ensure_provider()`, `reconcile()`, and `close()` are four independent flights
 over the same per-provider children, so it is their *interleavings*, not any one
 of them, that decide whether the inert-state guarantee actually holds. Rather
 than four ad-hoc locks, each provider carries one state
-(`absent | initializing | ready | draining | closed`) and the runtime carries a
-monotonic `config_generation`, incremented whenever `reconcile()` observes a
-changed route set. Three rules follow:
+(`absent | initializing | ready | draining | closed`) and **its own** monotonic
+generation, advanced when that provider's configured route set changes.
+
+The generation is deliberately per-provider rather than one runtime-wide
+counter. A shared counter is invalidated by any provider's config change, so a
+droid flip would stale an in-flight codex `ensure` that nothing was wrong with —
+and because the reconcile trigger reacts to *gained* and *lost* route edges, a
+codex whose routes did not change gives it no edge to retry on. The provider
+would be discarded and never re-initialized. Fencing on the provider's own
+generation makes a flight stale only when the thing it is publishing actually
+changed underneath it.
+
+Four rules follow:
 
 - **Admission is revoked before the drain, not during it.** Entering `draining`
   first flips the provider out of admission, so `codex_thread()`,
@@ -510,32 +620,85 @@ changed route set. Three rules follow:
   Without this, a lease or a dedicated client acquired mid-drain reopens the
   provider the rollback is in the middle of closing, and the drain completes
   against a child set that grew underneath it.
-- **Publication is fenced by generation.** An `ensure_provider` flight stamps
-  the generation it began under and publishes its children only if that value is
-  still current. A flight that finishes after a rollback or a `close()` sees a
-  newer generation, discards its result, and closes what it built on the same
-  graceful-then-forced path. This is what stops a late `ensure` from
-  resurrecting a provider the operator just disabled.
-- **Reconcile converges on the newest write, not the one it started with.**
-  Plain single-flight coalescing silently loses updates: a second write arriving
-  while the first flight drains sees a flight already in progress and returns,
-  and that flight then commits its older snapshot — leaving the runtime diverged
-  from live config indefinitely, until some later write happens along. The owner
-  therefore re-reads `config_getter()` after each pass and loops until the
-  observed generation is unchanged across a full pass. Latest write wins, and
-  at most one flight still runs.
+- **Publication is fenced by the provider's generation, and every child writer
+  goes through the same gate.** A flight stamps the generation it began under
+  and publishes its children only if that value is still current. A flight that
+  finishes after a rollback or a `close()` sees a newer generation, discards its
+  result, and closes what it built on the same graceful-then-forced path. This
+  is what stops a late flight from resurrecting a provider the operator just
+  disabled.
+
+  The gate is only as good as its coverage, and `ensure_provider` is **not** the
+  only path that creates or publishes a child. Four writers exist and all four
+  enter the same commit guard: `start()`'s eager probe, `ensure_provider()`,
+  the droid pool's lease-`finally` replenishment (2.3), and
+  `droid_web_chat_client()`'s dedicated-client construction. Replenishment is
+  the dangerous one — it fires from a `finally` block precisely while a forced
+  drain is cancelling leases, so an ungated replenish recreates the child the
+  drain just removed and the drain completes against a child set that grew
+  behind it. The pool therefore sets its closing flag *before* cancelling
+  leases, and any writer that finds the provider `draining`, `closed`, or
+  generation-stale at commit time closes what it built locally instead of
+  publishing it.
+- **Reconcile converges on the newest write, and terminates.** Plain
+  single-flight coalescing silently loses updates, and so does re-reading config
+  at the end of a pass: a write that lands *after* the flight's final read but
+  *before* the single-flight slot is released coalesces into a flight that is
+  already exiting and gets no pass of its own. The runtime therefore does not
+  rely on reading config at the end — the **write side** marks a dirty epoch at
+  the synchronous config-rebind boundary (2.6), before scheduling anything, so
+  the mark is always in place before any flight could observe it and exit.
+
+  Each reconcile pass is bounded: it converges the route set it read, then
+  checks the dirty mark and *reschedules* a fresh pass if it is set, rather than
+  looping in place. Looping in place is what a continuously writing config
+  client turns into a pass that never returns — monopolizing the reconcile owner
+  and blocking `close()` behind it. Rescheduling keeps latest-write-wins with at
+  most one flight live, and leaves the shutdown gate a place to intervene: once
+  `close()` begins, new passes are refused and the single in-flight pass is
+  awaited or cancelled before children are drained.
+
+**Initialization is transactional: acquire locally, validate, then commit.**
+The commit guard above only protects what it can see, and provider
+initialization creates real OS resources *before* there is anything to publish.
+Codex starts a child and only then validates the account (2.2); droid builds
+transport children, stderr drains, and isolated temp homes before the pool is
+publishable. Every non-commit exit therefore has to dispose of what the flight
+built: an auth rejection, a probe that never completes and hits the 30s bound, a
+cancellation, or a commit refused as generation-stale. A leaked child from any
+of these is invisible to `close()` precisely because it was never published,
+which is the one class of leak the shutdown budget cannot catch.
+
+The flight holds its new children and drains in a local set until the commit
+guard accepts them. On any exit that is not a commit it runs the same bounded
+graceful-then-forced cleanup plus temp-home removal, **shielded** from the
+cancellation that may have triggered it, and only then records the sanitized
+failure. `asyncio.CancelledError` is a `BaseException` and must be handled
+explicitly — an `except Exception` cleanup path silently skips exactly the
+cancellation cases (shutdown, timeout) most likely to strand a child.
 
 **Scheduled work is owned, not orphaned.** The two non-lease triggers
 (`set_runtime_config` in 2.6, the vision probe in 5.2) are synchronous callers
 that cannot await, so they schedule rather than call. Scheduling needs four
 things, and the runtime owns them once instead of each caller reinventing them:
 
-- **A loop that outlives the caller.** `ServiceContainer.main_loop` already
-  exists for exactly this case — "fire-and-forget work spawned from short-lived
-  loops must be scheduled here to survive the caller" (`app_context.py`). It
-  matters here because `set_runtime_config` can run on a worker thread with no
-  running loop, where a bare `asyncio.create_task` raises immediately. Schedule
-  onto `main_loop`; when it is absent, skip rather than raise.
+- **A loop that outlives the caller, reached through a getter.**
+  `ServiceContainer.main_loop` already exists for exactly this case —
+  "fire-and-forget work spawned from short-lived loops must be scheduled here to
+  survive the caller" (`app_context.py`). It matters here because
+  `set_runtime_config` can run on a worker thread with no running loop, where a
+  bare `asyncio.create_task` raises immediately.
+
+  The runtime cannot capture the loop, and cannot be handed it at construction:
+  `runner_lifecycle.py:153-157` assigns `runner.main_loop` and
+  `http_services.main_loop` from inside the running loop in `run_daemon`, which
+  is strictly *after* Phase 4 builds the runtime. The constructor therefore
+  takes `main_loop_getter` and `shutdown_getter` alongside the existing
+  `config_getter`, wired at the same 2.5 site to `lambda: services.main_loop`
+  and `lambda: services.shutdown_in_progress`. Reading through getters is also
+  what keeps the shutdown gate honest — `shutdown_in_progress` is a mutable flag
+  on the container, and a boolean copied at construction would be `False`
+  forever. When `main_loop_getter()` returns `None`, skip rather than raise.
 - **Strong references.** Tasks are retained in one runtime-owned set and
   discarded in a done-callback. A bare `create_task` handle can be garbage
   collected mid-flight.
@@ -544,7 +707,7 @@ things, and the runtime owns them once instead of each caller reinventing them:
   as an "exception was never retrieved" warning carrying the raw provider
   message — noise and a credential leak in one.
 - **A shutdown gate.** Scheduling is refused once `close()` has begun or
-  `ServiceContainer.shutdown_in_progress` is set, and `close()` settles the
+  `shutdown_getter()` reports shutdown, and `close()` settles the
   outstanding set *before* draining children — otherwise a late `ensure` spawns
   a child after the drain has already counted them, and it leaks.
 - `codex_thread()` / `droid_lease()` context managers with
@@ -614,19 +777,45 @@ survives.
   or initializing still converges on the newest route set. behavior: "provider
   lifecycle state" in `src/gobby/ai/agent_sdk/runtime.py`. test:
   `tests/ai/agent_sdk/test_runtime.py`.
-- 2.4.11 - Scheduled reconcile/ensure work is owned: it runs on
-  `ServiceContainer.main_loop` when scheduled from a thread with no running
+- 2.4.11 - Scheduled reconcile/ensure work is owned: it runs on the loop
+  returned by `main_loop_getter` when scheduled from a thread with no running
   loop, is retained until completion, reports failures through
   `sanitize_sdk_error` with no raw provider text and no "never retrieved"
-  warning, is refused once shutdown has begun, and is settled by `close()`
-  before children are drained so no child outlives the drain. behavior:
-  "scheduled work ownership" in `src/gobby/ai/agent_sdk/runtime.py`. test:
+  warning, is refused once `shutdown_getter()` reports shutdown, and is settled
+  by `close()` before children are drained so no child outlives the drain.
+  behavior: "scheduled work ownership" in
+  `src/gobby/ai/agent_sdk/runtime.py`. test:
   `tests/ai/agent_sdk/test_runtime.py`.
 - 2.4.12 - The runtime mutates degraded state only through
-  `set_degradation_sink`: with no sink installed, recovery and reconciliation
-  still succeed and touch nothing; with 2.6's sink installed, a recovered
-  provider's entry is discarded and a drained provider's entry is cleared.
-  symbol: `set_degradation_sink`. test: `tests/ai/agent_sdk/test_runtime.py`.
+  `set_degradation_sink`, asserted at the runtime boundary alone: with no sink
+  installed, recovery and reconciliation still succeed and touch nothing; with
+  an injected fake sink, a recovered provider produces a discard call and a
+  drained provider produces a clear call. The equivalent assertion against the
+  real `runner.degraded_services` set belongs to 2.6.5, because 2.6 installs
+  that sink and depends on this section — requiring it here would make this
+  section uncompletable under its own dependency order. symbol:
+  `set_degradation_sink`. test: `tests/ai/agent_sdk/test_runtime.py`.
+- 2.4.13 - Latest-write-wins survives the flight-teardown race: a config write
+  landing after a reconcile pass takes its final read but before its
+  single-flight slot is released still produces a further pass, because the
+  dirty mark is set on the write side before scheduling. A provider whose routes
+  did not change is never staled by an unrelated provider's write. Continuous
+  writes do not prevent a pass from returning, and `close()` during an
+  in-flight pass settles it before draining. behavior: "reconcile convergence"
+  in `src/gobby/ai/agent_sdk/runtime.py`. test:
+  `tests/ai/agent_sdk/test_runtime.py`.
+- 2.4.14 - Every child writer is fenced: pool replenishment racing a forced
+  drain, and a `start()` or `droid_web_chat_client()` construction that commits
+  against a `draining`/`closed`/stale provider, each close the child they built
+  locally and publish nothing, leaving zero surviving processes. test:
+  `tests/ai/agent_sdk/test_runtime.py`. test:
+  `tests/ai/agent_sdk/test_droid_pool.py`.
+- 2.4.15 - Initialization is transactional: an `account()` rejection, a probe
+  that never completes and hits the timeout bound, and a cancellation each
+  leave zero surviving child processes, stderr drains, and temp homes, with the
+  failure recorded sanitized. behavior: "transactional provider
+  initialization" in `src/gobby/ai/agent_sdk/runtime.py`. test:
+  `tests/ai/agent_sdk/test_runtime.py`.
 - 2.4.9 - `reconcile()` converges the runtime on the configured route set:
   flipping a provider's last sdk route to legacy closes its children, records
   `cleanup_outcome`, and leaves zero SDK processes; flipping a route to sdk
@@ -685,17 +874,34 @@ is completed in two steps:
 
 - Phase 2, in `_init_llm_service`: construct with `config_getter=lambda:
   runner.config`. Correct at this point — no config write can have happened yet.
+  `main_loop_getter` and `shutdown_getter` default to inert (`None` / `False`);
+  nothing can be scheduled before Phase 4 anyway.
 - Phase 4, in `init_servers`, immediately after the `ServiceContainer` is
-  built: `runner.agent_sdk_runtime.set_config_getter(lambda: services.config or
-  runner.config)`. From here the getter dereferences the exact attribute
-  `set_runtime_config` rebinds. The `or runner.config` arm covers
-  `ServiceContainer.config` being `DaemonConfig | None`.
+  built: one guarded `runner.agent_sdk_runtime.bind_service_context(...)` call
+  binding all three getters —
+  `config_getter=lambda: services.config or runner.config`,
+  `main_loop_getter=lambda: services.main_loop`, and
+  `shutdown_getter=lambda: services.shutdown_in_progress`. From here the config
+  getter dereferences the exact attribute `set_runtime_config` rebinds; the
+  `or runner.config` arm covers `ServiceContainer.config` being
+  `DaemonConfig | None`.
+
+  **The loop and shutdown getters cannot be supplied any earlier, and cannot be
+  values.** `run_daemon` assigns `runner.main_loop` and
+  `http_services.main_loop` from inside the running loop
+  (`runner_lifecycle.py:153-157`) — strictly after this phase — so a loop passed
+  at construction would always be `None`, and 2.4's scheduling rule would never
+  fire. `shutdown_in_progress` is a mutable flag on the same container, so a
+  boolean read once here would report `False` for the daemon's whole life and
+  the shutdown gate would never close. Both must be getters resolved at use
+  time, and this is the first site where the container they resolve against
+  exists.
 
   **This rebind must be guarded, because the runtime is legitimately absent.**
   The degradation boundary above exists precisely so a constructor failure
   leaves `runner.agent_sdk_runtime` as `None` and the daemon continues. An
-  unconditional `set_config_getter` in Phase 4 would then dereference `None` and
-  abort `init_servers` — converting the degraded-but-running outcome this
+  unconditional `bind_service_context` in Phase 4 would then dereference `None`
+  and abort `init_servers` — converting the degraded-but-running outcome this
   section is built to produce back into the aborted startup it is built to
   prevent. Skip the rebind when the runtime is absent; every later consumer
   already has to tolerate `agent_sdk_runtime=None` for the all-legacy case, so
@@ -751,13 +957,24 @@ New `async def start_agent_sdk_runtime(runner)` called in `run_daemon` after
 `uvicorn.Config(...)` (:208) — a deliberately separate, **non-fatal**
 pre-readiness step (the managed-services gate stays hard). Semantics:
 
-- `await runner.agent_sdk_runtime.start()`.
+- Return immediately when `runner.agent_sdk_runtime` is `None`, then
+  `await runner.agent_sdk_runtime.start()`.
 - Per-provider probe failure: sanitized warning +
   `mark_service_degraded(runner, "agent_sdk_codex"|"agent_sdk_droid")`;
   daemon still binds HTTP.
 - `ensure_provider()` success later discards the degraded entry (mirror the
   monitor add/discard pattern).
 - All-legacy: returns immediately, no degraded entries, no processes.
+
+**The absent-runtime guard is the same guard 2.5 needs, at a second call
+site.** 2.5's degradation boundary exists so that a constructor failure leaves
+`runner.agent_sdk_runtime` as `None` and the daemon keeps running. An
+unconditional `await runner.agent_sdk_runtime.start()` here would raise
+`AttributeError` on exactly that path — before HTTP readiness, converting a
+degraded-but-running daemon into a dead one, and doing so in the all-legacy
+case too, where the settled contract demands zero SDK processes and zero
+`agent_sdk` signals. The reconcile helper below already returns silently when
+the runtime is absent; startup needs the identical branch.
 
 **This section owns the degraded set; the runtime only reports.**
 `runner.degraded_services` is runner-owned, and the runtime has no path to it
@@ -827,6 +1044,12 @@ loop, hand off, return. If either is absent it returns without raising —
   that same entry — with the runtime never referencing the runner directly.
   file: `src/gobby/runner_lifecycle_startup.py`. test:
   `tests/runner/test_lifecycle_startup.py`.
+- 2.6.6 - A Phase-2 constructor failure carries through pre-readiness startup:
+  `start_agent_sdk_runtime` returns without raising, HTTP readiness is still
+  announced, and an all-legacy daemon on that path reports zero SDK processes
+  and no `agent_sdk_<provider>` degraded entries. file:
+  `src/gobby/runner_lifecycle_startup.py`. test:
+  `tests/runner/test_lifecycle_startup.py`.
 
 ### 2.7 Shutdown owners [category: code] (depends: 2.5)
 `kind: deliverable`
@@ -840,16 +1063,43 @@ Target: `src/gobby/servers/_app_lifecycle.py`,
   bounded (≤5s) best-effort `agent_sdk_runtime.close()`.
   `_reap_remaining_child_processes` remains the backstop.
 - `close()` is idempotent across all three owners (rollback, lifespan,
-  graceful shutdown) — double-close is a no-op.
+  graceful shutdown) — double-close is a no-op, and is skipped entirely when
+  `agent_sdk_runtime` is `None`.
+
+**`close()` contains its own failures; the shutdown owners must not see them.**
+2.9's sanitization boundary is written around request adapters, and
+`raise ... from None` there does nothing for this path. The owners here are
+pre-existing generic helpers that log raw:
+`runner_lifecycle_shutdown.py:91` and `:100` emit
+`logger.warning("%s failed: %s", name, e, exc_info=True)` — the raw exception
+string *and* a full traceback. An SDK `aclose`, a process-cleanup step, or a
+stderr-drain teardown that raises with a token, a response fragment, or a home
+path in its message would therefore print it, bypassing every control 2.9
+establishes.
+
+So `AgentSDKRuntime.close()` is internally non-raising for ordinary child
+failures: it sanitizes each one through `sanitize_sdk_error`, records only the
+fixed `cleanup_outcome` (`closed|killed|leaked`), and returns. If an aggregate
+genuinely must escape, it escapes as a fixed sanitized domain exception raised
+`from None`. Nothing changes in the three owners; the containment is the
+runtime's job, which is also why one fix covers all three.
 
 **Acceptance:**
 
 - 2.7.1 - Runtime closes on FastAPI lifespan shutdown and on graceful daemon
-  shutdown, and double-close is safe. file:
+  shutdown, double-close is safe, and an absent runtime is skipped. file:
   `src/gobby/servers/_app_lifecycle.py`.
-- 2.7.2 - All SDK child process groups are gone within the shutdown budget.
-  behavior: "cleanup outcome recording" in
+- 2.7.2 - All SDK children are gone within the shutdown budget, by the
+  ownership split 2.2 establishes: the droid transport's own process group is
+  signalled, and the Codex child is settled through the vendor client's bounded
+  close rather than a group signal. behavior: "cleanup outcome recording" in
   `src/gobby/ai/agent_sdk/runtime.py`.
+- 2.7.3 - A child whose cleanup raises an exception carrying a token-shaped
+  string, an env value, a home path, and response text produces no raw text in
+  any of the three shutdown owners' logs — asserted by log capture on each —
+  and the runtime reports only a fixed `cleanup_outcome`. test:
+  `tests/runner/test_lifecycle_shutdown.py`. test:
+  `tests/servers/test_app_lifecycle.py`.
 
 ### 2.8 Admin status diagnostics block [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -876,11 +1126,24 @@ queueing" from "provider is slow" without adding a new surface.
 Empty object when every route is legacy — absent-by-configuration produces
 zero signals (invariant from #16609/#18371).
 
+**Guard the runtime, or this endpoint breaks exactly when it is needed.**
+2.5 permits `services.agent_sdk_runtime` to be `None` after a constructor
+failure, so an unconditional `.status_snapshot()` raises `AttributeError` on
+precisely the degraded state this block exists to explain — and because the
+snapshot is assembled into one payload, it can take the whole health response
+down with it. `_health.py` already guards every other optional service this way
+(`if runner is None`, `if tracker is None`, `if database is None`); follow that
+convention and emit an empty block, which is also the correct rendering: a
+runtime that does not exist has no providers to report.
+
 **Acceptance:**
 
 - 2.8.1 - `/api/admin/status` exposes the block with sanitized
-  `startup_error` for a failed configured provider and `{}` when all-legacy.
-  file: `src/gobby/servers/routes/admin/_health.py`.
+  `startup_error` for a failed configured provider, `{}` when all-legacy, and
+  `{}` — not an error — when `agent_sdk_runtime` is `None` after a Phase-2
+  construction failure, with the rest of the health payload intact. file:
+  `src/gobby/servers/routes/admin/_health.py`. test:
+  `tests/servers/routes/admin/test_health.py`.
 - 2.8.2 - The block reports `concurrency` gauges for every configured
   provider and `pool` gauges for droid, as integer counts only. test:
   `tests/servers/routes/admin/test_health.py`.
@@ -895,7 +1158,7 @@ Target: `src/gobby/ai/_text_generation_service.py`,
   `configured_route`, `backend` (e.g. `codex_sdk`/`codex_cli`), and
   `usage_input_tokens`/`usage_output_tokens` lifted from
   `LLMTextResult.usage` when present (covers text_generate on both routes).
-- `AgentSDKRuntime` emits one `agent_sdk_call` structured log per lease:
+- One `agent_sdk_call` structured log per provider call, carrying
   `provider, capability, model, configured_route, backend, ready,
   queue_wait_ms, latency_ms, usage (ints), success, error (sanitized),
   cleanup_outcome` (covers tool_chat/vision/web_chat). `queue_wait_ms` is
@@ -903,17 +1166,32 @@ Target: `src/gobby/ai/_text_generation_service.py`,
   OTel helpers (`inc_counter`/`observe_histogram`) at the same site.
 - Never log prompts, responses, credentials, or auth-file paths.
 
-**The lease is the wrong lifetime for web chat.** Everything above is scoped to
-a lease, which fits text and tool chat: one lease, one provider call, one event.
-Droid web chat does not work that way — it holds a *dedicated* client for the
-life of the conversation (2.4) and issues a provider call per message, so a
-lease-scoped emitter would produce one event per conversation and none per
-message. Every field the operator actually needs — latency, usage, outcome —
-would be missing for the one capability that runs longest. `DroidSDKChatSession`
-therefore records the same `agent_sdk_call` shape around each per-message
-provider call itself (7.2), with `queue_wait_ms` of zero, since a dedicated
-client has no admission wait. Same event, same fields, boundary matched to the
-real operation; pooled adapters keep the lease emitter unchanged.
+**The emitter belongs in the adapters, because that is where the fields
+exist.** The natural-looking design — the runtime emits from the lease's
+`__aexit__` — cannot produce this event. `codex_thread()` and `droid_lease()`
+take no capability, model, or configured-route argument, and the runtime has no
+way to learn them: the model is resolved per request by the caller, and the
+route was resolved at the caller's dispatch snapshot. Worse, usage and the
+resolved model only exist *after* the adapter's call returns, which is after the
+lease body has produced its result — the runtime would be emitting a mandatory
+field set it structurally cannot fill. Giving the lease a metadata argument plus
+a `record_outcome()` channel would fix that, but it is a wider API for no gain
+over emitting where request and result already meet.
+
+So each SDK adapter emits its own `agent_sdk_call` exactly once (4.1, 4.2, 5.1,
+6.1, 6.2), reading `queue_wait_ms` from the value the lease returns and
+supplying everything else from the request it already holds and the result it
+just produced. The runtime keeps ownership of `queue_wait_ms` and
+`cleanup_outcome` — the two facts only it knows — and exposes them; it does not
+own the event.
+
+This also removes the special case web chat would otherwise need.
+`DroidSDKChatSession` holds a *dedicated* client for the life of a conversation
+(2.4) and issues a provider call per message, so a lease-scoped emitter would
+have produced one event per conversation and none per message. Emitting at the
+call boundary makes web chat the same rule as everything else: one event per
+provider call, with `queue_wait_ms` of zero because a dedicated client has no
+admission wait (7.2).
 
 **Sanitize at the raise site, not at the log site — and suppress the cause.**
 `feature_llm_call` logs `str(error)` verbatim
@@ -946,6 +1224,25 @@ Where the original is needed for diagnosis, log `sanitize_sdk_error(exc)` at the
 raise site; never the exception object. Nothing downstream is modified to
 compensate, and no new sanitization layer is added at the logging sites.
 
+**One existing helper already carries a raw response preview into the logs, and
+moving it does not fix that.** `_json_parse_failure`
+(`_text_generation_service.py:120-127`) builds its message from
+`raw[:240]` — 240 bytes of verbatim model output — and `feature_llm_call` stores
+`str(error)`. Malformed provider output is exactly the case most likely to
+contain something that must never be logged: an echoed prompt, a leaked
+credential from the model's context, a home or auth path in an error the
+provider stringified into its response. This is a pre-existing leak on the
+legacy path, and 4.3 requires the helper to move byte-for-byte, which would
+carry it onto the SDK path unchanged; the plan's own "never prompts, responses,
+credentials, or auth-file paths" rule forbids both.
+
+Drop the preview. The exception keeps the parse-error type, the parse-error
+message, and `raw_len`, which is what a reader actually acts on — "the model
+returned 12 bytes" and "the model returned 40 KB of prose" are different bugs,
+and neither needs the bytes to diagnose. This is the least mechanism that
+satisfies the rule: no second sanitized-vs-unsanitized exception pair, no
+conditional redaction, no new field.
+
 **Residual service-level admission.** SDK-routed text requests keep their
 existing CLI/DAEMON binding styles, so they still pass the text-generation
 service's spawn-cold admission semaphore (`_text_generation_service.py:55-68`)
@@ -973,9 +1270,17 @@ admission only, and 8.2 states that a saturated daemon can show low
   all the way into `feature_llm_call` — is carried by 4.3.6 instead, because no
   SDK text adapter and no SDK-to-service path exists at 2.9's completion (2.9
   depends only on 2.4). Same deferral shape as 3.1.4 → 6.3.5.
-- 2.9.2 - `agent_sdk_call` events carry the full field set including
-  `queue_wait_ms` and `latency_ms` as disjoint measurements, with sanitized
-  errors and no content. test: `tests/ai/agent_sdk/test_runtime.py`.
+- 2.9.2 - The runtime exposes `queue_wait_ms` and `cleanup_outcome` to its
+  callers as the two facts only it holds, with `queue_wait_ms` and
+  `latency_ms` disjoint, so an adapter can assemble the full `agent_sdk_call`
+  field set without the runtime emitting it. test:
+  `tests/ai/agent_sdk/test_runtime.py`.
+- 2.9.4 - `_json_parse_failure` emits no verbatim provider output: given a
+  malformed response containing a home path, an env value, a token-shaped
+  string, and prompt text, neither the raised exception's message nor the
+  `feature_llm_call` record contains any of them, while the parse-error type
+  and `raw_len` are still present. symbol: `_json_parse_failure`. test:
+  `tests/ai/test_text_generation.py`.
 
 ## P3: Shared Capability Surfaces
 `kind: framing`
@@ -1082,6 +1387,13 @@ Target: `src/gobby/ai/agent_sdk/codex_oneshot.py` (new)
   token-shaped string surfaces with none of the three, and the formatted
   traceback carries none of them either. test:
   `tests/ai/agent_sdk/test_codex_oneshot.py`.
+- 4.1.5 - The adapter emits exactly one `agent_sdk_call` per request carrying
+  the complete 2.9 key set — the exact resolved model, capability, configured
+  route, backend, readiness, `queue_wait_ms` taken from the lease,
+  `latency_ms`, integer usage, success/sanitized-error, and `cleanup_outcome` —
+  on both the success and the failure path, and never emits prompts, responses,
+  credentials, auth paths, home paths, or raw provider error text. test:
+  `tests/ai/agent_sdk/test_codex_oneshot.py`.
 
 ### 4.2 Droid SDK text adapter [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -1106,6 +1418,10 @@ Target: `src/gobby/ai/agent_sdk/droid_oneshot.py` (new)
   raise site per 2.9: a provider error carrying a home path, an env value, and a
   token-shaped string surfaces with none of the three, and the formatted
   traceback carries none of them either. test:
+  `tests/ai/agent_sdk/test_droid_oneshot.py`.
+- 4.2.4 - The adapter emits exactly one `agent_sdk_call` per request with the
+  complete 2.9 key set and security exclusions, on both the success and the
+  failure path, matching 4.1.5. test:
   `tests/ai/agent_sdk/test_droid_oneshot.py`.
 
 ### 4.3 Text routing wrapper and builder wiring [category: code] (depends: 2.5, 4.1, 4.2)
@@ -1175,6 +1491,12 @@ beside them, and put `StructuredJsonResult` there too, since both the producer
 (`route_adapters.py`) and the consumer (`_text_generation_service.py`) import it
 and neither should import the other.
 
+The move is byte-for-byte **except** for the raw-preview removal 2.9 requires:
+the helper's message drops `raw[:240]` and keeps the parse-error type, the
+parse-error message, and `raw_len`. Moving it unchanged would carry a
+pre-existing response-content leak onto the SDK path, and this is the section
+that touches the helper.
+
 **The public contract does not change.** `StructuredJsonResult` is an
 adapter-private return shape that the service unpacks immediately; it must never
 reach `TextGenerationService.generate_json`'s callers, which keep receiving a
@@ -1211,9 +1533,28 @@ least mechanism that keeps both the dispatch and the label honest.
   observes the flip, (c) SDK unavailable/timeout yields exactly one SDK
   attempt and no legacy adapter is constructed or called.
 - `_daemon_text_generation_adapter_factories` gains
-  `agent_sdk_runtime` kwarg; when present, wraps the `"codex"`/`"droid"`
-  entries **after** the endpoint loop (endpoint providers never wrapped). It
-  passes the runtime's config getter, not the config object it was built with.
+  `agent_sdk_runtime` kwarg and wraps the `"codex"`/`"droid"` entries **after**
+  the endpoint loop (endpoint providers never wrapped). It passes the runtime's
+  config getter, not the config object it was built with.
+
+**Wrap unconditionally; an absent runtime means unavailable, not legacy.**
+The wrapper needs only a config getter to resolve a route — the runtime is
+needed to *serve* an sdk route, not to *recognize* one. Installing the wrapper
+only "when a runtime is present" therefore silently converts a fail-closed
+condition into a fallback: after the Phase-2 constructor failure 2.5 explicitly
+permits, `agent_sdk_runtime` is `None`, the codex entry is left unwrapped, and a
+request configured `codex`/`sdk` is served by the legacy codex adapter with no
+error and no signal. That is the precise substitution the no-fallback rule
+exists to forbid, and it is reachable in production through both construction
+sites (6.3).
+
+So the wrapper is always installed, and it takes the runtime as
+`AgentSDKRuntimeHandle | None`. With a runtime it behaves as specified above.
+With `None` it serves `legacy` snapshots normally and raises
+`CapabilityUnavailableError` for an `sdk` snapshot **without constructing the
+legacy inner adapter** — the same outcome an unready provider produces, which
+is also the honest one: the operator asked for a backend the daemon failed to
+build.
 - `build_daemon_text_generation_service` gains the matching optional
   `agent_sdk_runtime` kwarg and threads it through. **This section also makes
   the production call site pass it**: `_init_llm_service`
@@ -1231,9 +1572,16 @@ least mechanism that keeps both the dispatch and the label honest.
 - 4.3.1 - route=legacy dispatches to the existing CLI adapters and
   `generate_json` returns the parsed-text result byte-identically to today,
   reusing `_json_request` / `_parse_json_text` / `_json_parse_failure` so a
-  malformed payload raises the same error as today; route=sdk dispatches to SDK
-  adapters using the SDK's structured output. symbol:
-  `RoutingTextGenerateAdapter`. test: `tests/ai/test_text_generation.py`.
+  malformed payload raises the same error type and shape as today, differing
+  only by the removed raw preview; route=sdk dispatches to SDK adapters using
+  the SDK's structured output. symbol: `RoutingTextGenerateAdapter`. test:
+  `tests/ai/test_text_generation.py`.
+- 4.3.9 - With `agent_sdk_runtime=None`, the routing wrapper is still installed
+  on the codex/droid entries: a `legacy` snapshot serves normally, and an `sdk`
+  snapshot raises `CapabilityUnavailableError` without constructing or invoking
+  the legacy inner adapter. test:
+  `tests/ai/agent_sdk/test_route_adapters.py`. test:
+  `tests/runner_init/test_services.py`.
 - 4.3.5 - A legacy-routed JSON request is logged `json_parse_outcome:
   parsed_text`, not `provider_structured`, and an sdk-routed one is logged
   `provider_structured`; adapters that return a bare `dict` are unaffected and
@@ -1324,6 +1672,10 @@ resolution would trade that protection for nothing.
   raise site per 2.9: a provider error carrying a home path, an env value, and a
   token-shaped string surfaces with none of the three, and the formatted
   traceback carries none of them either. test:
+  `tests/ai/agent_sdk/test_vision_adapters.py`.
+- 5.1.4 - Each vision adapter emits exactly one `agent_sdk_call` per
+  `extract()` with the complete 2.9 key set and security exclusions, on both
+  the success and the failure path, matching 4.1.5. test:
   `tests/ai/agent_sdk/test_vision_adapters.py`.
 
 ### 5.2 Vision registry availability gate [category: code] (depends: 2.4, 5.1)
@@ -1466,6 +1818,10 @@ Target: `src/gobby/ai/agent_sdk/tool_chat_codex.py` (new)
   the tool-chat service folds into its own error surface — so no home path, env
   value, or token-shaped string reaches that surface or the formatted traceback.
   test: `tests/ai/agent_sdk/test_tool_chat_codex.py`.
+- 6.1.5 - The adapter emits exactly one `agent_sdk_call` per request with the
+  complete 2.9 key set and security exclusions, on both the success and the
+  failure path, matching 4.1.5. test:
+  `tests/ai/agent_sdk/test_tool_chat_codex.py`.
 
 ### 6.2 Droid SDK tool-chat adapter [category: code] (depends: 2.4, 3.1)
 `kind: deliverable`
@@ -1496,6 +1852,10 @@ event supplies usage/stop_reason. Same substrate, budget, and
   the tool-chat service folds into its own error surface — so no home path, env
   value, or token-shaped string reaches that surface or the formatted traceback.
   test: `tests/ai/agent_sdk/test_tool_chat_droid.py`.
+- 6.2.5 - The adapter emits exactly one `agent_sdk_call` per request with the
+  complete 2.9 key set and security exclusions, on both the success and the
+  failure path, matching 4.1.5. test:
+  `tests/ai/agent_sdk/test_tool_chat_droid.py`.
 
 ### 6.3 Tool-chat routing shim [category: code] (depends: 2.5, 4.3, 6.1, 6.2)
 `kind: deliverable`
@@ -1523,6 +1883,17 @@ called twice in the repo: `_init_llm_service`
 A daemon that took the fallback path would otherwise serve tool chat from a
 runtime-less service, resolving every `sdk` route to legacy with no diagnostic —
 silently, because that is exactly what an unconfigured route looks like.
+
+That reasoning generalizes, and it is why the wrapper here follows 4.3's
+unconditional-install rule rather than being installed only when a runtime
+exists. `agent_sdk_runtime` is `None` on two distinct paths — the `http.py`
+fallback when service construction was skipped, and the Phase-2 constructor
+failure 2.5 permits — and on both, an unwrapped codex/droid entry serves an
+`sdk`-configured request from the legacy adapter. The wrapper is always
+installed and takes the runtime as optional; with `None` it fails an `sdk`
+snapshot closed with `CapabilityUnavailableError` and never constructs the
+legacy inner adapter.
+
 No new `AIAdapterStyle`; `_TOOL_CHAT_EXECUTABLE_STYLES`,
 `_RUNTIME_ADAPTER_STYLES`, style maps, and `ToolChatService` dispatch all
 unchanged (`ToolChatResult.adapter_style` still reports the binding style).
@@ -1568,9 +1939,13 @@ assertion deferred from 3.1.4, because SDK tool-chat adapters first exist at
   `tests/ai/test_tool_chat_service.py`.
 - 6.3.8 - `_init_llm_service` passes `runner.agent_sdk_runtime` into
   `build_daemon_tool_chat_service`, so a daemon built with sdk tool-chat routes
-  serves them; with the runtime absent the builder is called exactly as it is
-  today. file: `src/gobby/runner_init/services.py`. test:
+  serves them. file: `src/gobby/runner_init/services.py`. test:
   `tests/runner_init/test_services.py`.
+- 6.3.9 - With `agent_sdk_runtime=None` on either construction path, a
+  tool-chat request whose live route is `sdk` raises
+  `CapabilityUnavailableError` and no legacy codex/droid adapter is constructed
+  or invoked, while `legacy`-routed requests are served normally. test:
+  `tests/ai/test_tool_chat_service.py`.
 
 ## P7: Droid SDK Web Chat
 `kind: framing`
@@ -1626,11 +2001,18 @@ implementing `ChatSessionProtocol`, plus `DroidSDKWebChatBackend`:
   surface not covered by the adapter list, and it is the surface closest to the
   user.
 - **This session emits its own `agent_sdk_call` events**, one per provider call,
-  rather than relying on the runtime's lease emitter (2.9). It holds a dedicated
-  client for the conversation's whole life and never takes a lease, so the lease
-  emitter would produce a single event spanning hours and no per-message latency,
-  usage, or outcome at all. Same field set, `queue_wait_ms` of zero (a dedicated
-  client waits on no admission gate), sanitized errors.
+  on the same rule every SDK adapter follows (2.9) — the difference is only that
+  its provider call is a message rather than a request. It holds a dedicated
+  client for the conversation's whole life and never takes a lease, so
+  `queue_wait_ms` is zero (a dedicated client waits on no admission gate).
+  Everything else is identical: same key set, same sanitization, same
+  exclusions.
+
+  Because this emitter shares no code with the adapters' and no typed schema
+  enforces the shape, its acceptance asserts the **exact** key set rather than a
+  representative sample. A partial emitter here would be invisible — it would
+  still log something plausible per message — and this is the surface where a
+  leak would carry live user conversation content.
 
 **Acceptance:**
 
@@ -1647,9 +2029,13 @@ implementing `ChatSessionProtocol`, plus `DroidSDKWebChatBackend`:
   and a `logger.exception` capture of the failure contains none of the three.
   test: `tests/servers/websocket/chat/test_droid_sdk_backend.py`.
 - 7.2.5 - A conversation that sends three messages emits three `agent_sdk_call`
-  events, each carrying its own `latency_ms`, usage, and outcome, with
-  `queue_wait_ms` of zero — not one event for the conversation. test:
-  `tests/servers/websocket/chat/test_droid_sdk_backend.py`.
+  events — not one for the conversation — and each carries the **exact** 2.9 key
+  set: `provider`, `capability`, `model`, `configured_route`, `backend`,
+  `ready`, `queue_wait_ms` (zero), `latency_ms`, integer usage, `success`,
+  sanitized `error`, and `cleanup_outcome`. Asserted on both a successful
+  message and a failed one, and asserted to contain no prompt text, no response
+  text, no credential, no auth path, no home path, and no raw provider error
+  string. test: `tests/servers/websocket/chat/test_droid_sdk_backend.py`.
 
 ### 7.3 Backend selection and pinning [category: code] (depends: 7.2, 1.4, 2.5)
 `kind: deliverable`
@@ -1695,6 +2081,26 @@ does not own is how the wiring silently goes missing in production.
   recovery genuinely fails: `ensure_provider` runs, and if it cannot make the
   provider ready the client acquisition raises and the connect fails with the
   same unready-SDK error. The difference is that it fails *after* trying.
+
+  **Trying must be bounded, and must happen once.** "Fails after trying" is only
+  acceptable if the trying ends. The 30s cooldown on `ensure_provider` (2.4)
+  limits how *often* a probe runs, not how *long* one takes, so a provider whose
+  initialization hangs leaves the WebSocket connect waiting indefinitely with no
+  error and no timeout — the client sees a dead connection rather than a failed
+  one. Both `ensure_provider` and the dedicated-client initialization that
+  follows it run under the runtime's `timeout_seconds`, with the transactional
+  cleanup of 2.4 disposing of anything a timed-out attempt built.
+
+  It must also not become two attempts. `_session.py:830-836` catches
+  `Exception` around `session.start(...)` and, whenever `resume_session_id` is
+  set, clears it and calls `start()` again as a fresh session. That retry exists
+  for one specific condition — the provider no longer has the session being
+  resumed — but it is written against a bare `Exception`, so an SDK
+  availability, auth, or timeout failure would trigger a **second** full SDK
+  start: two bounded waits back to back, two initialization attempts, and two
+  chances to strand partially built resources, all to reach the same fail-closed
+  answer. Narrow the retry to the backend's explicit resume-not-found condition
+  and let every other failure propagate on the first attempt.
 - `_session.py`, three minimal edits, all inside the existing
   per-conversation creation lock (`_create_chat_session_inner`, so concurrent
   first connects are already serialized):
@@ -1801,6 +2207,23 @@ still fill in a genuinely absent stored one. Resolving them together is the
 point — they describe one durable identity, and splitting the decision is what
 lets a transient field override half of it.
 
+**`_pending_providers` is a second door into the same bypass, and it currently
+has the highest precedence of all.** `_create_chat_session_inner` resolves the
+provider at `:380-397` in this order: the popped `_pending_providers` entry
+first, *then* `existing_db_session.source`, then the request argument, then the
+configured binding. So the transient value set by a `session_config` message
+outranks the durable row outright. A conversation whose row says
+`(droid, sdk)` can be dispatched as `claude` or `codex` by a pending entry, and
+those branches never look at `web_chat_backend` — the pin is intact, correctly
+written, and simply never consulted. Fixing only the `continue_in_chat`
+precedence would leave this adjacent path open, and it is the more reachable of
+the two.
+
+The same rule therefore covers both sites: the durable pair is resolved first,
+and when the pin is non-NULL a conflicting pending provider fails the connect
+rather than taking precedence. A pending provider still applies normally to an
+unpinned conversation, which is every conversation this plan does not touch.
+
 **Pinned `sdk` under an all-legacy config.** This is the one place the plan's
 "rollback is a config change" claim does not hold, and it is deliberate. A
 conversation pinned `sdk` keeps requesting the SDK backend after an operator
@@ -1898,6 +2321,20 @@ refactor of unrelated code.
   manager also works with `agent_sdk_runtime=None`. file:
   `src/gobby/servers/websocket/chat/runtime_manager.py`. test:
   `tests/servers/websocket/chat/test_runtime_manager.py`.
+- 7.3.13 - A stored `(droid, sdk)` row is not overridden by a pending provider:
+  a `_pending_providers` entry naming `claude` or `codex` fails the connect
+  instead of taking precedence, while a pending provider still applies normally
+  to a conversation whose pin is `NULL`. file:
+  `src/gobby/servers/websocket/chat/_session.py`. test:
+  `tests/servers/websocket/chat/test_provider_routing.py`.
+- 7.3.14 - Web-chat recovery is bounded and single-attempt: an
+  `ensure_provider` or dedicated-client initialization that never completes
+  fails the connect within the runtime timeout leaving no surviving child, and
+  a resumed session whose SDK start fails for an availability, auth, or timeout
+  reason is **not** retried as a fresh start — only the backend's explicit
+  resume-not-found condition retries. file:
+  `src/gobby/servers/websocket/chat/_session.py`. test:
+  `tests/servers/websocket/chat/test_provider_routing.py`.
 
 ## P8: Rollout Hardening
 `kind: framing`
@@ -1916,11 +2353,28 @@ disabled by default: SDK text round-trip, account rejection path, droid lease
 round-trip. Register both gates in the `pre-push-test.sh` deselect block and
 the gate assertion list (:318-331).
 
+**Each scenario needs its own acceptance, or the section accepts nothing.**
+A single "skips cleanly and the gates are registered" criterion is satisfied by
+a file containing three `pass` bodies — it verifies the plumbing and none of the
+behavior, in the one section whose entire purpose is behavioral verification
+against a real authenticated SDK. The default-skip and gate-registration
+assertion is still required (it is what keeps these tests out of everyone's
+pre-push), but each promised scenario is accepted on its own terms, conditioned
+on its gate and prerequisite executable being present.
+
 **Acceptance:**
 
 - 8.1.1 - Live tests skip cleanly without env/CLI and the gate-list
   assertion passes with both new gates. file: `pre-push-test.sh`. test:
   `tests/ci/test_postgres_test_stack.py`.
+- 8.1.2 - With `GOBBY_RUN_CODEX_SDK_LIVE=1` and the codex executable present, a
+  live Codex SDK text round-trip returns non-empty text with usage, and the
+  API-key account path is rejected with the fixed sanitized message from 2.2.
+  test: `tests/ai/agent_sdk/test_live_sdk.py`.
+- 8.1.3 - With `GOBBY_RUN_DROID_SDK_LIVE=1` and the droid executable present, a
+  live droid lease round-trip initializes exactly one session, returns text, and
+  closes and replaces the leased client leaving no surviving process. test:
+  `tests/ai/agent_sdk/test_live_sdk.py`.
 
 ### 8.2 Documentation updates [category: docs] (depends: 4.3, 5.3, 6.3, 7.3)
 `kind: deliverable`
@@ -2264,3 +2718,101 @@ claim.
   provider, and `_session.py:740` warns and continues past a registration
   failure. `uv run gobby plans validate` passes (8 phases, consumer sweep
   green).
+
+**Round 4** `kind: verification`
+
+- reviewer_run: 983d5f1d-f296-4c5d-899b-ae06565c8e08
+- reviewer_session: e39bafc9-da25-4007-b27e-9c25e70b1bbf
+- reviewer_model: codex / gpt-5.6-sol / xhigh
+- evidence_id: bce61b75-1d55-44be-b4c1-ee15209f5485
+- plan_hash: a15dbb12c94fc3f6eaefa33b12a4da15c5986c4d260908ff0c92e4dd35a2bf27
+- verdict: reject
+- attestation_digest: f7bf2c10678b0b724091cd495d0d7adb9f570d593e9f8a519dd75283b2d4eb44
+- lanes: requirements_traceability (5), repository_blast_radius (9),
+  runtime_invariants (8); 22 candidates, 19 emitted (20 findings), 3 dismissed;
+  shadow manifest valid at 28 entries; cross-lane and adjacent-variant coverage
+  complete
+- findings (all severity `blocking`):
+- R4-F1 / §§ 1.1, 2.2, 2.7 / the pinned SDK cannot delete an inherited
+  `OPENAI_API_KEY` and does not spawn into its own session, so both the env
+  scrub and the process-group kill are unimplementable as written
+- R4-F2 / §§ 2.4, 2.6 / the Round 3 reconcile construct loses a write landing
+  between a flight's final read and its slot release, staling unrelated
+  providers through a runtime-global generation, and never terminates under
+  continuous writes
+- R4-F3 / §§ 2.2, 2.3, 2.4, 2.7 / the generation fence covers only
+  `ensure_provider`; Codex start, pool replenishment, and dedicated web-chat
+  clients are unfenced child writers
+- R4-F4 / §§ 2.4, 2.5, 2.6, 5.2 / the runtime is claimed to reuse
+  `ServiceContainer.main_loop` and `shutdown_in_progress` but is given no path
+  to either
+- R4-F5 / §§ 2.1-2.4 / resources built before publication have no specified
+  cleanup on failure, timeout, cancellation, or stale commit
+- R4-F6 / §§ 2.5, 2.6 / 2.6 awaits `runner.agent_sdk_runtime.start()`
+  unconditionally on a field 2.5 explicitly permits to be `None`
+- R4-F7 / §§ 2.4, 2.6 / acceptance 2.4.12 requires the sink integration that
+  2.6 — a downstream dependent — installs
+- R4-F8 / §§ 2.4, 7.2, 7.3 / web-chat recovery is unbounded in duration, and
+  the existing resume retry turns one SDK failure into two full starts
+- R4-F9 / §§ 2.5, 4.3, 6.3 / installing routing wrappers only when a runtime
+  exists lets `route=sdk` execute legacy after a constructor failure
+- R4-F10 / §§ 2.5, 2.8 / admin status dereferences the optional runtime,
+  breaking precisely on the degraded state it exists to report
+- R4-F11 / §§ 2.7, 2.9 / shutdown owners log raw exceptions with `exc_info`,
+  outside the request-adapter sanitization boundary
+- R4-F12 / §§ 2.4, 2.9, 4.1-4.2, 5.1, 6.1-6.2 / the runtime is assigned an
+  event it structurally cannot fill: the lease has no capability/model/route
+  metadata and no post-result channel
+- R4-F13 / §§ 2.9, 7.2 / 7.2.5 asserts a subset of the event contract at a
+  bypass emitter that no shared schema constrains
+- R4-F14 / §§ 1.4, 7.3 / `_pending_providers` outranks the durable row, so a
+  pinned conversation can enter a branch that never reads the pin
+- R4-F15 / §§ 4.3, 6.3 / **declined** — outer candidate loops advance past
+  `CapabilityUnavailableError`
+- R4-F16 / §§ 2.9, 4.3 / `_json_parse_failure` folds `raw[:240]` of provider
+  output into an exception that `feature_llm_call` logs
+- R4-F17 / §§ 1.4, 7.3 / `tests/storage/test_sessions_import.py` pins
+  `SessionManager.update`'s literal signature and public method set
+- R4-F18 / § 8.1 / the only acceptance verifies skipping, so behaviorless
+  gated tests satisfy the section
+- R4-F19 / § 1.1 / `uv lock` mutates `uv.lock`, which is neither a target nor
+  an acceptance artifact
+- R4-F20 / § 1.1 / the pinned distribution imports as `openai_codex`, so
+  `import codex` cannot pass
+- resolution_notes: 19 of 20 applied; **R4-F15 declined**. Every claim was
+  verified before acceptance — the two dependency-surface findings against the
+  pinned upstream source rather than against reasoning. F1 and F20 are
+  confirmed at
+  `openai/codex@rust-v0.144.4:sdk/python/src/openai_codex/`: the client builds
+  its child env as `os.environ.copy()` overlaid with `CodexConfig.env` (an
+  overlay cannot delete) and calls `subprocess.Popen` with no
+  `start_new_session`, and `AsyncCodex` is exported from the `openai_codex`
+  package, not `codex`. F1's fix keeps the security invariant and changes the
+  mechanism: `account()` was already required and is fail-closed, so it becomes
+  the stated enforcement point, the empty-string env value is retained as
+  best-effort narrowing that must never be described as deletion, and the
+  process-group escalation is **removed for Codex specifically** — that child
+  lives in the daemon's own process group, so the Round 3 text would have had
+  the daemon SIGTERM itself. `CodexConfig.codex_bin` plus an exec shim is
+  recorded as the escape hatch and deliberately not built, because it adds an
+  installed artifact to harden a path `account()` already closes. F4 was
+  narrowed to two lambdas at 2.5's existing wiring site rather than a new
+  binder API, after confirming `runner_lifecycle.py:153-157` assigns
+  `main_loop` strictly after Phase 4 — which is also why both must be getters,
+  not values. F2 replaces the Round 3 loop-until-stable rule rather than adding
+  to it: a write-side dirty epoch plus per-provider generations, with bounded
+  passes that reschedule instead of looping. F12 took the least-mechanism
+  option — emit in the adapters, where request and result already meet — which
+  also deleted web chat's special case. F16 is a pre-existing legacy leak that
+  4.3 would have carried onto the SDK path; the preview is dropped and
+  `raw_len` kept. F15 was **declined** after reading
+  `_tool_chat_service.py:87-152`: the outer loop already advances past
+  `CapabilityUnavailableError` for *every* unavailable provider, so making SDK
+  unavailability terminal would change dispatch semantics this plan promises to
+  leave byte-identical and would fail requests the operator configured a second
+  candidate to serve. The settled rule scopes to same-provider backend
+  substitution, which the wrappers already prevent; Constraints now states that
+  boundary explicitly instead. F8, F14, and F17 were each confirmed against the
+  named lines (`_session.py:830-836`, `:380-397`, and
+  `_normalized_signature`'s `UNSET` rendering). `uv run gobby plans validate`
+  passes (8 phases, consumer sweep green).
