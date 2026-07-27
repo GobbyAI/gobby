@@ -148,6 +148,7 @@ def _handler(
     session_manager=None,
     session_coordinator=None,
     task_recovery=None,
+    clone_storage=None,
 ) -> AgentCleanupHandler:
     async def default_run_db(func, *args, **kwargs):
         return func(*args, **kwargs)
@@ -158,7 +159,7 @@ def _handler(
         db=db,
         get_session_manager=lambda: session_manager,
         get_session_coordinator=lambda: session_coordinator,
-        clone_storage=None,
+        clone_storage=clone_storage,
         completion_registry=completion_registry,
         task_recovery=task_recovery or AsyncMock(),
         prompt_detector=clearable,
@@ -559,6 +560,226 @@ async def test_daemon_stop_parking_skips_later_resource_cleanup(
     session_coordinator.release_session_worktrees.assert_not_called()
     session_manager.update_status.assert_not_called()
     assert runtime_calls == [(db, "run-1", "child-1", "daemon_stop")]
+    assert db.executed == []
+
+
+class _RecordingTaskRecovery:
+    """Task recovery fake that records terminal-agent recovery requests."""
+
+    def __init__(self) -> None:
+        self.recovered: list[tuple[AgentRun, str]] = []
+
+    async def recover_task_from_terminal_agent(self, run: AgentRun, *, outcome: str) -> None:
+        self.recovered.append((run, outcome))
+
+
+class _FailingNotifyRegistry(RecordingCompletionRegistry):
+    """Completion registry whose subscriber notification always raises."""
+
+    async def notify(
+        self,
+        completion_id: str,
+        result: dict[str, object],
+        message: str = "",
+    ) -> dict[str, bool] | None:
+        raise RuntimeError("subscriber notification failed")
+
+
+def _stub_runtime_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
+    )
+
+
+@pytest.mark.asyncio
+async def test_daemon_stop_terminalization_with_task_keeps_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    active = _run(status="running")
+    parked = _run(status="cancelled", terminal_reason="daemon_stop")
+    manager = MagicMock()
+    manager.get.return_value = active
+    manager.cancel.return_value = parked
+    task_recovery = _RecordingTaskRecovery()
+    tick_calls: list[tuple[str, str]] = []
+
+    def record_tick(_db: object, *, task_id: str, reason: str) -> None:
+        tick_calls.append((task_id, reason))
+
+    _stub_runtime_cleanup(monkeypatch)
+    monkeypatch.setattr(
+        "gobby.build.dispatch_tick.schedule_dispatcher_tick_for_task",
+        record_tick,
+    )
+    handler = _handler(db, agent_run_manager=manager, task_recovery=task_recovery)
+
+    assert await handler.terminalize_cancelled_run("run-1", terminal_reason="daemon_stop")
+
+    manager.cancel.assert_called_once_with("run-1", terminal_reason="daemon_stop")
+    assert task_recovery.recovered == []
+    assert tick_calls == [("task-1", "agent_parked")]
+
+
+@pytest.mark.asyncio
+async def test_daemon_stop_parking_with_task_retains_isolation_and_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    session_coordinator = MagicMock()
+    clone_storage = MagicMock()
+    artifacts = MagicMock(return_value=[])
+    monkeypatch.setattr(
+        agent_cleanup,
+        "cleanup_merged_task_artifacts_after_agent_exit",
+        artifacts,
+    )
+    _stub_runtime_cleanup(monkeypatch)
+    handler = _handler(db, session_coordinator=session_coordinator, clone_storage=clone_storage)
+
+    await handler.post_terminal_cleanup(
+        replace(_run(status="cancelled", terminal_reason="daemon_stop"), clone_id="clone-1"),
+        allow_parent_session_fallback=False,
+    )
+
+    session_coordinator.release_session_worktrees.assert_not_called()
+    clone_storage.release.assert_not_called()
+    artifacts.assert_not_called()
+    assert db.executed == []
+
+
+@pytest.mark.asyncio
+async def test_daemon_stop_parking_with_task_preserves_completion_subscribers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    registry = AcknowledgingCompletionRegistry({"child-1": True})
+    _stub_runtime_cleanup(monkeypatch)
+    handler = _handler(db, completion_registry=registry)
+
+    await handler.post_terminal_cleanup(
+        _run(status="cancelled", terminal_reason="daemon_stop"),
+        allow_parent_session_fallback=False,
+        notification_result={"status": "cancelled", "terminal_reason": "daemon_stop"},
+        notification_message="Agent run-1 cancelled",
+    )
+
+    assert registry.notifications == []
+    assert registry.cleaned == []
+    assert db.executed == []
+
+
+@pytest.mark.asyncio
+async def test_user_cancelled_terminalization_with_task_runs_full_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    active = replace(_run(status="running"), clone_id="clone-1")
+    cancelled = replace(
+        _run(status="cancelled", terminal_reason="user_cancelled"),
+        clone_id="clone-1",
+    )
+    manager = MagicMock()
+    manager.get.return_value = active
+    manager.cancel.return_value = cancelled
+    task_recovery = _RecordingTaskRecovery()
+    registry = AcknowledgingCompletionRegistry({"child-1": True})
+    session_coordinator = MagicMock()
+    clone_storage = MagicMock()
+    artifact_calls: list[tuple[object, str]] = []
+    tick_calls: list[tuple[str, str]] = []
+
+    def retry_cleanup(
+        cleanup_db: object,
+        task_id: str,
+        *,
+        preserve_worktree_id: str | None = None,
+    ) -> list[SimpleNamespace]:
+        artifact_calls.append((cleanup_db, task_id))
+        return []
+
+    def record_tick(_db: object, *, task_id: str, reason: str) -> None:
+        tick_calls.append((task_id, reason))
+
+    monkeypatch.setattr(
+        agent_cleanup,
+        "cleanup_merged_task_artifacts_after_agent_exit",
+        retry_cleanup,
+    )
+    _stub_runtime_cleanup(monkeypatch)
+    monkeypatch.setattr(
+        "gobby.build.dispatch_tick.schedule_dispatcher_tick_for_task",
+        record_tick,
+    )
+    handler = _handler(
+        db,
+        agent_run_manager=manager,
+        completion_registry=registry,
+        session_coordinator=session_coordinator,
+        task_recovery=task_recovery,
+        clone_storage=clone_storage,
+    )
+
+    assert await handler.terminalize_cancelled_run("run-1", terminal_reason="user_cancelled")
+
+    assert task_recovery.recovered == [(cancelled, "cancelled")]
+    session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
+    clone_storage.release.assert_called_once_with("clone-1")
+    assert artifact_calls == [(db, "task-1")]
+    assert registry.notifications == [
+        (
+            "run-1",
+            {"status": "cancelled", "terminal_reason": "user_cancelled", "run_id": "run-1"},
+            "Agent run-1 cancelled",
+        )
+    ]
+    assert registry.cleaned == ["run-1"]
+    assert tick_calls == [("task-1", "agent_cancelled")]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["child-1"]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    registry = _FailingNotifyRegistry()
+    session_coordinator = MagicMock()
+    artifact_calls: list[tuple[object, str]] = []
+
+    def retry_cleanup(
+        cleanup_db: object,
+        task_id: str,
+        *,
+        preserve_worktree_id: str | None = None,
+    ) -> list[SimpleNamespace]:
+        artifact_calls.append((cleanup_db, task_id))
+        return []
+
+    monkeypatch.setattr(
+        agent_cleanup,
+        "cleanup_merged_task_artifacts_after_agent_exit",
+        retry_cleanup,
+    )
+    _stub_runtime_cleanup(monkeypatch)
+    handler = _handler(db, completion_registry=registry, session_coordinator=session_coordinator)
+
+    await handler.post_terminal_cleanup(
+        _run(),
+        allow_parent_session_fallback=False,
+        notification_result={"status": "completed"},
+        notification_message="done",
+    )
+
+    assert registry.cleaned == ["run-1"]
+    session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
+    assert artifact_calls == [(db, "task-1")]
     assert db.executed == []
 
 

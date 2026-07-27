@@ -15,8 +15,9 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -25,6 +26,7 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_
 from gobby.agents.tmux import configure_tmux
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.servers.routes.sessions import statusline_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
@@ -39,7 +41,10 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 from .detection_test_support import BundledDetectionRegistry
 
-DETECTION_REGISTRY = BundledDetectionRegistry()
+if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
+
+DETECTION_REGISTRY = cast("DetectionManifestRegistry", BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
 
 configure_tmux(TmuxConfig())
@@ -4405,3 +4410,214 @@ class TestCleanupAgentFdClose:
 
         assert result is None
         assert run.id not in monitor._master_fds
+
+
+def _parked_run(run_id: str, child_session_id: str | None = "child-parked") -> AgentRun:
+    """Build a cancelled daemon-stop original awaiting recovery."""
+    return replace(
+        _metadata_run(run_id, {}),
+        status="cancelled",
+        terminal_reason="daemon_stop",
+        child_session_id=child_session_id,
+    )
+
+
+class TestReapDaemonStopOrphans:
+    """Tests for the daemon-stop orphan reaper."""
+
+    @pytest.mark.asyncio
+    async def test_reap_seeds_completion_registry_from_durable_subscribers(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Finding-5 regression: DB-backed waiters get the terminal result.
+
+        Parked originals were never registered in the in-memory completion
+        registry, so the reaper must seed it from the durable subscriber rows
+        before terminal delivery.
+        """
+        registry = CompletionEventRegistry()
+        run = _parked_run(_rid("orphan-seed"))
+        run_manager = MagicMock()
+        monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
+            agent_run_manager=run_manager,
+            db=temp_db,
+            check_interval_seconds=1.0,
+            completion_registry=registry,
+            tmux_config=TmuxConfig(),
+        )
+        recovery = MagicMock(recover_task_from_terminal_agent=AsyncMock())
+        subscribers_at_delivery: list[list[str]] = []
+
+        async def record_cleanup(run_arg: AgentRun, **_kwargs: object) -> None:
+            subscribers_at_delivery.append(registry.get_subscribers(run_arg.id))
+
+        cleanup_handler = MagicMock(post_terminal_cleanup=AsyncMock(side_effect=record_cleanup))
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.return_value = ["durable-session"]
+
+        with (
+            patch.object(monitor, "_task_recovery", recovery),
+            patch.object(monitor, "_cleanup_handler", cleanup_handler),
+            patch(
+                "gobby.storage.agent_resume.claim_daemon_stop_orphan_reap",
+                return_value=True,
+            ) as claim,
+            patch("gobby.storage.agent_resume.expire_parked_daemon_session") as expire,
+            patch(
+                "gobby.storage.pipeline_subscribers.CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+        ):
+            assert await monitor._reap_daemon_stop_orphan(run) is True
+
+        subscriber_manager.get_completion_subscribers.assert_called_once_with(run.id)
+        assert subscribers_at_delivery == [["durable-session"]]
+        recovery.recover_task_from_terminal_agent.assert_awaited_once_with(
+            run,
+            outcome="cancelled",
+        )
+        cleanup_handler.post_terminal_cleanup.assert_awaited_once()
+        cleanup_kwargs = cleanup_handler.post_terminal_cleanup.await_args.kwargs
+        assert cleanup_kwargs["force_full_cleanup"] is True
+        assert cleanup_kwargs["notification_result"] == {
+            "status": "cancelled",
+            "terminal_reason": "daemon_stop",
+            "run_id": run.id,
+        }
+        claim.assert_called_once_with(
+            temp_db,
+            original_run_id=run.id,
+            child_session_id="child-parked",
+        )
+        expire.assert_called_once_with(
+            temp_db,
+            original_run_id=run.id,
+            child_session_id="child-parked",
+        )
+        merged = run_manager.merge_resume_metadata.call_args
+        assert merged.args[0] == run.id
+        assert "daemon_stop_orphan_reaped_at" in merged.args[1]
+
+    @pytest.mark.asyncio
+    async def test_reap_continues_after_single_orphan_failure(
+        self,
+        monitor: AgentLifecycleMonitor,
+    ) -> None:
+        failing = _parked_run(_rid("orphan-failing"), child_session_id="child-failing")
+        healthy = _parked_run(_rid("orphan-healthy"), child_session_id="child-healthy")
+        skipped = _parked_run(_rid("orphan-no-child"), child_session_id=None)
+        run_manager = MagicMock()
+        run_manager.list_daemon_stop_orphans.return_value = [failing, skipped, healthy]
+        reap = AsyncMock(side_effect=[RuntimeError("reap exploded"), True])
+
+        with (
+            patch.object(monitor, "_agent_run_manager", run_manager),
+            patch.object(monitor, "_reap_daemon_stop_orphan", reap),
+        ):
+            reaped = await monitor.reap_daemon_stop_orphans()
+
+        assert reaped == 1
+        assert [c.args[0].id for c in reap.await_args_list] == [failing.id, healthy.id]
+
+    def test_get_active_terminal_runs_excludes_recovery_protected(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        live = replace(_metadata_run(_rid("live-run"), None), tmux_session_name="gobby-live")
+        fenced = replace(
+            _metadata_run(_rid("fenced-run"), {"reconciliation_pending": True}),
+            tmux_session_name="gobby-fenced",
+        )
+        provisional = replace(
+            _metadata_run(_rid("provisional-run"), {"daemon_stop_resume_phase": "prepared"}),
+            tmux_session_name="gobby-provisional",
+        )
+        no_tmux = _metadata_run(_rid("no-tmux-run"), None)
+        run_manager = MagicMock()
+        run_manager.list_active.return_value = [live, fenced, provisional, no_tmux]
+        monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
+            agent_run_manager=run_manager,
+            db=temp_db,
+            check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
+        )
+
+        assert [r.id for r in monitor._get_active_terminal_runs()] == [live.id]
+
+
+class TestNonTaskResumeCallback:
+    """Tests for the parked non-task resume retry hook in the check loop."""
+
+    @pytest.mark.asyncio
+    async def test_check_loop_invokes_callback_after_reconciliation_and_survives_errors(
+        self,
+        monitor: AgentLifecycleMonitor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+        fail_first = True
+
+        async def reconcile() -> int:
+            events.append("reconcile")
+            return 0
+
+        async def non_task_resume() -> int:
+            nonlocal fail_first
+            events.append("non_task")
+            if fail_first:
+                fail_first = False
+                raise RuntimeError("retry callback failed")
+            return 0
+
+        async def record_pending_terminations() -> int:
+            events.append("pending_terminations")
+            return 0
+
+        monitor.set_reconciliation_callback(reconcile)
+        monitor.set_non_task_resume_callback(non_task_resume)
+        monkeypatch.setattr(
+            monitor,
+            "reconcile_pending_terminations",
+            record_pending_terminations,
+        )
+        for name in (
+            "check_trust_prompts",
+            "check_loop_prompts",
+            "check_approval_prompts",
+            "check_queued_continuation_prompts",
+            "check_periodic_enters",
+            "check_attention_agents",
+            "check_unhealthy_agents",
+            "check_agent_memory",
+            "reap_daemon_stop_orphans",
+            "expire_terminal_run_sessions",
+            "check_initialization_timeout",
+            "check_idle_agents",
+            "check_provider_stalls",
+            "check_autonomous_stuck_agents",
+            "refresh_active_run_dispatch_mutexes",
+        ):
+            monkeypatch.setattr(monitor, name, AsyncMock(return_value=0))
+
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(_seconds: float) -> None:
+            if events.count("reconcile") >= 2:
+                raise asyncio.CancelledError
+            await real_sleep(0)
+
+        monkeypatch.setattr("gobby.agents.lifecycle_monitor.asyncio.sleep", fake_sleep)
+        monitor._running = True
+
+        await asyncio.wait_for(monitor._check_loop(), timeout=5.0)
+
+        assert events == [
+            "reconcile",
+            "non_task",
+            "reconcile",
+            "non_task",
+            "pending_terminations",
+        ]

@@ -14,6 +14,7 @@ from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
     is_envelope_processed,
+    is_inbox_envelope_fresh,
     mark_envelope_processed,
     read_envelope_marker,
     release_envelope_processing_claim,
@@ -74,6 +75,70 @@ async def test_barrier_timeout_reports_unresolved_run_and_session(tmp_path: Path
     drain.assert_awaited_once()
     assert drain.await_args is not None
     assert drain.await_args.kwargs == {"include_fresh": True}
+
+
+@pytest.mark.asyncio
+async def test_barrier_replays_fresh_envelope_end_to_end(tmp_path: Path) -> None:
+    """The startup barrier replays envelopes still inside the freshness grace."""
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+    envelope_id = f"n-{timestamp_ms}-abcd"
+    envelope_path = inbox_dir / f"{envelope_id}.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
+    assert is_inbox_envelope_fresh(envelope_path)
+
+    response = MagicMock(status_code=200)
+    post = AsyncMock(return_value=response)
+    with (
+        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
+        patch("gobby.hooks.inbox._post_envelope", new=post),
+    ):
+        mock_load_bootstrap.return_value.auth_mode = "disabled"
+        result = await drain_hook_inbox_barrier(FastAPI(), inbox_dir, timeout_seconds=5.0)
+
+    assert result.replayed == 1
+    assert result.timed_out is False
+    assert not envelope_path.exists()
+    assert is_envelope_processed(envelope_id, processed_dir=inbox_dir / "processed")
+    post.assert_awaited_once()
+    assert post.await_args is not None
+    assert post.await_args.kwargs == {"envelope_id": envelope_id}
+
+
+@pytest.mark.asyncio
+async def test_replayed_envelope_without_id_is_quarantined_and_barrier_settles(
+    tmp_path: Path,
+) -> None:
+    """A 2xx replay with no envelope ID is quarantined instead of retained forever."""
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
+
+    response = MagicMock(status_code=200)
+    with (
+        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
+        patch("gobby.hooks.inbox._post_envelope", new=AsyncMock(return_value=response)),
+        patch("gobby.hooks.inbox.envelope_id_from_inbox_path", return_value=None),
+    ):
+        mock_load_bootstrap.return_value.auth_mode = "disabled"
+        replayed = await drain_hook_inbox_once(
+            FastAPI(),
+            inbox_dir=inbox_dir,
+            include_fresh=True,
+        )
+        barrier = await drain_hook_inbox_barrier(FastAPI(), inbox_dir, timeout_seconds=5.0)
+
+    assert replayed == 1
+    assert not envelope_path.exists()
+    assert (inbox_dir / "quarantine" / envelope_path.name).exists()
+    meta = json.loads(
+        (inbox_dir / "quarantine" / f"{envelope_path.name}.meta.json").read_text(encoding="utf-8")
+    )
+    assert meta["reason"] == "missing_envelope_id"
+    assert barrier.replayed == 0
+    assert barrier.timed_out is False
 
 
 @pytest.mark.asyncio

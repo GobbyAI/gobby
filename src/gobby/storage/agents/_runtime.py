@@ -102,38 +102,6 @@ class _AgentRunRuntimeMixin:
             return None
         return self.get(run_id)
 
-    def mark_daemon_resume_consumed(
-        self: _AgentRunRuntimeHost,
-        run_id: str,
-        *,
-        successor_run_id: str,
-        consumed_at: str,
-    ) -> AgentRun | None:
-        """Guardedly bind an original daemon-stop run to one successor."""
-        patch = {
-            "daemon_stop_resume_consumed_at": consumed_at,
-            "daemon_stop_resume_consumed_by_run_id": successor_run_id,
-        }
-        now = utc_now()
-        cursor = self.db.execute(
-            """
-            UPDATE agent_runs
-            SET resume_metadata_json =
-                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
-                updated_at = %s
-            WHERE id = %s
-              AND (
-                    NOT (COALESCE(resume_metadata_json, '{}'::jsonb)
-                         ? 'daemon_stop_resume_consumed_at')
-                    OR resume_metadata_json ->> 'daemon_stop_resume_consumed_by_run_id' = %s
-              )
-            """,
-            (dump_resume_metadata(patch), now, run_id, successor_run_id),
-        )
-        if not _positive_rowcount(cursor):
-            return None
-        return self.get(run_id)
-
     def update_sdk_session_id(
         self: _AgentRunRuntimeHost,
         run_id: str,

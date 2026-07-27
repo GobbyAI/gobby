@@ -41,6 +41,7 @@ from gobby.build.validation import _validate_no_merge, _validate_planning_seed, 
 from gobby.config.build import Isolation
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
+from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -91,6 +92,7 @@ class BuildTargetControlResult:
     automation_updated: int = 0
     mutexes_cleared: int = 0
     claims_released: int = 0
+    parked_runs_released: int = 0
     stages_reset: int = 0
     branches_deleted: int = 0
     escalations_cleared: int = 0
@@ -117,6 +119,7 @@ async def build_stop_target(
     tasks = _affected_tasks(task_manager, root)
     task_ids = [task.id for task in tasks]
     agents = _active_agents(db, task_ids)
+    parked = _parked_daemon_stop_runs(db, task_ids)
 
     updated = 0
     for task in tasks:
@@ -124,6 +127,7 @@ async def build_stop_target(
         updated += 1
 
     await _cancel_active_agents(db, agents, services=services)
+    parked_runs_released = await _give_up_parked_daemon_stop_runs(db, parked, services=services)
     mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
     stages_reset = _reset_stoppable_stages(db, tasks, reason="build_stop")
@@ -137,6 +141,7 @@ async def build_stop_target(
         automation_updated=updated,
         mutexes_cleared=mutexes_cleared,
         claims_released=claims_released,
+        parked_runs_released=parked_runs_released,
         stages_reset=stages_reset,
     )
     _record_target_history(db, result, input_ref=input_ref)
@@ -408,6 +413,7 @@ async def build_restart_target(
         clean_result.automation_updated = stop_result.automation_updated
         clean_result.mutexes_cleared = stop_result.mutexes_cleared + clean_result.mutexes_cleared
         clean_result.claims_released = stop_result.claims_released + clean_result.claims_released
+        clean_result.parked_runs_released = stop_result.parked_runs_released
         clean_result.stages_reset += restart_stage_resets
         clean_result.escalations_cleared = escalations_cleared
         clean_result.dispatch_failures_reset = dispatch_failures_reset
@@ -425,6 +431,7 @@ async def build_restart_target(
     clean_result.automation_updated = resume_result.automation_updated
     clean_result.mutexes_cleared = resume_result.mutexes_cleared
     clean_result.claims_released = resume_result.claims_released
+    clean_result.parked_runs_released = stop_result.parked_runs_released
     clean_result.stages_reset += restart_stage_resets
     clean_result.escalations_cleared = escalations_cleared
     clean_result.dispatch_failures_reset = dispatch_failures_reset
@@ -559,6 +566,57 @@ async def _cancel_active_agents(
                 )
 
         await shielded_terminal_delivery(run.id, cancel_and_deliver)
+
+
+def _parked_daemon_stop_runs(db: HubDatabase, task_ids: list[str]) -> list[AgentRun]:
+    """List unconsumed parked daemon-stop originals for the given tasks."""
+    if not task_ids:
+        return []
+    return LocalAgentRunManager(db).list_daemon_stop_orphans(
+        max_age_hours=None,
+        task_ids=task_ids,
+        limit=1000,
+    )
+
+
+async def _give_up_parked_daemon_stop_runs(
+    db: HubDatabase,
+    parked: list[AgentRun],
+    *,
+    services: object | None,
+) -> int:
+    """Give up parked daemon-stop runs now instead of waiting out the 24h window.
+
+    Each run is flagged with a durable reap request so the lifecycle orphan
+    reaper selects it regardless of age, then the reaper itself performs the
+    give-up (fenced claim, task recovery, full cleanup, session expiry, and
+    exactly-once terminal delivery to waiting parents). When no lifecycle
+    monitor is available the flag persists and the daemon's next lifecycle
+    tick reaps the runs.
+    """
+    if not parked:
+        return 0
+    run_manager = LocalAgentRunManager(db)
+    requested_at = datetime.now(UTC).isoformat()
+    for run in parked:
+        run_manager.merge_resume_metadata(run.id, {REAP_REQUESTED_AT_KEY: requested_at})
+    lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
+    if lifecycle_monitor is None:
+        logger.info(
+            "No lifecycle monitor available; %d parked daemon-stop run(s) flagged "
+            "for reap on the next lifecycle tick",
+            len(parked),
+        )
+        return len(parked)
+    try:
+        await lifecycle_monitor.reap_daemon_stop_orphans()
+    except Exception as exc:
+        logger.warning(
+            "Immediate reap of parked daemon-stop runs failed; "
+            "the lifecycle reaper will retry flagged runs: %s",
+            exc,
+        )
+    return len(parked)
 
 
 def _clear_stale_dispatch_mutexes(

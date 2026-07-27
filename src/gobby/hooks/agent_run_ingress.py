@@ -8,10 +8,22 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from gobby.agents.resume_finalization import finalize_resume_handoff_threadsafe
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 
 _PROVISIONAL_RESUME_PHASES = {"launch_requested", "runtime_persisted"}
+
+# The identity fence guards terminal side effects only: a stale SessionEnd or
+# Stop from a dead process must not terminalize the durable session's current
+# run. Non-terminal hooks are never gated, so a transient identity gap cannot
+# stall a live CLI mid-conversation.
+TERMINAL_INGRESS_HOOK_TYPES = frozenset(
+    {
+        HookEventType.SESSION_END,
+        HookEventType.STOP,
+        HookEventType.AFTER_AGENT,
+    }
+)
 
 
 class _SessionManager(Protocol):

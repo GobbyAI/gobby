@@ -146,6 +146,14 @@ class EnforcementCompletionMixin:
             )
             return
 
+        # get_by_session only returns running/pending runs, so a terminal run
+        # (e.g. one parked by a daemon stop) arrives via the fallback lookup and
+        # must be re-read to learn its actual terminal_reason.
+        run_row: Any | None = db_agent
+        if run_row is None:
+            run_row = await asyncio.to_thread(self._runner.get_run, run_id)
+        terminal_reason: str | None = getattr(run_row, "terminal_reason", None)
+
         notify_result: dict[str, Any] = {
             "status": "success",
             "run_id": run_id,
@@ -165,9 +173,29 @@ class EnforcementCompletionMixin:
         )
         if not isinstance(cleanup_session_id, str) or not cleanup_session_id:
             cleanup_session_id = session_id
+        cleanup_agent_runtime_state = _facade_attr("cleanup_agent_runtime_state")
+        if terminal_reason == "daemon_stop":
+            # The run was parked by a daemon stop: its workflow_instances rows
+            # are retained for resume and waiting subscribers must not receive
+            # a false success. Forward the parked reason so cleanup keeps the
+            # workflow rows, and skip completion delivery entirely.
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s run=%s "
+                "suppressed for daemon_stop parked run",
+                session_id,
+                workflow_name,
+                run_id,
+            )
+            await asyncio.to_thread(
+                cleanup_agent_runtime_state,
+                self.db,
+                run_id=run_id,
+                child_session_id=cleanup_session_id,
+                terminal_reason=terminal_reason,
+            )
+            return
         # Lifecycle monitor terminalizers are async by contract. A sync callable
         # is treated as unavailable so workflow completion uses the runner path.
-        cleanup_agent_runtime_state = _facade_attr("cleanup_agent_runtime_state")
         if inspect.iscoroutinefunction(terminalize_successful_run):
             terminalized = await terminalize_successful_run(
                 run_id,
@@ -184,7 +212,7 @@ class EnforcementCompletionMixin:
                 self.db,
                 run_id=run_id,
                 child_session_id=cleanup_session_id,
-                terminal_reason=None,
+                terminal_reason=terminal_reason,
             )
             return
         if callable(terminalize_successful_run):
@@ -206,7 +234,7 @@ class EnforcementCompletionMixin:
             self.db,
             run_id=run_id,
             child_session_id=cleanup_session_id,
-            terminal_reason=None,
+            terminal_reason=terminal_reason,
         )
 
     async def _process_step_after_tool(

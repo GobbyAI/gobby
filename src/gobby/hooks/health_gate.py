@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Literal, Protocol
+from typing import Protocol
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
@@ -20,6 +20,20 @@ CRITICAL_HOOKS = {
 FAIL_CLOSED_HOOKS = {HookEventType.STOP, HookEventType.AFTER_AGENT}
 RETRY_DELAYS = (0.5, 1.0, 2.0)
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
+
+
+class DaemonNotReadyError(RuntimeError):
+    """The daemon cannot process this hook yet; retain the envelope and retry.
+
+    Raised instead of returning an allow response so that neither ghook nor
+    the startup replay barrier acknowledges (and destroys) an envelope the
+    daemon never actually processed.
+    """
+
+    def __init__(self, *, daemon_status: str, reason: str | None) -> None:
+        super().__init__(f"Daemon {daemon_status}: {reason or 'Unknown'}")
+        self.daemon_status = daemon_status
+        self.reason = reason
 
 
 class HealthMonitorProtocol(Protocol):
@@ -37,33 +51,38 @@ def _unavailable_response(
     restart_source = _planned_restart_source()
     if restart_source:
         logger.debug(
-            "Daemon unavailable during planned restart, skipping hook execution: %s. "
+            "Daemon unavailable during planned restart, retaining hook for replay: %s. "
             "Status: %s, Error: %s, Source: %s",
             event.event_type,
             daemon_status,
             error_reason,
             restart_source,
         )
-        return HookResponse(
-            decision="allow",
-            reason=f"Daemon restarting ({restart_source}): {error_reason or 'Unknown'}",
+        raise DaemonNotReadyError(
+            daemon_status=f"restarting ({restart_source})",
+            reason=error_reason,
         )
 
-    decision: Literal["block", "allow"] = (
-        "block" if event.event_type in FAIL_CLOSED_HOOKS else "allow"
-    )
-    action = "blocking" if decision == "block" else "skipping"
+    if event.event_type in FAIL_CLOSED_HOOKS:
+        logger.warning(
+            "Daemon not available after retries, blocking hook execution: %s. "
+            "Status: %s, Error: %s",
+            event.event_type,
+            daemon_status,
+            error_reason,
+        )
+        return HookResponse(
+            decision="block",
+            reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
+        )
+
     logger.warning(
-        "Daemon not available after retries, %s hook execution: %s. Status: %s, Error: %s",
-        action,
+        "Daemon not available after retries, retaining hook for replay: %s. Status: %s, Error: %s",
         event.event_type,
         daemon_status,
         error_reason,
     )
-    return HookResponse(
-        decision=decision,
-        reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
-    )
+    raise DaemonNotReadyError(daemon_status=daemon_status, reason=error_reason)
 
 
 def _planned_restart_source() -> str | None:

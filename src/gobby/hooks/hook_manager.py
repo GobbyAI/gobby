@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
 
-from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
+from gobby.hooks.agent_run_ingress import (
+    TERMINAL_INGRESS_HOOK_TYPES,
+    validate_managed_agent_hook,
+)
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
@@ -336,20 +339,6 @@ class HookManager:
                     project_resolution.reason,
                 )
                 return HookResponse(decision="allow")
-            ingress = validate_managed_agent_hook(
-                event,
-                session_manager=self._session_manager,
-                agent_run_manager=self._agent_run_manager,
-                database=self._database,
-                completion_registry=self._completion_registry,
-                registry_loop=self._loop,
-            )
-            if not ingress.accepted:
-                self.logger.info(
-                    "Ignoring stale managed SESSION_START hook for run %s",
-                    ingress.run_id,
-                )
-                return HookResponse(decision="allow")
         else:
             project_resolution = resolve_hook_project_context(
                 event,
@@ -364,23 +353,33 @@ class HookManager:
                     project_resolution.reason,
                 )
                 return HookResponse(decision="allow")
-            # Resolve platform session_id from CLI external_id
-            self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
-            ingress = validate_managed_agent_hook(
+            # Resolve platform session_id from CLI external_id. Terminal
+            # events defer session mutations (revive/backfill) until the
+            # identity fence accepts the hook: a stale old-run SessionEnd
+            # must not write dead-process terminal identity onto the
+            # durable session.
+            gated = event.event_type in TERMINAL_INGRESS_HOOK_TYPES
+            platform_session_id = self._session_lookup.resolve(
                 event,
-                session_manager=self._session_manager,
-                agent_run_manager=self._agent_run_manager,
-                database=self._database,
-                completion_registry=self._completion_registry,
-                registry_loop=self._loop,
+                apply_session_mutations=not gated,
             )
-            if not ingress.accepted:
-                self.logger.info(
-                    "Ignoring stale managed hook for run %s (event=%s)",
-                    ingress.run_id,
-                    event.event_type.value,
+            if gated:
+                ingress = validate_managed_agent_hook(
+                    event,
+                    session_manager=self._session_manager,
+                    agent_run_manager=self._agent_run_manager,
+                    database=self._database,
+                    completion_registry=self._completion_registry,
+                    registry_loop=self._loop,
                 )
-                return HookResponse(decision="allow")
+                if not ingress.accepted:
+                    self.logger.info(
+                        "Ignoring stale managed hook for run %s (event=%s)",
+                        ingress.run_id,
+                        event.event_type.value,
+                    )
+                    return HookResponse(decision="allow")
+                self._session_lookup.apply_session_mutations(event, platform_session_id)
             self._record_session_activity_pulse(event)
             ingest_hook_verification_receipt(
                 event,

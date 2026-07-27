@@ -690,6 +690,9 @@ class TestAgentWorkflowCompletion:
             run_id="ff807256-1906-55de-b7b3-94163bb18352",
             task_id=task.id,
         )
+        # Spawn always binds the session back-pointer pre-launch; terminal
+        # session expiry is back-pointer-authoritative.
+        sessions.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
         run_manager.start(run.id)
         completion_registry = CompletionEventRegistry()
         completion_registry.register(run.id, subscribers=[])

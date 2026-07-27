@@ -8,6 +8,7 @@ from typing import Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.deployment import deployment_advisory_key
+from gobby.storage.daemon_resume_keys import daemon_resume_consumed_condition
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
@@ -190,8 +191,9 @@ class _AgentRunLifecycleMixin:
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
         now = utc_now()
+        consumed_sql = daemon_resume_consumed_condition(self.db, "ar.resume_metadata_json")
         cursor = self.db.execute(
-            """
+            f"""
             UPDATE sessions
             SET status = 'expired',
                 updated_at = %s
@@ -203,8 +205,7 @@ class _AgentRunLifecycleMixin:
                       AND ar.status = ANY(%s)
                       AND (
                             ar.terminal_reason IS DISTINCT FROM 'daemon_stop'
-                            OR COALESCE(ar.resume_metadata_json, '{}'::jsonb)
-                               ? 'daemon_stop_resume_consumed_at'
+                            OR {consumed_sql}
                       )
               )
             """,

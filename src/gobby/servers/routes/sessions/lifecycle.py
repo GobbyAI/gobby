@@ -276,7 +276,6 @@ def register_lifecycle_routes(
             logger.exception("Find current session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-
     @router.post("/find_by_terminal_context")
     async def find_session_by_terminal_context(request: Request) -> dict[str, Any]:
         """Find the unique active session matching terminal identity."""

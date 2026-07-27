@@ -230,6 +230,7 @@ class AgentLifecycleMonitor:
         self._stuck_interventions: dict[str, tuple[str | None, str | None, str]] = {}
         self._dispatch_refresh_cursor = 0
         self._reconciliation_callback: Callable[[], Awaitable[int]] | None = None
+        self._non_task_resume_callback: Callable[[], Awaitable[int]] | None = None
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -248,6 +249,13 @@ class AgentLifecycleMonitor:
     ) -> None:
         """Set the serialized owner for recovery-pending reclassification."""
         self._reconciliation_callback = callback
+
+    def set_non_task_resume_callback(
+        self,
+        callback: Callable[[], Awaitable[int]],
+    ) -> None:
+        """Set the retry owner for parked daemon-stop runs with no task."""
+        self._non_task_resume_callback = callback
 
     @property
     def prompt_detector(self) -> PromptDetector:
@@ -356,6 +364,8 @@ class AgentLifecycleMonitor:
                 logger.debug("Lifecycle check iteration %s", iteration)
                 if self._reconciliation_callback is not None:
                     await self._reconciliation_callback()
+                if self._non_task_resume_callback is not None:
+                    await self._non_task_resume_callback()
                 await self.reconcile_pending_terminations()
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
@@ -393,9 +403,16 @@ class AgentLifecycleMonitor:
                 break
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
-        """Get active terminal agent runs with tmux sessions from DB."""
+        """Get active terminal agent runs with tmux sessions from DB.
+
+        Recovery-protected runs (provisional successors, reconciliation
+        pending) are excluded so prompt monitors cannot kill them before
+        their durable state resolves.
+        """
+        from gobby.agents.recovery_state import is_recovery_protected
+
         runs = self._agent_run_manager.list_active()
-        return [r for r in runs if r.tmux_session_name]
+        return [r for r in runs if r.tmux_session_name and not is_recovery_protected(r)]
 
     async def expire_terminal_run_sessions(self) -> int:
         """Expire sessions whose agent run is already in a terminal state."""
@@ -404,53 +421,84 @@ class AgentLifecycleMonitor:
 
     async def reap_daemon_stop_orphans(self) -> int:
         """Release durable parked ownership after the recovery window elapses."""
-        from gobby.storage.agent_resume import (
-            claim_daemon_stop_orphan_reap,
-            expire_parked_daemon_session,
-        )
-        from gobby.utils.datetime import utc_now
-
         runs = await self._run_db(self._agent_run_manager.list_daemon_stop_orphans)
         reaped = 0
         for run in runs:
             if not run.child_session_id:
                 continue
-            claimed = await self._run_db(
-                claim_daemon_stop_orphan_reap,
-                self._db,
-                original_run_id=run.id,
-                child_session_id=run.child_session_id,
-            )
-            if not claimed:
-                continue
-            await self._task_recovery.recover_task_from_terminal_agent(
-                run,
-                outcome="cancelled",
-            )
-            await self._cleanup_handler.post_terminal_cleanup(
-                run,
-                cleanup_session_id=run.child_session_id,
-                notification_result={
-                    "status": "cancelled",
-                    "terminal_reason": "daemon_stop",
-                    "run_id": run.id,
-                },
-                notification_message=f"Agent {run.id} recovery window expired",
-                force_full_cleanup=True,
-            )
-            await self._run_db(
-                expire_parked_daemon_session,
-                self._db,
-                original_run_id=run.id,
-                child_session_id=run.child_session_id,
-            )
-            await self._run_db(
-                self._agent_run_manager.merge_resume_metadata,
-                run.id,
-                {"daemon_stop_orphan_reaped_at": utc_now().isoformat()},
-            )
-            reaped += 1
+            try:
+                if await self._reap_daemon_stop_orphan(run):
+                    reaped += 1
+            except Exception:
+                # One bad orphan must not abort the tick's sweep; the claim
+                # marker stays set and the next tick retries the remainder.
+                logger.warning(
+                    "Failed to reap daemon-stop orphan %s",
+                    run.id,
+                    exc_info=True,
+                )
         return reaped
+
+    async def _reap_daemon_stop_orphan(self, run: AgentRun) -> bool:
+        """Give up on one elapsed parked original, delivering to durable waiters."""
+        from gobby.storage.agent_resume import (
+            claim_daemon_stop_orphan_reap,
+            expire_parked_daemon_session,
+        )
+        from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+        from gobby.utils.datetime import utc_now
+
+        claimed = await self._run_db(
+            claim_daemon_stop_orphan_reap,
+            self._db,
+            original_run_id=run.id,
+            child_session_id=run.child_session_id,
+        )
+        if not claimed:
+            return False
+        # Parked originals were never registered in the in-memory completion
+        # registry, so seed it from the durable subscriber rows; the terminal
+        # delivery below would otherwise wake nobody.
+        if self._completion_registry is not None and not self._completion_registry.is_registered(
+            run.id
+        ):
+            subscribers = await self._run_db(
+                CompletionSubscriberManager(self._db).get_completion_subscribers,
+                run.id,
+            )
+            if subscribers:
+                self._completion_registry.register(
+                    run.id,
+                    subscribers=subscribers,
+                    continuation_prompt=getattr(run, "continuation_prompt", None),
+                )
+        await self._task_recovery.recover_task_from_terminal_agent(
+            run,
+            outcome="cancelled",
+        )
+        await self._cleanup_handler.post_terminal_cleanup(
+            run,
+            cleanup_session_id=run.child_session_id,
+            notification_result={
+                "status": "cancelled",
+                "terminal_reason": "daemon_stop",
+                "run_id": run.id,
+            },
+            notification_message=f"Agent {run.id} recovery window expired",
+            force_full_cleanup=True,
+        )
+        await self._run_db(
+            expire_parked_daemon_session,
+            self._db,
+            original_run_id=run.id,
+            child_session_id=run.child_session_id,
+        )
+        await self._run_db(
+            self._agent_run_manager.merge_resume_metadata,
+            run.id,
+            {"daemon_stop_orphan_reaped_at": utc_now().isoformat()},
+        )
+        return True
 
     async def recover_tasks_from_terminal_agents(self) -> int:
         """Recover task ownership for already-terminal non-success agent runs."""

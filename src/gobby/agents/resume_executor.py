@@ -14,7 +14,7 @@ import psycopg
 
 from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
 from gobby.agents.resume_finalization import (
-    finalize_resume_handoff,
+    finalize_resume_handoff_async,
     notify_parent_of_recovery,
 )
 from gobby.agents.resume_metadata import merge_resume_metadata_env
@@ -34,11 +34,29 @@ from gobby.ai.codex_endpoint import (
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
 from gobby.config.tmux import TmuxConfig
+from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_RESUME_PROVIDERS = frozenset({"claude", "qwen", "grok", "codex", "droid"})
+
+# Protocol bookkeeping accumulated on the original run must never leak into a
+# successor's launch snapshot: each recovery episode starts clean.
+_INHERITED_PROTOCOL_KEYS = (
+    daemon_resume_keys.RESUME_PHASE_KEY,
+    daemon_resume_keys.CONSUMED_AT_KEY,
+    daemon_resume_keys.CONSUMED_BY_KEY,
+    daemon_resume_keys.FAILURE_COUNT_KEY,
+    daemon_resume_keys.REAP_STARTED_AT_KEY,
+    daemon_resume_keys.REAP_REQUESTED_AT_KEY,
+    daemon_resume_keys.REAPED_AT_KEY,
+    daemon_resume_keys.RECONCILIATION_PENDING_KEY,
+    "daemon_stop_resume_finalized_at",
+    "daemon_stop_resume_tmux_session_name",
+    "daemon_stop_resume_planned_tmux_title",
+    "resumed_from_run_id",
+)
 DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
     "workspace state, preserve any existing work, and continue from where the prior run left off."
@@ -155,6 +173,8 @@ async def resume_agent_run(
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
     planned_tmux_title = f"gobby-resume-{run_id}"
     metadata = dict(resume_metadata)
+    for stale_key in _INHERITED_PROTOCOL_KEYS:
+        metadata.pop(stale_key, None)
     metadata["resumed_from_run_id"] = original_run.id
     metadata["provider_native_session_id"] = native_session_id
     metadata["daemon_stop_resume_phase"] = "prepared"
@@ -289,6 +309,7 @@ async def resume_agent_run(
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=config_overrides,
     )
+    launch_updates: dict[str, Any] = {}
     if provider == "claude":
         claude_mcp_path = _metadata_str(resume_metadata, "mcp_path")
         strict_mcp = bool(resume_metadata.get("strict_mcp"))
@@ -297,8 +318,8 @@ async def resume_agent_run(
             if claude_mcp_config.exists():
                 claude_mcp_path = str(claude_mcp_config)
                 strict_mcp = True
-                metadata["mcp_path"] = claude_mcp_path
-                metadata["strict_mcp"] = strict_mcp
+                launch_updates["mcp_path"] = claude_mcp_path
+                launch_updates["strict_mcp"] = strict_mcp
         if claude_mcp_path:
             command.extend(["--mcp-config", claude_mcp_path])
             if strict_mcp:
@@ -306,12 +327,15 @@ async def resume_agent_run(
         command.extend(sandbox_args)
         command.append(prompt)
     command = launch.wrap(command)
-    metadata["env"] = merge_resume_metadata_env(env)
-    metadata["sandbox_args"] = list(launch.provider_args)
-    metadata["sandbox_env"] = dict(launch.provider_env)
-    metadata["sandbox"] = launch.metadata()
-    metadata["config_overrides"] = config_overrides
-    runner.run_storage.merge_resume_metadata(run_id, metadata)
+    # Merge only the launch-snapshot keys refreshed above. The full local
+    # metadata dict carries protocol keys from a stale read (phase, native
+    # session id); re-merging it could reset a concurrently advanced phase.
+    launch_updates["env"] = merge_resume_metadata_env(env)
+    launch_updates["sandbox_args"] = list(launch.provider_args)
+    launch_updates["sandbox_env"] = dict(launch.provider_env)
+    launch_updates["sandbox"] = launch.metadata()
+    launch_updates["config_overrides"] = config_overrides
+    runner.run_storage.merge_resume_metadata(run_id, launch_updates)
     launched = runner.run_storage.transition_resume_phase(
         run_id,
         expected_phase="prepared",
@@ -411,7 +435,7 @@ async def resume_agent_run(
             )
 
     try:
-        finalize_resume_handoff(
+        await finalize_resume_handoff_async(
             runner.run_storage.db,
             original_run_id=original_run.id,
             successor_run_id=run_id,
@@ -439,7 +463,8 @@ async def resume_agent_run(
             child_session_id=spawn_context.session_id,
         )
     _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
-    notify_parent_of_recovery(
+    await asyncio.to_thread(
+        notify_parent_of_recovery,
         runner.run_storage.db,
         child_session_id=spawn_context.session_id,
         parent_session_id=parent_session_id,
@@ -541,24 +566,50 @@ async def _park_unlaunched_successor(
     child_session_id: str,
     completion_registry: Any | None,
 ) -> None:
-    from gobby.agents.resume_finalization import finalize_resume_handoff
+    """Park a spawned-but-failed successor, containing every step.
+
+    Runs inside the dispatcher's failure path: a raise here would leak the
+    dispatch mutex and leave the successor provisional, so each step logs
+    and continues instead of propagating.
+    """
     from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
-    finalize_resume_handoff(
-        runner.run_storage.db,
-        original_run_id=original_run.id,
-        successor_run_id=successor_run_id,
-        child_session_id=child_session_id,
-        completion_registry=completion_registry,
-    )
-    runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
-    await asyncio.to_thread(
-        cleanup_agent_runtime_state,
-        runner.run_storage.db,
-        run_id=successor_run_id,
-        child_session_id=child_session_id,
-        terminal_reason="daemon_stop",
-    )
+    try:
+        await finalize_resume_handoff_async(
+            runner.run_storage.db,
+            original_run_id=original_run.id,
+            successor_run_id=successor_run_id,
+            child_session_id=child_session_id,
+            completion_registry=completion_registry,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to finalize handoff while parking unlaunched successor %s",
+            successor_run_id,
+            exc_info=True,
+        )
+    try:
+        runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
+    except Exception:
+        logger.warning(
+            "Failed to park unlaunched successor %s",
+            successor_run_id,
+            exc_info=True,
+        )
+    try:
+        await asyncio.to_thread(
+            cleanup_agent_runtime_state,
+            runner.run_storage.db,
+            run_id=successor_run_id,
+            child_session_id=child_session_id,
+            terminal_reason="daemon_stop",
+        )
+    except Exception:
+        logger.warning(
+            "Failed runtime cleanup while parking unlaunched successor %s",
+            successor_run_id,
+            exc_info=True,
+        )
 
 
 def _fire_resume_started(

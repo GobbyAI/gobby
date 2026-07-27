@@ -12,11 +12,14 @@ import pytest
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
+from gobby.hooks.inbox import HookInboxBarrierResult
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
+    _reclassify_reconciliation_pending_runs,
     _rehydrate_active_agent_completion_subscribers,
     _resolve_provisional_daemon_resumes,
+    _run_agent_hook_replay_barrier,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
@@ -465,3 +468,143 @@ class TestAgentRestartReconciliation:
                 cleanup=MagicMock(),
             ),
         )
+
+
+class TestReclassifyReconciliationPendingRuns:
+    """Fenced-run reclassification waits for the hook replay barrier to settle."""
+
+    _RUN_ID = "ac314d27-4314-5fe3-a0ab-01645086e137"
+    _OTHER_RUN_ID = "bd425e38-5425-4fe4-b1bc-12756197f248"
+
+    def _runner(self, run_storage: Any) -> Any:
+        return SimpleNamespace(
+            agent_runner=SimpleNamespace(run_storage=run_storage),
+            http_server=SimpleNamespace(app=object()),
+            session_manager=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_pending_list_skips_replay_barrier(self) -> None:
+        run_storage = SimpleNamespace(
+            list_reconciliation_pending=MagicMock(return_value=[]),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        barrier = AsyncMock(return_value=True)
+
+        with patch(
+            "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+            new=barrier,
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        assert reclassified == 0
+        barrier.assert_not_awaited()
+        run_storage.merge_resume_metadata.assert_not_called()
+        run_storage.list_reconciliation_pending.assert_called_once_with(limit=_RUN_REPLAY_PAGE_SIZE)
+
+    @pytest.mark.asyncio
+    async def test_barrier_timeout_fences_live_runs_without_cancelling(self) -> None:
+        running_run = SimpleNamespace(id=self._RUN_ID, status="running")
+        cancelled_run = SimpleNamespace(id=self._OTHER_RUN_ID, status="cancelled")
+        runs = {run.id: run for run in (running_run, cancelled_run)}
+        run_storage = SimpleNamespace(
+            get=MagicMock(side_effect=lambda run_id: runs.get(run_id)),
+            merge_resume_metadata=MagicMock(),
+            cancel=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        barrier_result = HookInboxBarrierResult(
+            replayed=0,
+            timed_out=True,
+            unresolved_run_ids=(self._RUN_ID, self._OTHER_RUN_ID),
+            unresolved_session_ids=(),
+        )
+        drain = AsyncMock(return_value=barrier_result)
+
+        with patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain):
+            settled = await _run_agent_hook_replay_barrier(runner, timeout_seconds=1.0)
+
+        assert settled is False
+        drain.assert_awaited_once()
+        assert drain.await_args is not None
+        assert drain.await_args.kwargs == {"timeout_seconds": 1.0}
+        run_storage.merge_resume_metadata.assert_called_once_with(
+            self._RUN_ID, {"reconciliation_pending": True}
+        )
+        run_storage.cancel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_settled_barrier_reconciles_then_clears_fences(self) -> None:
+        order: list[str] = []
+        pending = [
+            SimpleNamespace(id=self._RUN_ID),
+            SimpleNamespace(id=self._OTHER_RUN_ID),
+        ]
+        run_storage = SimpleNamespace(
+            list_reconciliation_pending=MagicMock(return_value=pending),
+            merge_resume_metadata=MagicMock(
+                side_effect=lambda run_id, metadata: order.append(f"clear:{run_id}")
+            ),
+        )
+        runner = self._runner(run_storage)
+
+        async def reconcile(target: Any, *, include_fenced: bool) -> int:
+            order.append(f"reconcile:include_fenced={include_fenced}")
+            return 2
+
+        barrier = AsyncMock(return_value=True)
+        reconcile_mock = AsyncMock(side_effect=reconcile)
+
+        with (
+            patch(
+                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                new=barrier,
+            ),
+            patch(
+                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                new=reconcile_mock,
+            ),
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        assert reclassified == 2
+        barrier.assert_awaited_once()
+        reconcile_mock.assert_awaited_once_with(runner, include_fenced=True)
+        assert order == [
+            "reconcile:include_fenced=True",
+            f"clear:{self._RUN_ID}",
+            f"clear:{self._OTHER_RUN_ID}",
+        ]
+        assert run_storage.merge_resume_metadata.call_args_list == [
+            call(self._RUN_ID, {"reconciliation_pending": False}),
+            call(self._OTHER_RUN_ID, {"reconciliation_pending": False}),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_unsettled_barrier_leaves_fences_and_skips_reconcile(self) -> None:
+        pending = [SimpleNamespace(id=self._RUN_ID)]
+        run_storage = SimpleNamespace(
+            list_reconciliation_pending=MagicMock(return_value=pending),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        barrier = AsyncMock(return_value=False)
+        reconcile_mock = AsyncMock()
+
+        with (
+            patch(
+                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                new=barrier,
+            ),
+            patch(
+                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                new=reconcile_mock,
+            ),
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        assert reclassified == 0
+        barrier.assert_awaited_once()
+        reconcile_mock.assert_not_awaited()
+        run_storage.merge_resume_metadata.assert_not_called()

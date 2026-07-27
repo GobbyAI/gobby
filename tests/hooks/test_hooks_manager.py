@@ -162,6 +162,8 @@ class TestHookManagerHandle:
         """Test handling when daemon is not ready."""
         from unittest.mock import patch
 
+        from gobby.hooks.health_gate import DaemonNotReadyError
+
         manager = hook_manager_with_mocks
 
         # Simulate daemon not ready by mocking HealthMonitor's get_cached_status
@@ -177,13 +179,13 @@ class TestHookManagerHandle:
                 "check_now",
                 return_value=False,  # Retries also fail
             ),
+            pytest.raises(DaemonNotReadyError) as excinfo,
         ):
-            response = manager.handle(sample_session_start_event)
+            manager.handle(sample_session_start_event)
 
-        # Should fail open
-        assert response.decision == "allow"
-        assert response.reason is not None
-        assert "not_running" in response.reason
+        # Retained for replay, not fail-open
+        assert excinfo.value.daemon_status == "not_running"
+        assert excinfo.value.reason == "Connection refused"
 
     def test_handle_daemon_recovers_after_retry(
         self,

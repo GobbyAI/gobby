@@ -55,6 +55,23 @@ pub struct DeliveryReport {
     pub transport_error: Option<String>,
 }
 
+impl DeliveryReport {
+    /// True when the daemon deliberately deferred ingestion: HTTP 503 with a
+    /// JSON body whose `status` field is `"retry"` (the hook-ingress gate's
+    /// retryable signal). The envelope stays in the inbox for drain replay and
+    /// the host CLI must be allowed to continue — blocking on this outcome
+    /// would live-lock critical hooks against a daemon that keeps saying
+    /// "retry".
+    pub fn is_retry_backpressure(&self) -> bool {
+        self.status_code == Some(503)
+            && self
+                .response_body
+                .as_deref()
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+                .is_some_and(|v| v.get("status").and_then(|s| s.as_str()) == Some("retry"))
+    }
+}
+
 /// Compute the inbox directory (`~/.gobby/hooks/inbox/`).
 pub fn inbox_dir() -> Result<PathBuf> {
     Ok(gobby_core::gobby_home()?.join("hooks").join("inbox"))
@@ -319,6 +336,43 @@ mod tests {
     fn filename_prefix_reflects_critical() {
         assert!(envelope_filename(true).starts_with('c'));
         assert!(envelope_filename(false).starts_with('n'));
+    }
+
+    fn report_with(status_code: Option<u16>, response_body: Option<&str>) -> DeliveryReport {
+        DeliveryReport {
+            outcome: DeliveryOutcome::Enqueued,
+            failure_kind: Some(DeliveryFailureKind::Http),
+            status_code,
+            response_body: response_body.map(str::to_string),
+            transport_error: None,
+        }
+    }
+
+    #[test]
+    fn retry_backpressure_requires_503_and_retry_status_body() {
+        assert!(report_with(Some(503), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+        // Extra fields alongside "status" are fine.
+        assert!(
+            report_with(
+                Some(503),
+                Some(r#"{"status":"retry","detail":"missing run id"}"#)
+            )
+            .is_retry_backpressure()
+        );
+    }
+
+    #[test]
+    fn retry_backpressure_rejects_non_retry_outcomes() {
+        // 503 without the retry body keeps failure semantics.
+        assert!(
+            !report_with(Some(503), Some(r#"{"error":"unavailable"}"#)).is_retry_backpressure()
+        );
+        assert!(!report_with(Some(503), Some(r#"{"status":"error"}"#)).is_retry_backpressure());
+        assert!(!report_with(Some(503), Some("not json")).is_retry_backpressure());
+        assert!(!report_with(Some(503), None).is_retry_backpressure());
+        // The retry body only counts on 503.
+        assert!(!report_with(Some(500), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+        assert!(!report_with(None, Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
     }
 
     #[test]

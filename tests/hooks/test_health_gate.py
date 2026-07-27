@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
+from gobby.hooks.health_gate import (
+    DaemonNotReadyError,
+    ensure_daemon_ready,
+    ensure_daemon_ready_async,
+)
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 
 pytestmark = pytest.mark.unit
@@ -53,7 +57,7 @@ def _event(event_type: HookEventType = HookEventType.BEFORE_TOOL) -> HookEvent:
 
 
 @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
-def test_planned_restart_marker_allows_terminal_hooks(
+def test_planned_restart_marker_retains_terminal_hooks(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -65,12 +69,11 @@ def test_planned_restart_marker_allows_terminal_hooks(
     logger = logging.getLogger("gobby.test.health_gate")
     caplog.set_level(logging.DEBUG, logger=logger.name)
 
-    response = ensure_daemon_ready(_event(event_type), UnavailableHealthMonitor(), logger)
+    with pytest.raises(DaemonNotReadyError) as excinfo:
+        ensure_daemon_ready(_event(event_type), UnavailableHealthMonitor(), logger)
 
-    assert response is not None
-    assert response.decision == "allow"
-    assert response.reason is not None
-    assert "Daemon restarting (cli_restart)" in response.reason
+    assert excinfo.value.daemon_status == "restarting (cli_restart)"
+    assert excinfo.value.reason == "Connection refused"
     assert "Daemon unavailable during planned restart" in caplog.text
     assert all(record.levelno < logging.WARNING for record in caplog.records)
 
@@ -105,13 +108,12 @@ def test_unexpected_unavailable_daemon_still_warns(
     logger = logging.getLogger("gobby.test.health_gate")
     caplog.set_level(logging.WARNING, logger=logger.name)
 
-    response = ensure_daemon_ready(_event(), UnavailableHealthMonitor(), logger)
+    with pytest.raises(DaemonNotReadyError) as excinfo:
+        ensure_daemon_ready(_event(), UnavailableHealthMonitor(), logger)
 
-    assert response is not None
-    assert response.decision == "allow"
-    assert response.reason is not None
-    assert "Daemon not_running" in response.reason
-    assert "Daemon not available after retries" in caplog.text
+    assert excinfo.value.daemon_status == "not_running"
+    assert excinfo.value.reason == "Connection refused"
+    assert "Daemon not available after retries, retaining hook for replay" in caplog.text
 
 
 def test_noncritical_hook_refreshes_failed_cache_before_allowing() -> None:
@@ -135,23 +137,22 @@ async def test_async_noncritical_hook_refreshes_failed_cache_before_allowing() -
     assert monitor.check_count == 1
 
 
-def test_noncritical_hook_uses_fresh_unhealthy_status_in_allow_response(
+def test_noncritical_hook_uses_fresh_unhealthy_status_in_retry_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monitor = RefreshingHealthMonitor((False, "Timed out", "cannot_access", "fresh health timeout"))
     logger = logging.getLogger("gobby.test.health_gate")
     caplog.set_level(logging.WARNING, logger=logger.name)
 
-    response = ensure_daemon_ready(_event(HookEventType.BEFORE_TOOL), monitor, logger)
+    with pytest.raises(DaemonNotReadyError) as excinfo:
+        ensure_daemon_ready(_event(HookEventType.BEFORE_TOOL), monitor, logger)
 
-    assert response is not None
-    assert response.decision == "allow"
-    assert response.reason == "Daemon cannot_access: fresh health timeout"
+    assert str(excinfo.value) == "Daemon cannot_access: fresh health timeout"
     assert "Status: cannot_access, Error: fresh health timeout" in caplog.text
     assert monitor.check_count == 1
 
 
-def test_noncritical_hook_refreshes_once_before_planned_restart_allow(
+def test_noncritical_hook_refreshes_once_before_planned_restart_retry(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -159,15 +160,14 @@ def test_noncritical_hook_refreshes_once_before_planned_restart_allow(
     write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
     monitor = RefreshingHealthMonitor((False, "Timed out", "cannot_access", "fresh health timeout"))
 
-    response = ensure_daemon_ready(
-        _event(HookEventType.BEFORE_TOOL),
-        monitor,
-        logging.getLogger("gobby.test.health_gate"),
-    )
+    with pytest.raises(DaemonNotReadyError) as excinfo:
+        ensure_daemon_ready(
+            _event(HookEventType.BEFORE_TOOL),
+            monitor,
+            logging.getLogger("gobby.test.health_gate"),
+        )
 
-    assert response is not None
-    assert response.decision == "allow"
-    assert response.reason == "Daemon restarting (cli_restart): fresh health timeout"
+    assert str(excinfo.value) == "Daemon restarting (cli_restart): fresh health timeout"
     assert monitor.check_count == 1
 
 

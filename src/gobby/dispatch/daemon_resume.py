@@ -58,9 +58,6 @@ async def try_resume_daemon_stop_run(
     session_manager = getattr(services, "session_manager", None)
     from gobby.storage.agent_resume import increment_daemon_resume_failure_count
 
-    failure_count = increment_daemon_resume_failure_count(db, run_id=candidate.id)
-    candidate = LocalAgentRunManager(db).get(candidate.id) or candidate
-    metadata = candidate.resume_metadata_json or metadata
     if runner is None or session_manager is None:
         error = "services_missing:agent_runner,session_manager"
         return _handle_resume_failure(
@@ -71,7 +68,7 @@ async def try_resume_daemon_stop_run(
             workspace_path,
             workspace_dirty,
             error,
-            failure_count=failure_count,
+            failure_count=increment_daemon_resume_failure_count(db, run_id=candidate.id),
         )
 
     resume_result = await resume_agent_run(
@@ -90,6 +87,8 @@ async def try_resume_daemon_stop_run(
             run_id=str(resume_result.run_id),
         )
 
+    # The retry budget counts failures only; a successful resume consumes the
+    # original, and successors start each recovery episode at zero.
     return _handle_resume_failure(
         action,
         mutex,
@@ -98,7 +97,7 @@ async def try_resume_daemon_stop_run(
         workspace_path,
         workspace_dirty,
         resume_result.error or "resume_failed",
-        failure_count=failure_count,
+        failure_count=increment_daemon_resume_failure_count(db, run_id=candidate.id),
     )
 
 
@@ -158,6 +157,7 @@ def _handle_resume_failure(
         action.task_id,
         candidate,
         workspace_path=workspace_path,
+        workspace_dirty=workspace_dirty,
         error=error,
     )
     try:
@@ -186,15 +186,24 @@ def _append_resume_failure_marker(
     run: AgentRun,
     *,
     workspace_path: str | None,
+    workspace_dirty: bool,
     error: str,
 ) -> bool:
     task = get_task(db, task_id)
     description = task.description or ""
+    closing = (
+        "The workspace was dirty, so Gobby preserved it and did not start a fresh agent."
+        if workspace_dirty
+        else (
+            "Same-session resume retries were exhausted; Gobby preserved the "
+            "durable session and did not start a fresh agent."
+        )
+    )
     body = (
         f"Original run: {run.id}\n\n"
         f"Workspace: {workspace_path or 'unknown'}\n\n"
         f"Error: {error}\n\n"
-        "The workspace was dirty, so Gobby preserved it and did not start a fresh agent."
+        f"{closing}"
     )
     update_task(db, task_id, description=f"{description}\n\n### {_AUDIT_HEADING}\n\n{body}")
     return True

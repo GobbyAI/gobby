@@ -33,40 +33,22 @@ def rebind_agent_run(
     new_run_id: str,
     workflow_name: str | None,
 ) -> bool:
-    """Atomically move a durable session's run back-pointer to a successor."""
+    """Atomically move a durable session's run back-pointer to a successor.
+
+    A ``None`` workflow_name preserves the session's existing workflow binding;
+    only a concrete value overwrites it.
+    """
     cursor = db.execute(
         """
         UPDATE sessions
         SET agent_run_id = %s,
-            workflow_name = %s,
+            workflow_name = COALESCE(%s, workflow_name),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
           AND agent_run_id = %s
           AND status NOT IN ('expired', 'deleted')
         """,
         (new_run_id, workflow_name, session_id, expected_run_id),
-    )
-    return bool(cursor.rowcount)
-
-
-def restore_agent_run_binding(
-    db: HubDatabase,
-    *,
-    session_id: str,
-    expected_successor_run_id: str,
-    original_run_id: str,
-) -> bool:
-    """Restore a prepared-only resume binding before successor deletion."""
-    cursor = db.execute(
-        """
-        UPDATE sessions
-        SET agent_run_id = %s,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-          AND agent_run_id = %s
-          AND status NOT IN ('expired', 'deleted')
-        """,
-        (original_run_id, session_id, expected_successor_run_id),
     )
     return bool(cursor.rowcount)
 

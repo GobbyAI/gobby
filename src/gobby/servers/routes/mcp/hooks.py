@@ -28,6 +28,7 @@ from gobby.hooks.envelope_dedupe import (
     read_envelope_marker,
     release_envelope_processing_claim,
 )
+from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.servers.responses import JSONResponse
 from gobby.servers.tool_approvals import (
@@ -824,6 +825,29 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     content={
                         "status": "retry",
                         "reason": "agent_run_identity_pending",
+                    },
+                )
+
+            except DaemonNotReadyError as exc:
+                inc_counter("hooks_failed_total")
+                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                logger.warning(
+                    "Retrying hook after daemon-not-ready gate",
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        daemon_status=exc.daemon_status,
+                        reason=exc.reason,
+                        envelope_id=envelope_id,
+                        processing_claim_released=released,
+                    ),
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "retry",
+                        "reason": "daemon_not_ready",
                     },
                 )
 

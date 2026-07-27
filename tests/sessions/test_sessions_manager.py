@@ -429,65 +429,6 @@ class TestSessionManagerStatus:
         assert confirmed_result is False
 
 
-class TestSessionManagerHandoff:
-    """Tests for session handoff functionality."""
-
-    def test_find_parent_session(
-        self,
-        session_mgr: SessionManager,
-        test_project: dict,
-    ) -> None:
-        """Test finding parent session for handoff."""
-        # Create and mark a session as handoff_ready
-        parent_id = session_mgr.register_session(
-            external_id="parent-cli",
-            machine_id="handoff-machine",
-            source="claude",
-            project_id=test_project["id"],
-        )
-        session_mgr.update_session_status(parent_id, "handoff_ready")
-
-        # Update summary for handoff
-        session_mgr._storage.update_summary(parent_id, summary_markdown="Test summary content")
-
-        # Find parent (with very short max_attempts for test speed)
-        result = session_mgr.find_parent_session(
-            machine_id="handoff-machine",
-            source="claude",
-            project_id=test_project["id"],
-            max_attempts=1,
-        )
-
-        assert result is not None
-        found_id, summary = result
-        assert found_id == parent_id
-        assert summary == "Test summary content"
-
-    def test_find_parent_session_no_handoff_ready(
-        self,
-        session_mgr: SessionManager,
-        test_project: dict,
-    ) -> None:
-        """Test finding parent when none marked handoff_ready."""
-        # Create an active session
-        session_mgr.register_session(
-            external_id="active-session",
-            machine_id="test-machine",
-            source="claude",
-            project_id=test_project["id"],
-        )
-
-        # Should not find any parent (max_attempts=1 for speed)
-        result = session_mgr.find_parent_session(
-            machine_id="test-machine",
-            source="claude",
-            project_id=test_project["id"],
-            max_attempts=1,
-        )
-
-        assert result is None
-
-
 class TestSessionManagerCaching:
     """Tests for session caching functionality."""
 

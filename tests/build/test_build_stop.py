@@ -5,9 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.storage.agents import AgentRun
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -373,3 +378,184 @@ class TestBuildStopWakesWaiter:
 
         assert harness.wake.calls == []
         assert removals == []
+
+
+def _automated_task(
+    temp_db: HubDatabase,
+    project_id: str,
+    *,
+    title: str,
+    task_type: str = "task",
+    parent_task_id: str | None = None,
+) -> Any:
+    from gobby.storage.tasks import LocalTaskManager
+
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=project_id,
+        title=title,
+        task_type=task_type,
+        parent_task_id=parent_task_id,
+        validation_criteria="Test task completion is observable.",
+    )
+    manager.initialize_task_manifest(task.id, stage_names=["development"])
+    return manager.update_task(task.id, allow_automation=True, isolation="none")
+
+
+def _seed_parked_daemon_stop_run(
+    temp_db: HubDatabase,
+    *,
+    project_id: str,
+    task_id: str,
+    prefix: str,
+) -> AgentRun:
+    """Park a run the way daemon stop does: cancelled, unconsumed, session kept."""
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id=f"{prefix}-parent",
+        machine_id="machine-1",
+        source="test",
+        project_id=project_id,
+    )
+    child = sessions.register(
+        external_id=f"{prefix}-child",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        parent_session_id=parent.id,
+    )
+    runs = LocalAgentRunManager(temp_db)
+    run = runs.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="work",
+        task_id=task_id,
+    )
+    temp_db.execute(
+        "UPDATE sessions SET agent_run_id = %s, status = 'paused' WHERE id = %s",
+        (run.id, child.id),
+    )
+    runs.start(run.id)
+    parked = runs.cancel(run.id, terminal_reason="daemon_stop")
+    assert parked is not None
+    return parked
+
+
+class TestBuildStopParkedDaemonStopRuns:
+    """build stop gives up parked daemon-stop runs instead of waiting 24h."""
+
+    def _services(self) -> SimpleNamespace:
+        from unittest.mock import AsyncMock, MagicMock
+
+        monitor = MagicMock()
+        monitor.reap_daemon_stop_orphans = AsyncMock(return_value=1)
+        return SimpleNamespace(agent_lifecycle_monitor=monitor, completion_registry=None)
+
+    @pytest.mark.asyncio
+    async def test_stop_gives_up_parked_runs_in_subtree(self, temp_db: HubDatabase) -> None:
+        from gobby.build.controls import build_stop_target
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
+        from gobby.storage.projects import LocalProjectManager
+
+        project_id = (
+            LocalProjectManager(temp_db)
+            .create(
+                name="stop-parked-subtree",
+                repo_path="/tmp/stop-parked-subtree",
+            )
+            .id
+        )
+        root = _automated_task(temp_db, project_id, title="Root", task_type="epic")
+        child = _automated_task(temp_db, project_id, title="Child", parent_task_id=root.id)
+        outside = _automated_task(temp_db, project_id, title="Outside")
+        parked = _seed_parked_daemon_stop_run(
+            temp_db, project_id=project_id, task_id=child.id, prefix="in-scope"
+        )
+        outside_parked = _seed_parked_daemon_stop_run(
+            temp_db, project_id=project_id, task_id=outside.id, prefix="out-of-scope"
+        )
+        services = self._services()
+
+        result = await build_stop_target(
+            f"#{root.seq_num}", db=temp_db, project_id=project_id, services=services
+        )
+
+        assert result.parked_runs_released == 1
+        services.agent_lifecycle_monitor.reap_daemon_stop_orphans.assert_awaited_once()
+        runs = LocalAgentRunManager(temp_db)
+        flagged = runs.get(parked.id)
+        assert flagged is not None
+        assert flagged.resume_metadata_json is not None
+        assert flagged.resume_metadata_json[REAP_REQUESTED_AT_KEY]
+        # The reaper's own default selection now picks up the fresh flagged
+        # run, so the real reap_daemon_stop_orphans performs the give-up.
+        orphan_ids = {run.id for run in runs.list_daemon_stop_orphans()}
+        assert parked.id in orphan_ids
+        untouched = runs.get(outside_parked.id)
+        assert untouched is not None
+        assert not (untouched.resume_metadata_json or {}).get(REAP_REQUESTED_AT_KEY)
+        assert outside_parked.id not in orphan_ids
+
+    @pytest.mark.asyncio
+    async def test_stop_without_parked_runs_skips_reap(self, temp_db: HubDatabase) -> None:
+        from gobby.build.controls import build_stop_target
+        from gobby.storage.projects import LocalProjectManager
+
+        project_id = (
+            LocalProjectManager(temp_db)
+            .create(
+                name="stop-no-parked",
+                repo_path="/tmp/stop-no-parked",
+            )
+            .id
+        )
+        task = _automated_task(temp_db, project_id, title="Task")
+        services = self._services()
+
+        result = await build_stop_target(
+            f"#{task.seq_num}", db=temp_db, project_id=project_id, services=services
+        )
+
+        assert result.parked_runs_released == 0
+        services.agent_lifecycle_monitor.reap_daemon_stop_orphans.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stop_flags_parked_runs_without_lifecycle_monitor(
+        self, temp_db: HubDatabase
+    ) -> None:
+        from gobby.build.controls import build_stop_target
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
+        from gobby.storage.projects import LocalProjectManager
+
+        project_id = (
+            LocalProjectManager(temp_db)
+            .create(
+                name="stop-parked-no-monitor",
+                repo_path="/tmp/stop-parked-no-monitor",
+            )
+            .id
+        )
+        task = _automated_task(temp_db, project_id, title="Task")
+        parked = _seed_parked_daemon_stop_run(
+            temp_db, project_id=project_id, task_id=task.id, prefix="no-monitor"
+        )
+
+        result = await build_stop_target(
+            f"#{task.seq_num}", db=temp_db, project_id=project_id, services=None
+        )
+
+        assert result.parked_runs_released == 1
+        runs = LocalAgentRunManager(temp_db)
+        flagged = runs.get(parked.id)
+        assert flagged is not None
+        assert flagged.resume_metadata_json is not None
+        assert flagged.resume_metadata_json[REAP_REQUESTED_AT_KEY]
+        # The durable flag keeps the run eligible for the daemon's next
+        # lifecycle tick even though no monitor was available here.
+        assert parked.id in {run.id for run in runs.list_daemon_stop_orphans()}

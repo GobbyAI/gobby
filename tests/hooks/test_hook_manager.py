@@ -4,11 +4,13 @@ import asyncio
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.dispatchers.mcp import (
     PROJECT_MEMORY_CLOSE_TAG,
     PROJECT_MEMORY_CONTEXT_BUDGET,
@@ -129,12 +131,14 @@ class TestHandleInternalDaemonNotReady:
         downstream.assert_not_called()
         manager._workflow_handler.handle.assert_not_called()
 
-    def test_handle_returns_allow_when_daemon_not_ready_for_non_critical(
+    def test_handle_raises_retryable_when_daemon_not_ready_for_non_critical(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
     ) -> None:
-        """Non-critical hooks fail-open when daemon is not ready after retries."""
+        """Non-critical hooks retain the envelope when the daemon is not ready."""
+        from gobby.hooks.health_gate import DaemonNotReadyError
+
         manager = manager_with_mocks
         manager._health_monitor.get_cached_status.return_value = (
             False,
@@ -145,10 +149,10 @@ class TestHandleInternalDaemonNotReady:
         manager._health_monitor.check_now.return_value = False
 
         event = make_event(event_type=HookEventType.BEFORE_AGENT)
-        response = manager._handle_internal(event)
+        with pytest.raises(DaemonNotReadyError) as excinfo:
+            manager._handle_internal(event)
 
-        assert response.decision == "allow"
-        assert "unreachable" in (response.reason or "")
+        assert excinfo.value.daemon_status == "unreachable"
 
     @pytest.mark.parametrize(
         "event_type",
@@ -1744,3 +1748,131 @@ class TestRecordSessionActivityPulse:
         manager._handle_internal(event)
 
         assert statusline_activity.last_session_activity("platform-abc") is None
+
+
+class TestTerminalIngressGate:
+    """Terminal hooks pass the run-identity fence before any side effects."""
+
+    _PLATFORM_SESSION_ID = "d92fc5be-6638-415d-8143-c349293fb35c"
+    _RUN_ID = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
+    _STALE_RUN_ID = "8292b975-f848-42c4-a8a9-6b6e8b30ddc6"
+
+    def _prime_managed_session(self, manager: HookManager) -> MagicMock:
+        """Wire mocks so the durable session owns _RUN_ID and lookups resolve."""
+        mocks = cast(Any, manager)
+        mocks._session_manager.get.return_value = SimpleNamespace(
+            agent_run_id=self._RUN_ID,
+        )
+        mocks._agent_run_manager.get.return_value = SimpleNamespace(
+            id=self._RUN_ID,
+            resume_metadata_json={},
+        )
+        handler = MagicMock(return_value=HookResponse(decision="allow"))
+        mocks._event_handlers.get_handler.return_value = handler
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._workflow_handler.handle.reset_mock()
+        mocks._enricher.enrich = MagicMock()
+
+        def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+            event.metadata["_platform_session_id"] = self._PLATFORM_SESSION_ID
+            return self._PLATFORM_SESSION_ID
+
+        mocks._session_lookup.resolve.side_effect = resolve
+        return handler
+
+    def test_stale_terminal_hook_is_acked_without_side_effects(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """A dead-run SessionEnd is allowed through but must not touch the session."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.SESSION_END,
+            data={
+                "project_id": "proj-1",
+                "terminal_context": {"gobby_agent_run_id": self._STALE_RUN_ID},
+            },
+        )
+
+        response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        handler.assert_not_called()
+        mocks._workflow_handler.handle.assert_not_called()
+        mocks._session_lookup.apply_session_mutations.assert_not_called()
+
+    def test_missing_run_identity_raises_retryable_and_defers_mutations(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """A managed terminal hook without an exact run id retains the envelope."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.STOP,
+            data={"project_id": "proj-1"},
+        )
+
+        with pytest.raises(AgentRunIngressRetryableError) as exc_info:
+            manager._handle_internal(event)
+
+        assert exc_info.value.expected_run_id == self._RUN_ID
+        assert exc_info.value.session_id == self._PLATFORM_SESSION_ID
+        handler.assert_not_called()
+        mocks._workflow_handler.handle.assert_not_called()
+        mocks._session_lookup.apply_session_mutations.assert_not_called()
+
+    def test_matching_terminal_hook_applies_mutations_and_runs_handler(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """Session mutations are applied only after the identity fence accepts."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.AFTER_AGENT,
+            data={
+                "project_id": "proj-1",
+                "terminal_context": {"gobby_agent_run_id": self._RUN_ID},
+            },
+        )
+
+        response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        mocks._session_lookup.apply_session_mutations.assert_called_once_with(
+            event, self._PLATFORM_SESSION_ID
+        )
+        handler.assert_called_once_with(event)
+
+    def test_non_terminal_hook_skips_gate_and_applies_mutations_inline(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """Non-terminal hooks are never gated and mutate the session inline."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.BEFORE_TOOL,
+            data={"project_id": "proj-1", "tool_name": "Bash"},
+        )
+
+        with patch("gobby.hooks.hook_manager.validate_managed_agent_hook") as gate:
+            response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        gate.assert_not_called()
+        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": True}
+        mocks._session_lookup.apply_session_mutations.assert_not_called()
+        handler.assert_called_once_with(event)

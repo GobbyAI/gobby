@@ -4,13 +4,22 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from gobby.storage.daemon_resume_keys import RECONCILIATION_PENDING_KEY, RESUME_PHASE_KEY
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_than_now_expr
+from gobby.storage.sql_dialect import (
+    elapsed_seconds_greater_than_expr,
+    json_text_expr,
+    older_than_now_expr,
+)
 from gobby.utils.datetime import utc_now
 
 from ._constants import logger
 from ._lifecycle import terminal_fence_key
 from ._models import AgentRun
+
+# Provisional daemon-resume successors are exempt from stale sweeps only this
+# long; past the bound a stuck non-finalized successor re-enters normal cleanup.
+_PROVISIONAL_EXEMPTION_MINUTES = 60
 
 
 class _AgentRunCleanupHost(Protocol):
@@ -46,6 +55,11 @@ class _AgentRunCleanupMixin:
             "timeout_seconds",
         )
         default_timeout_sql = older_than_now_expr(self.db, "last_activity_at", "%s", "minute")
+        pending_flag_sql = json_text_expr(
+            self.db, "ar.resume_metadata_json", RECONCILIATION_PENDING_KEY
+        )
+        phase_sql = json_text_expr(self.db, "ar.resume_metadata_json", RESUME_PHASE_KEY)
+        provisional_stale_sql = older_than_now_expr(self.db, "ar.updated_at", "%s", "minute")
         stale_runs = self.db.fetchall(
             f"""
             WITH run_activity AS (
@@ -62,12 +76,12 @@ class _AgentRunCleanupMixin:
                 LEFT JOIN sessions child ON child.id = ar.child_session_id
                 LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
                 WHERE ar.status = 'running'
-                  AND COALESCE(
-                        ar.resume_metadata_json ->> 'reconciliation_pending',
-                        'false'
-                      ) != 'true'
-                  AND COALESCE(ar.resume_metadata_json ->> 'daemon_stop_resume_phase', '')
-                      NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                  AND COALESCE({pending_flag_sql}, 'false') != 'true'
+                  AND (
+                        COALESCE({phase_sql}, '')
+                            NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                        OR {provisional_stale_sql}
+                  )
             )
             SELECT
                 id,
@@ -88,7 +102,7 @@ class _AgentRunCleanupMixin:
                 )
               )
             """,  # nosec B608 # timeout expressions are selected by storage dialect.
-            (default_timeout_minutes,),
+            (_PROVISIONAL_EXEMPTION_MINUTES, default_timeout_minutes),
         )
 
         explicit_count = 0
@@ -138,6 +152,11 @@ class _AgentRunCleanupMixin:
         """Mark stale pending agent runs as failed and return transitioned IDs."""
         now = utc_now()
         pending_timeout_sql = older_than_now_expr(self.db, "created_at", "%s", "minute")
+        pending_flag_sql = json_text_expr(
+            self.db, "resume_metadata_json", RECONCILIATION_PENDING_KEY
+        )
+        phase_sql = json_text_expr(self.db, "resume_metadata_json", RESUME_PHASE_KEY)
+        provisional_stale_sql = older_than_now_expr(self.db, "updated_at", "%s", "minute")
         with self.db.bounded_transaction() as conn:
             conn.execute(
                 "SELECT pg_advisory_xact_lock_shared(%s)",
@@ -155,9 +174,12 @@ class _AgentRunCleanupMixin:
                     completed_at = %s,
                     updated_at = %s
                 WHERE status = 'pending'
-                AND COALESCE(resume_metadata_json ->> 'reconciliation_pending', 'false') != 'true'
-                AND COALESCE(resume_metadata_json ->> 'daemon_stop_resume_phase', '')
-                    NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                AND COALESCE({pending_flag_sql}, 'false') != 'true'
+                AND (
+                    COALESCE({phase_sql}, '')
+                        NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                    OR {provisional_stale_sql}
+                )
                 AND (
                     (
                         tmux_session_name IS NULL
@@ -170,7 +192,7 @@ class _AgentRunCleanupMixin:
                 )
                 RETURNING id
                 """,  # nosec B608 # timeout expression is selected by storage dialect.
-                (now, now, timeout_minutes, long_timeout_minutes),
+                (now, now, _PROVISIONAL_EXEMPTION_MINUTES, timeout_minutes, long_timeout_minutes),
             )
             run_ids = [str(row["id"]) for row in cursor.fetchall()]
         if run_ids:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -68,7 +69,7 @@ class TestIsFalkorDBInstalled:
 
         _seed_falkordb_config(hub_db)
         proxy = _NonClosingDb(hub_db)
-        assert services.is_falkordb_installed(db=proxy) is True
+        assert services.is_falkordb_installed(db=cast(HubDatabase, proxy)) is True
 
         assert proxy.close_count == 0
 
@@ -77,7 +78,7 @@ class TestIsFalkorDBInstalled:
 
         _seed_falkordb_config(hub_db)
         proxy = _NonClosingDb(hub_db)
-        assert services.is_falkordb_installed(db=proxy) is True
+        assert services.is_falkordb_installed(db=cast(HubDatabase, proxy)) is True
 
         assert proxy.close_count == 0
 
@@ -124,7 +125,7 @@ class TestFalkorDBHealthAndStatus:
         with (
             patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)),
         ):
-            status = await get_falkordb_status(db=proxy)
+            status = await get_falkordb_status(db=cast(HubDatabase, proxy))
 
         assert status == {
             "installed": True,

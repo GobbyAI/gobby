@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -30,6 +34,7 @@ pytestmark = pytest.mark.unit
 CHILD_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 WF_INSTANCE_ID = "22222222-2222-4222-8222-222222222222"
 WF_SUBMIT_INSTANCE_ID = "33333333-3333-4333-8333-333333333333"
+PARKED_RUN_ID = "44444444-4444-4444-8444-444444444444"
 
 
 @pytest.mark.asyncio
@@ -94,10 +99,69 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
 
 
 @pytest.mark.asyncio
-async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_skips_delivery(
     temp_db,
     sample_project,
+) -> None:
+    """A parked (cancelled/daemon_stop) run must keep its workflow rows and
+    never be reported to completion subscribers as a workflow-terminate success."""
+    temp_db.execute(
+        """
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id, status, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (
+            CHILD_SESSION_ID,
+            "ext-child-session",
+            "machine-1",
+            "codex",
+            sample_project["id"],
+        ),
+    )
+    instance_manager = WorkflowInstanceManager(temp_db)
+    instance_manager.save_instance(
+        WorkflowInstance(
+            id=WF_INSTANCE_ID,
+            session_id=CHILD_SESSION_ID,
+            workflow_name="tech-writer-steps",
+            current_step="terminate",
+            step_entered_at=datetime.now(UTC),
+        )
+    )
+
+    runner = MagicMock()
+    # Parked runs are terminal (cancelled), so the running/pending session
+    # lookup misses and resolution falls back to get_run_id_by_session.
+    runner.run_storage.get_by_session.return_value = None
+    runner.get_run_id_by_session.return_value = PARKED_RUN_ID
+    runner.get_run.return_value = SimpleNamespace(
+        id=PARKED_RUN_ID,
+        status="cancelled",
+        terminal_reason="daemon_stop",
+        child_session_id=CHILD_SESSION_ID,
+    )
+    runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock()
+    engine = RuleEngine(db=temp_db, runner=runner)
+
+    with patch(
+        "gobby.workflows.engine.enforcement.complete_and_notify_agent_run",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as complete:
+        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps")
+
+    runner.agent_lifecycle_monitor.terminalize_successful_run.assert_not_awaited()
+    complete.assert_not_awaited()
+    active = instance_manager.get_active_instances(CHILD_SESSION_ID)
+    assert [instance.id for instance in active] == [WF_INSTANCE_ID]
+
+
+@pytest.mark.asyncio
+async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher

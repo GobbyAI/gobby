@@ -190,6 +190,14 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             }
         }
         transport::DeliveryOutcome::Enqueued => {
+            // Retryable ingress backpressure (503 + {"status":"retry"}) is not
+            // a failure: the envelope stays enqueued for drain replay and the
+            // host CLI continues, even on critical hooks — blocking here would
+            // live-lock the CLI against a daemon that keeps asking for retry.
+            if report.is_retry_backpressure() {
+                return emit_action(continue_action());
+            }
+
             if planned_shutdown::suppress_after_failed_post(
                 hook_type,
                 report.failure_kind,

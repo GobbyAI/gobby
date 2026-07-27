@@ -14,6 +14,7 @@ from gobby.runner_lifecycle_agents import (
     _reclassify_reconciliation_pending_runs,
     _reconcile_agent_runs_after_restart,
     _recover_agent_completion_subscribers_on_startup,
+    _retry_parked_non_task_resumes,
     _run_agent_hook_replay_barrier,
 )
 from gobby.runner_lifecycle_startup import (
@@ -370,6 +371,12 @@ async def _start_agent_lifecycle_monitor(
         except Exception as e:
             startup_errors.append(f"start failed: {e}")
             logger.exception("Agent lifecycle monitor start failed during startup")
+            # Fail closed: without the running monitor there is no serialized
+            # reclassification owner, so fenced runs would never resolve.
+            raise RuntimeError(
+                "Agent lifecycle monitor failed to start; agent lifecycle "
+                "startup cannot continue without its reconciliation owner"
+            ) from e
     finally:
         if tracker:
             if startup_errors:
@@ -775,6 +782,7 @@ async def init_subsystems(
             raise RuntimeError("Agent reconciliation owner is unavailable")
     else:
         monitor.set_reconciliation_callback(lambda: _reclassify_reconciliation_pending_runs(runner))
+        monitor.set_non_task_resume_callback(lambda: _retry_parked_non_task_resumes(runner))
     await _run_agent_hook_replay_barrier(runner)
     reconciled_runs = (
         await reconcile_agent_runs_after_restart(runner)

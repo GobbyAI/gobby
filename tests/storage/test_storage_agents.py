@@ -2,14 +2,18 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.agent_resume import finalize_daemon_resume
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.agents import _lifecycle as agents_lifecycle
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -110,7 +114,7 @@ class TestAgentRun:
     def test_from_row(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating AgentRun from database row."""
         agent_run = agent_manager.create(
@@ -137,7 +141,7 @@ class TestAgentRun:
     def test_from_row_with_null_counts(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test AgentRun.from_row handles NULL tool_calls_count and turns_used."""
         agent_run = agent_manager.create(
@@ -161,7 +165,7 @@ class TestAgentRun:
     def test_to_dict(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test converting AgentRun to dictionary."""
         agent_run = agent_manager.create(
@@ -190,7 +194,7 @@ class TestAgentRun:
     def test_to_dict_includes_all_fields(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that to_dict includes all AgentRun fields."""
         agent_run = agent_manager.create(
@@ -238,8 +242,8 @@ class TestLocalAgentRunManager:
     def _create_run_with_child(
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
         external_id: str,
         agent_name: str | None = None,
     ) -> tuple[AgentRun, str]:
@@ -261,7 +265,7 @@ class TestLocalAgentRunManager:
     def test_create_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating a new agent run."""
         agent_run = agent_manager.create(
@@ -285,7 +289,7 @@ class TestLocalAgentRunManager:
     def test_create_agent_run_minimal(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating agent run with minimal required fields."""
         agent_run = agent_manager.create(
@@ -304,8 +308,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         """Test creating agent run with pre-assigned child session."""
         # Create a child session first
@@ -328,7 +332,7 @@ class TestLocalAgentRunManager:
     def test_create_agent_run_with_claimed_session(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating agent run with persisted claimed session ownership."""
         agent_run = agent_manager.create(
@@ -343,7 +347,7 @@ class TestLocalAgentRunManager:
     def test_create_logs_debug(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that create logs debug message."""
         with patch("gobby.storage.agents._lifecycle.logger") as mock_logger:
@@ -362,7 +366,7 @@ class TestLocalAgentRunManager:
     def test_create_raises_on_failed_retrieval(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that create raises RuntimeError if retrieval fails."""
         with patch.object(agent_manager, "get", return_value=None):
@@ -376,7 +380,7 @@ class TestLocalAgentRunManager:
     def test_get_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test getting an agent run by ID."""
         created = agent_manager.create(
@@ -393,7 +397,7 @@ class TestLocalAgentRunManager:
     def test_find_by_id_prefix(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         created = agent_manager.create(
             parent_session_id=sample_session["id"],
@@ -413,7 +417,7 @@ class TestLocalAgentRunManager:
     def test_start_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test starting an agent run."""
         agent_run = agent_manager.create(
@@ -437,7 +441,7 @@ class TestLocalAgentRunManager:
     def test_complete_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test completing an agent run successfully."""
         agent_run = agent_manager.create(
@@ -464,7 +468,7 @@ class TestLocalAgentRunManager:
     def test_complete_with_defaults(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test completing with default tool_calls_count and turns_used."""
         agent_run = agent_manager.create(
@@ -483,7 +487,7 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Completing an agent run expires its child session."""
         child_session = session_manager.register(
@@ -518,7 +522,7 @@ class TestLocalAgentRunManager:
     def test_fail_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test failing an agent run."""
         agent_run = agent_manager.create(
@@ -545,7 +549,7 @@ class TestLocalAgentRunManager:
     def test_fail_with_defaults(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test failing with default tool_calls_count and turns_used."""
         agent_run = agent_manager.create(
@@ -568,7 +572,7 @@ class TestLocalAgentRunManager:
     def test_timeout_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test timing out an agent run."""
         agent_run = agent_manager.create(
@@ -590,7 +594,7 @@ class TestLocalAgentRunManager:
     def test_timeout_with_default_turns(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test timeout with default turns_used."""
         agent_run = agent_manager.create(
@@ -609,7 +613,7 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Timing out an agent run expires its child session."""
         child_session = session_manager.register(
@@ -644,7 +648,7 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Terminal-run sweep keeps pending/running child sessions live."""
         pending_session = session_manager.register(
@@ -684,6 +688,228 @@ class TestLocalAgentRunManager:
         assert pending_updated.status == "active"
         assert running_updated.status == "active"
 
+    @staticmethod
+    def _seed_parked_owned_run(
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+        external_id: str,
+        task_id: str | None = None,
+    ) -> tuple[AgentRun, str]:
+        """Park a daemon-stop run that still owns its bound child session."""
+        child_session = session_manager.register(
+            external_id=external_id,
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt=f"Parked run for {external_id}",
+            child_session_id=child_session.id,
+            task_id=task_id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=agent_run.id,
+        )
+        agent_manager.start(agent_run.id)
+        agent_manager.cancel(agent_run.id, terminal_reason="daemon_stop")
+        return agent_run, child_session.id
+
+    def test_terminal_sweep_ignores_consumed_original_child_pointer(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+        sample_session: dict[str, Any],
+    ) -> None:
+        """A consumed daemon-stop original must not expire its successor's session.
+
+        The sweep keys on sessions.agent_run_id alone; the consumed original
+        still names the child via agent_runs.child_session_id, and that stale
+        back-reference must not expire the session the successor now owns.
+        """
+        original, child_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "agent-child-consumed-original",
+        )
+        paused = session_manager.get(child_session_id)
+        assert paused is not None
+        assert paused.status == "paused"
+
+        successor = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Successor after daemon stop",
+            child_session_id=child_session_id,
+            resume_metadata_json={
+                "resumed_from_run_id": original.id,
+                "daemon_stop_resume_phase": "runtime_persisted",
+            },
+        )
+        assert rebind_agent_run(
+            temp_db,
+            session_id=child_session_id,
+            expected_run_id=original.id,
+            new_run_id=successor.id,
+            workflow_name=None,
+        )
+        agent_manager.start(successor.id)
+        result = finalize_daemon_resume(
+            temp_db,
+            original_run_id=original.id,
+            successor_run_id=successor.id,
+            child_session_id=child_session_id,
+        )
+        assert result.already_finalized is False
+
+        expired = agent_manager.expire_sessions_for_terminal_runs()
+
+        assert expired == 0
+        revived = session_manager.get(child_session_id)
+        assert revived is not None
+        assert revived.status == "active"
+        assert revived.agent_run_id == successor.id
+
+    def test_terminal_sweep_preserves_unconsumed_parked_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        """An unconsumed daemon-stop original keeps its parked session paused."""
+        original, child_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "agent-child-parked-unconsumed",
+        )
+
+        expired = agent_manager.expire_sessions_for_terminal_runs()
+
+        assert expired == 0
+        parked = session_manager.get(child_session_id)
+        assert parked is not None
+        assert parked.status == "paused"
+        assert parked.agent_run_id == original.id
+
+    def test_terminal_sweep_expires_session_owned_by_plain_terminal_run(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+        sample_session: dict[str, Any],
+    ) -> None:
+        """A terminal run without terminal_reason still expires its session."""
+        child_session = session_manager.register(
+            external_id="agent-child-plain-terminal",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Plain terminal sweep test",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(agent_run.id)
+        agent_manager.cancel(agent_run.id)
+        temp_db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (agent_run.id, child_session.id),
+        )
+
+        expired = agent_manager.expire_sessions_for_terminal_runs()
+
+        assert expired == 1
+        updated = session_manager.get(child_session.id)
+        assert updated is not None
+        assert updated.status == "expired"
+
+    def test_list_parked_non_task_resume_candidates_filters(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Only recent unconsumed non-task originals owning live sessions list."""
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=sample_project["id"],
+            title="Parked non-task candidate filtering",
+            validation_criteria="Dispatcher-owned parked runs are excluded.",
+        )
+        candidate, _candidate_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-candidate",
+        )
+        self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-task-attached",
+            task_id=task.id,
+        )
+        consumed, _consumed_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-consumed",
+        )
+        assert (
+            agent_manager.merge_resume_metadata(
+                consumed.id,
+                {
+                    "daemon_stop_resume_consumed_at": "2026-07-01T00:00:00+00:00",
+                    "daemon_stop_resume_consumed_by_run_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+                },
+            )
+            is not None
+        )
+        stale, _stale_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-stale",
+        )
+        old_timestamp = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET completed_at = %s, updated_at = %s WHERE id = %s",
+            (old_timestamp, old_timestamp, stale.id),
+        )
+        _expired_run, expired_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-expired-session",
+        )
+        temp_db.execute(
+            "UPDATE sessions SET status = 'expired' WHERE id = %s",
+            (expired_session_id,),
+        )
+        _unbound_run, unbound_session_id = self._seed_parked_owned_run(
+            agent_manager,
+            session_manager,
+            sample_session,
+            "parked-unbound",
+        )
+        temp_db.execute(
+            "UPDATE sessions SET agent_run_id = NULL WHERE id = %s",
+            (unbound_session_id,),
+        )
+
+        candidates = agent_manager.list_parked_non_task_resume_candidates(max_age_hours=24)
+
+        assert [run.id for run in candidates] == [candidate.id]
+
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
         result = agent_manager.timeout("00000000-0000-0000-0000-0000000000ff")
@@ -692,7 +918,7 @@ class TestLocalAgentRunManager:
     def test_cancel_agent_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cancelling an agent run."""
         agent_run = agent_manager.create(
@@ -711,7 +937,7 @@ class TestLocalAgentRunManager:
     def test_cancel_agent_run_with_terminal_reason(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cancelling an agent run stores terminal_reason."""
         agent_run = agent_manager.create(
@@ -730,7 +956,7 @@ class TestLocalAgentRunManager:
     def test_cancel_pending_run(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cancelling a pending (not started) run."""
         agent_run = agent_manager.create(
@@ -753,8 +979,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         recent_cancelled, recent_child_id = self._create_run_with_child(
             agent_manager,
@@ -822,8 +1048,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         helper_run, helper_child_id = self._create_run_with_child(
             agent_manager,
@@ -866,8 +1092,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         old_created_run, old_created_child_id = self._create_run_with_child(
             agent_manager,
@@ -914,8 +1140,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         recent_run, recent_child_id = self._create_run_with_child(
             agent_manager,
@@ -951,7 +1177,7 @@ class TestLocalAgentRunManager:
     def test_terminal_transition_first_write_wins(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Second terminal write should no-op once a run is already terminal."""
         agent_run = agent_manager.create(
@@ -970,7 +1196,7 @@ class TestLocalAgentRunManager:
     def test_update_runtime_can_clear_pid(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         agent_run = agent_manager.create(
             parent_session_id=sample_session["id"],
@@ -997,7 +1223,7 @@ class TestLocalAgentRunManager:
     def test_terminal_transitions_clear_pid(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
         transition: str,
         expected_status: str,
     ) -> None:
@@ -1021,8 +1247,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         """Test updating child session ID after creation."""
         agent_run = agent_manager.create(
@@ -1057,7 +1283,7 @@ class TestLocalAgentRunManager:
     def test_update_sdk_session_id(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test updating SDK session ID after creation."""
         agent_run = agent_manager.create(
@@ -1083,7 +1309,7 @@ class TestLocalAgentRunManager:
     def test_list_by_session(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test listing agent runs for a session."""
         # Create multiple runs
@@ -1110,7 +1336,7 @@ class TestLocalAgentRunManager:
     def test_list_by_session_with_status_filter(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test listing agent runs filtered by status."""
         run1 = agent_manager.create(
@@ -1151,7 +1377,7 @@ class TestLocalAgentRunManager:
     def test_list_by_session_with_limit(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test listing agent runs with limit."""
         for i in range(5):
@@ -1167,7 +1393,7 @@ class TestLocalAgentRunManager:
     def test_list_by_session_ordered_by_created_at_desc(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that list_by_session returns runs ordered by created_at DESC."""
         run1 = agent_manager.create(
@@ -1196,7 +1422,7 @@ class TestLocalAgentRunManager:
     def test_list_by_session_empty(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test list_by_session returns empty list when no runs exist."""
         runs = agent_manager.list_by_session(sample_session["id"])
@@ -1206,8 +1432,8 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
-        sample_project: dict,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
     ) -> None:
         """Test listing all currently running agent runs."""
         # Create runs in different sessions
@@ -1248,7 +1474,7 @@ class TestLocalAgentRunManager:
     def test_list_running_with_limit(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test listing running runs with limit."""
         for i in range(5):
@@ -1265,7 +1491,7 @@ class TestLocalAgentRunManager:
     def test_list_running_ordered_by_started_at_asc(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that list_running returns runs ordered by started_at ASC."""
         run1 = agent_manager.create(
@@ -1304,7 +1530,7 @@ class TestLocalAgentRunManager:
     def test_count_by_session(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test counting agent runs by status for a session."""
         run1 = agent_manager.create(
@@ -1349,7 +1575,7 @@ class TestLocalAgentRunManager:
     def test_count_by_session_empty(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test count_by_session returns empty dict when no runs."""
         counts = agent_manager.count_by_session(sample_session["id"])
@@ -1359,7 +1585,7 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleaning up stale running agent runs."""
         child_session = session_manager.register(
@@ -1400,7 +1626,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_runs_skips_runs_with_process_identity(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Synchronous stale cleanup must not timeout runs it cannot kill."""
         run = agent_manager.create(
@@ -1426,7 +1652,7 @@ class TestLocalAgentRunManager:
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Active child session heartbeat prevents default stale timeout."""
         child_session = session_manager.register(
@@ -1463,7 +1689,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_runs_no_stale(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleanup_stale_runs returns no IDs when no runs are stale."""
         run = agent_manager.create(
@@ -1483,7 +1709,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_runs_logs_when_cleaned(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that cleanup_stale_runs logs when runs are timed out."""
         run = agent_manager.create(
@@ -1517,7 +1743,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_runs_skips_non_running(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleanup_stale_runs only affects running status."""
         # Pending run
@@ -1578,7 +1804,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_pending_runs(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleaning up stale pending agent runs."""
         pending = agent_manager.create(
@@ -1609,7 +1835,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_pending_runs_no_stale(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleanup_stale_pending_runs returns no IDs when no runs are stale."""
         pending = agent_manager.create(
@@ -1628,7 +1854,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_pending_runs_uses_long_timeout_for_tmux_initialized(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         pending = agent_manager.create(
             parent_session_id=sample_session["id"],
@@ -1655,7 +1881,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_pending_runs_logs_when_cleaned(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test that cleanup_stale_pending_runs logs when runs are failed."""
         pending = agent_manager.create(
@@ -1684,7 +1910,7 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_pending_runs_skips_non_pending(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cleanup_stale_pending_runs only affects pending status."""
         # Running run
@@ -1720,7 +1946,7 @@ class TestAgentRunStatuses:
     def test_full_success_lifecycle(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test complete successful agent run lifecycle."""
         # Create
@@ -1753,7 +1979,7 @@ class TestAgentRunStatuses:
     def test_full_failure_lifecycle(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test complete failed agent run lifecycle."""
         agent_run = agent_manager.create(
@@ -1777,7 +2003,7 @@ class TestAgentRunStatuses:
     def test_timeout_lifecycle(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test agent run timeout lifecycle."""
         agent_run = agent_manager.create(
@@ -1797,7 +2023,7 @@ class TestAgentRunStatuses:
     def test_cancel_from_pending(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cancelling an agent run from pending state."""
         agent_run = agent_manager.create(
@@ -1813,7 +2039,7 @@ class TestAgentRunStatuses:
     def test_cancel_from_running(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test cancelling an agent run from running state."""
         agent_run = agent_manager.create(
@@ -1833,7 +2059,7 @@ class TestAgentRunEdgeCases:
     def test_multiple_runs_same_session(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating multiple agent runs for the same session."""
         runs = []
@@ -1856,7 +2082,7 @@ class TestAgentRunEdgeCases:
     def test_different_providers(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating agent runs with different providers."""
         providers = ["claude", "qwen", "codex", "openai"]
@@ -1872,7 +2098,7 @@ class TestAgentRunEdgeCases:
     def test_long_prompt(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test creating agent run with very long prompt."""
         long_prompt = "Test " * 10000  # ~50K characters
@@ -1889,7 +2115,7 @@ class TestAgentRunEdgeCases:
     def test_long_result(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test completing agent run with very long result."""
         long_result = "Result " * 10000
@@ -1908,7 +2134,7 @@ class TestAgentRunEdgeCases:
     def test_long_error(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test failing agent run with very long error message."""
         long_error = "Error " * 10000
@@ -1927,7 +2153,7 @@ class TestAgentRunEdgeCases:
     def test_unicode_in_prompt(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test agent run with unicode characters in prompt."""
         # Use valid unicode characters (no surrogates)
@@ -1945,7 +2171,7 @@ class TestAgentRunEdgeCases:
     def test_high_tool_calls_count(
         self,
         agent_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Test completing with high tool calls count."""
         agent_run = agent_manager.create(

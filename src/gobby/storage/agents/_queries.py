@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
+from gobby.storage.daemon_resume_keys import (
+    REAP_REQUESTED_AT_KEY,
+    REAPED_AT_KEY,
+    daemon_resume_unconsumed_condition,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr, older_than_now_expr
 
@@ -79,11 +84,7 @@ class _AgentRunQueryMixin:
         """List recent cancelled daemon-stop runs for task resume recovery."""
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
-        consumed_at_sql = json_text_expr(
-            self.db,
-            "ar.resume_metadata_json",
-            "daemon_stop_resume_consumed_at",
-        )
+        unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
         recent_sql = newer_than_now_expr(
             self.db,
             "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
@@ -95,11 +96,51 @@ class _AgentRunQueryMixin:
             WHERE ar.task_id = %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
-              AND ({consumed_at_sql} IS NULL OR {consumed_at_sql} = '')
+              AND {unconsumed_sql}
               AND {recent_sql}
             """,
             (task_id, max_age_hours),
             order_by="ORDER BY ar.completed_at DESC NULLS LAST, ar.updated_at DESC",
+            limit=limit,
+        )
+
+    def list_parked_non_task_resume_candidates(
+        self: _AgentRunQueryHost,
+        *,
+        limit: int = 20,
+        max_age_hours: float = 24,
+    ) -> list[AgentRun]:
+        """List unconsumed non-task parked originals still owning their session.
+
+        Task-owned parked runs are relaunched by the dispatcher; these have no
+        dispatch owner and are retried by the lifecycle monitor instead.
+        """
+        if max_age_hours <= 0:
+            raise ValueError("max_age_hours must be positive")
+        unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
+        recent_sql = newer_than_now_expr(
+            self.db,
+            "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
+            "%s",
+            "hour",
+        )
+        return self._fetch_runs_with_live_stats(
+            f"""
+            WHERE ar.task_id IS NULL
+              AND ar.status = 'cancelled'
+              AND ar.terminal_reason = 'daemon_stop'
+              AND {unconsumed_sql}
+              AND {recent_sql}
+              AND EXISTS (
+                    SELECT 1
+                    FROM sessions s
+                    WHERE s.id = ar.child_session_id
+                      AND s.agent_run_id = ar.id
+                      AND s.status NOT IN ('expired', 'deleted')
+              )
+            """,
+            (max_age_hours,),
+            order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
 
@@ -147,43 +188,61 @@ class _AgentRunQueryMixin:
     def list_daemon_stop_orphans(
         self: _AgentRunQueryHost,
         *,
-        max_age_hours: float = 24,
+        max_age_hours: float | None = 24,
         limit: int = 100,
+        task_ids: Sequence[str] | None = None,
     ) -> list[AgentRun]:
-        """List parked originals whose durable-session recovery window elapsed."""
-        if max_age_hours <= 0:
+        """List parked originals whose durable-session recovery window elapsed.
+
+        Parked originals flagged with an operator reap request
+        (``daemon_stop_orphan_reap_requested_at``) match regardless of age.
+        ``max_age_hours=None`` lists parked originals without any age gate;
+        ``task_ids`` narrows results to runs owned by the given tasks.
+        """
+        if max_age_hours is not None and max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
-        consumed_at_sql = json_text_expr(
-            self.db,
-            "ar.resume_metadata_json",
-            "daemon_stop_resume_consumed_at",
-        )
+        unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
         reaped_at_sql = json_text_expr(
             self.db,
             "ar.resume_metadata_json",
-            "daemon_stop_orphan_reaped_at",
+            REAPED_AT_KEY,
         )
-        old_sql = older_than_now_expr(
-            self.db,
-            "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
-            "%s",
-            "hour",
-        )
-        return self._fetch_runs_with_live_stats(
-            f"""
-            WHERE ar.status = 'cancelled'
-              AND ar.terminal_reason = 'daemon_stop'
-              AND ({consumed_at_sql} IS NULL OR {consumed_at_sql} = '')
-              AND ({reaped_at_sql} IS NULL OR {reaped_at_sql} = '')
-              AND EXISTS (
+        conditions = [
+            "ar.status = 'cancelled'",
+            "ar.terminal_reason = 'daemon_stop'",
+            unconsumed_sql,
+            f"({reaped_at_sql} IS NULL OR {reaped_at_sql} = '')",
+            """EXISTS (
                     SELECT 1
                     FROM sessions s
                     WHERE s.id = ar.child_session_id
                       AND s.agent_run_id = ar.id
-              )
-              AND {old_sql}
-            """,
-            (max_age_hours,),
+              )""",
+        ]
+        params: list[object] = []
+        if max_age_hours is not None:
+            requested_sql = json_text_expr(
+                self.db,
+                "ar.resume_metadata_json",
+                REAP_REQUESTED_AT_KEY,
+            )
+            old_sql = older_than_now_expr(
+                self.db,
+                "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
+                "%s",
+                "hour",
+            )
+            conditions.append(
+                f"({old_sql} OR ({requested_sql} IS NOT NULL AND {requested_sql} <> ''))"
+            )
+            params.append(max_age_hours)
+        if task_ids is not None:
+            conditions.append("ar.task_id = ANY(%s)")
+            params.append(list(task_ids))
+        where_clause = "WHERE " + "\n              AND ".join(conditions)
+        return self._fetch_runs_with_live_stats(
+            where_clause,
+            tuple(params),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )

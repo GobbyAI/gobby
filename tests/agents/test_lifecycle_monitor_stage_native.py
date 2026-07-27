@@ -48,7 +48,10 @@ def test_recover_non_development_states_clear_ownership_no_stage_transition() ->
 def test_cancelled_agent_cleanup_delegates_to_stage_native_recovery() -> None:
     source = _cleanup_source()
 
-    assert 'recover_task_from_terminal_agent(db_run, outcome="cancelled")' in source
+    assert "recover_task_from_terminal_agent(" in source
+    assert 'outcome="cancelled"' in source
+    # Parked daemon_stop runs keep their claims; only real cancellations recover.
+    assert 'if terminal_reason != "daemon_stop":' in source
     assert "status='open'" not in source
 
 

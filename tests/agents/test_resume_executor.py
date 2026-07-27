@@ -2,25 +2,27 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 
 from gobby.agents import resume_executor
+from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
 
-def _original_run() -> AgentRun:
+def _original_run(*, provider: str = "codex") -> AgentRun:
     return AgentRun(
         id="e87bc595-eb81-4cd2-9745-06fc59dcd13d",
         parent_session_id="7d307ae2-5834-43d0-8d59-c385ab37885f",
         child_session_id="0bd17b43-4097-4efe-b16c-4c739ea4787d",
-        provider="codex",
+        provider=provider,
         prompt="Original prompt",
         status="cancelled",
         created_at=datetime(2026, 5, 30, tzinfo=UTC),
@@ -94,9 +96,9 @@ def _patch_common(
     monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
     monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
     monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "finalize_resume_handoff", finalize)
+    monkeypatch.setattr(resume_executor, "finalize_resume_handoff_async", finalize)
     monkeypatch.setattr(
-        "gobby.agents.resume_finalization.finalize_resume_handoff",
+        "gobby.agents.resume_finalization.finalize_resume_handoff_async",
         finalize,
     )
     monkeypatch.setattr(resume_executor, "notify_parent_of_recovery", MagicMock())
@@ -112,7 +114,7 @@ async def test_resume_reuses_child_session_and_finalizes_durable_phases(
     runner = _runner(storage=storage)
     spawner = MagicMock()
     spawner.spawn.return_value = _spawn_result()
-    finalize = MagicMock()
+    finalize = AsyncMock()
     prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
 
     result = await resume_executor.resume_agent_run(
@@ -157,7 +159,7 @@ async def test_live_spawn_is_left_provisional_when_runtime_persistence_fails(
     runner = _runner(storage=storage)
     spawner = MagicMock()
     spawner.spawn.return_value = _spawn_result()
-    finalize = MagicMock()
+    finalize = AsyncMock()
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
 
     result = await resume_executor.resume_agent_run(
@@ -181,7 +183,7 @@ async def test_spawn_failure_parks_successor_without_releasing_session(
     runner = _runner(storage=storage)
     spawner = MagicMock()
     spawner.spawn.return_value = _spawn_result(success=False)
-    finalize = MagicMock()
+    finalize = AsyncMock()
     cleanup_runtime = MagicMock()
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     monkeypatch.setattr(
@@ -233,3 +235,198 @@ async def test_resume_rejects_relative_cwd_before_preparing_successor(
     assert result.success is False
     assert result.error == "resume_cwd_not_absolute"
     prepare.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_override = 'model_provider="gobby_endpoint_openrouter"'
+    metadata = _resume_metadata()
+    metadata["model"] = "endpoint:openrouter/moonshotai/kimi-k3"
+    metadata["config_overrides"] = [provider_override]
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    build_cli = MagicMock(return_value=(["codex", "resume"], {}))
+    monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "openrouter": {
+                            "protocol": "openai-compatible",
+                            "wire_api": "responses",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "sk-openrouter-test",
+                            "model": "moonshotai/kimi-k3",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    build_kwargs = build_cli.call_args.kwargs
+    assert build_kwargs["cli"] == "codex"
+    assert build_kwargs["model"] == "moonshotai/kimi-k3"
+    assert build_kwargs["resume_session_id"] == "native-123"
+    overrides = build_kwargs["config_overrides"]
+    assert overrides.count(provider_override) == 1
+    assert 'model="moonshotai/kimi-k3"' in overrides
+    assert (
+        'model_providers.gobby_endpoint_openrouter.base_url="https://openrouter.ai/api/v1"'
+        in overrides
+    )
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env["GOBBY_CODEX_ENDPOINT_API_KEY"] == "sk-openrouter-test"
+    assert "sk-openrouter-test" not in repr(build_kwargs)
+    assert "sk-openrouter-test" not in repr(prepare.call_args.kwargs)
+    merge_calls = storage.merge_resume_metadata.call_args_list
+    assert merge_calls, "launch updates must be merged onto the successor"
+    assert all("sk-openrouter-test" not in repr(call) for call in merge_calls)
+    launch_updates = merge_calls[0].args[1]
+    assert launch_updates["config_overrides"].count(provider_override) == 1
+    assert 'model="moonshotai/kimi-k3"' in launch_updates["config_overrides"]
+
+
+@pytest.mark.asyncio
+async def test_resume_reuses_persisted_claude_mcp_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    metadata["mcp_path"] = "/persisted/.mcp.json"
+    metadata["strict_mcp"] = True
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = spawner.spawn.call_args.kwargs["command"]
+    assert command[0:3] == ["claude", "--resume", "native-123"]
+    assert command[command.index("--mcp-config") + 1] == "/persisted/.mcp.json"
+    assert command.index("--strict-mcp-config") == command.index("--mcp-config") + 2
+    assert command.index("--strict-mcp-config") < command.index("Continue")
+    assert command[-1] == "Continue"
+    successor_metadata = prepare.call_args.kwargs["resume_metadata_json"]
+    assert successor_metadata["mcp_path"] == "/persisted/.mcp.json"
+    assert successor_metadata["strict_mcp"] is True
+    launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert "mcp_path" not in launch_updates
+    assert "strict_mcp" not in launch_updates
+
+
+@pytest.mark.asyncio
+async def test_resume_discovers_workspace_mcp_config_for_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mcp_config = tmp_path / ".mcp.json"
+    mcp_config.write_text(
+        '{"mcpServers":{"gobby":{"command":"uv","args":["run","gobby","mcp-server"]}}}',
+        encoding="utf-8",
+    )
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    metadata["cwd"] = str(tmp_path)
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = spawner.spawn.call_args.kwargs["command"]
+    assert command[0:3] == ["claude", "--resume", "native-123"]
+    assert command[command.index("--mcp-config") + 1] == str(mcp_config)
+    assert command.index("--strict-mcp-config") < command.index("Continue")
+    assert command[-1] == "Continue"
+    launch_updates = storage.merge_resume_metadata.call_args_list[0].args[1]
+    assert launch_updates["mcp_path"] == str(mcp_config)
+    assert launch_updates["strict_mcp"] is True
+    ordered = [name for name, _args, _kwargs in storage.mock_calls]
+    assert ordered.index("merge_resume_metadata") < ordered.index("transition_resume_phase")
+
+
+@pytest.mark.asyncio
+async def test_successor_metadata_strips_inherited_protocol_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata.update(
+        {
+            "daemon_stop_resume_phase": "finalized",
+            "daemon_stop_resume_consumed_at": "2026-05-30T00:00:00+00:00",
+            "daemon_stop_resume_consumed_by_run_id": "stale-successor",
+            "daemon_stop_resume_failure_count": 2,
+            "daemon_stop_resume_finalized_at": "2026-05-30T00:00:00+00:00",
+            "daemon_stop_resume_tmux_session_name": "stale-tmux",
+            "daemon_stop_resume_planned_tmux_title": "stale-title",
+            "daemon_stop_orphan_reap_started_at": "2026-05-30T00:00:00+00:00",
+            "daemon_stop_orphan_reap_requested_at": "2026-05-30T00:00:00+00:00",
+            "daemon_stop_orphan_reaped_at": "2026-05-30T00:00:00+00:00",
+            "reconciliation_pending": True,
+            "resumed_from_run_id": "stale",
+        }
+    )
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    successor_metadata = prepare.call_args.kwargs["resume_metadata_json"]
+    refreshed_keys = {
+        "daemon_stop_resume_phase",
+        "daemon_stop_resume_planned_tmux_title",
+        "resumed_from_run_id",
+    }
+    for key in resume_executor._INHERITED_PROTOCOL_KEYS:
+        assert key in metadata, f"test must seed protocol key {key!r}"
+        if key in refreshed_keys:
+            continue
+        assert key not in successor_metadata, f"protocol key {key!r} leaked into successor"
+    assert successor_metadata["resumed_from_run_id"] == _original_run().id
+    assert successor_metadata["daemon_stop_resume_phase"] == "prepared"
+    assert (
+        successor_metadata["daemon_stop_resume_planned_tmux_title"]
+        == f"gobby-resume-{_SUCCESSOR_ID}"
+    )

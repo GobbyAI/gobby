@@ -16,7 +16,6 @@ from gobby.runner_gate import acquire_runner_gate
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
     _recover_agent_runs_after_restart,
-    _register_persisted_completion_subscribers,
 )
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_lifecycle_shutdown import (
@@ -51,7 +50,6 @@ __all__ = [
     "_reconcile_agent_runs_after_restart",
     "_record_provider_model_refresh_result",
     "_refresh_provider_model_catalog",
-    "_register_persisted_completion_subscribers",
     "_shutdown_websocket_server",
     "_start_periodic_tasks",
     "get_startup_tracker",

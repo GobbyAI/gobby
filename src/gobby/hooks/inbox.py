@@ -238,10 +238,15 @@ async def drain_hook_inbox_once(
 
         if 200 <= response.status_code < 300:
             if not envelope_id:
-                logger.warning(
-                    "Hook inbox replay succeeded for %s without an envelope ID; retaining file",
-                    path.name,
+                # The event was processed but cannot be marked in the
+                # dedupe ledger; retaining it would replay it forever and
+                # keep the startup barrier from ever settling.
+                _quarantine_or_warn(
+                    path,
+                    reason="missing_envelope_id",
+                    detail="Replay succeeded but the file name carries no envelope ID",
                 )
+                replayed += 1
                 continue
 
             mark_envelope_processed(envelope_id, processed_dir=processed_dir)

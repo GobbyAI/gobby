@@ -2,10 +2,15 @@
 
 import asyncio
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    import uvicorn
 
 from gobby import app_context, runner_lifecycle_shutdown
 from gobby.hooks.event_handlers import EventHandlers
@@ -1192,3 +1197,129 @@ class TestExpiryBackstopSubprocess:
         reclaim = claim_pid_file(pid_file)
         assert reclaim is not None
         reclaim.release()
+
+
+class TestStopShutdownAgentPreservation:
+    """#18974: STOP-intent shutdown parks agent runs instead of cancelling them."""
+
+    @pytest.mark.asyncio
+    async def test_stop_shutdown_never_cancels_agent_runs(self, tmp_path: Path) -> None:
+        run = SimpleNamespace(
+            id="run-preserved",
+            pid=4242,
+            tmux_session_name=None,
+            resume_metadata_json=None,
+        )
+        run_storage = MagicMock()
+        run_storage.list_active.return_value = [run]
+        reap = AsyncMock()
+        runner = SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.STOP,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _hook_manager=SimpleNamespace(
+                    _shutdown_complete=True,
+                    shutdown_async=AsyncMock(),
+                ),
+                _terminate_streamable_http_sessions=AsyncMock(),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
+            database=SimpleNamespace(close=MagicMock()),
+            agent_runner=SimpleNamespace(run_storage=run_storage),
+        )
+        server = SimpleNamespace(should_exit=False)
+
+        async def server_done() -> None:
+            return None
+
+        with patch.object(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            return_value=tmp_path / "shutdown.json",
+        ):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                cast(GobbyRunner, runner),
+                cast("uvicorn.Server", server),
+                asyncio.create_task(server_done()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=reap,
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        # The old shutdown-time cancellation helper is gone; run storage sees
+        # only the preservation listing and no cancel/fail/terminalize writes.
+        assert not hasattr(runner_lifecycle_shutdown, "_cancel_active_agent_runs_for_shutdown")
+        assert run_storage.list_active.called
+        assert {name for name, _args, _kwargs in run_storage.mock_calls} == {"list_active"}
+        reap.assert_awaited_once_with(preserve_agents=True, preserved_agent_pids={4242})
+        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_cleanup_skips_child_reap_when_preserve_set_unknown(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+
+        async def cancel_health_checks() -> None:
+            events.append("health")
+
+        async def drain_deliveries() -> None:
+            events.append("drain")
+
+        async def shutdown_executor(_executor: object) -> None:
+            events.append("executor")
+
+        async def unknown_preserve_set(_runner: object) -> set[int] | None:
+            events.append("preserve")
+            return None
+
+        reap = AsyncMock()
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "close_terminal_delivery_admission",
+            lambda: events.append("close"),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "cancel_and_await_health_checks",
+            cancel_health_checks,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "drain_shielded_terminal_deliveries",
+            drain_deliveries,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_shutdown_database_executor",
+            shutdown_executor,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_preserved_agent_terminal_pids",
+            unknown_preserve_set,
+        )
+
+        await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+            cast(GobbyRunner, SimpleNamespace(db_executor=object())),
+            shutdown_intent=ShutdownIntent.STOP,
+            reap_remaining_child_processes=reap,
+            shutdown_telemetry=lambda: events.append("telemetry"),
+        )
+
+        reap.assert_not_awaited()
+        assert "preserve" in events
+        assert "telemetry" in events
+        assert events[-1] == "executor"

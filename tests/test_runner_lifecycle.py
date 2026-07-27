@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -654,7 +655,7 @@ class TestInitSubsystems:
         provider_catalog.refresh.assert_called_once_with(codex_client=codex_client)
 
     @pytest.mark.asyncio
-    async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
+    async def test_agent_lifecycle_monitor_cleanup_failure_is_non_fatal(
         self,
         caplog: pytest.LogCaptureFixture,
         enable_log_propagation: None,
@@ -665,7 +666,7 @@ class TestInitSubsystems:
         monitor = SimpleNamespace(
             set_reconciliation_callback=MagicMock(),
             cleanup_stale_pending_runs=AsyncMock(side_effect=RuntimeError("cleanup failed")),
-            start=AsyncMock(side_effect=RuntimeError("start failed")),
+            start=AsyncMock(),
         )
         runner = SimpleNamespace(agent_lifecycle_monitor=monitor)
         with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
@@ -680,10 +681,43 @@ class TestInitSubsystems:
         assert tracker.errors == [
             {
                 "subsystem": "Agent lifecycle monitor",
-                "error": "cleanup failed: cleanup failed; start failed: start failed",
+                "error": "cleanup failed: cleanup failed",
             }
         ]
         assert "Agent stale pending cleanup failed during startup" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_agent_lifecycle_monitor_start_failure_fails_closed(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
+
+        tracker = runner_lifecycle.StartupTracker()
+        monitor = SimpleNamespace(
+            set_reconciliation_callback=MagicMock(),
+            cleanup_stale_pending_runs=AsyncMock(),
+            start=AsyncMock(side_effect=RuntimeError("start failed")),
+        )
+        runner = SimpleNamespace(agent_lifecycle_monitor=monitor)
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"),
+            pytest.raises(RuntimeError, match="reconciliation owner"),
+        ):
+            await _start_agent_lifecycle_monitor(
+                runner,
+                tracker,
+            )
+
+        monitor.start.assert_awaited_once()
+        assert tracker.steps_completed == []
+        assert tracker.errors == [
+            {
+                "subsystem": "Agent lifecycle monitor",
+                "error": "start failed: start failed",
+            }
+        ]
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
 
     async def test_start_failures_do_not_abort_init_and_readiness_is_last(self) -> None:
@@ -1911,12 +1945,12 @@ class TestShutdownDaemonServices:
         list_active = MagicMock(
             side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
         )
-        db_calls: list[tuple[object, tuple[object, ...]]] = []
+        db_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
 
-        async def run_db(func: object, *args: object) -> object:
-            db_calls.append((func, args))
+        async def run_db(func: object, *args: object, **kwargs: object) -> object:
+            db_calls.append((func, args, kwargs))
             assert callable(func)
-            return func(*args)
+            return func(*args, **kwargs)
 
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(
@@ -1925,6 +1959,7 @@ class TestShutdownDaemonServices:
             db_executor=SimpleNamespace(run=run_db),
         )
         tmux_manager = SimpleNamespace(
+            config=SimpleNamespace(socket_name="gobby", socket_path=None),
             list_sessions=AsyncMock(
                 return_value=[
                     SimpleNamespace(
@@ -1934,7 +1969,7 @@ class TestShutdownDaemonServices:
                     )
                     for index in range(run_count)
                 ]
-            )
+            ),
         )
 
         with patch(
@@ -1945,7 +1980,11 @@ class TestShutdownDaemonServices:
 
         assert preserved_pids == {20_000 + index for index in range(run_count)}
         assert db_calls == [
-            (runner_lifecycle_shutdown._list_active_agent_runs_once, (runner,)),
+            (
+                runner_lifecycle_shutdown._list_active_agent_runs_once,
+                (runner,),
+                {"include_fenced": True},
+            ),
         ]
         assert [invocation.kwargs for invocation in list_active.call_args_list] == [
             {"limit": runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE, "offset": offset}
@@ -3336,7 +3375,10 @@ class TestMainFunctionExtended:
 @pytest.mark.asyncio
 async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure() -> None:
     events: list[str] = []
-    monitor = SimpleNamespace(set_reconciliation_callback=MagicMock())
+    monitor = SimpleNamespace(
+        set_reconciliation_callback=MagicMock(),
+        set_non_task_resume_callback=MagicMock(),
+    )
 
     async def barrier(_runner: object) -> bool:
         assert monitor.set_reconciliation_callback.call_count == 1
@@ -3770,6 +3812,160 @@ class TestAgentRestartRecoveryHelpers:
         )
 
     @pytest.mark.asyncio
+    async def test_startup_terminal_redelivery_skips_parked_daemon_stop_originals(self) -> None:
+        """R2-P0-1: parked recovery-pending originals get no false cancellation."""
+        genuine = SimpleNamespace(
+            id="genuine-run",
+            status="error",
+            terminal_reason=None,
+            resume_metadata_json=None,
+        )
+        parked = SimpleNamespace(
+            id="parked-run",
+            status="cancelled",
+            terminal_reason="daemon_stop",
+            resume_metadata_json={},
+        )
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.side_effect = lambda run_id: {
+            "genuine-run": ["genuine-session"],
+            "parked-run": ["parked-session"],
+        }.get(run_id, [])
+        run_manager = MagicMock()
+        run_manager.list_by_status.side_effect = lambda status, **_kwargs: {
+            "error": [genuine],
+            "cancelled": [parked],
+        }.get(status, [])
+        wake = AsyncMock(return_value={"ism_persisted": True})
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=MagicMock(),
+            wake_dispatcher=SimpleNamespace(wake=wake),
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            delivered = (
+                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(runner)
+            )
+
+        assert delivered == 1
+        wake.assert_awaited_once_with(
+            "genuine-session",
+            "Agent genuine-run reached terminal status error",
+            {"status": "error", "run_id": "genuine-run"},
+        )
+        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+            "genuine-run",
+            session_ids=["genuine-session"],
+        )
+        # The parked original is skipped entirely: its durable subscriber rows
+        # are retained for the reaper/genuine completion instead of receiving a
+        # false cancellation redelivery at startup.
+        subscriber_manager.get_completion_subscribers.assert_called_once_with("genuine-run")
+
+    def test_find_live_tmux_by_planned_name_prefers_exact_then_sorted_prefix(self) -> None:
+        exact = SimpleNamespace(name="wf-agent")
+        suffixed_a = SimpleNamespace(name="wf-agent-aaaa1111")
+        suffixed_b = SimpleNamespace(name="wf-agent-bbbb2222")
+
+        assert (
+            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+                {"wf-agent": exact, "wf-agent-aaaa1111": suffixed_a},
+                "wf-agent",
+            )
+            is exact
+        )
+        assert (
+            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+                {"wf-agent-aaaa1111": suffixed_a},
+                "wf-agent",
+            )
+            is suffixed_a
+        )
+        assert (
+            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+                {"wf-agent-bbbb2222": suffixed_b, "wf-agent-aaaa1111": suffixed_a},
+                "wf-agent",
+            )
+            is suffixed_a
+        )
+        assert (
+            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+                {"other-session": exact, "wf-agent2-aaaa1111": suffixed_a},
+                "wf-agent",
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_retry_parked_non_task_resumes_honors_failure_budget(self) -> None:
+        missing_metadata = SimpleNamespace(id="run-missing-metadata", resume_metadata_json=None)
+        at_cap = SimpleNamespace(
+            id="run-at-cap",
+            resume_metadata_json={"daemon_stop_resume_failure_count": 3},
+        )
+        raising = SimpleNamespace(
+            id="run-raising",
+            resume_metadata_json={"daemon_stop_resume_failure_count": 1},
+        )
+        succeeding = SimpleNamespace(
+            id="run-succeeding",
+            resume_metadata_json={"daemon_stop_resume_failure_count": 2},
+        )
+        run_storage = SimpleNamespace(
+            list_parked_non_task_resume_candidates=MagicMock(
+                return_value=[missing_metadata, at_cap, raising, succeeding]
+            ),
+        )
+        runner = SimpleNamespace(
+            agent_runner=SimpleNamespace(run_storage=run_storage),
+            database=MagicMock(),
+            db_executor=None,
+            session_manager=MagicMock(),
+            config=MagicMock(),
+            completion_registry=MagicMock(),
+        )
+        resume = AsyncMock(
+            side_effect=[
+                RuntimeError("resume exploded"),
+                SimpleNamespace(success=True, error=None),
+            ]
+        )
+        increment = MagicMock()
+
+        with (
+            patch("gobby.agents.resume_executor.resume_agent_run", resume),
+            patch(
+                "gobby.storage.agent_resume.increment_daemon_resume_failure_count",
+                increment,
+            ),
+        ):
+            resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(runner)
+
+        assert resumed == 1
+        assert [c.args[0].id for c in resume.await_args_list] == [
+            "run-raising",
+            "run-succeeding",
+        ]
+        assert resume.await_args_list[0].kwargs["resume_metadata"] == {
+            "daemon_stop_resume_failure_count": 1
+        }
+        assert resume.await_args_list[0].kwargs["runner"] is runner.agent_runner
+        increment.assert_called_once_with(runner.database, run_id="run-raising")
+
+    @pytest.mark.asyncio
     async def test_stop_shutdown_policy_preserves_active_agents(self) -> None:
         class LifecycleMonitor:
             def __init__(self) -> None:
@@ -3786,7 +3982,7 @@ class TestAgentRestartRecoveryHelpers:
             communications_manager=None,
         )
         await runner_lifecycle_shutdown._stop_started_services(
-            runner,
+            cast(GobbyRunner, runner),
             shutdown_intent=ShutdownIntent.STOP,
         )
 
@@ -3809,7 +4005,7 @@ class TestAgentRestartRecoveryHelpers:
             communications_manager=None,
         )
         await runner_lifecycle_shutdown._stop_started_services(
-            runner,
+            cast(GobbyRunner, runner),
             shutdown_intent=ShutdownIntent.RESTART,
         )
 
@@ -3834,7 +4030,7 @@ class TestAgentRestartRecoveryHelpers:
         caplog.set_level(logging.INFO, logger="gobby.runner_lifecycle")
         with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
             await runner_lifecycle_shutdown._stop_started_services(
-                runner,
+                cast(GobbyRunner, runner),
                 shutdown_intent=ShutdownIntent.RESTART,
             )
 
@@ -3860,7 +4056,7 @@ class TestAgentRestartRecoveryHelpers:
         caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
         with patch("gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=raise_timeout):
             await runner_lifecycle_shutdown._stop_started_services(
-                runner,
+                cast(GobbyRunner, runner),
                 shutdown_intent=ShutdownIntent.STOP,
             )
 
@@ -3907,7 +4103,7 @@ class TestAgentRestartRecoveryHelpers:
         )
 
         await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
-            SimpleNamespace(db_executor=object()),
+            cast(GobbyRunner, SimpleNamespace(db_executor=object())),
             shutdown_intent=ShutdownIntent.STOP,
             reap_remaining_child_processes=reap_children,
             shutdown_telemetry=lambda: events.append("telemetry"),

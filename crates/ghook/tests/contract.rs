@@ -590,6 +590,129 @@ fn daemon_http_error_writes_failure_and_keeps_envelope_for_replay() -> TestResul
 }
 
 #[test]
+fn daemon_retry_backpressure_continues_critical_hook_and_keeps_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let (daemon_url, daemon) = start_daemon(http_json_status(
+        503,
+        "Service Unavailable",
+        r#"{"status":"retry"}"#,
+    ))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("session-end"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+    assert_stderr_empty(&output, "critical retry backpressure")?;
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    assert!(read_failure_artifacts(gobby_home.path())?.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn daemon_retry_backpressure_continues_noncritical_hook_and_keeps_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let (daemon_url, daemon) = start_daemon(http_json_status(
+        503,
+        "Service Unavailable",
+        r#"{"status":"retry"}"#,
+    ))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("qwen"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+    assert_stderr_empty(&output, "noncritical retry backpressure")?;
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    assert!(read_failure_artifacts(gobby_home.path())?.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn daemon_503_without_retry_body_still_blocks_critical_hook() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"error":"unavailable"}"#;
+    let (daemon_url, daemon) = start_daemon(http_json_status(503, "Service Unavailable", body))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("session-end"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Hook error on critical hook 'session-end'"));
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["status_code"], 503);
+    assert_eq!(failures[0]["response_body_preview"], body);
+
+    Ok(())
+}
+
+#[test]
+fn daemon_503_without_retry_body_keeps_noncritical_fail_open() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"error":"unavailable"}"#;
+    let (daemon_url, daemon) = start_daemon(http_json_status(503, "Service Unavailable", body))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("qwen"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_json_stdout(
+        &output,
+        serde_json::json!({
+            "status": "error",
+            "message": format!("Daemon error: {body}"),
+        }),
+    )?;
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+
+    Ok(())
+}
+
+#[test]
 fn daemon_connect_failure_writes_failure_and_keeps_envelope_for_replay() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;

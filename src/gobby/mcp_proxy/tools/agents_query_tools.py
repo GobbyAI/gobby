@@ -116,7 +116,7 @@ def _follow_daemon_resume_chain(
     while True:
         current_id = str(current.id)
         if current_id in visited:
-            return current, False
+            raise ValueError("Daemon resume successor chain contains a cycle")
         visited.add(current_id)
         successor_id = daemon_resume_successor_id(current)
         if not successor_id:
@@ -139,10 +139,17 @@ def register_agent_query_tools(
         run = ctx.runner.get_run(run_id)
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
-        run, recovery_pending = _follow_daemon_resume_chain(
-            run,
-            get_run=ctx.runner.get_run,
-        )
+        try:
+            run, recovery_pending = _follow_daemon_resume_chain(
+                run,
+                get_run=ctx.runner.get_run,
+            )
+        except ValueError as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "error_code": "daemon_resume_chain_corrupt",
+            }
         run = await overlay_live_activity(run, ctx.transcript_reader)
         return {
             "success": True,
@@ -163,10 +170,17 @@ def register_agent_query_tools(
         if run is None:
             return {"success": False, "error": f"Agent run {run_id} not found"}
         requested_run = run
-        run, recovery_pending = _follow_daemon_resume_chain(
-            run,
-            get_run=ctx.runner.get_run,
-        )
+        try:
+            run, recovery_pending = _follow_daemon_resume_chain(
+                run,
+                get_run=ctx.runner.get_run,
+            )
+        except ValueError as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "error_code": "daemon_resume_chain_corrupt",
+            }
         if run.status in agents._TERMINAL_AGENT_STATUSES and not recovery_pending:
             payload = _agent_result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
@@ -229,6 +243,13 @@ def register_agent_query_tools(
                 subscribers=[session_id],
                 continuation_prompt=getattr(run, "continuation_prompt", None),
             )
+            refreshed = ctx.runner.get_run(run.id)
+            if refreshed is not None and daemon_resume_successor_id(refreshed):
+                # Finalization consumed this original between the fenced DB
+                # registration and the in-memory register. The durable
+                # subscription was copied to the successor under the fence,
+                # so drop the stale local entry instead of leaking it.
+                ctx.completion_registry.cleanup(run.id)
             payload = _agent_result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
                 include_prompt=False,

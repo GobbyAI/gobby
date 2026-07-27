@@ -101,8 +101,48 @@ def _best_effort_sync[T](operation: Callable[[], T], name: str) -> T | None:
         return None
 
 
-async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
-    """Resolve live pane PIDs for active tmux-backed agents that survive shutdown."""
+async def _agent_live_sessions_by_name(
+    socket_name: str | None,
+    socket_path: str | None,
+) -> dict[str, Any] | None:
+    """List live tmux sessions for one socket identity; None on failure."""
+    try:
+        from gobby.agents.tmux import get_tmux_session_manager
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+        manager = get_tmux_session_manager()
+        config = manager.config
+        if (socket_name and socket_name != config.socket_name) or (
+            socket_path and socket_path != config.socket_path
+        ):
+            config = config.model_copy(
+                update={
+                    "socket_name": socket_name or config.socket_name,
+                    "socket_path": socket_path,
+                }
+            )
+            manager = TmuxSessionManager(config)
+        live_sessions = await manager.list_sessions()
+    except Exception as e:
+        logger.warning("Failed to verify tmux panes for agent preservation: %s", e)
+        return None
+    return {
+        session.name: session
+        for session in live_sessions
+        if not getattr(session, "pane_dead", False)
+    }
+
+
+async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int] | None:
+    """Resolve PIDs for managed agents that must survive shutdown.
+
+    Fenced (reconciliation_pending) runs are preserved like any other managed
+    run, sessions are verified against each run's persisted tmux socket
+    identity, and tmux failures fall back to the stored run PID. Returns None
+    when the managed-run set cannot be determined at all; the caller must then
+    skip child reaping rather than risk killing live agents (including the
+    daemon-owned tmux server).
+    """
     agent_runner = getattr(runner, "agent_runner", None)
     run_storage = getattr(agent_runner, "run_storage", None)
     if run_storage is None:
@@ -110,33 +150,45 @@ async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
     try:
         db_executor = getattr(runner, "db_executor", None)
         if db_executor is not None:
-            runs = await db_executor.run(_list_active_agent_runs_once, runner)
+            runs = await db_executor.run(_list_active_agent_runs_once, runner, include_fenced=True)
         else:
-            runs = await asyncio.to_thread(_list_active_agent_runs_once, runner)
+            runs = await asyncio.to_thread(
+                _list_active_agent_runs_once, runner, include_fenced=True
+            )
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
-        return set()
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
+        return None
 
-        live_sessions = await get_tmux_session_manager().list_sessions()
-    except Exception as e:
-        logger.warning("Failed to verify tmux panes for agent preservation: %s", e)
-        return set()
-    live_by_name = {
-        session.name: session
-        for session in live_sessions
-        if not getattr(session, "pane_dead", False)
-    }
     pids: set[int] = set()
+    listings: dict[tuple[str | None, str | None], dict[str, Any] | None] = {}
     for run in runs:
+        stored_pid = getattr(run, "pid", None)
+        fallback_pid = stored_pid if isinstance(stored_pid, int) and stored_pid > 0 else None
         session_name = getattr(run, "tmux_session_name", None)
         if not isinstance(session_name, str):
+            if fallback_pid is not None:
+                pids.add(fallback_pid)
+            continue
+        metadata = getattr(run, "resume_metadata_json", None) or {}
+        socket_name = metadata.get("tmux_socket_name")
+        socket_path = metadata.get("tmux_socket_path")
+        key = (
+            socket_name if isinstance(socket_name, str) and socket_name else None,
+            socket_path if isinstance(socket_path, str) and socket_path else None,
+        )
+        if key not in listings:
+            listings[key] = await _agent_live_sessions_by_name(*key)
+        live_by_name = listings[key]
+        if live_by_name is None:
+            if fallback_pid is not None:
+                pids.add(fallback_pid)
             continue
         live = live_by_name.get(session_name)
         pane_pid = getattr(live, "pane_pid", None)
         if isinstance(pane_pid, int) and pane_pid > 0:
             pids.add(pane_pid)
+        elif live is not None and fallback_pid is not None:
+            pids.add(fallback_pid)
     return pids
 
 
@@ -840,13 +892,19 @@ async def _run_async_shutdown_cleanup(
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
     await _settle_terminal_delivery_barrier()
     preserved_agent_pids = await _preserved_agent_terminal_pids(runner)
-    await _best_effort(
-        lambda: reap_remaining_child_processes(
-            preserve_agents=True,
-            preserved_agent_pids=preserved_agent_pids,
-        ),
-        "Child process reap",
-    )
+    if preserved_agent_pids is None:
+        logger.warning(
+            "Skipping child process reap: managed agent runs could not be "
+            "enumerated, so reaping could kill live agents"
+        )
+    else:
+        await _best_effort(
+            lambda: reap_remaining_child_processes(
+                preserve_agents=True,
+                preserved_agent_pids=preserved_agent_pids,
+            ),
+            "Child process reap",
+        )
     _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
 
     db_executor = getattr(runner, "db_executor", None)

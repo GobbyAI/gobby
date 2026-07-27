@@ -6,12 +6,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.resume_metadata import dump_resume_metadata, normalize_resume_metadata
+from gobby.storage.daemon_resume_keys import (
+    CONSUMED_AT_KEY as _CONSUMED_AT_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
+    CONSUMED_BY_KEY as _CONSUMED_BY_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
+    RESUME_PHASE_KEY as _RESUME_PHASE_KEY,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
-
-_RESUME_PHASE_KEY = "daemon_stop_resume_phase"
-_CONSUMED_AT_KEY = "daemon_stop_resume_consumed_at"
-_CONSUMED_BY_KEY = "daemon_stop_resume_consumed_by_run_id"
 
 
 @dataclass(frozen=True)
@@ -88,8 +93,36 @@ def finalize_daemon_resume(
             """,
             (child_session_id,),
         ).fetchone()
-        if original is None or successor is None or session is None:
-            raise ValueError("Daemon resume finalization requires existing run and session rows")
+        if original is None or successor is None:
+            raise ValueError("Daemon resume finalization requires existing run rows")
+
+        original_metadata = _metadata(original["resume_metadata_json"])
+        successor_metadata = _metadata(successor["resume_metadata_json"])
+        consumed_by = original_metadata.get(_CONSUMED_BY_KEY)
+        phase = successor_metadata.get(_RESUME_PHASE_KEY)
+        if phase == "finalized" and consumed_by == successor_run_id:
+            # Idempotent repeat: the handoff already committed. Later state
+            # drift (expired session, reaper ownership) must not turn a
+            # completed finalization into an error.
+            subscriber_rows = conn.execute(
+                """
+                SELECT session_id
+                FROM completion_subscribers
+                WHERE completion_id = %s
+                ORDER BY session_id
+                """,
+                (successor_run_id,),
+            ).fetchall()
+            return FinalizeDaemonResumeResult(
+                original_run_id=original_run_id,
+                successor_run_id=successor_run_id,
+                child_session_id=child_session_id,
+                subscriber_session_ids=tuple(str(row["session_id"]) for row in subscriber_rows),
+                already_finalized=True,
+            )
+
+        if session is None:
+            raise ValueError("Daemon resume finalization requires an existing session row")
         if original["status"] != "cancelled" or original["terminal_reason"] != "daemon_stop":
             raise ValueError("Daemon resume original is not parked")
         if str(successor["child_session_id"]) != child_session_id:
@@ -98,21 +131,15 @@ def finalize_daemon_resume(
             raise ValueError("Daemon resume successor does not own the durable session")
         if session["status"] in {"expired", "deleted"}:
             raise ValueError("Daemon resume cannot activate a terminal session")
-
-        original_metadata = _metadata(original["resume_metadata_json"])
-        successor_metadata = _metadata(successor["resume_metadata_json"])
         if original_metadata.get("daemon_stop_orphan_reap_started_at"):
             raise ValueError("Daemon resume original is owned by the orphan reaper")
         resumed_from = successor_metadata.get("resumed_from_run_id")
         if resumed_from != original_run_id:
             raise ValueError("Daemon resume successor does not reference the original run")
-        consumed_by = original_metadata.get(_CONSUMED_BY_KEY)
         if consumed_by not in {None, successor_run_id}:
             raise ValueError("Daemon resume original was consumed by another successor")
-        phase = successor_metadata.get(_RESUME_PHASE_KEY)
         if phase not in {"launch_requested", "runtime_persisted", "finalized"}:
             raise ValueError(f"Daemon resume successor phase cannot finalize: {phase!r}")
-        already_finalized = phase == "finalized" and consumed_by == successor_run_id
 
         original_patch = {
             _CONSUMED_AT_KEY: original_metadata.get(_CONSUMED_AT_KEY) or now.isoformat(),
@@ -202,7 +229,7 @@ def finalize_daemon_resume(
         successor_run_id=successor_run_id,
         child_session_id=child_session_id,
         subscriber_session_ids=tuple(str(row["session_id"]) for row in subscriber_rows),
-        already_finalized=already_finalized,
+        already_finalized=False,
     )
 
 
@@ -402,10 +429,14 @@ def increment_daemon_resume_failure_count(
                     COALESCE(resume_metadata_json, '{}'::jsonb),
                     '{daemon_stop_resume_failure_count}',
                     to_jsonb(
-                        COALESCE(
-                            (resume_metadata_json ->> 'daemon_stop_resume_failure_count')::int,
-                            0
-                        ) + 1
+                        CASE
+                            WHEN resume_metadata_json ->> 'daemon_stop_resume_failure_count'
+                                 ~ '^[0-9]+$'
+                            THEN (
+                                resume_metadata_json ->> 'daemon_stop_resume_failure_count'
+                            )::int
+                            ELSE 0
+                        END + 1
                     ),
                     true
                 ),

@@ -65,7 +65,12 @@ class SessionLookupService:
         self._resolve_project_id = resolve_project_id
         self._logger = logger
 
-    def resolve(self, event: HookEvent) -> str | None:
+    def resolve(
+        self,
+        event: HookEvent,
+        *,
+        apply_session_mutations: bool = True,
+    ) -> str | None:
         """Resolve platform session ID from event and enrich with task context.
 
         Looks up the platform session ID from the CLI's external_id via:
@@ -78,6 +83,11 @@ class SessionLookupService:
 
         Args:
             event: HookEvent with session_id (external_id) and source
+            apply_session_mutations: When False, defer the session-mutating
+                steps (terminal revive and terminal-context backfill) so the
+                ingress identity fence can reject a stale hook before it
+                writes onto the durable session; call
+                :meth:`apply_session_mutations` after acceptance.
 
         Returns:
             Platform session ID or None if no external_id
@@ -106,8 +116,9 @@ class SessionLookupService:
                 return None
 
         if explicit_platform_session_id:
-            self._revive_expired_terminal_session(explicit_platform_session_id, event)
-            self._backfill_terminal_context(explicit_platform_session_id, event)
+            if apply_session_mutations:
+                self._revive_expired_terminal_session(explicit_platform_session_id, event)
+                self._backfill_terminal_context(explicit_platform_session_id, event)
             self._enrich_task_context(explicit_platform_session_id, event)
             event.metadata["_platform_session_id"] = explicit_platform_session_id
             return explicit_platform_session_id
@@ -120,8 +131,9 @@ class SessionLookupService:
 
         # Resolve active task for this session
         if platform_session_id:
-            self._revive_expired_terminal_session(platform_session_id, event)
-            self._backfill_terminal_context(platform_session_id, event)
+            if apply_session_mutations:
+                self._revive_expired_terminal_session(platform_session_id, event)
+                self._backfill_terminal_context(platform_session_id, event)
             self._enrich_task_context(platform_session_id, event)
 
         # Store platform session_id in event metadata for handlers. Never
@@ -133,6 +145,20 @@ class SessionLookupService:
             event.metadata.pop("_platform_session_id", None)
 
         return platform_session_id
+
+    def apply_session_mutations(
+        self,
+        event: HookEvent,
+        platform_session_id: str | None,
+    ) -> None:
+        """Apply revive/backfill deferred by ``resolve(apply_session_mutations=False)``.
+
+        Called only after the ingress identity fence accepted the hook.
+        """
+        if not platform_session_id:
+            return
+        self._revive_expired_terminal_session(platform_session_id, event)
+        self._backfill_terminal_context(platform_session_id, event)
 
     def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
         """Validate caller-supplied _platform_session_id without side effects.

@@ -3691,6 +3691,56 @@ class TestHooksEndpoints:
         release.assert_called_once_with("retryable-run-identity")
         mark_processed.assert_not_called()
 
+    def test_execute_hook_releases_claim_for_daemon_not_ready(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        from gobby.hooks.health_gate import DaemonNotReadyError
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        not_ready = DaemonNotReadyError(
+            daemon_status="not_running",
+            reason="Connection refused",
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new=AsyncMock(side_effect=not_ready),
+            ),
+            patch(
+                "gobby.servers.routes.mcp.hooks.release_envelope_processing_claim",
+                return_value=True,
+            ) as release,
+            patch(
+                "gobby.servers.routes.mcp.hooks.mark_envelope_processed",
+            ) as mark_processed,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Envelope-Id": "retryable-daemon-not-ready"},
+                json=_hook_envelope(
+                    hook_type="SessionStart",
+                    source="codex",
+                    critical=True,
+                    input_data={"session_id": "child-1"},
+                ),
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "retry",
+            "reason": "daemon_not_ready",
+        }
+        release.assert_called_once_with("retryable-daemon-not-ready")
+        mark_processed.assert_not_called()
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
         [
