@@ -714,8 +714,10 @@ fn enqueue_only_session_end_returns_without_contacting_slow_daemon() -> TestResu
         Some("SessionEnd"),
         &daemon_url,
         VALID_STDIN,
-        &[],
-        &["--enqueue-only"],
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+        },
     )?;
 
     assert!(
@@ -756,8 +758,10 @@ fn enqueue_only_failure_does_not_fall_back_to_direct_post() -> TestResult {
         Some("SessionEnd"),
         &daemon_url,
         VALID_STDIN,
-        &[],
-        &["--enqueue-only"],
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+        },
     )?;
 
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -890,9 +894,16 @@ fn run_ghook_with_dirs(
         hook_type,
         daemon_url,
         stdin,
-        extra_env,
-        &[],
+        RunGhookExtras {
+            env: extra_env,
+            args: &[],
+        },
     )
+}
+
+struct RunGhookExtras<'a> {
+    env: &'a [(&'a str, &'a str)],
+    args: &'a [&'a str],
 }
 
 fn run_ghook_with_dirs_and_args(
@@ -902,8 +913,7 @@ fn run_ghook_with_dirs_and_args(
     hook_type: Option<&str>,
     daemon_url: &str,
     stdin: &str,
-    extra_env: &[(&str, &str)],
-    extra_args: &[&str],
+    extras: RunGhookExtras<'_>,
 ) -> Result<Output, Box<dyn std::error::Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ghook"));
     command
@@ -928,8 +938,8 @@ fn run_ghook_with_dirs_and_args(
     if let Some(hook_type) = hook_type {
         command.args(["--type", hook_type]);
     }
-    command.args(extra_args);
-    for (key, value) in extra_env {
+    command.args(extras.args);
+    for (key, value) in extras.env {
         command.env(key, value);
     }
 
