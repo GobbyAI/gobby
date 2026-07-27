@@ -102,7 +102,6 @@ class TestWikiResearcherStepMachine:
             "gobby-tasks:*",
             "gobby-skills:get_skill",
             "gobby-agents:end_agent_run",
-            "gobby-sessions:record_verification_evidence",
         ]
 
     def test_research_step_blocks_lifecycle_and_spawn(self, agent: AgentDefinitionBody) -> None:
@@ -148,7 +147,6 @@ class TestWikiResearcherStepMachine:
         scope = "tool_input.get('task_id') == vars.get('assigned_task_id')"
         conditions = {
             "claim_task": scope,
-            "close_task": f"not tool_input.get('preview', False) and {scope}",
             "escalate_task": scope,
         }
         claim = find_step(agent.steps or [], "claim")
@@ -162,9 +160,17 @@ class TestWikiResearcherStepMachine:
             handlers = getattr(step, "on_mcp_success", []) or []
             matching = [h for h in handlers if _field(h, "tool") == tool]
             assert matching, f"no on_mcp_success handler for {tool}"
-            assert all(_field(h, "when") == conditions[tool] for h in matching), (
-                f"{tool} trigger must use its assigned-task lifecycle condition"
-            )
+            if tool == "close_task":
+                for handler in matching:
+                    condition = _field(handler, "when")
+                    assert isinstance(condition, str)
+                    assert scope in condition
+                    assert "tool_output.get('closed') is True" in condition
+                    assert "tool_output.get('result', {}).get('closed') is True" in condition
+            else:
+                assert all(_field(h, "when") == conditions[tool] for h in matching), (
+                    f"{tool} trigger must use its assigned-task lifecycle condition"
+                )
 
     def test_terminate_step_only_permits_end_agent_run(self, agent: AgentDefinitionBody) -> None:
         terminate = find_step(agent.steps or [], "terminate")

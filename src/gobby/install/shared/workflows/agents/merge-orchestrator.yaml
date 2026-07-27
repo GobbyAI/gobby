@@ -622,10 +622,6 @@ steps:
     status_message: |
       Call gobby-tasks-ops:record_merge_result with report_ref and either
       merge_sha for clean success or failure_reason for unresolved failures.
-      If completion-readiness blocks the report because verification happened
-      through merge tooling, re-run the final verification command via
-      gobby-merge:verify_in_worktree with final=true so the evidence is
-      recorded, then retry record_merge_result.
       Use escalate_task only when human intervention is required.
     allowed_tools:
       - mcp__gobby__call_tool
@@ -638,7 +634,6 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks-ops:append_description_section"
-      - "gobby-merge:verify_in_worktree"
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: record_merge_result

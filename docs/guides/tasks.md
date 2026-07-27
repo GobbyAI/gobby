@@ -114,19 +114,16 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
 })
 ```
 
-The conditional call returns the prospective commit set, canonical selected
-receipt IDs, evidence-completeness disclosure, unassigned-receipt diagnostics,
-blocking reasons, and exact repair actions. Blocked calls remain read-only.
-Repair every blocker and repeat the same `preview=true` call until `closed=true`;
-a ready call reevaluates current state and links `commit_sha` while closing.
+The conditional call evaluates an ordered checklist: task/session/repository
+context, closed children, criteria and summary, linked commits, clean
+task-attributed files, transcript-visible validation, then one bounded criteria
+review. It returns per-item results, resolved commit SHAs, a transcript evidence
+summary, and the verdict. Blocked calls remain read-only and name the first
+repair action. A ready `preview=true` call reuses that evaluation, links the
+commit, and closes in the same call; the LLM runs once.
 Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
-
-Pass `evidence_receipt_ids` when specific assigned receipts need detailed
-inspection. Explicit selection changes detail priority only: failed,
-conflicting, and unknown outcomes remain disclosed as audit context, and an ID
-not assigned to the task returns an exact assignment repair action.
 
 Autonomous stage work may require review instead of direct close. Inspect the
 stage manifest first:
@@ -330,8 +327,13 @@ gobby tasks validation-history #14390
 ```
 
 `close_task` validates leaf tasks with `validation_criteria` against the linked
-or current diff. Parent tasks can close when all children are closed. Epics are
-organizational containers and do not require their own commit.
+or current diff. Validation commands come from the claiming and closing session
+transcripts. A task-attributed edit after a clean run makes that run stale; a
+commit does not. Code, refactor, and test tasks require a clean test-category
+run, config tasks accept any clean validation command, and documentation,
+planning, research, manual, and no-edit tasks skip that checklist item. Parent
+tasks can close when all children are closed. Epics are organizational
+containers and do not require their own commit or criteria review.
 
 ## CLI Reference
 

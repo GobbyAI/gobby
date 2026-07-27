@@ -156,7 +156,6 @@ steps:
       - "gobby-tasks:*"
       - "gobby-skills:get_skill"
       - "gobby-agents:end_agent_run"
-      - "gobby-sessions:record_verification_evidence"
     blocked_mcp_tools:
       - "gobby-tasks:reopen_task"
       - "gobby-tasks:de_escalate_task"

@@ -1382,6 +1382,7 @@ class TestLoadConfig:
     def test_load_config_deletes_removed_validation_rows(self, temp_dir: Path) -> None:
         """Removed validation settings cannot prevent the daemon from starting."""
         removed_keys = {
+            "gobby_tasks.validation.build_command",
             "gobby_tasks.validation.issue_similarity_threshold",
             "gobby_tasks.validation.max_consecutive_errors",
             "gobby_tasks.validation.max_retries",

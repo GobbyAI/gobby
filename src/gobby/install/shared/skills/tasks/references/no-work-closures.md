@@ -10,9 +10,9 @@ Allowed reasons:
 - `obsolete`
 - `out_of_repo`
 
-These reasons skip commit and commit-link gates. Fresh verification and memory
-review still apply, and `changes_summary` must explain the evidence supporting
-the reason.
+These reasons require no commit when the task has no attributed edits. The
+checklist still requires criteria, a useful `changes_summary`, and the bounded
+criteria review. Complete the memory review before calling `close_task`.
 
 ```python
 call_tool("gobby-tasks", "close_task", {
@@ -25,4 +25,5 @@ call_tool("gobby-tasks", "close_task", {
 }, session_id="#2333")
 ```
 
-Repair preview blockers, then repeat without `preview`.
+The `preview=true` call closes when ready. Repair a returned checklist blocker
+before retrying.

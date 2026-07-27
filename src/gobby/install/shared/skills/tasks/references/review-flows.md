@@ -35,6 +35,7 @@ call_tool("gobby-tasks-ops", "reject_review", {
 }, session_id="#2333")
 ```
 
-All completion gates remain active. Commits from the submitting or reviewing
-session are linked by the review transition. Review tools are reserved for
-autonomous/reviewer sessions; interactive sessions close directly.
+The same commit, clean-tree, transcript-validation, and criteria-review
+checklist applies. Commits from the submitting or reviewing session are linked
+by the review transition. Review tools are reserved for autonomous/reviewer
+sessions; interactive sessions close directly.

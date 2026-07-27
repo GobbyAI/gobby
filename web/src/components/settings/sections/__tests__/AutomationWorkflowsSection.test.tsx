@@ -36,7 +36,7 @@ const SCHEMA: Record<string, unknown> = {
       type: 'object',
       properties: {
         escalation_notify: { enum: ['webhook', 'slack', 'none'], type: 'string' },
-        max_retries: { type: 'integer', minimum: 0 },
+        max_iterations: { type: 'integer', minimum: 1 },
       },
     },
     GobbyTasksConfig: {
@@ -90,13 +90,7 @@ function makeConfigValues(): Record<string, unknown> {
         prompt_path: null,
         criteria_prompt_path: null,
         criteria_system_prompt: 'Generate criteria.',
-        max_retries: 3,
         max_iterations: 5,
-        max_consecutive_errors: 3,
-        recurring_issue_threshold: 3,
-        issue_similarity_threshold: 0.8,
-        run_build_first: false,
-        build_command: null,
         escalation_enabled: true,
         escalation_notify: 'none',
         escalation_webhook_url: null,
@@ -214,13 +208,13 @@ describe('AutomationWorkflowsSection', () => {
     ).toHaveValue('route')
   })
 
-  it('reads validation rows including the escalation-notify enum select', () => {
+  it('reads checklist validation rows including the escalation-notify enum select', () => {
     renderSection(makeContext())
 
     const notify = screen.getByLabelText('Escalation notify method')
     expect(notify).toHaveValue('none')
     expect(within(notify).getAllByRole('option')).toHaveLength(3)
-    expect(screen.getByLabelText('Max validation retries')).toHaveValue(3)
+    expect(screen.getByLabelText('Max validation iterations')).toHaveValue(5)
   })
 
   it('reads workflow-engine, tmux, cron int-list, system-loop, and pipeline rows', () => {

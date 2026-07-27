@@ -60,13 +60,7 @@ const VALIDATION_PATHS = [
   'gobby-tasks.validation.prompt_path',
   'gobby-tasks.validation.criteria_prompt_path',
   'gobby-tasks.validation.criteria_system_prompt',
-  'gobby-tasks.validation.max_retries',
   'gobby-tasks.validation.max_iterations',
-  'gobby-tasks.validation.max_consecutive_errors',
-  'gobby-tasks.validation.recurring_issue_threshold',
-  'gobby-tasks.validation.issue_similarity_threshold',
-  'gobby-tasks.validation.run_build_first',
-  'gobby-tasks.validation.build_command',
   'gobby-tasks.validation.escalation_enabled',
   'gobby-tasks.validation.escalation_notify',
   'gobby-tasks.validation.escalation_webhook_url',
@@ -352,47 +346,9 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <NumberConfigField
         fields={fields}
-        path="gobby-tasks.validation.max_retries"
-        label="Max validation retries"
-        ariaLabel="Max validation retries"
-      />
-      <NumberConfigField
-        fields={fields}
         path="gobby-tasks.validation.max_iterations"
         label="Max validation iterations"
         ariaLabel="Max validation iterations"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.validation.max_consecutive_errors"
-        label="Max consecutive errors"
-        ariaLabel="Max consecutive errors"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.validation.recurring_issue_threshold"
-        label="Recurring issue threshold"
-        ariaLabel="Recurring issue threshold"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.validation.issue_similarity_threshold"
-        label="Issue similarity threshold"
-        ariaLabel="Issue similarity threshold"
-        step={0.05}
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="gobby-tasks.validation.run_build_first"
-        label="Run build before validation"
-        ariaLabel="Run build before validation"
-      />
-      <TextConfigField
-        fields={fields}
-        path="gobby-tasks.validation.build_command"
-        label="Build command"
-        ariaLabel="Build command"
-        nullable
       />
       <SwitchConfigField
         fields={fields}

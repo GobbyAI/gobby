@@ -78,27 +78,24 @@ labels, or writing expanded validation criteria.
 
 ## Completion Gates
 
-All gates apply to interactive close and autonomous review:
+Closing a leaf task is an ordered checklist:
 
 | # | Gate | Exception |
 | --- | --- | --- |
-| 1 | Fresh verification after the final edit | None |
-| 2 | Relevant changes committed | Approved non-work close |
-| 3 | Commit linked by the lifecycle transition | Approved non-work close |
-| 4 | Memory review completed | None |
+| 1 | At least one linked commit when the task has attributed edits | No-edit close |
+| 2 | No uncommitted task-attributed files | None |
+| 3 | A clean category-appropriate validation command in a task session transcript | Docs, planning, research, manual, or no-edit close |
+| 4 | One bounded criteria review | Organizational parent |
 
-Later edits invalidate earlier verification readiness. Git commits preserve
-captured evidence. Shell validation must produce a complete terminal result;
+The close tool derives validation evidence from the claiming and closing session
+transcripts. A later task-attributed file edit makes earlier validation stale;
+commits preserve it. Shell validation must produce a definitive exit code, so
 follow every yielded cell or PTY session until exit.
 
 Use the verification commands from `.gobby/project.json`, scoped to touched
-files and behavior. Every command run while a task is claimed is captured as a
-durable receipt. Manual evidence is limited to `manual_diff_review` and never
-replaces a shell command outcome.
-
-Open `references/evidence-provider-recovery.md` only when evidence capture is
-missing, provider-specific command recovery is needed, or manual review evidence
-must be recorded.
+files and behavior. Code, refactor, and test tasks need a clean test-category
+run. Config tasks need any clean validation command. When a CLI cannot expose a
+definitive exit code, rerun the command through a supported shell tool.
 
 ## Exact Interactive Close Sequence
 
@@ -112,10 +109,8 @@ Follow this order exactly:
 5. Review session memories; create, update, or delete valuable durable facts, or
    explicitly clear the memory gate.
 6. Set `memory_review_completed=true`.
-7. Call `close_task` with `task_id`, `commit_sha`, `changes_summary`, and
-   `preview=true`.
-8. Repair every blocker and repeat the conditional close until `closed=true`.
-   A ready call reevaluates current state, links the commit, and closes the task.
+7. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
+   `preview=true`. A ready call links the commit and closes atomically.
 
 Stage and commit only the files for this task:
 
@@ -135,10 +130,10 @@ call_tool("gobby-tasks", "close_task", {
 }, session_id="#2333")
 ```
 
-Blocked calls remain read-only and return repair actions. Pass
-`evidence_receipt_ids` when the response requests specific assigned receipts.
-Never call `link_commit` merely to close; the successful conditional
-`close_task(..., commit_sha=..., preview=true)` call links and closes atomically.
+Blocked calls remain read-only and return the first actionable checklist
+failure. Repair that fact before retrying. Stale task state returns
+`stale_task_state`; it never silently reruns the criteria review. Never call
+`link_commit` merely to close.
 
 ## Review and Non-Work Paths
 

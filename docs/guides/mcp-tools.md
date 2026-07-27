@@ -319,9 +319,9 @@ call_tool("gobby-tasks", "close_task", {
 # Repair every blocker and repeat the same call until closed=true.
 ```
 
-Optional `evidence_receipt_ids` prioritizes assigned receipts for detailed
-inspection without suppressing failed, conflicting, or unknown audit outcomes.
-Unknown or unassigned IDs block with a concrete receipt-assignment action.
+The result reports each checklist item, resolved commit SHAs, transcript-derived
+validation evidence, and the bounded criteria verdict. Blocked evaluations are
+read-only; ready evaluations close in the same call.
 
 ---
 
@@ -481,7 +481,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 
 ## Session Management (`gobby-sessions`)
 
-20 tools for session lifecycle and context management.
+19 tools for session lifecycle and context management.
 
 | Tool | Description |
 | :--- | :--- |
@@ -497,7 +497,6 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `set_handoff_context` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
 | `get_handoff_context` | Read handoff context from a session. |
 | `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
-| `record_verification_evidence` | Record non-command verification evidence for completion readiness. |
 | `mark_loop_complete` | Mark the autonomous loop as complete to prevent session chaining. |
 | `capture_baseline_dirty_files` | Capture current dirty files as the session-aware commit-detection baseline. |
 | `restore_session_transcript` | Restore a transcript from the gzip archive for CLI resume. |

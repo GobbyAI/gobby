@@ -411,13 +411,10 @@ Grok `0.2.67` normal `PostToolUse` payloads include a definitive shell exit code
 ```
 
 The adapter normalizes `toolInput` and `toolResult` to `tool_input` and
-`tool_output`. Exit `0` records successful validation evidence; a nonzero exit
-records failure and clears readiness. Older Grok payloads used
-`toolResult.status: "completed"` for both zero and nonzero exits. Payloads
-without a definitive exit code remain unknown and cannot satisfy readiness;
-record the inspected result explicitly with
-`gobby-sessions:record_verification_evidence` when validating through such a
-Grok version.
+`tool_output`. Task close reads these normalized outcomes from the transcript:
+exit `0` is clean, a nonzero exit is failed, and a missing definitive exit code
+is unknown. Unknown outcomes cannot satisfy the checklist. Rerun the command
+through a CLI shell tool that reports a definitive exit code.
 
 ## Unified HookEvent Model
 

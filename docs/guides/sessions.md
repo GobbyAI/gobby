@@ -206,7 +206,6 @@ with `get_tool_schema` before writing examples or automating calls.
 | `set_handoff_context` | Set or generate handoff context for the current session. |
 | `get_handoff_context` | Retrieve handoff context directly or from the latest same-project `handoff_ready` session. |
 | `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
-| `record_verification_evidence` | Record non-command verification evidence for completion readiness. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Mark an autonomous loop complete to prevent session chaining. |

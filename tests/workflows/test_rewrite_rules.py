@@ -161,9 +161,6 @@ class TestBundledBlockReasonFraming:
             'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"java"})'
         )
         assert reasons["no-invalid-git-flags"].startswith("Run the command without `--no-stat`")
-        completion_reason = reasons["require-completion-readiness-evidence"]
-        assert completion_reason.startswith("Run project-appropriate verification")
-        assert completion_reason.index("{{ completion_evidence_diagnostic") > 0
 
     def test_bundled_skill_reasons_use_one_canonical_fetch_call(self) -> None:
         for reason in _bundled_before_tool_block_reasons().values():
@@ -297,88 +294,6 @@ class TestMCPRewriteNesting:
         inner = response.modified_input["arguments"]
         assert inner["skip_validation"] is False
         assert inner["task_id"] == "t-2"
-
-
-class TestStripSkipValidation:
-    """Tests for the skip-validation-with-commit rule pattern."""
-
-    @pytest.mark.asyncio
-    async def test_warns_without_rewriting_skip_validation_with_commits(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
-
-        event = _make_event(
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "close_task",
-                    "arguments": {"task_id": "t-1", "skip_validation": True},
-                },
-            }
-        )
-
-        engine = RuleEngine(db)
-        response = await engine.evaluate(
-            event, session_id=SESSION_ID, variables={"task_has_commits": True}
-        )
-
-        assert response.decision == "allow"
-        assert "skip_validation override policy" in (response.context or "")
-        assert response.modified_input is None
-
-    @pytest.mark.asyncio
-    async def test_passthrough_without_commits(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Rule should NOT fire when no commits are attached."""
-        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
-
-        event = _make_event(
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "close_task",
-                    "arguments": {"task_id": "t-1", "skip_validation": True},
-                },
-            }
-        )
-
-        engine = RuleEngine(db)
-        response = await engine.evaluate(
-            event, session_id=SESSION_ID, variables={"task_has_commits": False}
-        )
-
-        assert response.decision == "allow"
-        assert response.modified_input is None
-
-    @pytest.mark.asyncio
-    async def test_does_not_fire_for_other_servers(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Rule must scope to gobby-tasks::close_task, not any close_task lookalike."""
-        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
-
-        event = _make_event(
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "some-other-server",
-                    "tool_name": "close_task",
-                    "arguments": {"task_id": "t-1", "skip_validation": True},
-                },
-            }
-        )
-
-        engine = RuleEngine(db)
-        response = await engine.evaluate(
-            event, session_id=SESSION_ID, variables={"task_has_commits": True}
-        )
-
-        assert response.decision == "allow"
-        assert response.modified_input is None
 
 
 class TestRegexReplaceFilter:

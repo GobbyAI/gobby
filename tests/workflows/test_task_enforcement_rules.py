@@ -137,10 +137,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-task-before-edit",
     "require-claimed-task-required-skills",
     "require-commit-before-status",
-    "require-completion-readiness-evidence",
     "require-clean-tree-before-status",
-    "block-direct-verification-evidence-variable-set",
-    "strip-skip-validation-with-commit",
     "task-commit-project-path-allowlist-before-git",
     "block-ask-during-stop-compliance",
     "block-needs-review-interactive",
@@ -1046,33 +1043,6 @@ class TestRequireCommitBeforeStatus:
 
         reason = body.effects[0].reason or ""
         assert "no commit linked" in reason.lower()
-
-
-class TestStripSkipValidationWithCommit:
-    """Verify strip-skip-validation-with-commit does not rewrite skip_validation."""
-
-    def test_does_not_rewrite_close_task(self, db, manager) -> None:
-        """Should inject context only; close_task enforces policy."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("strip-skip-validation-with-commit")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        effect_types = {e.type for e in body.resolved_effects}
-        assert "rewrite_input" not in effect_types
-        assert "inject_context" in effect_types
-
-    def test_when_checks_skip_validation(self, db, manager) -> None:
-        """Should check skip_validation flag."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("strip-skip-validation-with-commit")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "skip_validation" in body.when
 
 
 class TestBlockNeedsReviewInteractive:

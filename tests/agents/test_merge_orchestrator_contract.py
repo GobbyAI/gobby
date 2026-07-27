@@ -392,7 +392,7 @@ def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
     assert "gobby-tasks:close_task" in survey["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" in plan["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" in report["allowed_mcp_tools"]
-    assert "gobby-merge:verify_in_worktree" in report["allowed_mcp_tools"]
+    assert "gobby-merge:verify_in_worktree" not in report["allowed_mcp_tools"]
     assert "gobby-sessions:record_verification_evidence" not in report["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" not in _step(agent, "execute")["blocked_mcp_tools"]
     assert any(

@@ -36,6 +36,7 @@ _REMOVED_CONFIG_STORE_KEYS = frozenset(
     {
         "databases.falkordb.requirepass",
         "gobby_tasks.validation.issue_similarity_threshold",
+        "gobby_tasks.validation.build_command",
         "gobby_tasks.validation.max_consecutive_errors",
         "gobby_tasks.validation.max_retries",
         "gobby_tasks.validation.recurring_issue_threshold",

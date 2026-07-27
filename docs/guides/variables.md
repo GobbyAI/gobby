@@ -184,15 +184,10 @@ not only by declarative rules:
 | `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
 | `session_edited_files` | Updated by tool observers as the session edits files |
 
-Fresh successful validation commands set `verification_evidence_recorded` and append
-`validation_command` evidence to `verification_evidence`; manual evidence should use
-`gobby-sessions:record_verification_evidence` with a snake-case `evidence_type` such as
-`manual_diff_review`. Completion gates derive readiness from the evidence list:
-failed validation commands block readiness until a later validation command succeeds.
-These session variables drive lifecycle readiness and audited overrides. Semantic
-task-close validation uses durable task-scoped verification receipts. Failed,
-conflicting, and unknown receipts remain audit context; only trusted successful
-terminal outcomes substantiate completed verification.
+Task-close validation reads command outcomes directly from the claiming and
+closing session transcripts. It does not project validation evidence into
+session variables. A later task-attributed edit makes an earlier clean run
+stale, while a commit preserves it.
 
 ---
 
@@ -357,8 +352,6 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `task_edited_files` | `{}` | dict | Map of claimed task UUIDs to repo-relative files edited this session |
 | `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
 | `require_commit_before_status` | `true` | bool | Enforce commit-before-status gate |
-| `verification_evidence_recorded` | `false` | bool | Whether verification evidence was recorded this session |
-| `verification_evidence` | `[]` | list | Bounded session readiness evidence; durable task-close evidence lives in verification receipts |
 | `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
 | `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
 | `max_consecutive_blocked_tool_attempts` | `5` | int | Retry threshold for repeated blocked tool calls |
