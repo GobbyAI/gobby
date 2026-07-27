@@ -80,7 +80,10 @@ impl AiContext {
         #[cfg(feature = "ai")]
         let tool_loop_limits = match ToolLoopLimits::resolve(source) {
             Ok(limits) => limits,
-            Err(_) if !strict_tool_loop_limits => ToolLoopLimits::default(),
+            Err(error) if !strict_tool_loop_limits => {
+                log::warn!("failed to resolve tool-loop limits; using defaults: {error}");
+                ToolLoopLimits::default()
+            }
             Err(error) => return Err(error.into()),
         };
         #[cfg(not(feature = "ai"))]

@@ -138,6 +138,12 @@ pub(super) fn record_synthesis(
         model: model.clone(),
         error: None,
     });
+    if citation_check.status == "no_citations" {
+        let warning = "synthesis answer contains no wiki citations".to_string();
+        if !output.warnings.contains(&warning) {
+            output.warnings.push(warning);
+        }
+    }
     for claim in &citation_check.unsupported_claims {
         let warning =
             format!("synthesis claim lacks citation support in retrieved evidence: {claim}");

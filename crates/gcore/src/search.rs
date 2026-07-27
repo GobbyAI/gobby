@@ -143,19 +143,14 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         .collect::<String>();
 
     let chars = cleaned.chars().collect::<Vec<_>>();
-    let mut quote_backslash_run = 0;
-    let unescaped_quote_count = chars
-        .iter()
-        .filter(|&&ch| {
-            let unescaped_quote = ch == '"' && quote_backslash_run % 2 == 0;
-            quote_backslash_run = if ch == '\\' {
-                quote_backslash_run + 1
-            } else {
-                0
-            };
-            unescaped_quote
-        })
-        .count();
+    let (unescaped_quote_count, _) =
+        chars
+            .iter()
+            .fold((0_usize, 0_usize), |(count, backslash_run), &ch| {
+                let unescaped_quote = ch == '"' && backslash_run % 2 == 0;
+                let next_backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
+                (count + usize::from(unescaped_quote), next_backslash_run)
+            });
     let balanced_quotes = unescaped_quote_count % 2 == 0;
     let literal_parentheses = literal_parenthesis_mask(&chars, balanced_quotes);
     let mut escaped_literals = String::with_capacity(cleaned.len());

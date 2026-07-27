@@ -448,15 +448,17 @@ mod scope_tests {
                 .expect("run git");
             assert!(status.success(), "git {args:?} failed");
         };
-        git(&["init", "-q"]);
+        git(&["init", "-q", "--object-format=sha1"]);
         git(&["config", "user.email", "test@example.com"]);
         git(&["config", "user.name", "Test"]);
+        git(&["config", "commit.gpgSign", "false"]);
         std::fs::write(root.join("tracked.rs"), "fn tracked() {}\n").expect("write source");
         git(&["add", "tracked.rs"]);
         git(&["commit", "-q", "-m", "base"]);
 
         let clean = capture_commit_stamp(root).expect("clean commit stamp");
         assert_eq!(clean.sha.len(), 40);
+        assert!(clean.sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert!(!clean.dirty);
 
         std::fs::write(root.join("tracked.rs"), "fn tracked() { let _ = 1; }\n")
@@ -607,7 +609,7 @@ pub(crate) fn capture_commit_stamp(project_root: &Path) -> Option<CommitStamp> {
     let status = std::process::Command::new("git")
         .arg("-C")
         .arg(project_root)
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--untracked-files=no"])
         .output()
         .ok()?;
     if !status.status.success() {

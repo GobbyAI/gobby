@@ -141,20 +141,12 @@ impl GenerationOutcome {
         }
     }
 
-    pub(crate) fn from_tool_loop(outcome: ToolLoopOutcome, prompt: &str) -> Self {
-        let observability = GenerationObservability {
-            stop_reason: Some(outcome.stop_reason),
-            tool_call_count: outcome.observability.tool_call_count,
-            turns: Some(outcome.observability.turns),
-            usage: outcome.total_usage,
-        };
-        if !outcome.stop_reason.is_completed() {
-            return Self::rejected_with_observability(
-                GenerationFailureCause::Unavailable,
-                observability,
-            );
-        }
-        match outcome.content {
+    fn classify_content(
+        content: Option<String>,
+        prompt: &str,
+        observability: GenerationObservability,
+    ) -> Self {
+        match content {
             None => Self::rejected_with_observability(
                 GenerationFailureCause::Unavailable,
                 observability,
@@ -173,6 +165,22 @@ impl GenerationOutcome {
                 ),
             },
         }
+    }
+
+    pub(crate) fn from_tool_loop(outcome: ToolLoopOutcome, prompt: &str) -> Self {
+        let observability = GenerationObservability {
+            stop_reason: Some(outcome.stop_reason),
+            tool_call_count: outcome.observability.tool_call_count,
+            turns: Some(outcome.observability.turns),
+            usage: outcome.total_usage,
+        };
+        if !outcome.stop_reason.is_completed() {
+            return Self::rejected_with_observability(
+                GenerationFailureCause::Unavailable,
+                observability,
+            );
+        }
+        Self::classify_content(outcome.content, prompt, observability)
     }
 
     pub(crate) fn from_daemon_agentic(result: DaemonAgenticResult, prompt: &str) -> Self {
@@ -195,25 +203,7 @@ impl GenerationOutcome {
                 observability,
             );
         }
-        match result.content {
-            None => Self::rejected_with_observability(
-                GenerationFailureCause::Unavailable,
-                observability,
-            ),
-            Some(text) if is_prompt_echo(&text, prompt) => {
-                Self::rejected_with_observability(GenerationFailureCause::PromptEcho, observability)
-            }
-            Some(text) if is_model_refusal(&text) => {
-                Self::rejected_with_observability(GenerationFailureCause::Refusal, observability)
-            }
-            Some(text) => match clean_generated(text) {
-                Some(clean) => Self::generated_with_observability(clean, observability),
-                None => Self::rejected_with_observability(
-                    GenerationFailureCause::Unavailable,
-                    observability,
-                ),
-            },
-        }
+        Self::classify_content(result.content, prompt, observability)
     }
 
     pub(crate) fn observability(&self) -> &GenerationObservability {

@@ -12,6 +12,7 @@
 //!   OpenAI-compatible chat completion with no tools.
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
@@ -30,6 +31,10 @@ use crate::config::{AiCapability, AiRouting, FeatureCandidate};
 
 use super::profile::DirectGenerationTarget;
 use super::tier::{GenerationTier, profile_for_tier};
+use super::tool_loop::{ChatCompletionRequest, ChatMessage, ToolChoice};
+use super::transport::build_request_body;
+
+static DIRECT_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 
 /// Aggregate prose runs for minutes per page, so its daemon candidates get the
 /// whole total budget; per-file and module generations keep tight budgets for
@@ -40,8 +45,17 @@ fn budget_for_tier(tier: GenerationTier) -> GenerationBudget {
         GenerationTier::Standard | GenerationTier::Module => GenerationBudget::Interactive,
     }
 }
-use super::tool_loop::{ChatCompletionRequest, ChatMessage, ToolChoice};
-use super::transport::build_request_body;
+
+fn direct_http_client() -> Result<Client, AiError> {
+    if let Some(client) = DIRECT_HTTP_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = Client::builder().build().map_err(reqwest_error)?;
+    if DIRECT_HTTP_CLIENT.set(client.clone()).is_ok() {
+        return Ok(client);
+    }
+    Ok(DIRECT_HTTP_CLIENT.get().cloned().unwrap_or(client))
+}
 
 /// One-shot generation for a writing tier on an already-resolved route.
 ///
@@ -185,7 +199,7 @@ pub fn generate_text_with_target(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let client = Client::builder().build().map_err(reqwest_error)?;
+    let client = direct_http_client()?;
     let _permit = context.limiter.acquire();
     let value = retry_with_backoff(
         || {

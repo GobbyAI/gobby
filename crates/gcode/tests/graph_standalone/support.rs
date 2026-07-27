@@ -80,7 +80,7 @@ pub(super) fn run_gcode_with_format(
         .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
-        .env("GOBBY_RUNTIME_MODE", "standalone")
+        .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
         .arg("--no-freshness")
         .arg("--format")
         .arg(format)

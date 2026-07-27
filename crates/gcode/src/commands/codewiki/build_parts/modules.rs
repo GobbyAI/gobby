@@ -86,6 +86,7 @@ pub(crate) fn build_module_docs_with_filter(
 
     let mut docs = Vec::new();
     let module_total = modules.len();
+    let diagram_context = module_diagram_context(files, graph_edges);
     for (index, module) in modules.into_iter().enumerate() {
         let mut seen_direct_files = BTreeSet::new();
         let direct_files = files
@@ -123,8 +124,11 @@ pub(crate) fn build_module_docs_with_filter(
             })
             .collect::<Vec<_>>();
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
-        let dependency_outcome =
-            render_module_dependency_mermaid(&module, files, graph_edges, graph_availability);
+        let dependency_outcome = render_module_dependency_mermaid_with_context(
+            &module,
+            &diagram_context,
+            graph_availability,
+        );
         diagram_stats.record(
             &module_doc_path(&module),
             DiagramKind::ModuleDependency,
@@ -138,7 +142,7 @@ pub(crate) fn build_module_docs_with_filter(
             | DiagramOutcome::Rejected => None,
         };
         let call_sequence_outcome =
-            render_module_call_sequence(&module, files, graph_edges, graph_availability);
+            render_module_call_sequence_with_context(&module, &diagram_context, graph_availability);
         diagram_stats.record(
             &module_doc_path(&module),
             DiagramKind::ModuleCallSequence,

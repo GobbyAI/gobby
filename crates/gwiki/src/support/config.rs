@@ -146,16 +146,7 @@ fn resolve_index_options_from_layers<P: ConfigSource>(
     primary: P,
     standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
 ) -> Result<IndexOptions, WikiError> {
-    match layers {
-        Some((served, routing_overrides)) => {
-            let mut source = LayeredConfigSource::new(Some(served), routing_overrides);
-            resolve_index_options(&mut source)
-        }
-        None => {
-            let mut source = LayeredConfigSource::new(Some(primary), standalone()?);
-            resolve_index_options(&mut source)
-        }
-    }
+    resolve_from_layers(layers, primary, standalone, resolve_index_options)
 }
 
 fn resolve_shared_code_graph_limits_from_layers<P: ConfigSource>(
@@ -163,16 +154,28 @@ fn resolve_shared_code_graph_limits_from_layers<P: ConfigSource>(
     primary: P,
     standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
 ) -> Result<SharedCodeGraphLimits, WikiError> {
-    match layers {
-        Some((served, routing_overrides)) => {
-            let mut source = LayeredConfigSource::new(Some(served), routing_overrides);
-            resolve_shared_code_graph_limits(&mut source)
-        }
-        None => {
-            let mut source = LayeredConfigSource::new(Some(primary), standalone()?);
-            resolve_shared_code_graph_limits(&mut source)
-        }
-    }
+    resolve_from_layers(
+        layers,
+        primary,
+        standalone,
+        resolve_shared_code_graph_limits,
+    )
+}
+
+fn resolve_from_layers<P: ConfigSource, T>(
+    layers: Option<EffectiveConfigLayers>,
+    primary: P,
+    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
+    resolve: impl FnOnce(
+        &mut LayeredConfigSource<DaemonOrPrimary<P>, StandaloneConfig>,
+    ) -> Result<T, WikiError>,
+) -> Result<T, WikiError> {
+    let (primary, fallback) = match layers {
+        Some((served, routing_overrides)) => (DaemonOrPrimary::Daemon(served), routing_overrides),
+        None => (DaemonOrPrimary::Primary(primary), standalone()?),
+    };
+    let mut source = LayeredConfigSource::new(Some(primary), fallback);
+    resolve(&mut source)
 }
 
 fn resolve_index_options(

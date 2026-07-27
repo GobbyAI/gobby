@@ -52,11 +52,11 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // the prior None-profile defaults re-render.
 // 18 (#985): AI route/fallback/status frontmatter and metadata are explicit, and
 // the rejected repo-level code-graph dependency diagram is absent again.
-// 19 (#978): aggregate pages (repo overview, architecture, curated
-// navigation/concept/narrative) are produced by the tool loop when a
-// tool-chat route resolves, recording `lane: tool_loop` + tool-call/turn counts
-// in frontmatter; a tool-loop failure hard-fails the page instead of degrading to a
-// skeleton, so prior on-disk aggregate pages re-render under the new shape.
+// 19 (#978): repo overview and architecture pages are produced by the tool loop
+// when a tool-chat route resolves, recording `lane: tool_loop` +
+// tool-call/turn counts in frontmatter; a tool-loop failure hard-fails the page
+// instead of degrading to a skeleton, so prior on-disk aggregate pages re-render
+// under the new shape. Curated and leaf pages continue to use one-shot generation.
 // 20 (#980): generalized handbook taxonomy (Overview/Architecture/Capabilities/
 // Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
 // semantic cross-directory concept-cluster names, and an enumerable `Reference |
@@ -225,22 +225,24 @@ pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_serv
 pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
 // Evidence-grounded LLM diagram composition (#17521): the model composes,
 // deterministic code verifies every arrow against supplied evidence.
-pub(crate) use diagram_compose::{
-    DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
-};
-// Rendered markdown and graph-derived narrative analysis.
 #[cfg(test)]
 pub(crate) use compare::compare_to;
 pub use compare::{
     CodewikiChangedDoc, CodewikiCommitMetadata, CodewikiCompareDoc, CodewikiCompareSummary,
     run_compare,
 };
-pub(crate) use render::{
-    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
-    render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_call_sequence, render_module_dependency_mermaid,
-    render_module_doc, render_onboarding_doc,
+pub(crate) use diagram_compose::{
+    DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
 };
+// Rendered markdown and graph-derived narrative analysis.
+pub(crate) use render::{
+    build_repo_doc, collect_subsystem_dependency_edges, module_diagram_context,
+    render_architecture_doc, render_deprecations_doc, render_feature_catalog_doc, render_file_doc,
+    render_hotspots_doc, render_infrastructure_doc, render_module_call_sequence_with_context,
+    render_module_dependency_mermaid_with_context, render_module_doc, render_onboarding_doc,
+};
+#[cfg(test)]
+pub(crate) use render::{render_module_call_sequence, render_module_dependency_mermaid};
 // Reuse of unchanged docs without regeneration.
 #[cfg(test)]
 pub(crate) use purge::purge_generated_output;

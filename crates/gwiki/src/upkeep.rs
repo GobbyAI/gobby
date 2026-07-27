@@ -231,11 +231,11 @@ fn archive_long_stale_pages(
     Ok(archived)
 }
 
-fn find_unworthy_concepts(vault_root: &Path) -> Result<Vec<UnworthyConceptArchive>, WikiError> {
+fn find_unworthy_concepts(pages: &[lint::WikiPage]) -> Vec<UnworthyConceptArchive> {
     use crate::frontmatter::WikiLifecycle;
 
     let mut archived = Vec::new();
-    for page in lint::collect_pages(vault_root)? {
+    for page in pages {
         if !page
             .relative_path
             .starts_with(Path::new("knowledge/concepts"))
@@ -259,7 +259,7 @@ fn find_unworthy_concepts(vault_root: &Path) -> Result<Vec<UnworthyConceptArchiv
             }
         }
 
-        let rejected = page_match_keys(&page)
+        let rejected = page_match_keys(page)
             .into_iter()
             .filter(|key| is_entity_key(key))
             .map(|key| concept_rejection_reason(&key).map(|reason| (key, reason.to_string())))
@@ -271,7 +271,7 @@ fn find_unworthy_concepts(vault_root: &Path) -> Result<Vec<UnworthyConceptArchiv
             continue;
         };
         archived.push(UnworthyConceptArchive {
-            page: page.relative_path,
+            page: page.relative_path.clone(),
             key,
             reason,
         });
@@ -281,7 +281,7 @@ fn find_unworthy_concepts(vault_root: &Path) -> Result<Vec<UnworthyConceptArchiv
             .cmp(&right.page)
             .then_with(|| left.key.cmp(&right.key))
     });
-    Ok(archived)
+    archived
 }
 
 fn archive_unworthy_concepts(

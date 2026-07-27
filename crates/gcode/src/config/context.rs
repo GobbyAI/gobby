@@ -191,6 +191,43 @@ pub struct Context {
     pub index_scope: ProjectIndexScope,
 }
 
+type ResolvedServices = (
+    Option<FalkorConfig>,
+    Option<QdrantConfig>,
+    Option<EmbeddingConfig>,
+    IndexingSettings,
+    CodeVectorSettings,
+);
+
+fn resolve_services(
+    conn: &mut Client,
+    layers: &super::layers::ConfigLayers,
+    services: ServiceConfigSelection,
+) -> anyhow::Result<ResolvedServices> {
+    let falkordb = if services.falkordb {
+        resolve_falkordb_config(conn, layers)?
+    } else {
+        None
+    };
+    let qdrant = if services.qdrant {
+        resolve_qdrant_config(conn, layers)?
+    } else {
+        None
+    };
+    let embedding = if services.embedding {
+        resolve_embedding_config(conn, layers)?
+    } else {
+        None
+    };
+    let indexing = resolve_indexing_settings(conn, layers)?;
+    let code_vectors = if services.code_vectors {
+        resolve_code_vector_settings(conn, layers)?
+    } else {
+        CodeVectorSettings::default()
+    };
+    Ok((falkordb, qdrant, embedding, indexing, code_vectors))
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ProjectIndexScope {
     #[default]
@@ -263,27 +300,8 @@ impl Context {
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let falkordb = if services.falkordb {
-            resolve_falkordb_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let qdrant = if services.qdrant {
-            resolve_qdrant_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let embedding = if services.embedding {
-            resolve_embedding_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let indexing = resolve_indexing_settings(&mut conn, &layers)?;
-        let code_vectors = if services.code_vectors {
-            resolve_code_vector_settings(&mut conn, &layers)?
-        } else {
-            CodeVectorSettings::default()
-        };
+        let (falkordb, qdrant, embedding, indexing, code_vectors) =
+            resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
@@ -313,27 +331,8 @@ impl Context {
 
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
-        let falkordb = if services.falkordb {
-            resolve_falkordb_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let qdrant = if services.qdrant {
-            resolve_qdrant_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let embedding = if services.embedding {
-            resolve_embedding_config(&mut conn, &layers, quiet)?
-        } else {
-            None
-        };
-        let indexing = resolve_indexing_settings(&mut conn, &layers)?;
-        let code_vectors = if services.code_vectors {
-            resolve_code_vector_settings(&mut conn, &layers)?
-        } else {
-            CodeVectorSettings::default()
-        };
+        let (falkordb, qdrant, embedding, indexing, code_vectors) =
+            resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 

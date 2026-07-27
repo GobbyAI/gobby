@@ -428,7 +428,10 @@ mod tests {
             .ok()
             .or_else(|| std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok());
         if database_url.is_none() {
-            eprintln!("skipping {purpose}; GWIKI_POSTGRES_TEST_DATABASE_URL is not set");
+            eprintln!(
+                "skipping {purpose}; GWIKI_POSTGRES_TEST_DATABASE_URL or \
+                 GCODE_POSTGRES_TEST_DATABASE_URL is not set"
+            );
         }
         database_url
     }

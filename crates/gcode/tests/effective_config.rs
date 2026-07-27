@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
+use std::time::Duration;
 
 use gobby_core::ai::effective_config::ai_source_with_primary;
 use gobby_core::ai_context::NoPrimaryAiConfigSource;
@@ -60,6 +61,9 @@ fn spawn_effective_config_server() -> (String, thread::JoinHandle<String>) {
     let address = listener.local_addr().expect("daemon address");
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set request read timeout");
         let mut request = Vec::new();
         let mut buffer = [0_u8; 4096];
         loop {

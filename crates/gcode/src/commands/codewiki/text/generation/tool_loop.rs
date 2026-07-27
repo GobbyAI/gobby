@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
-    ToolExecutor, ToolLoopLimits, ToolPolicy, daemon_agentic_chat, profile_for_tier,
-    resolve_direct_generation_target, run_tool_loop,
+    ToolExecutor, ToolLoopLimits, ToolPolicy, daemon_agentic_chat, profile_for_tier, run_tool_loop,
 };
 use gobby_core::ai::resolve_route_observed;
 use gobby_core::config::{AiCapability, AiRouting};
@@ -13,10 +11,9 @@ use crate::commands::codewiki::{
     CodewikiAiOptions, CodewikiAiOutcome, CodewikiGraphAvailability, CodewikiToolExecutor, prompts,
 };
 use crate::config::Context;
-use crate::db;
 
 use super::outcome::GenerationOutcome;
-use super::routing::resolve_ai_context;
+use super::routing::{resolve_ai_context, resolve_direct_targets};
 
 const CODEWIKI_READONLY_GCODE_TOOLS: &[&str] = &[
     "search",
@@ -37,6 +34,12 @@ const CODEWIKI_READONLY_GCODE_TOOLS: &[&str] = &[
     "path",
     "blast-radius",
 ];
+
+fn log_tool_loop_error(ctx: &Context, stage: &str, error: &dyn std::fmt::Display) {
+    if !ctx.quiet {
+        eprintln!("CodeWiki tool loop {stage} failed: {error}");
+    }
+}
 
 fn codewiki_readonly_tool_policy() -> ToolPolicy {
     ToolPolicy {
@@ -137,7 +140,10 @@ fn run_direct_tool_loop(
 ) -> ToolLoopResult {
     let executor = match CodewikiToolExecutor::new(ctx, graph_availability) {
         Ok(executor) => executor,
-        Err(_) => return ToolLoopResult::unavailable(),
+        Err(error) => {
+            log_tool_loop_error(ctx, "executor initialization", &error);
+            return ToolLoopResult::unavailable();
+        }
     };
     let executor = Arc::new(executor);
     let prompt = bound_seed_prompt(prompt);
@@ -148,7 +154,10 @@ fn run_direct_tool_loop(
     let loop_executor: Arc<dyn ToolExecutor> = executor.clone();
     let outcome = match run_tool_loop(transport, loop_executor, messages, limits, max_tokens) {
         Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
-        Err(_) => GenerationOutcome::unavailable(),
+        Err(error) => {
+            log_tool_loop_error(ctx, "execution", &error);
+            GenerationOutcome::unavailable()
+        }
     };
     ToolLoopResult {
         outcome,
@@ -160,16 +169,14 @@ fn resolve_aggregate_direct_target(
     ctx: &Context,
     aggregate_override: Option<&str>,
 ) -> DirectGenerationTarget {
-    let Ok(mut conn) = db::connect_readonly(&ctx.database_url) else {
-        return DirectGenerationTarget::default();
-    };
-    let Ok(mut source) = ai_source_for_conn(&mut conn) else {
-        return DirectGenerationTarget::default();
-    };
-    resolve_direct_generation_target(
-        &mut source,
-        &profile_for_tier(GenerationTier::Aggregate, aggregate_override),
-    )
+    let [target] = resolve_direct_targets(
+        ctx,
+        [profile_for_tier(
+            GenerationTier::Aggregate,
+            aggregate_override,
+        )],
+    );
+    target
 }
 
 pub(crate) fn resolve_tool_loop_generator(
@@ -243,7 +250,10 @@ pub(crate) fn resolve_tool_loop_generator(
                         outcome: GenerationOutcome::from_daemon_agentic(result, &bounded_prompt),
                         data_source_degraded: Vec::new(),
                     },
-                    Err(_) => ToolLoopResult::unavailable(),
+                    Err(error) => {
+                        log_tool_loop_error(&ctx_owned, "daemon generation", &error);
+                        ToolLoopResult::unavailable()
+                    }
                 }
             }
             AiRouting::Direct => match direct_target.clone() {
@@ -258,7 +268,10 @@ pub(crate) fn resolve_tool_loop_generator(
                             &ai_context.tool_loop_limits,
                             max_tokens,
                         ),
-                        Err(_) => ToolLoopResult::unavailable(),
+                        Err(error) => {
+                            log_tool_loop_error(&ctx_owned, "transport initialization", &error);
+                            ToolLoopResult::unavailable()
+                        }
                     }
                 }
                 None => ToolLoopResult::unavailable(),

@@ -109,6 +109,17 @@ pub(super) struct GitBlameOutput {
     stderr: String,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static LAST_TIMED_OUT_GIT_BLAME_PID: std::cell::Cell<Option<u32>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn take_last_timed_out_git_blame_pid() -> Option<u32> {
+    LAST_TIMED_OUT_GIT_BLAME_PID.take()
+}
+
 fn blame_file_contributors(
     project_root: &Path,
     head: gix::ObjectId,
@@ -152,6 +163,8 @@ pub(super) fn git_blame_output_with_timeout(
     let status = match child.wait_timeout(timeout)? {
         Some(status) => status,
         None => {
+            #[cfg(test)]
+            LAST_TIMED_OUT_GIT_BLAME_PID.set(Some(child.id()));
             let _ = child.kill();
             let _ = child.wait();
             return Ok(None);

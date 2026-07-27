@@ -696,44 +696,127 @@ fn duplicate_concepts(vault_root: &Path, pages: &[crate::lint::WikiPage]) -> Vec
     let mut concepts = pages
         .iter()
         .filter(|page| page.relative_path.starts_with("knowledge/concepts"))
-        .map(|page| (page, title_for_page(page), page_match_keys(page)))
+        .map(|page| {
+            (
+                page.relative_path.clone(),
+                title_for_page(page),
+                page_match_keys(page),
+            )
+        })
         .collect::<Vec<_>>();
-    concepts.sort_by(|left, right| left.0.relative_path.cmp(&right.0.relative_path));
+    concepts.sort_by(|left, right| left.0.cmp(&right.0));
 
-    let mut duplicates = Vec::new();
-    for left_index in 0..concepts.len() {
-        let (left_page, left_title, left_keys) = &concepts[left_index];
-        for (right_page, right_title, right_keys) in &concepts[left_index + 1..] {
-            if distinct_pairs.contains(&normalized_health_page_pair(
-                &left_page.relative_path,
-                &right_page.relative_path,
-            )) {
-                continue;
+    let partition_bucket = |members: &[usize]| {
+        let mut groups = Vec::<Vec<usize>>::new();
+        for &member in members {
+            let compatible = groups.iter_mut().find(|group| {
+                group.iter().all(|&other| {
+                    !distinct_pairs.contains(&normalized_health_page_pair(
+                        &concepts[member].0,
+                        &concepts[other].0,
+                    ))
+                })
+            });
+            if let Some(group) = compatible {
+                group.push(member);
+            } else {
+                groups.push(vec![member]);
             }
-            let reason = if left_title.eq_ignore_ascii_case(right_title) {
-                "exact_title"
-            } else if !left_keys.is_disjoint(right_keys) {
-                "shared_key"
-            } else if is_title_prefix_pair(left_title, right_title) {
-                "title_prefix"
-            } else {
-                continue;
-            };
-            let title = if reason == "exact_title" {
-                left_title.clone()
-            } else {
-                format!("{left_title} / {right_title}")
-            };
+        }
+        groups
+    };
+    let mut duplicates = Vec::new();
+    let mut emitted_path_groups = BTreeSet::<Vec<PathBuf>>::new();
+    let mut exact_title_buckets = BTreeMap::<String, Vec<usize>>::new();
+    let mut shared_key_buckets = BTreeMap::<String, Vec<usize>>::new();
+    for (index, (_, title, keys)) in concepts.iter().enumerate() {
+        exact_title_buckets
+            .entry(title.to_lowercase())
+            .or_default()
+            .push(index);
+        for key in keys {
+            shared_key_buckets
+                .entry(key.clone())
+                .or_default()
+                .push(index);
+        }
+    }
+
+    for members in exact_title_buckets.values() {
+        for group in partition_bucket(members)
+            .into_iter()
+            .filter(|group| group.len() > 1)
+        {
+            let paths = group
+                .iter()
+                .map(|&index| concepts[index].0.clone())
+                .collect::<Vec<_>>();
+            emitted_path_groups.insert(paths.clone());
             duplicates.push(DuplicateConcept {
-                title,
-                paths: vec![
-                    left_page.relative_path.clone(),
-                    right_page.relative_path.clone(),
-                ],
-                reason: reason.to_owned(),
+                title: concepts[group[0]].1.clone(),
+                paths,
+                reason: "exact_title".to_string(),
             });
         }
     }
+
+    for members in shared_key_buckets.values() {
+        for group in partition_bucket(members)
+            .into_iter()
+            .filter(|group| group.len() > 1)
+        {
+            let paths = group
+                .iter()
+                .map(|&index| concepts[index].0.clone())
+                .collect::<Vec<_>>();
+            if !emitted_path_groups.insert(paths.clone()) {
+                continue;
+            }
+            let titles = group
+                .iter()
+                .map(|&index| concepts[index].1.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(" / ");
+            duplicates.push(DuplicateConcept {
+                title: titles,
+                paths,
+                reason: "shared_key".to_string(),
+            });
+        }
+    }
+
+    let mut title_order = (0..concepts.len()).collect::<Vec<_>>();
+    title_order.sort_by_key(|&index| (concepts[index].1.to_lowercase(), concepts[index].0.clone()));
+    for adjacent in title_order.windows(2) {
+        let [left_index, right_index] = adjacent else {
+            continue;
+        };
+        let (left_path, left_title, left_keys) = &concepts[*left_index];
+        let (right_path, right_title, right_keys) = &concepts[*right_index];
+        if left_title.eq_ignore_ascii_case(right_title)
+            || !left_keys.is_disjoint(right_keys)
+            || !is_title_prefix_pair(left_title, right_title)
+            || distinct_pairs.contains(&normalized_health_page_pair(left_path, right_path))
+        {
+            continue;
+        }
+        let paths = vec![left_path.clone(), right_path.clone()];
+        if !emitted_path_groups.insert(paths.clone()) {
+            continue;
+        }
+        duplicates.push(DuplicateConcept {
+            title: format!("{left_title} / {right_title}"),
+            paths,
+            reason: "title_prefix".to_string(),
+        });
+    }
+    duplicates.sort_by(|left, right| {
+        left.reason
+            .cmp(&right.reason)
+            .then_with(|| left.paths.cmp(&right.paths))
+    });
     duplicates
 }
 

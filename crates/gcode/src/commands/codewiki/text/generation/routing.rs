@@ -61,47 +61,55 @@ impl DirectTierTargets {
         }
     }
 
-    pub(super) fn has_usable_target(&self) -> bool {
+    pub(super) fn all_tiers_usable(&self) -> bool {
         self.aggregate.api_base().is_some()
             && self.module.api_base().is_some()
             && self.standard.api_base().is_some()
     }
 }
 
-/// Resolve a Direct-route target per tier from the AI config source. A failed
-/// config read leaves every field unset; generation then surfaces a clear
-/// "profile api_base required" error rather than silently degrading to skeleton.
+pub(super) fn resolve_direct_targets<const N: usize>(
+    ctx: &Context,
+    profiles: [String; N],
+) -> [DirectGenerationTarget; N] {
+    let mut conn = match db::connect_readonly(&ctx.database_url) {
+        Ok(conn) => conn,
+        Err(error) => {
+            if !ctx.quiet {
+                eprintln!("failed to connect while resolving direct AI targets: {error}");
+            }
+            return std::array::from_fn(|_| DirectGenerationTarget::default());
+        }
+    };
+    let mut source = match ai_source_for_conn(&mut conn) {
+        Ok(source) => source,
+        Err(error) => {
+            if !ctx.quiet {
+                eprintln!("failed to load AI configuration for direct targets: {error}");
+            }
+            return std::array::from_fn(|_| DirectGenerationTarget::default());
+        }
+    };
+    std::array::from_fn(|index| resolve_direct_generation_target(&mut source, &profiles[index]))
+}
+
+/// Resolve a Direct-route target per tier from the AI config source.
 pub(super) fn resolve_direct_tier_targets(
     ctx: &Context,
     aggregate_override: Option<&str>,
 ) -> DirectTierTargets {
-    let Ok(mut conn) = db::connect_readonly(&ctx.database_url) else {
-        return DirectTierTargets {
-            aggregate: DirectGenerationTarget::default(),
-            module: DirectGenerationTarget::default(),
-            standard: DirectGenerationTarget::default(),
-        };
-    };
-    let Ok(mut source) = ai_source_for_conn(&mut conn) else {
-        return DirectTierTargets {
-            aggregate: DirectGenerationTarget::default(),
-            module: DirectGenerationTarget::default(),
-            standard: DirectGenerationTarget::default(),
-        };
-    };
+    let [aggregate, module, standard] = resolve_direct_targets(
+        ctx,
+        [
+            profile_for_tier(GenerationTier::Aggregate, aggregate_override),
+            profile_for_tier(GenerationTier::Module, None),
+            profile_for_tier(GenerationTier::Standard, None),
+        ],
+    );
     DirectTierTargets {
-        aggregate: resolve_direct_generation_target(
-            &mut source,
-            &profile_for_tier(GenerationTier::Aggregate, aggregate_override),
-        ),
-        module: resolve_direct_generation_target(
-            &mut source,
-            &profile_for_tier(GenerationTier::Module, None),
-        ),
-        standard: resolve_direct_generation_target(
-            &mut source,
-            &profile_for_tier(GenerationTier::Standard, None),
-        ),
+        aggregate,
+        module,
+        standard,
     }
 }
 
@@ -174,7 +182,7 @@ mod tests {
                 module: target(Some("http://module.test/v1")),
                 standard: target(Some("http://standard.test/v1")),
             }
-            .has_usable_target()
+            .all_tiers_usable()
         );
 
         for targets in [
@@ -194,7 +202,7 @@ mod tests {
                 standard: target(None),
             },
         ] {
-            assert!(!targets.has_usable_target());
+            assert!(!targets.all_tiers_usable());
         }
     }
 }

@@ -101,8 +101,7 @@ pub(crate) fn build_architecture_doc(
         observability.tool_call_count += generated.observability.tool_call_count;
         observability.turns = observability
             .turns
-            .zip(generated.observability.turns)
-            .map(|(total, turns)| total + turns);
+            .map(|total| total + generated.observability.turns.unwrap_or(0));
         degraded_sources.extend(generated.data_source_degraded);
         let responsibility = match generated.content {
             GenerationContent::Generated(generated) => {
@@ -164,8 +163,7 @@ pub(crate) fn build_architecture_doc(
         observability.tool_call_count += generated.observability.tool_call_count;
         observability.turns = observability
             .turns
-            .zip(generated.observability.turns)
-            .map(|(total, turns)| total + turns);
+            .map(|total| total + generated.observability.turns.unwrap_or(0));
         degraded_sources.extend(generated.data_source_degraded);
         match generated.content {
             GenerationContent::Generated(generated) => {

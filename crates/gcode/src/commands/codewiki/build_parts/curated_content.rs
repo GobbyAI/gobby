@@ -719,30 +719,34 @@ pub(crate) fn curated_flow_diagram(
         child_rollup = true;
     }
 
-    if matches!(&outcome, DiagramOutcome::Emitted(_)) {
-        diagram_stats.record_named_pass(
-            page_path,
-            DiagramKind::CuratedFlow,
-            &outcome,
-            pass,
-            progress,
-        );
-    }
-    let DiagramOutcome::Emitted(block) = outcome else {
-        diagram_stats.record_named_pass(
-            page_path,
-            DiagramKind::CuratedFlow,
-            &outcome,
-            "pass 3 containment fallback",
-            progress,
-        );
-        return containment_structure_section(
-            page_path,
-            member_modules,
-            member_files,
-            module_lookup,
-            &outcome,
-        );
+    let block = match outcome {
+        DiagramOutcome::Emitted(block) => {
+            let emitted = DiagramOutcome::Emitted(block.clone());
+            diagram_stats.record_named_pass(
+                page_path,
+                DiagramKind::CuratedFlow,
+                &emitted,
+                pass,
+                progress,
+            );
+            block
+        }
+        outcome => {
+            diagram_stats.record_named_pass(
+                page_path,
+                DiagramKind::CuratedFlow,
+                &outcome,
+                "pass 3 containment fallback",
+                progress,
+            );
+            return containment_structure_section(
+                page_path,
+                member_modules,
+                member_files,
+                module_lookup,
+                &outcome,
+            );
+        }
     };
 
     let degraded = stages

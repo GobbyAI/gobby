@@ -509,6 +509,20 @@ fn ingest_url_cli_forwards_explicit_max_age_hours() {
 }
 
 #[test]
+fn ingest_url_cli_rejects_unbounded_max_age_hours() {
+    let error = Cli::try_parse_from([
+        "gwiki",
+        "ingest-url",
+        "--max-age-hours",
+        "8761",
+        "https://example.test/source",
+    ])
+    .expect_err("max age above one year must fail");
+
+    assert!(error.to_string().contains("8760"));
+}
+
+#[test]
 fn ingest_url_cli_command_literal_carries_max_age_hours() {
     let command = command_from_cli(
         CliCommand::IngestUrl {

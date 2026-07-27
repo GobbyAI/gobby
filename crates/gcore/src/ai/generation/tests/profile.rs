@@ -163,17 +163,37 @@ fn profile_resolves_plaintext_api_key_and_env_default() {
 fn profile_resolves_api_keys_from_recognized_provider_environment() {
     let env = ProviderApiKeyEnvGuard::new();
     let cases = [
-        ("anthropic", "ANTHROPIC_API_KEY", "anthropic-key"),
-        ("openai", "OPENAI_API_KEY", "openai-key"),
-        ("openrouter", "OPENROUTER_API_KEY", "openrouter-key"),
-        ("groq", "GROQ_API_KEY", "groq-key"),
+        (
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            "ANTHROPIC_API_KEY",
+            "anthropic-key",
+        ),
+        (
+            "openai",
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+            "openai-key",
+        ),
+        (
+            "openrouter",
+            "https://openrouter.ai/api/v1",
+            "OPENROUTER_API_KEY",
+            "openrouter-key",
+        ),
+        (
+            "groq",
+            "https://api.groq.com/openai/v1",
+            "GROQ_API_KEY",
+            "groq-key",
+        ),
     ];
 
-    for (provider, env_name, expected) in cases {
+    for (provider, api_base, env_name, expected) in cases {
         env.set(env_name, &format!("  {expected}  "));
         let mut source = MapSource::new()
             .with(ai_keys::TEXT_GENERATE_PROVIDER, provider)
-            .with(ai_keys::TEXT_GENERATE_API_BASE, "https://api.example/v1");
+            .with(ai_keys::TEXT_GENERATE_API_BASE, api_base);
 
         let target = resolve_direct_generation_target(&mut source, "feature_low");
 
@@ -181,7 +201,9 @@ fn profile_resolves_api_keys_from_recognized_provider_environment() {
     }
 
     env.set("OPENAI_API_KEY", "   ");
-    let mut blank_env_source = MapSource::new().with(ai_keys::TEXT_GENERATE_PROVIDER, "openai");
+    let mut blank_env_source = MapSource::new()
+        .with(ai_keys::TEXT_GENERATE_PROVIDER, "openai")
+        .with(ai_keys::TEXT_GENERATE_API_BASE, "https://api.openai.com/v1");
     assert_eq!(
         resolve_direct_generation_target(&mut blank_env_source, "feature_low").api_key,
         None
@@ -190,6 +212,10 @@ fn profile_resolves_api_keys_from_recognized_provider_environment() {
     env.set("OPENAI_API_KEY", "env-key");
     let mut configured_source = MapSource::new()
         .with(ai_keys::TEXT_GENERATE_PROVIDER, "openai")
+        .with(
+            ai_keys::TEXT_GENERATE_API_BASE,
+            "https://openai-compatible.example/v1",
+        )
         .with(ai_keys::TEXT_GENERATE_API_KEY, "configured-key");
     assert_eq!(
         resolve_direct_generation_target(&mut configured_source, "feature_low")
@@ -215,6 +241,22 @@ fn profile_never_sends_openai_env_key_to_custom_or_unspecified_provider() {
 
         assert_eq!(target.api_key, None, "provider={provider:?}");
     }
+}
+
+#[test]
+fn profile_never_sends_openai_env_key_to_custom_openai_base() {
+    let env = ProviderApiKeyEnvGuard::new();
+    env.set("OPENAI_API_KEY", "must-not-leak");
+    let mut source = MapSource::new()
+        .with(ai_keys::TEXT_GENERATE_PROVIDER, "openai")
+        .with(
+            ai_keys::TEXT_GENERATE_API_BASE,
+            "https://openai-compatible.example/v1",
+        );
+
+    let target = resolve_direct_generation_target(&mut source, "feature_low");
+
+    assert_eq!(target.api_key, None);
 }
 
 #[test]

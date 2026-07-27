@@ -158,6 +158,7 @@ mod tests {
             ("awk", "generic_word"),
             ("sed", "generic_word"),
             ("grep", "generic_word"),
+            ("src/gobby/tasks/store.py", "path_shaped"),
         ] {
             assert!(!is_concept_worthy(key), "expected `{key}` to be rejected");
             assert_eq!(concept_rejection_reason(key), Some(reason), "{key}");

@@ -1140,7 +1140,21 @@ fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
         "unexpected malformed-current error: {malformed_current:#}"
     );
 
-    for invalid_path in ["", "/_meta/codewiki.json", "../_meta/codewiki.json"] {
+    let escaped_out = compare_to(valid_project.path(), Some("../escape"), &valid_target)
+        .expect_err("path-traversing output fails");
+    assert!(
+        escaped_out
+            .to_string()
+            .contains("requires --out to be inside the source repository"),
+        "unexpected path-traversal error: {escaped_out:#}"
+    );
+
+    for invalid_path in [
+        "",
+        "/_meta/codewiki.json",
+        "../_meta/codewiki.json",
+        "..\\_meta/codewiki.json",
+    ] {
         let invalid_target = format!("{baseline_ref}:{invalid_path}");
         let invalid = compare_to(valid_project.path(), Some("wiki"), &invalid_target)
             .expect_err("invalid explicit metadata path fails");

@@ -330,6 +330,8 @@ fn within_ttl_uses_manifest_cache_without_fetch_or_store() {
 
     assert!(result.accepted.is_empty());
     assert!(result.failed.is_empty());
+    assert_eq!(result.status(), "ingested");
+    assert_eq!(result.exit_code(), 0);
     assert_eq!(fetch_calls, 0);
     assert_eq!(
         result.cached,
@@ -342,6 +344,18 @@ fn within_ttl_uses_manifest_cache_without_fetch_or_store() {
     );
     assert_eq!(store.indexed_hash_reads, 0);
     assert_eq!(store.indexed_hashes_reads, 0);
+
+    let cached_plus_failed = UrlBatchIngest {
+        accepted: Vec::new(),
+        cached: result.cached.clone(),
+        failed: vec![UrlIngestFailure::new(
+            "https://example.test/failed",
+            "http_status",
+            "HTTP status 500",
+        )],
+    };
+    assert_eq!(cached_plus_failed.status(), "partial");
+    assert_eq!(cached_plus_failed.exit_code(), 0);
 }
 
 #[test]
@@ -353,12 +367,12 @@ fn zero_ttl_forces_refetch_even_at_zero_age() {
         test_snapshot(url, url, "Zero TTL", "unix-ms:1783215000000"),
     )
     .expect("seed fetched URL");
-    let mut store = MemoryWikiStore::default();
+    let mut html_store = MemoryWikiStore::default();
     let mut fetch_calls = 0;
 
     let result = ingest_urls_with_fetcher(
         temp.path(),
-        &mut store,
+        &mut html_store,
         &[url.to_string()],
         "unix-ms:1783215000000",
         0,
@@ -466,10 +480,11 @@ fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
     .expect("seed PDF URL");
     let asset_path = pdf.asset_path.clone().expect("PDF asset");
     std::fs::remove_file(pdf_root.path().join(&asset_path)).expect("remove asset");
+    let mut pdf_store = MemoryWikiStore::default();
     let mut pdf_fetches = 0;
     ingest_urls_with_fetcher(
         pdf_root.path(),
-        &mut store,
+        &mut pdf_store,
         &[pdf_url.to_string()],
         "unix-ms:1783218600000",
         24,
@@ -490,7 +505,7 @@ fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
     .expect("set future freshness");
     ingest_urls_with_fetcher(
         pdf_root.path(),
-        &mut store,
+        &mut pdf_store,
         &[pdf_url.to_string()],
         "unix-ms:1783218600000",
         24,
@@ -508,7 +523,7 @@ fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
     .expect("set corrupt freshness");
     ingest_urls_with_fetcher(
         pdf_root.path(),
-        &mut store,
+        &mut pdf_store,
         &[pdf_url.to_string()],
         "unix-ms:1783218601000",
         24,

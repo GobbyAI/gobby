@@ -5,7 +5,7 @@ use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::falkor::GraphClient;
 
-use crate::graph::{MemoryWikiGraph, document_target_map};
+use crate::graph::{BACKWARD_LINK_WEIGHT, MemoryWikiGraph, document_target_map};
 use crate::links::canonical_target_key;
 use crate::search::{
     SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource, WikiSearchResult,
@@ -258,7 +258,10 @@ pub fn rank_link_neighborhood(
                 // Backlinks are useful context, but direct outbound neighbors
                 // usually better express the user's starting point.
                 let outdegree = outdegrees.get(&link.source_path).copied().unwrap_or(1) as f64;
-                Some((link.source_path.clone(), seed_score * 0.8 / outdegree))
+                Some((
+                    link.source_path.clone(),
+                    seed_score * BACKWARD_LINK_WEIGHT / outdegree,
+                ))
             } else {
                 None
             };

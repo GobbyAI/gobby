@@ -112,13 +112,8 @@ fn fetch_daemon_served_config_at_with_timeout(
         base_url.trim_end_matches('/'),
         EFFECTIVE_CONFIG_PATH
     );
-    let mut request = ureq::get(&url).timeout(timeout);
-    if let Some(token) = token {
-        request = request.set(
-            crate::local_token::AUTHORIZATION_HEADER,
-            &crate::local_token::authorization_bearer(token),
-        );
-    }
+    let request =
+        crate::local_token::apply_bearer_header_with_token(ureq::get(&url).timeout(timeout), token);
     let response = match request.call() {
         Ok(response) => response,
         Err(ureq::Error::Status(status, _)) => {

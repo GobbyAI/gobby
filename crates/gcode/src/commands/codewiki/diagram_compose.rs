@@ -59,17 +59,12 @@ pub(crate) enum DiagramKind {
 }
 
 impl DiagramKind {
-    const LABELS: [(Self, &'static str); 3] = [
-        (Self::ModuleDependency, "module_dependency"),
-        (Self::ModuleCallSequence, "module_call_sequence"),
-        (Self::CuratedFlow, "curated_flow"),
-    ];
-
     fn label(self) -> &'static str {
-        Self::LABELS
-            .iter()
-            .find_map(|(kind, label)| (*kind == self).then_some(*label))
-            .expect("every diagram kind has a stable label")
+        match self {
+            Self::ModuleDependency => "module_dependency",
+            Self::ModuleCallSequence => "module_call_sequence",
+            Self::CuratedFlow => "curated_flow",
+        }
     }
 }
 
@@ -79,6 +74,8 @@ pub(crate) struct DiagramStats {
     pub(crate) sparse_evidence: usize,
     pub(crate) no_generator: usize,
     pub(crate) rejected: usize,
+    #[serde(default)]
+    pub(crate) partial: bool,
     #[serde(skip)]
     recorded_slots: BTreeSet<(String, DiagramKind)>,
 }

@@ -160,7 +160,7 @@ mod tests {
 
         let mut source = ServiceSource::daemon(
             served([("databases.qdrant.url", "http://daemon.example:6333")]),
-            Some(routing),
+            Some(routing.clone()),
         );
         assert_eq!(
             source
@@ -168,6 +168,15 @@ mod tests {
                 .expect("resolve daemon value")
                 .as_deref(),
             Some("http://daemon.example:6333")
+        );
+
+        let mut source = ServiceSource::daemon(served([]), Some(routing));
+        assert_eq!(
+            source
+                .config_value("databases.qdrant.url")
+                .expect("resolve routing value")
+                .as_deref(),
+            Some("http://routing.example:6333")
         );
     }
 

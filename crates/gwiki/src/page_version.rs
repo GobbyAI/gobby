@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use gobby_core::markdown::{frontmatter_body_start, normalize_markdown};
+use gobby_core::markdown::{
+    frontmatter_body_start, normalize_markdown, yaml_frontmatter_closing_delimiter_start,
+};
 
 use crate::WikiError;
 
@@ -51,7 +53,7 @@ pub(crate) fn stamp_generated_page<'a>(
         }
     }
 
-    let Some(closing_start) = yaml_closing_delimiter_start(markdown) else {
+    let Some(closing_start) = yaml_frontmatter_closing_delimiter_start(markdown) else {
         return format!("---\n{metadata}---\n\n{markdown}");
     };
     let mut stamped = String::with_capacity(markdown.len() + metadata.len());
@@ -59,14 +61,6 @@ pub(crate) fn stamp_generated_page<'a>(
     stamped.push_str(&metadata);
     stamped.push_str(&markdown[closing_start..]);
     stamped
-}
-
-fn yaml_closing_delimiter_start(markdown: &str) -> Option<usize> {
-    let body_start = frontmatter_body_start(markdown)?;
-    if !markdown.starts_with("---\n") {
-        return None;
-    }
-    markdown[..body_start].rfind("---\n")
 }
 
 #[cfg(test)]
@@ -101,5 +95,16 @@ mod tests {
         assert!(stamped.starts_with("---\ncontent_hash: "));
         assert!(stamped.contains("\ncompiled_from: []\n---\n\n# Example"));
         assert_eq!(content_hash(&stamped), content_hash(markdown));
+    }
+
+    #[test]
+    fn generated_page_stamp_reuses_crlf_frontmatter_with_spaced_delimiters() {
+        let markdown = "  ---  \r\ntitle: Example\r\n  ---  \r\n\r\n# Example\r\n";
+
+        let stamped = stamp_generated_page(markdown, []);
+
+        assert!(stamped.starts_with("  ---  \r\ntitle: Example\r\ncontent_hash: "));
+        assert!(stamped.contains("compiled_from: []\n  ---  \r\n\r\n# Example\r\n"));
+        assert_eq!(stamped.matches("title: Example").count(), 1);
     }
 }
