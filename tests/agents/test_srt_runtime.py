@@ -13,6 +13,7 @@ import pytest
 
 from gobby.agents import srt_runtime
 from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv, compute_sandbox_paths
+from gobby.agents.sandbox_policy import _nearest_package_root
 from gobby.agents.srt_runtime import (
     SRT_LOCKFILE_SHA256,
     SRT_NPM_INTEGRITY,
@@ -63,6 +64,44 @@ def test_render_settings_uses_srt_credential_schema() -> None:
         "allowPlaintextInject": False,
     }
     assert "inject_hosts" not in json.dumps(settings)
+
+
+def test_package_root_discovery_preserves_worktree_carveout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    provider_bin = home / "bin"
+    nested_package = home / "tools" / "droid"
+    nested_bin = nested_package / "bin"
+    workspace = home / ".gobby" / "worktrees" / "project"
+    provider_bin.mkdir(parents=True)
+    nested_bin.mkdir(parents=True)
+    workspace.mkdir(parents=True)
+    (home / "package.json").write_text("{}", encoding="utf-8")
+    (nested_package / "package.json").write_text("{}", encoding="utf-8")
+    home_executable = provider_bin / "droid"
+    nested_executable = nested_bin / "droid"
+    for executable in (home_executable, nested_executable):
+        executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+
+    assert _nearest_package_root(home_executable) is None
+    assert _nearest_package_root(nested_executable) == nested_package
+
+    paths = compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        str(workspace),
+        provider="droid",
+        env={"PATH": str(provider_bin)},
+    )
+    filesystem = render_srt_settings(paths)["filesystem"]
+
+    assert str(home.resolve()) not in filesystem["allowRead"]
+    assert str(workspace.resolve()) in filesystem["allowRead"]
+    assert str((home / ".gobby").resolve()) in filesystem["denyRead"]
 
 
 def test_compute_paths_masks_credentials_only_at_provider_api_hosts(tmp_path: Path) -> None:

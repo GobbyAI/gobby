@@ -137,11 +137,11 @@ def provider_read_exceptions(provider: str, env: Mapping[str, str]) -> list[str]
 
 def _nearest_package_root(executable: Path) -> Path | None:
     home = Path.home().resolve(strict=False)
-    for parent in executable.parents:
+    for parent in executable.parents[:2]:
+        if parent == home:
+            break
         if (parent / "package.json").is_file():
             return parent
-        if parent == home or len(parent.parts) < 3:
-            break
     return None
 
 
