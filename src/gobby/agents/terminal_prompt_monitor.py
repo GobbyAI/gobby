@@ -18,6 +18,50 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_VANISHED_TMUX_ERROR_MARKERS = (
+    "can't find pane",
+    "can't find session",
+    "failed to connect to server",
+    "no server running on",
+    "no such file or directory",
+)
+
+
+def _is_expected_prompt_probe_error(error: Exception) -> bool:
+    """Return whether a prompt probe failed because its tmux target vanished."""
+    if isinstance(error, TimeoutError):
+        return True
+    message = str(error).casefold()
+    return any(marker in message for marker in _VANISHED_TMUX_ERROR_MARKERS)
+
+
+def _log_prompt_probe_error(
+    *,
+    operation: str,
+    run_id: str,
+    tmux_target: str,
+    error: Exception,
+) -> None:
+    """Log expected terminal races quietly and preserve unexpected tracebacks."""
+    values = (
+        operation,
+        type(error).__name__,
+        run_id,
+        tmux_target,
+        error,
+    )
+    if _is_expected_prompt_probe_error(error):
+        logger.debug(
+            "Prompt probe %s skipped: exception=%s run_id=%s tmux_target=%s error=%s",
+            *values,
+        )
+        return
+    logger.warning(
+        "Prompt probe %s failed: exception=%s run_id=%s tmux_target=%s error=%s",
+        *values,
+        exc_info=True,
+    )
+
 
 class TerminalPromptMonitor:
     """Detect and dismiss blocking prompts in spawned agent tmux panes."""
@@ -95,7 +139,12 @@ class TerminalPromptMonitor:
                         )
                         handled += 1
             except Exception as e:
-                logger.warning("Error checking trust prompt for agent %s: %s", run.id, e)
+                _log_prompt_probe_error(
+                    operation="trust",
+                    run_id=run.id,
+                    tmux_target=tmux_name,
+                    error=e,
+                )
 
         return handled
 
@@ -153,7 +202,12 @@ class TerminalPromptMonitor:
                     )
                     await self._handle_looping_agent(run)
             except Exception as e:
-                logger.warning("Error checking loop prompt for agent %s: %s", run.id, e)
+                _log_prompt_probe_error(
+                    operation="loop",
+                    run_id=run.id,
+                    tmux_target=tmux_name,
+                    error=e,
+                )
 
         return handled
 
@@ -191,7 +245,12 @@ class TerminalPromptMonitor:
                     logger.info("Auto-entered approval prompt for agent %s", run.id)
                     handled += 1
             except Exception as e:
-                logger.warning("Error checking approval prompt for agent %s: %s", run.id, e)
+                _log_prompt_probe_error(
+                    operation="approval",
+                    run_id=run.id,
+                    tmux_target=tmux_name,
+                    error=e,
+                )
 
         return handled
 
@@ -227,7 +286,12 @@ class TerminalPromptMonitor:
                     run.id,
                 )
             except Exception as e:
-                logger.warning("Error checking queued continuation for agent %s: %s", run.id, e)
+                _log_prompt_probe_error(
+                    operation="queued-continuation",
+                    run_id=run.id,
+                    tmux_target=tmux_name,
+                    error=e,
+                )
         return 0
 
     async def check_periodic_enters(self) -> int:
@@ -272,7 +336,12 @@ class TerminalPromptMonitor:
                     logger.debug("Sent periodic Enter to agent terminal %s", run.id)
                     handled += 1
             except Exception as e:
-                logger.warning("Error sending periodic Enter to agent %s: %s", run.id, e)
+                _log_prompt_probe_error(
+                    operation="periodic-enter",
+                    run_id=run.id,
+                    tmux_target=tmux_name,
+                    error=e,
+                )
 
         return handled
 

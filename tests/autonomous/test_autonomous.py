@@ -437,6 +437,46 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TOOL_CALL
         assert event.is_high_value is False
 
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_args", "effective_tool_name"),
+        [
+            ("wait", {}, "wait"),
+            ("collaboration__wait_agent", {}, "collaboration__wait_agent"),
+            ("collaborationwait_agent", {}, "collaborationwait_agent"),
+            ("functions.wait", {}, "functions.wait"),
+            (
+                "mcp__gobby__call_tool",
+                {"server_name": "collaboration", "tool_name": "wait_for_output"},
+                "wait_for_output",
+            ),
+        ],
+        ids=["direct", "namespaced", "compact-codex", "functions", "proxied-mcp"],
+    )
+    def test_passive_wait_details_cover_client_representations(
+        self,
+        progress_tracker: ProgressTracker,
+        session_id: str,
+        tool_name: str,
+        tool_args: dict[str, str],
+        effective_tool_name: str,
+    ) -> None:
+        completed = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+        )
+        started = progress_tracker.record_tool_start(
+            session_id=session_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+        )
+
+        assert completed is not None
+        assert completed.details["effective_tool_name"] == effective_tool_name
+        assert completed.details["is_passive_wait"] is True
+        assert started.details["effective_tool_name"] == effective_tool_name
+        assert started.details["is_passive_wait"] is True
+
     def test_record_tool_call_mcp_failed_mutation_is_low_value(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:
@@ -1534,6 +1574,43 @@ class TestStuckDetectorToolLoop:
         result = detector.detect_tool_loop(session_id)
 
         assert result.is_stuck is False
+
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_args"),
+        [
+            ("wait", {}),
+            ("collaboration__wait_agent", {}),
+            ("collaborationwait_agent", {}),
+            ("functions.wait", {}),
+            (
+                "mcp__gobby__call_tool",
+                {"server_name": "collaboration", "tool_name": "wait_for_agent"},
+            ),
+        ],
+        ids=["direct", "namespaced", "compact-codex", "functions", "proxied-mcp"],
+    )
+    def test_passive_wait_activity_never_triggers_tool_loop(
+        self,
+        test_db: HubDatabase,
+        session_id: str,
+        tool_name: str,
+        tool_args: dict[str, str],
+    ) -> None:
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+
+        for _ in range(5):
+            tracker.record_tool_call(session_id, tool_name, tool_args=tool_args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+        assert len(tracker.get_recent_events(session_id, limit=10)) == 5
 
     def test_tool_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test tool loop detection with repeated identical calls."""

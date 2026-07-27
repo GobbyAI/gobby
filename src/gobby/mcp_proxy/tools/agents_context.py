@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
-    from gobby.hooks.hook_manager import HookManager
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.clones import LocalCloneManager
@@ -43,7 +42,6 @@ class AgentsRegistryContext:
     db: HubDatabase | None = None
     workflow_loader: WorkflowLoader | None = None
     mcp_inventory: MCPInventoryProtocol | None = None
-    hook_manager_resolver: Callable[[], HookManager | None] | None = None
     completion_registry: CompletionEventRegistry | None = None
     lifecycle_monitor: AgentLifecycleMonitor | None = None
     daemon_config: DaemonConfig | None = None

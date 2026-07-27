@@ -176,6 +176,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         is_stuck=True,
         reason="same tool pattern",
         layer="tool_loop",
+        details={"tool_pattern": "Read:['file_path']:abc"},
         suggested_action="change_approach",
     )
     monitor = AgentLifecycleMonitor(
@@ -201,10 +202,47 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
     monitor._tmux.send_keys = AsyncMock(return_value=True)
 
     handled = await monitor.check_autonomous_stuck_agents()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="same tool pattern with a higher count",
+        layer="tool_loop",
+        details={"tool_pattern": "Read:['file_path']:abc"},
+        suggested_action="change_approach",
+    )
+    duplicate = await monitor.check_autonomous_stuck_agents()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="new tool pattern",
+        layer="tool_loop",
+        details={"tool_pattern": "Bash:['command']:def"},
+        suggested_action="change_approach",
+    )
+    changed = await monitor.check_autonomous_stuck_agents()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
+    cleared = await monitor.check_autonomous_stuck_agents()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="new tool pattern",
+        layer="tool_loop",
+        details={"tool_pattern": "Bash:['command']:def"},
+        suggested_action="change_approach",
+    )
+    repeated_after_clear = await monitor.check_autonomous_stuck_agents()
+    with patch.object(monitor, "_get_active_terminal_runs", return_value=[]):
+        left_active_set = await monitor.check_autonomous_stuck_agents()
+    repeated_after_reentry = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    stuck_detector.is_stuck.assert_called_once_with(child.id)
-    monitor._tmux.send_keys.assert_awaited_once_with("gobby-test", "Enter", literal=True)
+    assert duplicate == 0
+    assert changed == 1
+    assert cleared == 0
+    assert repeated_after_clear == 1
+    assert left_active_set == 0
+    assert repeated_after_reentry == 1
+    assert stuck_detector.is_stuck.call_count == 6
+    monitor._tmux.send_keys.assert_awaited_with("gobby-test", "Enter", literal=True)
+    assert monitor._tmux.send_keys.await_count == 4
+    assert sum("Autonomous session stuck" in record.getMessage() for record in caplog.records) == 4
     assert all(
         "Counter agent_lifecycle_autonomous_stuck_detected_total not registered"
         not in record.getMessage()
@@ -2199,6 +2237,86 @@ class TestCheckTrustPrompts:
         assert handled == 0
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            TimeoutError(),
+            RuntimeError("can't find pane: gobby-probe-race"),
+        ],
+        ids=["timeout", "vanished-pane"],
+    )
+    async def test_expected_probe_races_log_at_debug(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        caplog: pytest.LogCaptureFixture,
+        error: Exception,
+    ) -> None:
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid(f"run-probe-{type(error).__name__}"),
+            tmux_session_name="gobby-probe-race",
+        )
+        caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
+
+        with patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ):
+            handled = await monitor.check_trust_prompts()
+
+        assert handled == 0
+        probe_records = [
+            record for record in caplog.records if "Prompt probe trust" in record.message
+        ]
+        assert len(probe_records) == 1
+        record = probe_records[0]
+        assert record.levelname == "DEBUG"
+        assert type(error).__name__ in record.message
+        assert run.id in record.message
+        assert "gobby-probe-race" in record.message
+
+    @pytest.mark.asyncio
+    async def test_unexpected_probe_error_warns_with_traceback(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid("run-probe-unexpected"),
+            tmux_session_name="gobby-probe-unexpected",
+        )
+        caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
+
+        with patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("unexpected capture failure"),
+        ):
+            handled = await monitor.check_trust_prompts()
+
+        assert handled == 0
+        probe_records = [
+            record for record in caplog.records if "Prompt probe trust" in record.message
+        ]
+        assert len(probe_records) == 1
+        record = probe_records[0]
+        assert record.levelname == "WARNING"
+        assert "RuntimeError" in record.message
+        assert run.id in record.message
+        assert "gobby-probe-unexpected" in record.message
+        assert record.exc_info is not None
+
+    @pytest.mark.asyncio
     async def test_cleared_on_dead_agent_cleanup(
         self,
         monitor: AgentLifecycleMonitor,
@@ -4029,7 +4147,7 @@ class TestDeadAgentCompletionEvent:
         sample_session: dict,
         temp_db: HubDatabase,
     ) -> None:
-        """Completion event is fired when a dead tmux agent is cleaned up."""
+        """The next health pass captures and delivers an immediate tmux exit once."""
         mock_cr = MagicMock()
         mock_cr.notify = AsyncMock()
         mon = AgentLifecycleMonitor(
@@ -4047,12 +4165,27 @@ class TestDeadAgentCompletionEvent:
             pid=999999,
         )
 
-        with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
-            await mon.check_unhealthy_agents()
+        with (
+            patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False),
+            patch.object(
+                mon._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="agent exited during startup",
+            ) as capture_pane,
+        ):
+            first_cleaned = await mon.check_unhealthy_agents()
+            second_cleaned = await mon.check_unhealthy_agents()
 
-        mock_cr.notify.assert_called_once()
-        assert mock_cr.notify.call_count == 1
+        assert first_cleaned == 1
+        assert second_cleaned == 0
+        capture_pane.assert_awaited_once_with("gobby-dead-cr", lines=50)
+        mock_cr.notify.assert_awaited_once()
         assert mock_cr.notify.call_args is not None
+        updated = agent_run_manager.get(_rid("run-dead-cr"))
+        assert updated is not None
+        assert updated.status == "error"
+        assert "agent exited during startup" in (updated.error or "")
 
     @pytest.mark.asyncio
     async def test_releases_clones_on_dead_tmux_agent(
@@ -4199,7 +4332,7 @@ class TestCleanupAgentFdClose:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Registered master_fd is os.close()'d during cleanup."""
         r_fd, w_fd = os.pipe()
@@ -4228,7 +4361,7 @@ class TestCleanupAgentFdClose:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
     ) -> None:
         """Cleanup succeeds when no master_fd was registered."""
         run = _make_terminal_run(

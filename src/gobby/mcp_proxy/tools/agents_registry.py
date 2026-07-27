@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
@@ -20,7 +19,6 @@ if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
-    from gobby.hooks.hook_manager import HookManager
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -45,8 +43,6 @@ def create_agents_registry(
     db: HubDatabase | None = None,
     workflow_loader: WorkflowLoader | None = None,
     mcp_inventory: MCPInventoryProtocol | None = None,
-    # For firing synthetic stop events on agent kill
-    hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     lifecycle_monitor: AgentLifecycleMonitor | None = None,
     daemon_config: DaemonConfig | None = None,
@@ -68,7 +64,6 @@ def create_agents_registry(
         db: Database instance for agent definition lookups.
         workflow_loader: Workflow loader used by spawn dry-run validation.
         mcp_inventory: Combined internal and external MCP tool inventory.
-        hook_manager_resolver: Resolver for the active HookManager.
         completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
         lifecycle_monitor: Agent lifecycle monitor for termination cleanup.
         daemon_config: Daemon configuration for spawn_agent runtime defaults.
@@ -101,7 +96,6 @@ def create_agents_registry(
         db=db,
         workflow_loader=workflow_loader,
         mcp_inventory=mcp_inventory,
-        hook_manager_resolver=hook_manager_resolver,
         completion_registry=completion_registry,
         lifecycle_monitor=lifecycle_monitor,
         daemon_config=daemon_config,

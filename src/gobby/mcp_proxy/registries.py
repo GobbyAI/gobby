@@ -288,7 +288,6 @@ def setup_internal_registries(
             db=db,
             workflow_loader=workflow_loader,
             mcp_inventory=workflow_mcp_inventory(manager, mcp_manager),
-            hook_manager_resolver=hook_manager_resolver,
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,

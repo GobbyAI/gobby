@@ -82,6 +82,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=SessionEnd --enqueue-only",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

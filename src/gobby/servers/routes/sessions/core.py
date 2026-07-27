@@ -30,7 +30,6 @@ from gobby.servers.models import (
 from gobby.servers.routes.sessions.statusline_activity import (
     STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
     STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-    last_session_activity,
     record_statusline_seen,
     should_emit_statusline_gap_warning,
 )
@@ -394,23 +393,28 @@ def register_core_routes(
             provider="claude",
         )
         now = datetime.now(UTC)
-        previous = record_statusline_seen(session.id, now)
+        gap_snapshot = record_statusline_seen(session.id, now)
+        previous = gap_snapshot.previous_statusline
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
             if gap_ms >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS:
-                activity_ts = last_session_activity(session.id)
-                if activity_ts is not None and activity_ts > previous:
-                    last_activity_ms_ago = int((now - activity_ts).total_seconds() * 1000)
+                first_activity = gap_snapshot.first_activity_since_statusline
+                last_activity = gap_snapshot.last_activity_since_statusline
+                if first_activity is not None and last_activity is not None:
+                    first_activity_ms_ago = int((now - first_activity).total_seconds() * 1000)
+                    last_activity_ms_ago = int((now - last_activity).total_seconds() * 1000)
                     if (
                         gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS
+                        and first_activity_ms_ago >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS
                         and should_emit_statusline_gap_warning(session.id, now)
                     ):
                         logger.warning(
                             "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
-                            "last_activity_ms_ago=%s",
+                            "first_activity_ms_ago=%s last_activity_ms_ago=%s",
                             session.id,
                             gap_ms,
                             STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                            first_activity_ms_ago,
                             last_activity_ms_ago,
                         )
                         inc_counter(
@@ -421,11 +425,12 @@ def register_core_routes(
                         logger.debug(
                             "statusline_usage_gap_quiet session_id=%s gap_ms=%s "
                             "observation_threshold_ms=%s warning_threshold_ms=%s "
-                            "last_activity_ms_ago=%s",
+                            "first_activity_ms_ago=%s last_activity_ms_ago=%s",
                             session.id,
                             gap_ms,
                             STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
                             STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                            first_activity_ms_ago,
                             last_activity_ms_ago,
                         )
                 else:

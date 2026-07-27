@@ -91,6 +91,16 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     let direct_post_after_enqueue_failure =
         |failure_detail: String| -> Result<HookAction, ExitCode> {
+            if args.enqueue_only {
+                let enqueue_error = format!("enqueue failed: {failure_detail}");
+                return Ok(action_from_failure(
+                    hook_type,
+                    &cfg,
+                    transport::DeliveryFailureKind::Other,
+                    &enqueue_error,
+                ));
+            }
+
             // Mirror the normal enqueue→detach→POST ordering: a --detach run must
             // escape the host's process group before the bounded fallback POST,
             // or a host group-kill can reap us mid-delivery with no action emitted.
@@ -151,6 +161,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             };
         }
     };
+
+    if args.enqueue_only {
+        return emit_action(continue_action());
+    }
 
     // Detach *after* project walk-up and enqueue — the file on disk is
     // now the source of truth even if we die mid-POST.

@@ -15,6 +15,7 @@ import shlex
 import stat
 import tempfile
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from gobby.config.tmux import TmuxConfig
 
@@ -22,6 +23,24 @@ logger = logging.getLogger(__name__)
 
 # Same signature as pty_reader.OutputCallback
 OutputCallback = Callable[[str, str], Awaitable[None]]
+
+_TMUX_STDERR_LOG_LIMIT = 512
+_VANISHED_TMUX_ERROR_MARKERS = (
+    "can't find pane",
+    "can't find session",
+    "error connecting to",
+    "failed to connect to server",
+    "no server running on",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TmuxCommandResult:
+    """Structured result from a tmux subprocess."""
+
+    returncode: int
+    stderr: str
+    timed_out: bool
 
 
 def _safe_fifo_component(value: str) -> str:
@@ -72,23 +91,92 @@ class TmuxOutputReader:
             args.extend(["-f", self._config.config_file])
         return args
 
-    async def _run(self, *tmux_args: str, timeout: float = 5.0) -> int:
-        """Run a tmux command, return the exit code."""
+    @staticmethod
+    def _target_from_args(tmux_args: tuple[str, ...]) -> str:
+        try:
+            return tmux_args[tmux_args.index("-t") + 1]
+        except (ValueError, IndexError):
+            return "<unspecified>"
+
+    @staticmethod
+    def _bounded_stderr(stderr: str) -> str:
+        compact = " ".join(stderr.split())
+        if len(compact) <= _TMUX_STDERR_LOG_LIMIT:
+            return compact
+        return f"{compact[:_TMUX_STDERR_LOG_LIMIT]}…"
+
+    def _log_command_result(
+        self,
+        *,
+        target: str,
+        result: TmuxCommandResult,
+    ) -> None:
+        bounded_stderr = self._bounded_stderr(result.stderr) or "<empty>"
+        if result.timed_out:
+            logger.warning(
+                "tmux pipe-pane timed out: target=%s status=%s stderr=%s",
+                target,
+                result.returncode,
+                bounded_stderr,
+            )
+            return
+        if result.returncode == 0:
+            if result.stderr:
+                logger.warning(
+                    "tmux pipe-pane returned unexpected stderr: target=%s status=%s stderr=%s",
+                    target,
+                    result.returncode,
+                    bounded_stderr,
+                )
+            return
+        if any(marker in result.stderr.casefold() for marker in _VANISHED_TMUX_ERROR_MARKERS):
+            logger.debug(
+                "tmux pipe-pane target vanished: target=%s status=%s stderr=%s",
+                target,
+                result.returncode,
+                bounded_stderr,
+            )
+            return
+        logger.warning(
+            "tmux pipe-pane failed: target=%s status=%s stderr=%s",
+            target,
+            result.returncode,
+            bounded_stderr,
+        )
+
+    async def _run(
+        self,
+        *tmux_args: str,
+        timeout: float = 5.0,
+    ) -> TmuxCommandResult:
+        """Run a tmux command and classify its structured result."""
         cmd = [*self._base_args(), *tmux_args]
+        target = self._target_from_args(tmux_args)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
+        timed_out = False
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return 1
-        if proc.returncode != 0 and stderr:
-            logger.debug("tmux pipe-pane stderr: %s", stderr.decode(errors="replace").strip())
-        return proc.returncode or 0
+            timed_out = True
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            _, stderr = await proc.communicate()
+        returncode = proc.returncode
+        if returncode is None:
+            returncode = 1 if timed_out else 0
+        result = TmuxCommandResult(
+            returncode=returncode,
+            stderr=stderr.decode(errors="replace").strip(),
+            timed_out=timed_out,
+        )
+        self._log_command_result(target=target, result=result)
+        return result
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,9 +219,13 @@ class TmuxOutputReader:
 
             # Tell tmux to pipe pane output into the FIFO
             # Note: Holding lock to ensure race-free start vs stop
-            rc = await self._run("pipe-pane", "-t", session_name, f"cat >> {safe_fifo_path}")
-            if rc != 0:
-                logger.error("tmux pipe-pane failed for session '%s'", session_name)
+            result = await self._run(
+                "pipe-pane",
+                "-t",
+                session_name,
+                f"cat >> {safe_fifo_path}",
+            )
+            if result.returncode != 0:
                 try:
                     os.unlink(fifo_path)
                 except OSError:

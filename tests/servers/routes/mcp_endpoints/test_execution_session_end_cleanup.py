@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.inbox import drain_hook_inbox_once
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
+from gobby.servers.routes.mcp.hooks import create_hooks_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -104,6 +109,11 @@ class _SessionEndHandler(SessionEndMixin):
         self._get_machine_id = MagicMock(return_value="machine-1")
         self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
         self._handler_map = {}
+        self.handle_count = 0
+
+    def handle(self, event: HookEvent) -> HookResponse:
+        self.handle_count += 1
+        return self.handle_session_end(event)
 
 
 def _make_session_end_event(session_id: str) -> HookEvent:
@@ -225,3 +235,84 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         assert allowed is None
     finally:
         reset_seeded_contexts(tokens)
+
+
+@pytest.mark.asyncio
+async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
+    db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = str(uuid.uuid4())
+    external_id = f"ext-{session_id}"
+    _insert_session(db, session_id=session_id, external_id=external_id)
+
+    LocalWorkflowDefinitionManager(db).create(
+        name="plan-adversary-steps",
+        definition_json=json.dumps(_PLAN_ADVERSARY_TERMINATE_WORKFLOW),
+        workflow_type="workflow",
+        priority=100,
+        enabled=True,
+    )
+    workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db), enabled=True)
+    instance_manager = WorkflowInstanceManager(db)
+    instance_manager.save_instance(
+        WorkflowInstance(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            workflow_name="plan-adversary-steps",
+            enabled=True,
+            priority=100,
+            current_step="terminate",
+            step_entered_at=datetime.now(UTC),
+        )
+    )
+    session_manager = SessionManager(db)
+    hook_manager = _SessionEndHandler(
+        session_manager=session_manager,
+        workflow_handler=workflow_handler,
+    )
+
+    server = MagicMock()
+    app = FastAPI()
+    app.state.hook_manager = hook_manager
+    app.include_router(create_hooks_router(server))
+
+    gobby_home = tmp_path / "gobby-home"
+    inbox_dir = gobby_home / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-07-26T20:00:00Z",
+        "critical": False,
+        "hook_type": "SessionEnd",
+        "input_data": {
+            "session_id": external_id,
+            "reason": "other",
+        },
+        "source": "codex",
+        "headers": {
+            "X-Gobby-Project-Id": PROJECT_ID,
+            "X-Gobby-Session-Id": session_id,
+        },
+    }
+    envelope_path = inbox_dir / "n-0000000000001-session-end.json"
+    envelope_path.write_text(json.dumps(envelope))
+    os.utime(envelope_path, (0, 0))
+
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
+        patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None),
+    ):
+        first_replay = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
+        second_replay = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
+
+    assert first_replay == 1
+    assert second_replay == 0
+    assert hook_manager.handle_count == 1
+    assert not envelope_path.exists()
+    stored_session = session_manager.get(session_id)
+    assert stored_session is not None
+    assert stored_session.status == "expired"
+    assert instance_manager.get_active_instances(session_id) == []

@@ -174,7 +174,6 @@ async def stop_agent_run(
     completion_registry: Any | None,
     task_manager: Any | None,
     session_manager: Any | None,
-    hook_manager_resolver: Any | None,
     kill_agent_process: Any,
     cleanup_terminal_artifacts: Any,
 ) -> dict[str, Any]:
@@ -224,6 +223,7 @@ async def stop_agent_run(
                     current.status if current else "missing",
                 )
 
+            result["terminal_reason"] = "user_cancelled"
             await cleanup_terminal_artifacts(
                 run_id=run.id,
                 db=kill_db,
@@ -231,7 +231,6 @@ async def stop_agent_run(
                 agent_session_id=run.child_session_id,
                 debug=False,
                 session_manager=session_manager,
-                hook_manager_resolver=hook_manager_resolver,
                 result=result,
             )
             return {

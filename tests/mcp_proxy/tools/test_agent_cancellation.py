@@ -220,7 +220,6 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
             completion_registry=None,
             task_manager=None,
             session_manager=None,
-            hook_manager_resolver=None,
             kill_agent_process=kill_agent_process,
             cleanup_terminal_artifacts=cleanup_terminal_artifacts,
         )
@@ -255,8 +254,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         agent_session_id="child-session-123",
         debug=False,
         session_manager=None,
-        hook_manager_resolver=None,
-        result={"success": True},
+        result={"success": True, "terminal_reason": "user_cancelled"},
     )
 
 
@@ -331,7 +329,6 @@ class TestStopAgentRunCapturePreemptedDelivery:
             completion_registry=harness.registry,
             task_manager=None,
             session_manager=None,
-            hook_manager_resolver=None,
             kill_agent_process=kill_agent_process,
             cleanup_terminal_artifacts=AsyncMock(),
         )

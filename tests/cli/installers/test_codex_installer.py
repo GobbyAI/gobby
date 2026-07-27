@@ -20,6 +20,7 @@ EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
     "PreCompact",
     "PostCompact",
     "SessionStart",
+    "SessionEnd",
     "UserPromptSubmit",
     "Stop",
 )
@@ -32,6 +33,7 @@ EVENT_KEY_LABELS: Final[dict[str, str]] = {
     "PreCompact": "pre_compact",
     "PostCompact": "post_compact",
     "SessionStart": "session_start",
+    "SessionEnd": "session_end",
     "UserPromptSubmit": "user_prompt_submit",
     "Stop": "stop",
 }
@@ -45,16 +47,15 @@ def _load_toml_file(path: Path) -> dict[str, Any]:
 def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict[str, Any]:
     hooks: dict[str, Any] = {}
     for event in events:
-        group: dict[str, Any] = {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": (
-                        f'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type={event}'
-                    ),
-                }
-            ]
+        command = f"ghook --gobby-owned --cli=codex --type={event}"
+        handler: dict[str, Any] = {
+            "type": "command",
+            "command": command,
         }
+        if event == "SessionEnd":
+            handler["command"] = f"{command} --enqueue-only"
+            handler["timeout"] = 3
+        group: dict[str, Any] = {"hooks": [handler]}
         if event in HOOKS_WITH_MATCHERS:
             group["matcher"] = ".*"
         hooks[event] = [group]
@@ -813,6 +814,19 @@ class TestInstallCodexProjectHooks:
                 ],
             },
         )
+        hooks_config["hooks"]["SessionEnd"].insert(
+            0,
+            {
+                "matcher": "custom-session-end",
+                "hooks": [
+                    {"type": "command", "command": "echo user session end hook"},
+                    {
+                        "type": "command",
+                        "command": ("ghook --gobby-owned --cli=codex --type=SessionEnd --old"),
+                    },
+                ],
+            },
+        )
         hooks_config["hooks"]["CustomEvent"] = [
             {"hooks": [{"type": "command", "command": "echo custom hook"}]}
         ]
@@ -831,6 +845,28 @@ class TestInstallCodexProjectHooks:
         assert "echo custom hook" in json.dumps(merged["hooks"]["CustomEvent"])
         assert not any(command.endswith("--old") for command in pre_tool_commands)
         assert sum("--gobby-owned" in command for command in pre_tool_commands) == 1
+        session_end_groups = merged["hooks"]["SessionEnd"]
+        custom_group = next(
+            group for group in session_end_groups if group.get("matcher") == "custom-session-end"
+        )
+        assert custom_group["hooks"] == [
+            {"type": "command", "command": "echo user session end hook"}
+        ]
+        gobby_session_end_groups = [
+            group
+            for group in session_end_groups
+            if any("--gobby-owned" in hook["command"] for hook in group["hooks"])
+        ]
+        assert len(gobby_session_end_groups) == 1
+        gobby_group = gobby_session_end_groups[0]
+        assert "matcher" not in gobby_group
+        assert len(gobby_group["hooks"]) == 1
+        gobby_handler = gobby_group["hooks"][0]
+        assert gobby_handler["type"] == "command"
+        assert gobby_handler["command"].endswith(
+            " --gobby-owned --cli=codex --type=SessionEnd --enqueue-only"
+        )
+        assert gobby_handler["timeout"] == 3
 
     def test_project_install_skips_shared_cli_and_cleanup(
         self,
@@ -1177,6 +1213,27 @@ class TestHooksTemplateFormat:
             for entry in entries:
                 for hook in entry["hooks"]:
                     assert "--cli=codex" in hook["command"], f"{event_name} missing --cli=codex"
+
+    def test_session_end_is_matcherless_enqueue_only_with_three_second_timeout(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_deps: Any,
+    ) -> None:
+        from gobby.cli.installers.codex import install_codex
+
+        result = install_codex(mock_home)
+
+        assert result["success"] is True
+        hooks_config = json.loads((mock_home / ".codex" / "hooks.json").read_text())
+        session_end_groups = hooks_config["hooks"]["SessionEnd"]
+        assert len(session_end_groups) == 1
+        assert "matcher" not in session_end_groups[0]
+        handler = session_end_groups[0]["hooks"][0]
+        assert handler["command"].endswith(
+            " --gobby-owned --cli=codex --type=SessionEnd --enqueue-only"
+        )
+        assert handler["timeout"] == 3
 
 
 class TestEdgeCases:

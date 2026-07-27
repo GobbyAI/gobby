@@ -306,6 +306,7 @@ CODEX_EVENT_MAP: dict[str, HookEventType] = {
     "PreCompact": HookEventType.PRE_COMPACT,
     "PostCompact": HookEventType.POST_COMPACT,
     "Stop": HookEventType.STOP,
+    "SessionEnd": HookEventType.SESSION_END,
 }
 
 CODEX_ADDITIONAL_CONTEXT_HOOKS = frozenset({"SessionStart", "UserPromptSubmit", "PostToolUse"})

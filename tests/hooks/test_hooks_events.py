@@ -212,6 +212,7 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["codex"] == "SessionStart"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["codex"] == "PreToolUse"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["codex"] == "PostToolUse"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["codex"] == "SessionEnd"
 
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""

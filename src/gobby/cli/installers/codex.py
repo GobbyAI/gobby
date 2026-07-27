@@ -51,6 +51,7 @@ CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
     "SessionStart": "session_start",
     "UserPromptSubmit": "user_prompt_submit",
     "Stop": "stop",
+    "SessionEnd": "session_end",
 }
 
 CODEX_MATCHER_HASH_EVENTS = {

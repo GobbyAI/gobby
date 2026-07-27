@@ -286,8 +286,11 @@ class StuckDetector:
 
         # Count tool call patterns
         tool_counts: dict[str, int] = {}
+        tool_names: dict[str, str] = {}
         for event in recent_events:
             if event.tool_name:
+                if event.details.get("is_passive_wait") is True:
+                    continue
                 # Create a key from tool name and key args
                 raw_arg_keys = event.details.get("tool_args_keys", [])
                 arg_keys = (
@@ -296,13 +299,20 @@ class StuckDetector:
                     else []
                 )
                 arg_fingerprint = event.details.get("tool_args_fingerprint", "<missing>")
-                key = f"{event.tool_name}:{arg_keys}:{arg_fingerprint}"
+                effective_tool_name = event.details.get("effective_tool_name")
+                tool_name = (
+                    effective_tool_name
+                    if isinstance(effective_tool_name, str) and effective_tool_name
+                    else event.tool_name
+                )
+                key = f"{tool_name}:{arg_keys}:{arg_fingerprint}"
                 tool_counts[key] = tool_counts.get(key, 0) + 1
+                tool_names[key] = tool_name
 
         # Check for repeated patterns
         for key, count in tool_counts.items():
             if count >= self.tool_loop_threshold:
-                tool_name = key.split(":")[0]
+                tool_name = tool_names[key]
                 logger.info(
                     "Session %s stuck in tool loop: %s called %s times",
                     session_id,

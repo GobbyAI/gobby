@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -156,7 +157,9 @@ class TestStatuslineEndpoint:
         stale_at = now - timedelta(seconds=statusline_activity.STATUSLINE_LAST_SEEN_TTL_SECONDS + 1)
         activity_at = now - timedelta(seconds=30)
         statusline_activity.record_session_activity(session.id, activity_at)
-        statusline_activity._STATUSLINE_LAST_SEEN["stale-session"] = stale_at
+        statusline_activity._STATUSLINE_ACTIVITY_STATES["stale-session"] = (
+            statusline_activity.StatuslineActivityState(previous_statusline=stale_at)
+        )
         statusline_activity._LAST_PRUNE_AT = now - timedelta(
             seconds=statusline_activity.STATUSLINE_PRUNE_INTERVAL_SECONDS
         )
@@ -176,8 +179,11 @@ class TestStatuslineEndpoint:
 
         assert response.status_code == 200
         mock_prune.assert_called_once_with(now)
-        assert "stale-session" not in statusline_activity._STATUSLINE_LAST_SEEN
-        assert statusline_activity.last_session_activity(session.id) == activity_at
+        assert "stale-session" not in statusline_activity._STATUSLINE_ACTIVITY_STATES
+        current_state = statusline_activity._STATUSLINE_ACTIVITY_STATES[session.id]
+        assert current_state.previous_statusline == now
+        assert current_state.first_activity_since_statusline is None
+        assert current_state.last_activity_since_statusline is None
 
     def test_returns_warning_for_unknown_session(self, client, mock_server) -> None:
         mock_server.session_manager.find_active_by_external_id.return_value = None
@@ -314,6 +320,7 @@ class TestStatuslineEndpoint:
             # A hook event landed after the first statusline POST: session is alive
             # while the statusline feed is silent — this is the actionable case.
             statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=600))
             response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
 
         assert response_one.status_code == 200
@@ -321,6 +328,8 @@ class TestStatuslineEndpoint:
         assert "statusline_usage_gap" in caplog.text
         assert "gap_ms=605000" in caplog.text
         assert "threshold_ms=600000" in caplog.text
+        assert "first_activity_ms_ago=545000" in caplog.text
+        assert "last_activity_ms_ago=5000" in caplog.text
         mock_counter.assert_any_call(
             "statusline_usage_gap_warnings_total", attributes={"source": "claude"}
         )
@@ -328,7 +337,7 @@ class TestStatuslineEndpoint:
             "statusline_posts_succeeded_total", attributes={"source": "claude"}
         )
 
-    def test_suppresses_warning_for_short_active_gap(
+    def test_suppresses_warning_for_recent_activity_pulse_after_long_gap(
         self, client, mock_server, caplog, enable_log_propagation
     ) -> None:
         session = _make_session()
@@ -344,10 +353,10 @@ class TestStatuslineEndpoint:
             patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
             caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
         ):
-            mock_datetime.now.side_effect = [start, start + timedelta(seconds=125)]
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=605)]
 
             response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
-            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=600))
             response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
 
         assert response_one.status_code == 200
@@ -472,3 +481,44 @@ class TestStatuslineEndpoint:
         assert response_one.status_code == 200
         assert response_two.status_code == 200
         assert "statusline_usage_gap" not in caplog.text
+
+
+def test_concurrent_statusline_state_transitions_are_atomic() -> None:
+    session_id = "concurrent-session"
+    start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+    activity_at = start + timedelta(minutes=3)
+    recovery_at = start + timedelta(minutes=11)
+    statusline_activity.record_statusline_seen(session_id, start)
+    statusline_activity.record_session_activity(session_id, activity_at)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshots = list(
+            executor.map(
+                lambda _index: statusline_activity.record_statusline_seen(
+                    session_id,
+                    recovery_at,
+                ),
+                range(2),
+            )
+        )
+
+    snapshots_with_activity = [
+        snapshot for snapshot in snapshots if snapshot.first_activity_since_statusline is not None
+    ]
+    assert len(snapshots_with_activity) == 1
+    assert snapshots_with_activity[0].first_activity_since_statusline == activity_at
+    assert snapshots_with_activity[0].last_activity_since_statusline == activity_at
+    assert statusline_activity.last_session_activity(session_id) is None
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        warning_claims = list(
+            executor.map(
+                lambda _index: statusline_activity.should_emit_statusline_gap_warning(
+                    "concurrent-warning-session",
+                    recovery_at,
+                ),
+                range(4),
+            )
+        )
+
+    assert warning_claims.count(True) == 1

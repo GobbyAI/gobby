@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
@@ -11,53 +9,6 @@ from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
-
-
-def _fire_synthetic_stop(
-    hook_manager_resolver: Any | None,
-    session_id: str,
-    session_manager: Any | None = None,
-) -> None:
-    """Fire a synthetic STOP event so stop-triggered rules evaluate for killed agents."""
-    if not hook_manager_resolver:
-        return
-
-    agents = facade()
-    try:
-        hook_mgr = hook_manager_resolver()
-        if hook_mgr is None:
-            return
-
-        from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
-
-        source = SessionSource.CLAUDE
-        if session_manager is not None:
-            try:
-                session = session_manager.get(session_id)
-                session_source = getattr(session, "source", None) if session else None
-                if isinstance(session_source, str) and session_source:
-                    source = parse_session_source(session_source)
-            except (AttributeError, ValueError) as exc:
-                agents.logger.debug(
-                    "Failed to resolve source for synthetic stop session %s: %s",
-                    session_id,
-                    exc,
-                )
-
-        stop_event = HookEvent(
-            event_type=HookEventType.STOP,
-            session_id=session_id,
-            source=source,
-            timestamp=datetime.now(UTC),
-            data={},
-            metadata={"_platform_session_id": session_id},
-        )
-        hook_mgr.evaluate_workflow_rules(stop_event)
-        agents.logger.debug("Fired synthetic stop rules for killed agent session %s", session_id)
-    except Exception as e:
-        agents.logger.warning(
-            "Failed to fire synthetic stop rules for session %s: %s", session_id, e
-        )
 
 
 async def _cleanup_terminal_artifacts(
@@ -68,7 +19,6 @@ async def _cleanup_terminal_artifacts(
     agent_session_id: str | None,
     debug: bool,
     session_manager: Any | None,
-    hook_manager_resolver: Any | None,
     result: dict[str, Any],
 ) -> None:
     """Clean up terminal/session state after an explicit agent termination."""
@@ -78,6 +28,7 @@ async def _cleanup_terminal_artifacts(
             db,
             run_id=run_id,
             child_session_id=agent_session_id,
+            terminal_reason=result.get("terminal_reason"),
         )
         result["dispatch_mutex_released"] = cleanup.dispatch_mutex_rows
         result["workflow_instances_deleted"] = cleanup.workflow_instance_rows
@@ -92,13 +43,6 @@ async def _cleanup_terminal_artifacts(
             except Exception as e:
                 result["session_expire_error"] = str(e)
 
-        await asyncio.to_thread(
-            agents._fire_synthetic_stop,
-            hook_manager_resolver,
-            agent_session_id,
-            session_manager,
-        )
-
 
 async def _complete_self_terminated_run(
     *,
@@ -107,7 +51,6 @@ async def _complete_self_terminated_run(
     kill_db: Any,
     completion_registry: Any | None,
     session_manager: Any | None,
-    hook_manager_resolver: Any | None,
     signal: str = "TERM",
     debug: bool = False,
 ) -> dict[str, Any]:
@@ -201,7 +144,6 @@ async def _complete_self_terminated_run(
         agent_session_id=agent_session_id,
         debug=debug,
         session_manager=session_manager,
-        hook_manager_resolver=hook_manager_resolver,
         result=result,
     )
     result["run_id"] = run.id

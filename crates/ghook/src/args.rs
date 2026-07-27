@@ -30,4 +30,8 @@ pub(crate) struct Args {
     /// Detach from the parent's session/process group before the POST.
     #[arg(long)]
     pub(crate) detach: bool,
+
+    /// Exit after the durable inbox enqueue without posting to the daemon.
+    #[arg(long)]
+    pub(crate) enqueue_only: bool,
 }

@@ -33,7 +33,6 @@ def register_agent_lifecycle_tools(
             completion_registry=ctx.completion_registry,
             task_manager=ctx.task_manager,
             session_manager=ctx.session_manager,
-            hook_manager_resolver=ctx.hook_manager_resolver,
             kill_agent_process=agents._kill_agent_process,
             cleanup_terminal_artifacts=agents._cleanup_terminal_artifacts,
         )
@@ -78,7 +77,6 @@ def register_agent_lifecycle_tools(
                     completion_registry=ctx.completion_registry,
                     task_manager=ctx.task_manager,
                     session_manager=ctx.session_manager,
-                    hook_manager_resolver=ctx.hook_manager_resolver,
                     kill_agent_process=agents._kill_agent_process,
                     cleanup_terminal_artifacts=agents._cleanup_terminal_artifacts,
                 )
@@ -126,7 +124,6 @@ def register_agent_lifecycle_tools(
                 kill_db=ctx.db or ctx.agent_run_manager.db,
                 completion_registry=ctx.completion_registry,
                 session_manager=ctx.session_manager,
-                hook_manager_resolver=ctx.hook_manager_resolver,
             ),
         )
         if not result.get("success"):
@@ -239,7 +236,6 @@ def register_agent_lifecycle_tools(
                     kill_db=kill_db,
                     completion_registry=ctx.completion_registry,
                     session_manager=ctx.session_manager,
-                    hook_manager_resolver=ctx.hook_manager_resolver,
                     signal=signal,
                     debug=debug,
                 ),
@@ -290,7 +286,6 @@ def register_agent_lifecycle_tools(
                     agent_session_id=agent_session_id,
                     debug=debug,
                     session_manager=ctx.session_manager,
-                    hook_manager_resolver=ctx.hook_manager_resolver,
                     result=result,
                 )
                 return result

@@ -198,7 +198,7 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     HookEventType.SESSION_END: {
         "claude": "SessionEnd",
         "qwen": "SessionEnd",
-        "codex": None,
+        "codex": "SessionEnd",
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",

@@ -2599,6 +2599,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             ("PermissionRequest", HookEventType.PERMISSION_REQUEST),
             ("PreCompact", HookEventType.PRE_COMPACT),
             ("PostCompact", HookEventType.POST_COMPACT),
+            ("SessionEnd", HookEventType.SESSION_END),
         ],
     )
     def test_translate_new_codex_hook_events(
@@ -2621,7 +2622,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event.event_type == expected_event_type
 
     def test_all_event_types_mapped(self) -> None:
-        """All 8 Codex hook types are in EVENT_MAP."""
+        """All 9 Codex hook types are in EVENT_MAP."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         expected = {
@@ -2633,6 +2634,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             "SessionStart",
             "UserPromptSubmit",
             "Stop",
+            "SessionEnd",
         }
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected
 

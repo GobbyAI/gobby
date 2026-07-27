@@ -28,7 +28,6 @@ from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.agents_termination import (
     _cleanup_terminal_artifacts,
     _complete_self_terminated_run,
-    _fire_synthetic_stop,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
@@ -45,7 +44,6 @@ __all__ = [
     "_agent_result_payload",
     "_cleanup_terminal_artifacts",
     "_complete_self_terminated_run",
-    "_fire_synthetic_stop",
     "_kill_agent_process",
     "asyncio",
     "cleanup_agent_runtime_state",

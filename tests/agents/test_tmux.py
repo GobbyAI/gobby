@@ -880,6 +880,94 @@ class TestTmuxOutputReader:
         assert _safe_fifo_component("../session/name") == "session-name"
 
     @pytest.mark.asyncio
+    async def test_run_logs_vanished_target_at_debug(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        reader = TmuxOutputReader()
+        proc = MagicMock(returncode=1)
+        proc.communicate = AsyncMock(
+            return_value=(b"pane contents must stay private", b"can't find pane: dead-pane")
+        )
+        caplog.set_level(logging.DEBUG, logger=output_reader_mod.__name__)
+
+        with patch.object(
+            asyncio,
+            "create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            result = await reader._run("pipe-pane", "-t", "dead-pane")
+
+        assert result.returncode == 1
+        assert result.stderr == "can't find pane: dead-pane"
+        assert result.timed_out is False
+        assert "target vanished" in caplog.text
+        assert "target=dead-pane" in caplog.text
+        assert "pane contents must stay private" not in caplog.text
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    async def test_run_logs_timeout_at_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        reader = TmuxOutputReader()
+        proc = MagicMock(returncode=-9)
+        proc.communicate = AsyncMock(
+            side_effect=[
+                TimeoutError(),
+                (b"pane contents must stay private", b"partial tmux diagnostic"),
+            ]
+        )
+        caplog.set_level(logging.DEBUG, logger=output_reader_mod.__name__)
+
+        with patch.object(
+            asyncio,
+            "create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            result = await reader._run("pipe-pane", "-t", "slow-pane", timeout=0.01)
+
+        assert result.returncode == -9
+        assert result.stderr == "partial tmux diagnostic"
+        assert result.timed_out is True
+        assert "pipe-pane timed out" in caplog.text
+        assert "status=-9" in caplog.text
+        assert "pane contents must stay private" not in caplog.text
+        proc.kill.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_run_distinguishes_unexpected_stderr_and_bounds_diagnostics(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        reader = TmuxOutputReader()
+        long_stderr = f"unexpected warning {'x' * 700}"
+        proc = MagicMock(returncode=0)
+        proc.communicate = AsyncMock(
+            return_value=(b"pane contents must stay private", long_stderr.encode())
+        )
+        caplog.set_level(logging.DEBUG, logger=output_reader_mod.__name__)
+
+        with patch.object(
+            asyncio,
+            "create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            result = await reader._run("pipe-pane", "-t", "live-pane")
+
+        assert result.returncode == 0
+        assert result.stderr == long_stderr
+        assert result.timed_out is False
+        assert "returned unexpected stderr" in caplog.text
+        assert "pane contents must stay private" not in caplog.text
+        assert "x" * 600 not in caplog.text
+        assert "…" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_stop_reader_not_running(self) -> None:
         reader = TmuxOutputReader()
         assert await reader.stop_reader("nonexistent") is False

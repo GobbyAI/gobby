@@ -717,6 +717,7 @@ class TestStopAgent:
             runtime_db,
             run_id="run-123",
             child_session_id="sess-456",
+            terminal_reason="user_cancelled",
         )
 
     @pytest.mark.asyncio
@@ -1701,116 +1702,20 @@ class TestRunningAgentStats:
         assert result["by_parent_count"] == 3  # 3 unique parents
 
 
-class TestFireSyntheticStop:
-    """Tests for _fire_synthetic_stop helper."""
+class TestTerminalCleanupHookIsolation:
+    """Terminal cleanup must not fabricate lifecycle hook events."""
 
-    def test_noop_when_no_resolver(self) -> None:
-        """Test that _fire_synthetic_stop does nothing when resolver is None."""
-        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+    def test_shared_cleanup_has_no_hook_rule_dispatch(self) -> None:
+        import inspect
 
-        result = _fire_synthetic_stop(None, "sess-123")
+        from gobby.mcp_proxy.tools import agents_termination
 
-        assert result is None
+        source = inspect.getsource(agents_termination)
 
-    def test_noop_when_resolver_returns_none(self) -> None:
-        """Test that _fire_synthetic_stop does nothing when resolver returns None."""
-        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
-
-        resolver = MagicMock(return_value=None)
-
-        result = _fire_synthetic_stop(resolver, "sess-123")
-
-        assert result is None
-        resolver.assert_called_once_with()
-
-    def test_calls_evaluate_workflow_rules(self) -> None:
-        """Test that _fire_synthetic_stop fires a synthetic STOP event."""
-        from gobby.hooks.events import HookEventType
-        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
-
-        mock_hook_mgr = MagicMock()
-        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
-
-        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
-
-        mock_hook_mgr.evaluate_workflow_rules.assert_called_once()
-        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
-        assert event_arg.event_type == HookEventType.STOP
-        assert event_arg.metadata["_platform_session_id"] == "sess-123"
-
-    def test_unsupported_source_becomes_unknown(self) -> None:
-        """Synthetic stop normalizes unsupported persisted sources."""
-        from gobby.hooks.events import SessionSource
-        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
-
-        mock_hook_mgr = MagicMock()
-        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
-        session_manager = MagicMock()
-        session_manager.get.return_value = MagicMock(source="unsupported")
-
-        _fire_synthetic_stop(
-            lambda: mock_hook_mgr,
-            "sess-123",
-            session_manager=session_manager,
-        )
-
-        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
-        assert event_arg.source is SessionSource.UNKNOWN
-
-    def test_catches_exceptions(self) -> None:
-        """Test that _fire_synthetic_stop catches and logs exceptions."""
-        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
-
-        mock_hook_mgr = MagicMock()
-        mock_hook_mgr.evaluate_workflow_rules.side_effect = RuntimeError("boom")
-
-        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
-        assert mock_hook_mgr.evaluate_workflow_rules.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_kill_agent_fires_synthetic_stop(self) -> None:
-        """Test that kill_agent calls _fire_synthetic_stop after cleanup."""
-        runner = _make_runner_with_run_storage()
-        mock_run = _make_mock_agent_run(
-            run_id="run-123",
-            session_id="sess-456",
-            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
-        )
-        runner.get_run.return_value = mock_run
-        runner.cancel_run.return_value = True
-
-        mock_hook_mgr = MagicMock()
-        evaluated_events: list[Any] = []
-
-        def evaluate_off_loop(event: Any) -> tuple[None, None]:
-            with pytest.raises(RuntimeError, match="no running event loop"):
-                asyncio.get_running_loop()
-            evaluated_events.append(event)
-            return None, None
-
-        mock_hook_mgr.evaluate_workflow_rules.side_effect = evaluate_off_loop
-        mock_resolver = MagicMock(return_value=mock_hook_mgr)
-
-        registry = create_agents_registry(
-            runner,
-            hook_manager_resolver=mock_resolver,
-        )
-        kill_agent = registry._tools["kill_agent"].func
-
-        with patch(
-            "gobby.mcp_proxy.tools.agents._kill_agent_process",
-            new_callable=AsyncMock,
-            return_value={"success": True},
-        ):
-            result = await kill_agent(run_id="run-123")
-
-        assert result["success"] is True
-        # Verify synthetic stop was fired for the agent's session
-        mock_resolver.assert_called_once()
-        mock_hook_mgr.evaluate_workflow_rules.assert_called_once()
-        assert len(evaluated_events) == 1
-        event_arg = evaluated_events[0]
-        assert event_arg.metadata["_platform_session_id"] == "sess-456"
+        assert "_fire_synthetic_stop" not in source
+        assert "evaluate_workflow_rules" not in source
+        assert "HookEventType.STOP" not in source
+        assert "HookEventType.SESSION_END" not in source
 
 
 class TestCompleteSelfTerminatedRunSignoffMessage:
@@ -1865,7 +1770,6 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
                 kill_db=temp_db,
                 completion_registry=completion_registry,
                 session_manager=None,
-                hook_manager_resolver=None,
             )
 
         assert result["success"] is True
@@ -1918,7 +1822,6 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
                 kill_db=kill_db,
                 completion_registry=completion_registry,
                 session_manager=None,
-                hook_manager_resolver=None,
             )
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]
@@ -1966,7 +1869,6 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
                 kill_db=kill_db,
                 completion_registry=None,
                 session_manager=None,
-                hook_manager_resolver=None,
             )
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]

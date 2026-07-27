@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     thread::{self, JoinHandle},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::Value;
@@ -699,6 +699,89 @@ fn enqueue_failure_uses_enqueue_error_as_failure_action() -> TestResult {
 }
 
 #[test]
+fn enqueue_only_session_end_returns_without_contacting_slow_daemon() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    listener.set_nonblocking(true)?;
+    let daemon_url = format!("http://{}", listener.local_addr()?);
+    let started = Instant::now();
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionEnd"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+        &["--enqueue-only"],
+    )?;
+
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "enqueue-only exceeded the Codex SessionEnd deadline"
+    );
+    assert!(output.status.success());
+    assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+    assert_stderr_empty(&output, "enqueue-only SessionEnd")?;
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    assert_eq!(read_failure_artifacts(gobby_home.path())?.len(), 0);
+    assert!(
+        listener
+            .accept()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock),
+        "enqueue-only unexpectedly contacted the daemon"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn enqueue_only_failure_does_not_fall_back_to_direct_post() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let hooks_dir = gobby_home.path().join("hooks");
+    fs::create_dir_all(&hooks_dir)?;
+    fs::write(hooks_dir.join("inbox"), b"not a directory")?;
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    listener.set_nonblocking(true)?;
+    let daemon_url = format!("http://{}", listener.local_addr()?);
+    let started = Instant::now();
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionEnd"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+        &["--enqueue-only"],
+    )?;
+
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(output.status.code(), Some(1));
+    let stdout: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(stdout["status"], "error");
+    assert!(
+        stdout["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("enqueue"))
+    );
+    assert_stderr_empty(&output, "enqueue-only failure")?;
+    assert_eq!(read_failure_artifacts(gobby_home.path())?.len(), 0);
+    assert!(
+        listener
+            .accept()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock),
+        "enqueue failure unexpectedly fell back to a direct daemon POST"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn stop_post_connect_failure_with_shutdown_marker_is_suppressed_and_dequeued() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
@@ -800,6 +883,28 @@ fn run_ghook_with_dirs(
     stdin: &str,
     extra_env: &[(&str, &str)],
 ) -> Result<Output, Box<dyn std::error::Error>> {
+    run_ghook_with_dirs_and_args(
+        home,
+        gobby_home,
+        cli,
+        hook_type,
+        daemon_url,
+        stdin,
+        extra_env,
+        &[],
+    )
+}
+
+fn run_ghook_with_dirs_and_args(
+    home: &Path,
+    gobby_home: &Path,
+    cli: Option<&str>,
+    hook_type: Option<&str>,
+    daemon_url: &str,
+    stdin: &str,
+    extra_env: &[(&str, &str)],
+    extra_args: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ghook"));
     command
         .arg("--gobby-owned")
@@ -823,6 +928,7 @@ fn run_ghook_with_dirs(
     if let Some(hook_type) = hook_type {
         command.args(["--type", hook_type]);
     }
+    command.args(extra_args);
     for (key, value) in extra_env {
         command.env(key, value);
     }

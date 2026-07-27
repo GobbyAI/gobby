@@ -7,6 +7,7 @@ and enable informed decisions about when to stop or redirect work.
 import hashlib
 import json
 import logging
+import re
 import shlex
 import threading
 from dataclasses import dataclass, field
@@ -147,6 +148,45 @@ def _result_indicates_test_success(result_str: str) -> bool:
 def _is_mcp_proxy_call(tool_name: str) -> bool:
     """Return True for the MCP proxy's call_tool step (any client prefix)."""
     return tool_name == "call_tool" or tool_name.endswith("__call_tool")
+
+
+_PASSIVE_WAIT_TOOL_LEAVES = (
+    "wait_for_output",
+    "wait_for_agent",
+    "wait_agent",
+    "wait",
+)
+
+
+def _normalize_tool_identity(tool_name: str) -> str:
+    """Normalize client namespaces and separators without losing semantic leaves."""
+    return re.sub(r"[^a-z0-9]+", "_", tool_name.casefold()).strip("_")
+
+
+def _is_passive_wait_tool(tool_name: str) -> bool:
+    normalized = _normalize_tool_identity(tool_name)
+    compact = normalized.replace("_", "")
+    for leaf in _PASSIVE_WAIT_TOOL_LEAVES:
+        if normalized == leaf or normalized.endswith(f"_{leaf}"):
+            return True
+        if leaf != "wait" and compact.endswith(leaf.replace("_", "")):
+            return True
+    return False
+
+
+def _tool_activity_details(
+    canonical_tool_name: str,
+    tool_args: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    """Resolve the semantic tool beneath an MCP proxy wrapper."""
+    effective_tool_name = canonical_tool_name
+    is_passive_wait = _is_passive_wait_tool(canonical_tool_name)
+    if _is_mcp_proxy_call(canonical_tool_name):
+        inner_tool_name = str((tool_args or {}).get("tool_name") or "")
+        if inner_tool_name:
+            effective_tool_name = inner_tool_name
+            is_passive_wait = is_passive_wait or _is_passive_wait_tool(inner_tool_name)
+    return effective_tool_name, is_passive_wait
 
 
 def _mcp_result_indicates_failure(result_str: str) -> bool:
@@ -342,6 +382,10 @@ class ProgressTracker:
             ProgressEvent if recorded, None if tool is not tracked
         """
         canonical_tool_name = str(canonicalize_shell_tool_name(tool_name))
+        effective_tool_name, is_passive_wait = _tool_activity_details(
+            canonical_tool_name,
+            tool_args,
+        )
 
         # Determine progress type from tool name
         progress_type = MEANINGFUL_TOOLS.get(canonical_tool_name, ProgressType.TOOL_CALL)
@@ -374,6 +418,8 @@ class ProgressTracker:
             "tool_args_keys": list((tool_args or {}).keys()),
             "tool_args_fingerprint": _hash_tool_args(tool_args),
             "result_type": type(tool_result).__name__ if tool_result else None,
+            "effective_tool_name": effective_tool_name,
+            "is_passive_wait": is_passive_wait,
         }
 
         return self.record_event(
@@ -390,6 +436,11 @@ class ProgressTracker:
         tool_args: dict[str, Any] | None = None,
     ) -> ProgressEvent:
         """Record that a tool call started and remains in flight."""
+        canonical_tool_name = str(canonicalize_shell_tool_name(tool_name))
+        effective_tool_name, is_passive_wait = _tool_activity_details(
+            canonical_tool_name,
+            tool_args,
+        )
         return self.record_event(
             session_id=session_id,
             progress_type=ProgressType.TOOL_STARTED,
@@ -397,6 +448,8 @@ class ProgressTracker:
             details={
                 "tool_args_keys": list((tool_args or {}).keys()),
                 "tool_args_fingerprint": _hash_tool_args(tool_args),
+                "effective_tool_name": effective_tool_name,
+                "is_passive_wait": is_passive_wait,
             },
         )
 
