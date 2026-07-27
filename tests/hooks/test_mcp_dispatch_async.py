@@ -84,8 +84,8 @@ class TestContextInjection:
         assert args["project_path"] == "/repo/project"
 
     @pytest.mark.asyncio
-    async def test_coerces_none_platform_session_id_to_empty_string(self) -> None:
-        """When _platform_session_id is None (unresolved), inject "" not None."""
+    async def test_skips_call_when_platform_session_id_is_none(self) -> None:
+        """When _platform_session_id is None (unresolved), skip the call with a warning."""
         call_tool = AsyncMock(return_value={"success": True})
         event = _make_event()
         event.metadata["_platform_session_id"] = None
@@ -97,13 +97,11 @@ class TestContextInjection:
             logging.getLogger("test"),
         )
 
-        args = call_tool.call_args[0][2]
-        assert args["session_id"] == ""
-        assert args["session_id"] is not None
+        call_tool.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_coerces_missing_platform_session_id_to_empty_string(self) -> None:
-        """When _platform_session_id key is absent, inject "" not None."""
+    async def test_skips_call_when_platform_session_id_is_missing(self) -> None:
+        """When _platform_session_id key is absent, skip the call with a warning."""
         call_tool = AsyncMock(return_value={"success": True})
         event = _make_event()
         del event.metadata["_platform_session_id"]
@@ -115,8 +113,24 @@ class TestContextInjection:
             logging.getLogger("test"),
         )
 
-        args = call_tool.call_args[0][2]
-        assert args["session_id"] == ""
+        call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_proceeds_with_explicit_session_id_even_when_metadata_missing(self) -> None:
+        """Calls with an explicit session_id are not skipped."""
+        call_tool = AsyncMock(return_value={"success": True})
+        event = _make_event()
+        del event.metadata["_platform_session_id"]
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-memory", "tool": "digest", "arguments": {"session_id": "explicit-123"}}],
+            event,
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        call_tool.assert_called_once()
+        assert call_tool.call_args[0][2]["session_id"] == "explicit-123"
 
     @pytest.mark.asyncio
     async def test_maps_prompt_text_to_query(self) -> None:

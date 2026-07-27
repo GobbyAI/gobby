@@ -76,11 +76,23 @@ async def dispatch_mcp_calls(
             continue
 
         # Inject event context into arguments.
-        # ``_platform_session_id`` may be present with value None when
-        # SessionLookupService.resolve() could not map the external id; coerce
-        # to "" so downstream tools receive a str, not None.
+        # Skip the call when no platform session_id could be resolved —
+        # downstream tools like build_turn_and_digest require a valid
+        # session_id and fail with "session_id is required" when passed None.
         if "session_id" not in arguments:
-            arguments["session_id"] = event.metadata.get("_platform_session_id") or ""
+            platform_sid = event.metadata.get("_platform_session_id")
+            if isinstance(platform_sid, str) and platform_sid:
+                arguments["session_id"] = platform_sid
+            else:
+                logger.warning(
+                    "dispatch_mcp_calls: no platform session_id resolved for "
+                    "%s/%s (event=%s, external_session_id=%s); skipping call",
+                    server,
+                    tool,
+                    event.event_type,
+                    event.session_id,
+                )
+                continue
         if arguments.get("prompt_text") is None:
             arguments.pop("prompt_text", None)
             event_prompt = event.data.get("prompt") if event.data else None
