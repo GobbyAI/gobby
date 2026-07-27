@@ -821,7 +821,11 @@ class TestInitSubsystems:
         from gobby.utils.datetime import utc_now
 
         task_manager = LocalTaskManager(temp_db)
-        task = task_manager.create_task(project_id=sample_project["id"], title="Expand me")
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Expand me",
+            validation_criteria="Expansion run cleanup completes.",
+        )
         run_manager = LocalExpansionRunManager(temp_db)
         run = run_manager.create(
             parent_task_id=task.id,

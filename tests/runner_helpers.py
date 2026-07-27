@@ -1,12 +1,36 @@
 """Shared helpers for runner tests."""
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from gobby.config.logging import LoggingSettings
 
 RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
+
+
+def normalize_mcp_manager(mock_mcp_manager: Any | None) -> MagicMock:
+    """Match the production manager's synchronous and asynchronous method contracts."""
+    manager = mock_mcp_manager or MagicMock()
+
+    for method_name in ("connect_all", "disconnect_all"):
+        method = manager.__dict__.get(method_name)
+        if not isinstance(method, AsyncMock):
+            setattr(manager, method_name, AsyncMock())
+
+    get_server_config = manager.__dict__.get("get_server_config")
+    if isinstance(get_server_config, AsyncMock):
+        sync_get_server_config = MagicMock(side_effect=get_server_config.side_effect)
+        sync_get_server_config.return_value = (
+            None
+            if get_server_config._mock_return_value is DEFAULT
+            else get_server_config._mock_return_value
+        )
+        manager.get_server_config = sync_get_server_config
+    elif not isinstance(get_server_config, MagicMock):
+        manager.get_server_config = MagicMock(return_value=None)
+
+    return manager
 
 
 def set_mock_default(obj: MagicMock, name: str, default: Any) -> None:
@@ -98,10 +122,7 @@ def create_base_patches(
     if mock_config is not None:
         apply_safe_runner_config_defaults(mock_config)
 
-    if mock_mcp_manager is None:
-        mock_mcp_manager = AsyncMock()
-        mock_mcp_manager.connect_all = AsyncMock()
-        mock_mcp_manager.disconnect_all = AsyncMock()
+    mock_mcp_manager = normalize_mcp_manager(mock_mcp_manager)
 
     if mock_http is None:
         mock_http = MagicMock()
