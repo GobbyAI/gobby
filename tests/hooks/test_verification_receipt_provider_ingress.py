@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -169,6 +170,67 @@ def test_provider_adapter_terminal_outcomes_are_durably_ingested(
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert len(variables["verification_evidence"]) == 1
     assert variables["verification_evidence"][0]["task_id"] == task.id
+
+
+@pytest.mark.asyncio
+async def test_codex_inbox_persists_nul_output_without_retry(
+    temp_db: Any,
+    session_manager: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = session_manager.register(
+        external_id="codex-nul-output",
+        machine_id="machine-codex-nul-output",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        "Codex NUL output",
+        claimed_by_session_id=session.id,
+        validation_criteria="Codex output is persisted without inbox retry.",
+    )
+    SessionVariableManager(temp_db).set_variable(session.id, "active_task_id", task.id)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = _IngressHookManager(
+        temp_db,
+        sample_project["id"],
+        session.id,
+    )
+
+    raw_output = "provider\x00ingress"
+    payload = _codex_payload(session.external_id)
+    payload["input_data"]["tool_output"]["output"] = raw_output
+    envelope = _hook_envelope("codex", payload)
+    envelope["headers"] = {"X-Gobby-Session-Id": session.id}
+    gobby_home = tmp_path / "gobby-home"
+    inbox_dir = gobby_home / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-codex-nul-output.json"
+    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    monkeypatch.setattr(
+        "gobby.hooks.envelope_dedupe.get_gobby_home",
+        lambda: gobby_home,
+    )
+
+    assert await drain_hook_inbox_once(server.app, inbox_dir) == 1
+    assert not envelope_path.exists()
+    receipts = VerificationReceiptStore(temp_db).list_for_task(
+        sample_project["id"],
+        task.id,
+    )
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.output_first_4k == "provider\ufffdingress"
+    assert receipt.output_last_4k == "provider\ufffdingress"
+    assert receipt.output_sha256 == hashlib.sha256(raw_output.encode()).hexdigest()
+    assert receipt.output_bytes == len(raw_output.encode())
 
 
 @pytest.mark.parametrize(

@@ -36,8 +36,12 @@ def _bounded_output(output: str | None) -> tuple[str | None, str | None, str | N
     if output is None:
         return None, None, None, None
     encoded = output.encode("utf-8")
-    first = encoded[:_OUTPUT_EXCERPT_BYTES].decode("utf-8", errors="replace")
-    last = encoded[-_OUTPUT_EXCERPT_BYTES:].decode("utf-8", errors="replace")
+    first = (
+        encoded[:_OUTPUT_EXCERPT_BYTES].decode("utf-8", errors="replace").replace("\x00", "\ufffd")
+    )
+    last = (
+        encoded[-_OUTPUT_EXCERPT_BYTES:].decode("utf-8", errors="replace").replace("\x00", "\ufffd")
+    )
     return first, last, hashlib.sha256(encoded).hexdigest(), len(encoded)
 
 
