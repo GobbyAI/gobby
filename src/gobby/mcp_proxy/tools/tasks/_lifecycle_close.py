@@ -446,10 +446,7 @@ async def _commit_close(
             validation_override_reason=override_justification if store_override else None,
             expected_updated_at=linked.updated_at,
             reset_validation_fail_count=evaluation.validation_reset_reason is not None,
-            validation_status=(
-                evaluation.validation_status
-                or ("skipped" if evaluation.skip_leaf_checks else "valid")
-            ),
+            validation_status=evaluation.validation_status or "valid",
             validation_feedback=evaluation.validation_feedback,
         )
     except BootstrapLedgerMismatchError as exc:

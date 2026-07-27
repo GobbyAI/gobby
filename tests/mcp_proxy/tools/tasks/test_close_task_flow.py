@@ -372,3 +372,37 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
     assert [gate.item for gate in evaluation.gates] == list(range(1, 11))
     assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
     review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_epic_persists_allowed_valid_status() -> None:
+    task = replace(_task(), task_type="epic")
+    ctx = _ctx(task)
+    manager = cast(MagicMock, ctx.task_manager)
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = task.claimed_by_session_id
+    evaluation.commit_shas = []
+    evaluation.is_epic = True
+    evaluation.skip_leaf_checks = True
+
+    with (
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(lifecycle, "notify_parent_on_task_state_change"),
+        patch.object(lifecycle, "_cleanup_closed_claim"),
+        patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    assert manager.close_task.call_args.kwargs["validation_status"] == "valid"

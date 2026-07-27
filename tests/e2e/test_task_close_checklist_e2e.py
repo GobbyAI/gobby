@@ -133,6 +133,7 @@ def _register_claimed_task(
     events: CLIEventSimulator,
     *,
     suffix: str,
+    task_type: str = "task",
 ) -> tuple[str, str, str]:
     project_result = events.register_test_project(
         project_id=PROJECT_ID,
@@ -155,6 +156,7 @@ def _register_claimed_task(
             "create_task",
             {
                 "title": f"Close checklist E2E {suffix}",
+                "task_type": task_type,
                 "category": "code",
                 "implementation_domain": "backend",
                 "validation_criteria": "The committed Python module contains VALUE = 1.",
@@ -393,6 +395,37 @@ def test_failed_validation_run_blocks_before_llm(
 
     assert result.get("error") == "validation_command_required", result
     assert result["closed"] is False
+    assert validation_llm_server.validation_calls == 0
+
+
+def test_epic_closes_without_llm_or_invalid_skipped_status(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+    cli_events: CLIEventSimulator,
+    validation_llm_server: _ValidationLLMServer,
+) -> None:
+    task_id, _session_id, _external_id = _register_claimed_task(
+        daemon_instance,
+        mcp_client,
+        cli_events,
+        suffix="epic",
+        task_type="epic",
+    )
+
+    result = _unwrap(
+        mcp_client.call_tool(
+            "gobby-tasks",
+            "close_task",
+            {
+                "task_id": task_id,
+                "preview": True,
+                "response_detail": "diagnostic",
+            },
+        )
+    )
+
+    assert result["closed"] is True, result
+    assert all(gate["status"] == "skipped" for gate in result["checklist"][4:])
     assert validation_llm_server.validation_calls == 0
 
 
