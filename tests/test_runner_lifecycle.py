@@ -9,13 +9,14 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
+import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
@@ -212,7 +213,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = _serve_mock_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -1922,7 +1923,7 @@ class TestShutdownDaemonServices:
 
         monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
 
-        await runner_lifecycle_shutdown._reap_remaining_child_processes(
+        await runner_lifecycle_processes._reap_remaining_child_processes(
             preserve_agents=True,
             preserved_agent_pids={pane.pid},
         )
@@ -1976,12 +1977,12 @@ class TestShutdownDaemonServices:
             "gobby.agents.tmux.get_tmux_session_manager",
             return_value=tmux_manager,
         ):
-            preserved_pids = await runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
+            preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
 
         assert preserved_pids == {20_000 + index for index in range(run_count)}
         assert db_calls == [
             (
-                runner_lifecycle_shutdown._list_active_agent_runs_once,
+                runner_lifecycle_processes._list_active_agent_runs_once,
                 (runner,),
                 {"include_fenced": True},
             ),
@@ -4111,3 +4112,129 @@ class TestAgentRestartRecoveryHelpers:
 
         assert events[:3] == ["close", "health", "drain"]
         assert events[-1] == "executor"
+
+
+async def test_restart_preserve_set_uses_and_caches_persisted_tmux_socket() -> None:
+    runs = [
+        SimpleNamespace(
+            id=f"run-{index}",
+            pid=1_000 + index,
+            tmux_session_name=f"agent-{index}",
+            resume_metadata_json={
+                "tmux_socket_name": "persisted",
+                "tmux_socket_path": "/tmp/persisted.sock",
+            },
+        )
+        for index in range(2)
+    ]
+    run_db = AsyncMock(return_value=runs)
+    runner = SimpleNamespace(
+        agent_runner=SimpleNamespace(run_storage=object()),
+        db_executor=SimpleNamespace(run=run_db),
+    )
+    persisted_config = object()
+    default_config = SimpleNamespace(
+        socket_name="gobby",
+        socket_path=None,
+        model_copy=MagicMock(return_value=persisted_config),
+    )
+    default_manager = SimpleNamespace(config=default_config)
+    persisted_manager = SimpleNamespace(
+        list_sessions=AsyncMock(
+            return_value=[
+                SimpleNamespace(name=f"agent-{index}", pane_pid=2_000 + index) for index in range(2)
+            ]
+        )
+    )
+
+    with (
+        patch(
+            "gobby.agents.tmux.get_tmux_session_manager",
+            return_value=default_manager,
+        ),
+        patch(
+            "gobby.agents.tmux.session_manager.TmuxSessionManager",
+            return_value=persisted_manager,
+        ) as manager_type,
+    ):
+        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
+            cast(GobbyRunner, runner)
+        )
+
+    assert preserved_pids == {2_000, 2_001}
+    assert default_config.model_copy.call_count == 1
+    assert default_config.model_copy.call_args == call(
+        update={
+            "socket_name": "persisted",
+            "socket_path": "/tmp/persisted.sock",
+        }
+    )
+    assert manager_type.call_args_list == [call(persisted_config)]
+    assert persisted_manager.list_sessions.await_count == 1
+
+
+async def test_restart_preserve_set_falls_back_to_stored_pids() -> None:
+    runs = [
+        SimpleNamespace(
+            id="lookup-failed",
+            pid=1_001,
+            tmux_session_name="lookup-failed",
+            resume_metadata_json={"tmux_socket_name": "failed"},
+        ),
+        SimpleNamespace(
+            id="pane-pid-unusable",
+            pid=1_002,
+            tmux_session_name="pane-pid-unusable",
+            resume_metadata_json={"tmux_socket_name": "unusable"},
+        ),
+    ]
+    runner = SimpleNamespace(
+        agent_runner=SimpleNamespace(run_storage=object()),
+        db_executor=SimpleNamespace(run=AsyncMock(return_value=runs)),
+    )
+
+    with patch.object(
+        runner_lifecycle_processes,
+        "_agent_live_sessions_by_name",
+        AsyncMock(
+            side_effect=[
+                None,
+                {"pane-pid-unusable": SimpleNamespace(pane_pid=0)},
+            ]
+        ),
+    ):
+        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
+            cast(GobbyRunner, runner)
+        )
+
+    assert preserved_pids == {1_001, 1_002}
+
+
+async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() -> None:
+    run_db = AsyncMock(side_effect=RuntimeError("database unavailable"))
+    runner = SimpleNamespace(
+        agent_runner=SimpleNamespace(run_storage=object()),
+        db_executor=SimpleNamespace(run=run_db),
+    )
+
+    preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
+        cast(GobbyRunner, runner)
+    )
+
+    assert preserved_pids is None
+    run_db.assert_awaited_once()
+    await_args = run_db.await_args
+    assert await_args is not None
+    assert await_args.args[1] is runner
+    assert await_args.kwargs == {"include_fenced": True}
+
+
+def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
+    server.started = True
+    server.should_exit = False
+
+    async def serve() -> None:
+        while not server.should_exit:
+            await asyncio.sleep(0)
+
+    return AsyncMock(side_effect=serve)

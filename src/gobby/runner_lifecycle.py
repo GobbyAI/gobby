@@ -18,9 +18,9 @@ from gobby.runner_lifecycle_agents import (
     _recover_agent_runs_after_restart,
 )
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
 from gobby.runner_lifecycle_shutdown import (
     _await_critical_stop_hook_grace_window,
-    _reap_remaining_child_processes,
     _shutdown_websocket_server,
     shutdown_daemon_services,
 )

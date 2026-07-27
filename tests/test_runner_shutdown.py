@@ -12,7 +12,7 @@ import pytest
 if TYPE_CHECKING:
     import uvicorn
 
-from gobby import app_context, runner_lifecycle_shutdown
+from gobby import app_context, runner_lifecycle_processes, runner_lifecycle_shutdown
 from gobby.agents import agent_cleanup
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
@@ -1314,7 +1314,7 @@ class TestStopShutdownAgentPreservation:
             shutdown_executor,
         )
         monkeypatch.setattr(
-            runner_lifecycle_shutdown,
+            runner_lifecycle_processes,
             "_preserved_agent_terminal_pids",
             unknown_preserve_set,
         )
