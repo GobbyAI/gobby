@@ -1263,29 +1263,58 @@ class TestDaemonProxy:
 
     @pytest.mark.asyncio
     async def test_call_tool_uses_extended_timeout_for_run_expansion_qa_coverage(self) -> None:
-        """Plan-coverage QA blocks for longer than 30s on real expanded trees."""
+        """A coverage run that outlives the 30s boundary still returns its verdict."""
         from gobby.mcp_proxy.stdio import DaemonProxy
+        from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
         proxy = DaemonProxy(60887)
-        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+
+        async def request_after_boundary(*args: Any, **kwargs: Any) -> httpx.Response:
+            if kwargs["timeout"] <= 30.0:
+                raise httpx.ReadTimeout("simulated coverage still running after 30 seconds")
+            return httpx.Response(200, json={"success": True, "passed": True})
+
+        with (
+            patch("gobby.mcp_proxy.stdio.load_config") as mock_config,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
             mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
-            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
-                mock_request.return_value = {"success": True, "passed": True}
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request.side_effect = request_after_boundary
+            mock_client_cls.return_value = mock_client
 
-                result = await proxy.call_tool(
-                    "gobby-tasks-ops",
-                    "run_expansion_qa_coverage",
-                    {"run_id": "run-1"},
-                )
+            result = await proxy.call_tool(
+                "gobby-tasks-ops",
+                "run_expansion_qa_coverage",
+                {"run_id": "run-1"},
+                preflight_enabled=False,
+            )
 
-                assert result == {"success": True, "passed": True}
-                mock_request.assert_called_once_with(
-                    "POST",
-                    "/api/mcp/gobby-tasks-ops/tools/run_expansion_qa_coverage",
-                    json={"run_id": "run-1"},
-                    timeout=300.0,
-                    preflight=True,
-                )
+        assert result == {"success": True, "passed": True}
+        mock_client.request.assert_awaited_once_with(
+            "POST",
+            "http://127.0.0.1:60887/api/mcp/gobby-tasks-ops/tools/run_expansion_qa_coverage",
+            json={"run_id": "run-1"},
+            headers=mock_client.request.await_args.kwargs["headers"],
+            timeout=MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
+        )
+
+    def test_run_expansion_qa_coverage_is_client_guarded_and_heartbeated(self) -> None:
+        """Extended-timeout membership also arms the wrapper guard and heartbeat."""
+        from gobby.mcp_proxy import wait_tools
+
+        assert "run_expansion_qa_coverage" in wait_tools.CLIENT_GUARDED_TOOL_NAMES
+        assert "run_expansion_qa_coverage" in wait_tools.HEARTBEAT_TOOL_NAMES
+
+        guard = wait_tools.prepare_client_guard(
+            tool_name="run_expansion_qa_coverage",
+            arguments={"run_id": "run-1"},
+        )
+
+        assert guard.timeout == wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
+        assert guard.wait_timeout_capped is False
 
     @pytest.mark.asyncio
     async def test_call_tool_keeps_default_timeout_for_unlisted_tasks_ops_tool(self) -> None:
