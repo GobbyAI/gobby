@@ -17,15 +17,20 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
+from gobby.agents.watchdog.completed_turn_recovery import (
+    format_reprompt_message,
+    recover_completed_turn,
+)
 from gobby.agents.watchdog.models import (
     CapacityRecoveryState,
+    CompletedTurnRecoveryState,
     WatchdogTranscriptSnapshot,
 )
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
 from gobby.sessions.transcript_paths import _find_transcript_on_disk
 from gobby.storage.attention import run_attention_entry_id
 from gobby.utils.datetime import parse_stored_datetime
-from gobby.workflows.step_context import get_active_step_workflow_context
+from gobby.workflows.step_context import StepWorkflowContext, get_active_step_workflow_context
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -85,6 +90,7 @@ class IdleCheckHandler:
         self._stall_classifier = stall_classifier
         self._watchdog_readers = watchdog_readers
         self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
+        self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
         self._transcript_path_cache: dict[tuple[str, str, str], str] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -212,6 +218,7 @@ class IdleCheckHandler:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
             self._capacity_recovery.clear()
+            self._completed_turn_recovery.clear()
             self._transcript_path_cache.clear()
             return 0
 
@@ -220,6 +227,11 @@ class IdleCheckHandler:
         self._capacity_recovery = {
             run_id: state
             for run_id, state in self._capacity_recovery.items()
+            if run_id in active_run_ids
+        }
+        self._completed_turn_recovery = {
+            run_id: state
+            for run_id, state in self._completed_turn_recovery.items()
             if run_id in active_run_ids
         }
         self._transcript_path_cache = {
@@ -349,6 +361,7 @@ class IdleCheckHandler:
         if latest_run is None or latest_run.status not in ("pending", "running"):
             await self.clear_attention(latest_run or run)
             idle_detector.reset_idle(run.id)
+            self._completed_turn_recovery.pop(run.id, None)
             return 0
 
         run = latest_run
@@ -484,22 +497,19 @@ class IdleCheckHandler:
             )
         if completed_turn_recovery_due is False:
             return 0
-        if completed_turn_recovery_due is True:
-            logger.info("Recovering completed turn for idle agent %s", run.id)
-            await self._log_transcript_snapshot(
+        if (
+            completed_turn_recovery_due is True
+            and transcript_snapshot is not None
+            and transcript_path is not None
+        ):
+            return await recover_completed_turn(
+                self,
                 run,
-                reason="recovering completed turn",
+                tmux_name=tmux_name,
+                session_id=session_id,
+                transcript_path=transcript_path,
                 snapshot=transcript_snapshot,
             )
-            if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
-                return 0
-            await self._record_watchdog_task_event(
-                run,
-                action="completed_turn_reprompt",
-                session_id=session_id,
-                detail="latest_turn_kind=completed",
-            )
-            return 1
 
         if idle_detector.should_reprompt(
             run.id,
@@ -614,8 +624,15 @@ class IdleCheckHandler:
         )
         return 1
 
-    async def _send_idle_reprompt(self, run: AgentRun, *, tmux_name: str) -> bool:
-        reprompt_message = await self._idle_reprompt_message(run)
+    async def _send_idle_reprompt(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        reprompt_message: str | None = None,
+    ) -> bool:
+        if reprompt_message is None:
+            reprompt_message = await self._idle_reprompt_message(run)
         cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
         if not cleared:
             logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
@@ -632,8 +649,10 @@ class IdleCheckHandler:
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True
 
-    async def _idle_reprompt_message(self, run: AgentRun) -> str:
-        """Return an idle continuation prompt tuned to active step workflows."""
+    async def _load_step_workflow_context(
+        self,
+        run: AgentRun,
+    ) -> tuple[StepWorkflowContext | None, bool]:
         try:
             step_context = await self._run_db(
                 get_active_step_workflow_context,
@@ -648,7 +667,7 @@ class IdleCheckHandler:
                 run.child_session_id,
                 exc_info=True,
             )
-            return IdleDetector.REPROMPT_MESSAGE
+            return None, False
         except (json.JSONDecodeError, pydantic.ValidationError, TypeError, ValueError):
             logger.warning(
                 "Malformed active step workflow context for idle reprompt on run %s session %s",
@@ -656,7 +675,7 @@ class IdleCheckHandler:
                 run.child_session_id,
                 exc_info=True,
             )
-            return IdleDetector.REPROMPT_MESSAGE
+            return None, False
         except Exception:
             logger.exception(
                 "Unexpected error loading active step workflow context for idle reprompt "
@@ -664,18 +683,22 @@ class IdleCheckHandler:
                 run.id,
                 run.child_session_id,
             )
-            return IdleDetector.REPROMPT_MESSAGE
-        if step_context is None:
-            return IdleDetector.REPROMPT_MESSAGE
+            return None, False
+        return step_context, True
 
-        message = (
-            "Continue working on your task. Your active Gobby step workflow is not complete.\n"
-            f"Workflow: {step_context.workflow_name}. Current step: {step_context.current_step}.\n"
-        )
-        if step_context.status_message:
-            message = f"{message}{step_context.status_message.strip()}\n"
-        return (
-            f"{message}Finish the required Gobby lifecycle MCP transition, then call end_agent_run."
+    async def _idle_reprompt_message(
+        self,
+        run: AgentRun,
+        *,
+        step_context: StepWorkflowContext | None = None,
+        context_resolved: bool = False,
+    ) -> str:
+        """Return an idle continuation prompt tuned to active step workflows."""
+        if not context_resolved:
+            step_context, _lookup_succeeded = await self._load_step_workflow_context(run)
+        return format_reprompt_message(
+            step_context,
+            fallback_message=IdleDetector.REPROMPT_MESSAGE,
         )
 
     @staticmethod
@@ -849,10 +872,12 @@ class IdleCheckHandler:
                 return
 
             self._idle_detector.clear_state(run.id)
+            self._completed_turn_recovery.pop(run.id, None)
             return
 
         self._idle_detector.clear_state(run.id)
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
+        self._completed_turn_recovery.pop(run.id, None)
 
     async def _log_transcript_snapshot(
         self,
@@ -860,6 +885,7 @@ class IdleCheckHandler:
         *,
         reason: str,
         snapshot: WatchdogTranscriptSnapshot | None = None,
+        level: int = logging.WARNING,
     ) -> None:
         session_id = run.child_session_id
         if not session_id:
@@ -921,11 +947,21 @@ class IdleCheckHandler:
             )
             return
 
-        logger.warning(
-            "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+        log_args = (
             snapshot.provider,
             run.id,
             reason,
             session_id,
             json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
         )
+        if level == logging.WARNING:
+            logger.warning(
+                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+                *log_args,
+            )
+        else:
+            logger.log(
+                level,
+                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+                *log_args,
+            )

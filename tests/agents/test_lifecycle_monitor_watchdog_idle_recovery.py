@@ -8,16 +8,19 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, call, patch
 
+import psycopg
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.watchdog.models import CompletedTurnRecoveryState
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.step_context import StepWorkflowContext
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -335,12 +338,13 @@ def _make_idle_monitor_run(
     child_source: str = "codex",
     session_age_seconds: int = 120,
     task_manager: LocalTaskManager | None = None,
+    max_reprompt_attempts: int = 2,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
         idle_timeout_seconds=10,
         idle_reprompt_delay_seconds=300,
-        max_reprompt_attempts=2,
+        max_reprompt_attempts=max_reprompt_attempts,
         reasoning_watchdog_settle_seconds=0,
     )
     monitor = AgentLifecycleMonitor(
@@ -1307,3 +1311,334 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
     assert "Watchdog idle diagnostic for droid" in diagnostic
     assert '"latest_activity_kind": "reasoning"' in diagnostic
     assert secret not in diagnostic
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapshot(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-repeated-completions.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1020",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=3,
+    )
+    handler = monitor._idle_check_handler
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            side_effect=[
+                "❯\n",
+                "Processing files...\n",
+                "Processing hook activity...\n",
+                "❯\n",
+            ],
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+    ):
+        assert await monitor.check_idle_agents() == 1
+        state = handler._completed_turn_recovery[run.id]
+        assert state.successful_reprompts == 1
+
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 0
+        assert state.successful_reprompts == 1
+        assert mock_send.await_count == 3
+
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (datetime.now(UTC).isoformat(), run.child_session_id),
+        )
+        assert await monitor.check_idle_agents() == 0
+        assert state.successful_reprompts == 1
+
+        stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (stale_time, run.child_session_id),
+        )
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=121)
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    assert state.successful_reprompts == 2
+    assert mock_send.await_count == 6
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_recovery_allows_budget_then_fails_without_step_workflow(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transcript_path = tmp_path / "codex-bounded-completions.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1021",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=3,
+    )
+    handler = monitor._idle_check_handler
+    caplog.set_level(logging.INFO)
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+    ):
+        for attempt in range(3):
+            _write_codex_lifecycle_transcript(
+                transcript_path,
+                age_seconds=120 + attempt,
+            )
+            monitor._idle_detector.reset_idle(run.id)
+            assert await monitor.check_idle_agents() == 1
+
+        state = handler._completed_turn_recovery[run.id]
+        assert state.workflow_fingerprint == run.id
+        assert state.successful_reprompts == 3
+
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=123)
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    assert mock_send.await_count == 9
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+    assert run.id not in handler._completed_turn_recovery
+    assert any(
+        record.levelno == logging.INFO
+        and "Watchdog idle diagnostic" in record.getMessage()
+        and "recovering completed turn" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any(
+        record.levelno == logging.ERROR
+        and "completed another turn without workflow progress" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-step-advance.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1022",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=2,
+    )
+    plan_context = StepWorkflowContext(
+        workflow_name="developer-steps",
+        current_step="plan",
+        description=None,
+        status_message=None,
+        exit_condition=None,
+    )
+    build_context = StepWorkflowContext(
+        workflow_name="developer-steps",
+        current_step="build",
+        description=None,
+        status_message=None,
+        exit_condition=None,
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch(
+            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            return_value=plan_context,
+        ) as mock_context,
+    ):
+        for attempt in range(2):
+            _write_codex_lifecycle_transcript(
+                transcript_path,
+                age_seconds=120 + attempt,
+            )
+            monitor._idle_detector.reset_idle(run.id)
+            assert await monitor.check_idle_agents() == 1
+
+        state = monitor._idle_check_handler._completed_turn_recovery[run.id]
+        assert state.successful_reprompts == 2
+        mock_context.return_value = build_context
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=122)
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    assert mock_send.await_count == 9
+    assert state.workflow_fingerprint == "developer-steps:build"
+    assert state.successful_reprompts == 1
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_failed_completed_turn_prompt_submission_does_not_consume_attempt(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-failed-completion-prompt.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1023",
+        transcript_path=transcript_path,
+    )
+    handler = monitor._idle_check_handler
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux,
+            "send_keys",
+            new_callable=AsyncMock,
+            side_effect=[True, True, False, True, True, True],
+        ),
+    ):
+        assert await monitor.check_idle_agents() == 0
+        state = handler._completed_turn_recovery[run.id]
+        assert state.successful_reprompts == 0
+        assert state.last_completion_identity is None
+
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    assert state.successful_reprompts == 1
+    assert state.last_completion_identity is not None
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-completion-context-failure.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1024",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=1,
+    )
+    plan_context = StepWorkflowContext(
+        workflow_name="developer-steps",
+        current_step="plan",
+        description=None,
+        status_message=None,
+        exit_condition=None,
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_fail_idle_agent",
+            new_callable=AsyncMock,
+        ) as mock_fail,
+        patch(
+            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            side_effect=[plan_context, psycopg.DatabaseError("lookup failed")],
+        ),
+    ):
+        assert await monitor.check_idle_agents() == 1
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=121)
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    state = monitor._idle_check_handler._completed_turn_recovery[run.id]
+    assert state.workflow_fingerprint == "developer-steps:plan"
+    assert state.successful_reprompts == 1
+    assert mock_send.await_count == 3
+    mock_fail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor, inactive_run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1025",
+        transcript_path=None,
+    )
+    handler = monitor._idle_check_handler
+    handler._completed_turn_recovery[inactive_run.id] = CompletedTurnRecoveryState()
+    assert inactive_run.tmux_session_name is not None
+    assert agent_run_manager.clear_tmux_session_name(
+        inactive_run.id,
+        inactive_run.tmux_session_name,
+    )
+    assert await monitor.check_idle_agents() == 0
+    assert inactive_run.id not in handler._completed_turn_recovery
+
+    _, terminal_run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1026",
+        transcript_path=None,
+    )
+    handler._completed_turn_recovery[terminal_run.id] = CompletedTurnRecoveryState()
+    assert agent_run_manager.complete(terminal_run.id) is not None
+    assert await handler._handle_idle_check(terminal_run) == 0
+    assert terminal_run.id not in handler._completed_turn_recovery
