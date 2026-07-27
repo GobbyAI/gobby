@@ -75,9 +75,12 @@ async def dispatch_mcp_calls(
             )
             continue
 
-        # Inject event context into arguments
+        # Inject event context into arguments.
+        # ``_platform_session_id`` may be present with value None when
+        # SessionLookupService.resolve() could not map the external id; coerce
+        # to "" so downstream tools receive a str, not None.
         if "session_id" not in arguments:
-            arguments["session_id"] = event.metadata.get("_platform_session_id", "")
+            arguments["session_id"] = event.metadata.get("_platform_session_id") or ""
         if arguments.get("prompt_text") is None:
             arguments.pop("prompt_text", None)
             event_prompt = event.data.get("prompt") if event.data else None

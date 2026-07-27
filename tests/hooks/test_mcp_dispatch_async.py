@@ -84,6 +84,41 @@ class TestContextInjection:
         assert args["project_path"] == "/repo/project"
 
     @pytest.mark.asyncio
+    async def test_coerces_none_platform_session_id_to_empty_string(self) -> None:
+        """When _platform_session_id is None (unresolved), inject "" not None."""
+        call_tool = AsyncMock(return_value={"success": True})
+        event = _make_event()
+        event.metadata["_platform_session_id"] = None
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
+            event,
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        args = call_tool.call_args[0][2]
+        assert args["session_id"] == ""
+        assert args["session_id"] is not None
+
+    @pytest.mark.asyncio
+    async def test_coerces_missing_platform_session_id_to_empty_string(self) -> None:
+        """When _platform_session_id key is absent, inject "" not None."""
+        call_tool = AsyncMock(return_value={"success": True})
+        event = _make_event()
+        del event.metadata["_platform_session_id"]
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
+            event,
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        args = call_tool.call_args[0][2]
+        assert args["session_id"] == ""
+
+    @pytest.mark.asyncio
     async def test_maps_prompt_text_to_query(self) -> None:
         call_tool = AsyncMock(return_value={"success": True})
 

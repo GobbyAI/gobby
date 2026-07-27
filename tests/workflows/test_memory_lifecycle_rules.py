@@ -6,6 +6,7 @@ are tested there instead.
 
 Active memory-lifecycle rules:
 - digest-on-plan-turn-end: mcp_call on provider-specific plan boundaries
+- digest-catch-up-on-turn-start: mcp_call on turn_start to catch up undigested prior turns
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
@@ -25,7 +26,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.hooks.events import HookEventType, SessionSource
+from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -36,7 +37,7 @@ pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
     "digest-on-response",
-    "digest-prior-codex-turn-on-start",
+    "digest-catch-up-on-turn-start",
     "digest-on-plan-turn-end",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
@@ -190,12 +191,12 @@ class TestDigestOnPlanTurnEnd:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# digest-prior-codex-turn-on-start
+# digest-catch-up-on-turn-start
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestDigestPriorCodexTurnOnStart:
-    """Catch up an interrupted Codex response at the next turn boundary."""
+class TestDigestCatchUpOnTurnStart:
+    """Catch up undigested prior turns at the next turn_start (e.g. after daemon restart)."""
 
     def test_event_and_effect(
         self,
@@ -203,47 +204,19 @@ class TestDigestPriorCodexTurnOnStart:
         manager: LocalWorkflowDefinitionManager,
     ) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("digest-prior-codex-turn-on-start")
+        row = manager.get_by_name("digest-catch-up-on-turn-start")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.effects is not None
         effect = body.effects[0]
 
         assert body.event.value == "turn_start"
-        assert body.when == "event.source == 'codex'"
+        assert body.when is None
         assert effect.type == "mcp_call"
         assert effect.server == "gobby-memory"
         assert effect.tool == "build_turn_and_digest"
         assert effect.arguments == {"prior_turn_only": True}
         assert effect.background is True
-
-    def test_matches_only_codex(
-        self,
-        db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("digest-prior-codex-turn-on-start")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-
-        event = CodexHooksAdapter().translate_to_hook_event(
-            {
-                "hook_type": "UserPromptSubmit",
-                "input_data": {
-                    "session_id": "codex-session-123",
-                    "cwd": "/project",
-                    "prompt": "Continue",
-                },
-                "source": "codex",
-            }
-        )
-        assert event is not None
-        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is True
-
-        event.source = SessionSource.CLAUDE
-        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is False
 
 
 # ═══════════════════════════════════════════════════════════════════════

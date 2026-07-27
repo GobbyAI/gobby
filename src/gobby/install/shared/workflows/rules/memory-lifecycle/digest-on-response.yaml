@@ -12,12 +12,11 @@ rules:
         tool: build_turn_and_digest
         background: true
 
-  digest-prior-codex-turn-on-start:
-    description: "Catch up the prior interrupted Codex turn at the next prompt"
+  digest-catch-up-on-turn-start:
+    description: "Catch up undigested prior turn at the next prompt (e.g. after daemon restart)"
     event: turn_start
     enabled: true
     priority: 10
-    when: "event.source == 'codex'"
     effects:
       - type: mcp_call
         server: gobby-memory
