@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,8 +11,9 @@ from urllib.error import URLError
 
 import pytest
 
-from gobby.agents.srt_runtime import SRT_PACKAGE, SRT_VERSION, SrtInstallation, SrtRuntimeError
+from gobby.agents.srt_runtime import SrtInstallation, SrtRuntimeError
 from gobby.cli import install_setup_srt
+from gobby.utils.dependency_requirements import SRT_RELEASE
 
 
 def test_install_srt_runtime_wraps_download_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -51,7 +53,11 @@ def test_download_verified_tarball_rejects_non_https_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(install_setup_srt, "SRT_TARBALL_URL", "file:///tmp/srt.tgz")
+    monkeypatch.setattr(
+        install_setup_srt,
+        "SRT_RELEASE",
+        replace(SRT_RELEASE, tarball_url="file:///tmp/srt.tgz"),
+    )
 
     with pytest.raises(SrtRuntimeError, match="must use HTTPS"):
         install_setup_srt._download_verified_tarball(tmp_path / "sandbox-runtime.tgz")
@@ -61,7 +67,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    target = tmp_path / "tools" / "srt" / SRT_VERSION
+    target = tmp_path / "tools" / "srt" / SRT_RELEASE.version
     node = tmp_path / "bin" / "node"
     npm = tmp_path / "bin" / "npm"
     node.parent.mkdir()
@@ -91,7 +97,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
         package_dir = cwd / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text(
-            json.dumps({"name": SRT_PACKAGE, "version": SRT_VERSION}),
+            json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
             encoding="utf-8",
         )
         return SimpleNamespace(returncode=0, stderr="")
@@ -130,5 +136,5 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     assert (target / "runner.mjs").is_file()
     assert (target / "runner.mjs").stat().st_mode & 0o777 == 0o700
     receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
-    assert receipt["package"] == SRT_PACKAGE
-    assert receipt["version"] == SRT_VERSION
+    assert receipt["package"] == SRT_RELEASE.package
+    assert receipt["version"] == SRT_RELEASE.version

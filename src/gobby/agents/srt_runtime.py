@@ -13,23 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox_policy import secure_policy_directory
 from gobby.paths import get_gobby_home
+from gobby.utils.dependency_requirements import (
+    SRT_RELEASE,
+    node_dependency_status,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from gobby.agents.sandbox import SandboxConfig, SandboxResolver
-
-SRT_PACKAGE = "@anthropic-ai/sandbox-runtime"
-SRT_VERSION = "0.0.66"
-SRT_TARBALL_URL = (
-    "https://registry.npmjs.org/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.66.tgz"
-)
-SRT_TARBALL_SHA256 = "10088a88db2d734d3a7ccf57d83e0b781ab08669361b45947637e3fd51d7c4ee"
-SRT_NPM_INTEGRITY = (
-    "sha512-OE7QiGZJXe7ZshP47U2vk2z9FGSyiSN4ca9krVrE28LS2Qj0AHRWZz+"
-    "gAce6FzG3gx/4OjNFwIhDuHXnI0WWwA=="
-)
-SRT_LOCKFILE_SHA256 = "aa0e24fece2864c9a561db55ac5d528af202b17107675be89c1bce65c289ee3f"
 
 
 class SrtRuntimeError(RuntimeError):
@@ -104,7 +96,7 @@ class SandboxLaunch:
 
 
 def srt_install_root() -> Path:
-    return get_gobby_home() / "tools" / "srt" / SRT_VERSION
+    return get_gobby_home() / "tools" / "srt" / SRT_RELEASE.version
 
 
 def verify_srt_installation() -> SrtInstallation:
@@ -122,33 +114,26 @@ def verify_srt_installation() -> SrtInstallation:
         lockfile_bytes = (root / "package-lock.json").read_bytes()
     except (OSError, json.JSONDecodeError) as exc:
         raise SrtRuntimeError(
-            f"managed SRT {SRT_VERSION} is missing or invalid; rerun `gobby install`"
+            f"managed SRT {SRT_RELEASE.version} is missing or invalid; rerun `gobby install`"
         ) from exc
 
-    expected_receipt = {
-        "package": SRT_PACKAGE,
-        "version": SRT_VERSION,
-        "tarball_url": SRT_TARBALL_URL,
-        "tarball_sha256": SRT_TARBALL_SHA256,
-        "npm_integrity": SRT_NPM_INTEGRITY,
-        "lockfile_sha256": SRT_LOCKFILE_SHA256,
-    }
+    expected_receipt = SRT_RELEASE.receipt_fields()
     if any(receipt.get(key) != value for key, value in expected_receipt.items()):
         raise SrtRuntimeError("managed SRT receipt does not match Gobby's pinned runtime")
-    if package.get("name") != SRT_PACKAGE or package.get("version") != SRT_VERSION:
+    if package.get("name") != SRT_RELEASE.package or package.get("version") != SRT_RELEASE.version:
         raise SrtRuntimeError("managed SRT package identity does not match its receipt")
     runner_sha256 = hashlib.sha256(runner_bytes).hexdigest()
-    if receipt.get("runner_sha256") != runner_sha256:
+    if runner_sha256 != SRT_RELEASE.runner_sha256:
         raise SrtRuntimeError("managed SRT runner checksum mismatch")
-    if runner_sha256 != hashlib.sha256(bundled_runner_bytes).hexdigest():
+    if hashlib.sha256(bundled_runner_bytes).hexdigest() != SRT_RELEASE.runner_sha256:
         raise SrtRuntimeError("managed SRT runner does not match this Gobby installation")
-    if hashlib.sha256(lockfile_bytes).hexdigest() != SRT_LOCKFILE_SHA256:
+    if hashlib.sha256(lockfile_bytes).hexdigest() != SRT_RELEASE.lockfile_sha256:
         raise SrtRuntimeError("managed SRT lockfile checksum mismatch")
 
-    node_raw = shutil.which("node")
-    if not node_raw:
-        raise SrtRuntimeError("Node.js 20.11 or newer is required for managed SRT")
-    node = Path(node_raw).resolve(strict=True)
+    node_status = node_dependency_status()
+    if node_status.state != "healthy" or node_status.path is None:
+        raise SrtRuntimeError(node_status.error or "Node.js version could not be verified")
+    node = Path(node_status.path)
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
 
 
@@ -266,7 +251,7 @@ async def prepare_sandbox_launch(
     launch = SandboxLaunch(
         backend="srt",
         enforced=True,
-        runtime_version=SRT_VERSION,
+        runtime_version=SRT_RELEASE.version,
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),

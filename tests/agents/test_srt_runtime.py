@@ -16,18 +16,16 @@ from gobby.agents import srt_runtime
 from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv, compute_sandbox_paths
 from gobby.agents.sandbox_policy import _nearest_package_root
 from gobby.agents.srt_runtime import (
-    SRT_LOCKFILE_SHA256,
-    SRT_NPM_INTEGRITY,
-    SRT_PACKAGE,
-    SRT_TARBALL_SHA256,
-    SRT_TARBALL_URL,
-    SRT_VERSION,
     SandboxLaunch,
     SrtInstallation,
     SrtRuntimeError,
     prepare_sandbox_launch,
     render_srt_settings,
     verify_srt_installation,
+)
+from gobby.utils.dependency_requirements import (
+    SRT_RELEASE,
+    DependencyStatus,
 )
 
 
@@ -309,7 +307,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert launch.backend == "srt"
     assert launch.enforced is True
     assert launch.provider_executable == str(provider_target.resolve())
-    assert launch.runtime_version == SRT_VERSION
+    assert launch.runtime_version == SRT_RELEASE.version
     assert policy_path.parent == expected_parent
     assert violation_path.parent == expected_parent
     temp_path = expected_parent / "tmp"
@@ -445,18 +443,13 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     runner.write_text("runner", encoding="utf-8")
     bundled_runner.write_text("runner", encoding="utf-8")
     (package_dir / "package.json").write_text(
-        json.dumps({"name": SRT_PACKAGE, "version": SRT_VERSION}),
+        json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
         encoding="utf-8",
     )
     (root / "receipt.json").write_text(
         json.dumps(
             {
-                "package": SRT_PACKAGE,
-                "version": SRT_VERSION,
-                "tarball_url": SRT_TARBALL_URL,
-                "tarball_sha256": SRT_TARBALL_SHA256,
-                "npm_integrity": SRT_NPM_INTEGRITY,
-                "lockfile_sha256": SRT_LOCKFILE_SHA256,
+                **SRT_RELEASE.receipt_fields(),
                 "runner_sha256": hashlib.sha256(runner.read_bytes()).hexdigest(),
             }
         ),
@@ -466,4 +459,88 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     monkeypatch.setattr(srt_runtime, "__file__", str(tmp_path / "srt_runtime.py"))
 
     with pytest.raises(SrtRuntimeError, match="missing or invalid"):
+        verify_srt_installation()
+
+
+def _write_valid_srt_install(root: Path) -> None:
+    package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
+        encoding="utf-8",
+    )
+    runner_source = Path(srt_runtime.__file__).with_name("srt_runner.mjs")
+    shutil.copyfile(runner_source, root / "runner.mjs")
+    lock_source = Path(srt_runtime.__file__).parents[1] / "install" / "srt-package-lock.json"
+    shutil.copyfile(lock_source, root / "package-lock.json")
+    (root / "receipt.json").write_text(
+        json.dumps(SRT_RELEASE.receipt_fields() | {"node": "/usr/bin/node"}),
+        encoding="utf-8",
+    )
+
+
+def _patch_srt_verification_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+) -> None:
+    monkeypatch.setattr(srt_runtime, "srt_install_root", lambda: root)
+    monkeypatch.setattr(
+        srt_runtime,
+        "node_dependency_status",
+        lambda: DependencyStatus(
+            state="healthy",
+            installed_version="20.11.0",
+            minimum_version="20.11.0",
+            expected_version=None,
+            path="/usr/bin/node",
+            error=None,
+        ),
+    )
+
+
+def test_verify_srt_installation_accepts_release_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    _write_valid_srt_install(root)
+    _patch_srt_verification_runtime(monkeypatch, root)
+
+    installation = verify_srt_installation()
+
+    assert installation.root == root.resolve()
+    assert installation.runner == (root / "runner.mjs").resolve()
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_error"),
+    [
+        ("receipt", "receipt does not match"),
+        ("version", "package identity"),
+        ("runner", "runner checksum"),
+    ],
+)
+def test_verify_srt_installation_rejects_corruption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    corruption: str,
+    expected_error: str,
+) -> None:
+    root = tmp_path / "runtime"
+    _write_valid_srt_install(root)
+    _patch_srt_verification_runtime(monkeypatch, root)
+    if corruption == "receipt":
+        receipt = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
+        receipt["tarball_sha256"] = "wrong"
+        (root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    elif corruption == "version":
+        package_json = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
+        package_json.write_text(
+            json.dumps({"name": SRT_RELEASE.package, "version": "0.0.65"}),
+            encoding="utf-8",
+        )
+    else:
+        (root / "runner.mjs").write_text("corrupted", encoding="utf-8")
+
+    with pytest.raises(SrtRuntimeError, match=expected_error):
         verify_srt_installation()

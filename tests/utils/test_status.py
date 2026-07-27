@@ -12,6 +12,24 @@ from gobby.utils.status import (
 pytestmark = pytest.mark.unit
 
 
+def _dependency(
+    installed_version: str | None,
+    *,
+    minimum_version: str | None = None,
+    expected_version: str | None = None,
+    state: str = "healthy",
+    error: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "state": state,
+        "installed_version": installed_version,
+        "minimum_version": minimum_version,
+        "expected_version": expected_version,
+        "path": "/usr/bin/tool" if installed_version else None,
+        "error": error,
+    }
+
+
 @patch("gobby.utils.status.daemon_auth_headers", return_value={"Authorization": "Bearer status"})
 @patch("httpx.AsyncClient.get")
 async def test_fetch_rich_status_sends_bearer(mock_get, _mock_headers) -> None:
@@ -110,6 +128,63 @@ class TestStatusUtils:
         assert "Daemon control plane:" in msg
         assert "HTTP control plane unavailable at localhost:8080" in msg
 
+    @pytest.mark.parametrize("age", [0.0, 6.0, 119.999])
+    def test_format_status_message_starting_during_control_plane_grace(
+        self,
+        age: float,
+    ) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=1234,
+            control_plane_error="HTTP control plane unavailable",
+            process_uptime_seconds=age,
+        )
+
+        assert "Starting (PID: 1234)" in msg
+        assert "Daemon control plane:" not in msg
+
+    def test_format_status_message_degraded_at_control_plane_grace_boundary(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=1234,
+            control_plane_error="HTTP control plane unavailable",
+            process_uptime_seconds=120.0,
+        )
+
+        assert "Degraded (PID: 1234; HTTP unavailable)" in msg
+        assert "Daemon control plane:" in msg
+
+    def test_required_dependency_failure_degrades_running_daemon(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=1234,
+            api_data={"process": {}},
+            deps_info={
+                "dependencies": {
+                    "required": {
+                        "git": _dependency(
+                            "2.37.0",
+                            minimum_version="2.38.0",
+                            state="outdated",
+                            error=(
+                                "Git is outdated; detected 2.37.0, requires >=2.38.0. Install Git."
+                            ),
+                        )
+                    },
+                    "optional": {"tailscale": _dependency(None, state="missing")},
+                }
+            },
+        )
+
+        assert "Degraded (PID: 1234)" in msg
+        assert "Required dependency git: Git is outdated" in msg
+        assert "Required dependency tailscale" not in msg
+
+    def test_native_windows_status_is_unsupported(self) -> None:
+        msg = format_status_message(running=False, unsupported_platform=True)
+
+        assert "Unsupported (native Windows; use WSL 2)" in msg
+
     def test_format_status_message_stopped(self) -> None:
         msg = format_status_message(running=False)
         assert "Stopped" in msg
@@ -182,15 +257,15 @@ class TestStatusUtils:
                     "codex": None,
                     "hooks": {"claude": True, "qwen": False, "codex": False},
                 },
+                "runtime": {"python": _dependency("3.13.5", minimum_version="3.13.0")},
                 "dependencies": {
-                    "tmux": "installed",
-                    "docker": None,
-                    "docker_running": False,
-                    "git": "installed",
-                    "node": None,
-                    "tailscale": None,
-                    "ollama": None,
-                    "lmstudio": None,
+                    "required": {
+                        "tmux": _dependency("3.7b", minimum_version="3.2"),
+                        "git": _dependency("2.50.1", minimum_version="2.38.0"),
+                        "node": _dependency("26.5.0", minimum_version="20.11.0"),
+                        "srt": _dependency("0.0.66", expected_version="0.0.66"),
+                    },
+                    "optional": {"tailscale": _dependency(None, state="missing")},
                 },
             },
         )
@@ -199,14 +274,18 @@ class TestStatusUtils:
         assert "0.2.0" in msg
         assert "0.6.6" in msg
         assert "Claude Code:" in msg
+        assert "Python:           3.13.5 (min: 3.13.0)" in msg
+        assert "Required Dependencies:" in msg
         assert "tmux:" in msg
         assert "git:" in msg
+        assert "SRT:              0.0.66 (managed, verified)" in msg
+        assert "Optional Dependencies:" in msg
 
     def test_format_status_message_prefers_configured_embeddings_provider(self) -> None:
         msg = format_status_message(
             running=True,
             deps_info={
-                "dependencies": {
+                "integrations": {
                     "embeddings_provider": "lmstudio",
                     "ollama": {"version": "0.1.30", "running": True},
                     "lmstudio": {"running": True},
@@ -219,7 +298,7 @@ class TestStatusUtils:
         msg = format_status_message(
             running=True,
             deps_info={
-                "dependencies": {
+                "integrations": {
                     "embeddings_provider": {
                         "status": "degraded",
                         "error": "BootstrapConfigError",
@@ -234,7 +313,7 @@ class TestStatusUtils:
         msg = format_status_message(
             running=True,
             deps_info={
-                "dependencies": {
+                "integrations": {
                     "embeddings_provider": "openai",
                     "ollama": {"version": "0.1.30", "running": False},
                     "lmstudio": {"running": False},

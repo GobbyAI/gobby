@@ -247,14 +247,17 @@ class TestFormatStatusMessage:
                 },
                 "coding_clis": {"claude": "installed", "qwen": None, "codex": None, "hooks": {}},
                 "dependencies": {
-                    "tmux": "installed",
-                    "docker": None,
-                    "docker_running": False,
-                    "git": "installed",
-                    "node": None,
-                    "tailscale": None,
-                    "ollama": None,
-                    "lmstudio": None,
+                    "required": {
+                        "tmux": {
+                            "state": "healthy",
+                            "installed_version": "3.7b",
+                            "minimum_version": "3.2",
+                            "expected_version": None,
+                            "path": "/usr/bin/tmux",
+                            "error": None,
+                        }
+                    },
+                    "optional": {},
                 },
             },
         )
@@ -265,9 +268,8 @@ class TestFormatStatusMessage:
         assert "0.1.0 (/Users/test/.gobby/bin/gwiki)" in result
         assert "Coding CLIs:" in result
         assert "Claude Code:" in result
-        assert "Dependencies:" in result
+        assert "Required Dependencies:" in result
         assert "tmux:" in result
-        assert "git:" in result
 
     def test_coding_clis_include_qwen_and_droid(self) -> None:
         result = format_status_message(
@@ -305,10 +307,31 @@ class TestFormatStatusMessage:
                     "healthy": True,
                 }
             },
-            deps_info={"dependencies": {"docker": "installed", "docker_running": True}},
+            deps_info={
+                "services": {
+                    "docker": {
+                        "state": "healthy",
+                        "installed_version": "28.0.0",
+                        "minimum_version": None,
+                        "expected_version": None,
+                        "path": "/usr/bin/docker",
+                        "error": None,
+                    },
+                    "docker_running": True,
+                    "docker_compose": {
+                        "state": "healthy",
+                        "installed_version": "2.39.1",
+                        "minimum_version": "2.7.0",
+                        "expected_version": None,
+                        "path": "/usr/bin/docker",
+                        "error": None,
+                    },
+                }
+            },
         )
 
-        assert result.index("Docker:") < result.index("PostgreSQL:")
+        assert result.index("Docker Engine:") < result.index("PostgreSQL:")
+        assert "Docker Compose:   2.39.1 (min: 2.7.0)" in result
 
 
 class TestFormatStartupSummary:

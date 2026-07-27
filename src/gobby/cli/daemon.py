@@ -5,6 +5,7 @@ Daemon management commands.
 import asyncio
 import json
 import logging
+import math
 import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
 import sys
@@ -25,6 +26,11 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 from gobby.runner_pid_file import probe_daemon_lock
+from gobby.utils.dependency_requirements import (
+    collect_dependency_report,
+    required_dependency_errors,
+    unsupported_platform_error,
+)
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
 from .installers.compose_env import (
@@ -62,6 +68,13 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 class ServiceStartResult:
     outcome: Literal["success", "skipped", "failed"]
     detail: str
+
+
+def _start_dependency_errors() -> list[str]:
+    if platform_error := unsupported_platform_error():
+        return [platform_error]
+    report = collect_dependency_report(managed_services=True, include_srt=True)
+    return required_dependency_errors(report)
 
 
 def _services_start(gobby_home: Path) -> ServiceStartResult:
@@ -406,6 +419,11 @@ def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
 
+    if dependency_errors := _start_dependency_errors():
+        for error in dependency_errors:
+            _step(error, error=True)
+        sys.exit(1)
+
     config = get_cli_runtime(ctx).config
     gobby_dir = get_gobby_home()
 
@@ -676,8 +694,13 @@ def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
 
+    if unsupported_platform_error():
+        click.echo(format_status_message(running=False, unsupported_platform=True))
+        sys.exit(0)
+
     config = get_cli_runtime(ctx).config
-    pid_file = get_gobby_home() / "gobby.pid"
+    gobby_home = get_gobby_home()
+    pid_file = gobby_home / "gobby.pid"
     log_dir = resolved_logs_dir(config.logging)
 
     # Read PID from file, falling back to launchctl service detection
@@ -704,10 +727,15 @@ def status(ctx: click.Context) -> None:
         sys.exit(0)
 
     # Get process info for uptime
+    uptime_seconds: float | None = None
     try:
         process = psutil.Process(pid)
-        uptime_seconds = time.time() - process.create_time()
-        uptime_str = format_uptime(uptime_seconds)
+        observed_uptime = time.time() - process.create_time()
+        if observed_uptime >= 0 and math.isfinite(observed_uptime):
+            uptime_seconds = observed_uptime
+            uptime_str = format_uptime(observed_uptime)
+        else:
+            uptime_str = None
     except Exception:
         uptime_str = None
 
@@ -725,7 +753,7 @@ def status(ctx: click.Context) -> None:
         ui_mode = ui_resolution.display
         ui_url = f"http://localhost:{http_port}/"
         if ui_resolution.effective == "dev":
-            ui_pid_file = get_gobby_home() / "ui.pid"
+            ui_pid_file = gobby_home / "ui.pid"
             if ui_pid_file.exists():
                 try:
                     with open(ui_pid_file) as f:
@@ -748,16 +776,33 @@ def status(ctx: click.Context) -> None:
     from gobby.utils.deps import check_config_mismatches, collect_all_deps
 
     try:
-        deps_info = collect_all_deps(require_cli_database(ctx))
+        managed_services = (gobby_home / "services" / "docker-compose.yml").is_file()
+        deps_info = collect_all_deps(
+            require_cli_database(ctx),
+            managed_services=managed_services,
+        )
     except Exception as exc:
         logger.debug("Failed to collect CLI dependency status", exc_info=True)
         deps_info = {
             "dependencies": {
+                "required": {
+                    "status": {
+                        "state": "invalid",
+                        "installed_version": None,
+                        "minimum_version": None,
+                        "expected_version": None,
+                        "path": None,
+                        "error": f"Dependency status collection failed: {type(exc).__name__}",
+                    }
+                },
+                "optional": {},
+            },
+            "integrations": {
                 "embeddings_provider": {
                     "status": "degraded",
                     "error": type(exc).__name__,
                 }
-            }
+            },
         }
     config_issues = check_config_mismatches(config)
 
@@ -793,6 +838,7 @@ def status(ctx: click.Context) -> None:
         deps_info=deps_info,
         config_issues=config_issues,
         control_plane_error=control_plane_error,
+        process_uptime_seconds=uptime_seconds,
     )
     click.echo(message)
     sys.exit(0)

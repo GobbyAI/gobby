@@ -1,7 +1,6 @@
 """Daemon startup helpers for the install command."""
 
 import os
-import platform
 import shutil
 import socket
 import subprocess  # nosec B404 # fixed daemon startup command
@@ -19,6 +18,11 @@ from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
     BootstrapConfigError,
+)
+from gobby.utils.dependency_requirements import (
+    collect_dependency_report,
+    required_dependency_errors,
+    unsupported_platform_error,
 )
 
 
@@ -67,10 +71,19 @@ def _run_install_preflight(
     install_dir: Path,
     embedding_url: str | None,
     embedding_provider: str | None,
+    managed_services: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Return full-install preflight errors and optional warnings."""
     errors: list[str] = []
     warnings: list[str] = []
+
+    if platform_error := unsupported_platform_error():
+        errors.append(platform_error)
+    dependency_report = collect_dependency_report(
+        managed_services=managed_services,
+        include_srt=False,
+    )
+    errors.extend(required_dependency_errors(dependency_report))
 
     if is_full_install:
         if not _docker_daemon_available():
@@ -80,12 +93,6 @@ def _run_install_preflight(
                 "At least one supported coding CLI is required for full install "
                 "(Claude Code, AGY, Codex, Grok, Qwen, or Droid)."
             )
-        python_version = tuple(int(part) for part in platform.python_version_tuple()[:2])
-        if python_version < (3, 13):
-            current = platform.python_version()
-            errors.append(f"Python >= 3.13 is required; current Python is {current}.")
-        if os.name == "posix" and shutil.which("tmux") is None:
-            errors.append("tmux is required on POSIX systems. Install tmux and retry.")
         if _is_source_checkout_install(install_dir) and shutil.which("uv") is None:
             errors.append("uv is required when installing from a source checkout.")
 
@@ -94,11 +101,6 @@ def _run_install_preflight(
                 "No embedding provider override supplied; install will prompt or keep "
                 "semantic features disabled."
             )
-
-    if shutil.which("git") is None:
-        warnings.append(
-            "git was not found on PATH; project initialization and hooks may be limited."
-        )
 
     for port in (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT):
         if not _port_available(port):

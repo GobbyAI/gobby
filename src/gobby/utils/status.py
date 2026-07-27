@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from gobby.utils.dependency_requirements import STARTING_GRACE_SECONDS
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
@@ -141,6 +142,60 @@ def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name
     return f" ({', '.join(parts)})" if parts else ""
 
 
+def _dependency_sections(
+    deps_info: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    info = deps_info or {}
+    dependencies = info.get("dependencies")
+    if not isinstance(dependencies, dict):
+        dependencies = {}
+    required = dependencies.get("required")
+    optional = dependencies.get("optional")
+    runtime = info.get("runtime")
+    return (
+        required if isinstance(required, dict) else {},
+        optional if isinstance(optional, dict) else {},
+        runtime if isinstance(runtime, dict) else {},
+    )
+
+
+def _unhealthy_required_dependencies(deps_info: dict[str, Any] | None) -> list[tuple[str, str]]:
+    required, _, runtime = _dependency_sections(deps_info)
+    unhealthy: list[tuple[str, str]] = []
+    for name, record in {**runtime, **required}.items():
+        if not isinstance(record, dict) or record.get("state") == "healthy":
+            continue
+        error = _safe_status_text(record.get("error")) or "dependency is unhealthy"
+        unhealthy.append((str(name), error))
+    return unhealthy
+
+
+def _format_dependency_record(record: Any, *, managed: bool = False) -> str:
+    if not isinstance(record, dict):
+        return "invalid"
+    state = _safe_status_text(record.get("state")) or "invalid"
+    installed = _safe_status_text(record.get("installed_version"))
+    minimum = _safe_status_text(record.get("minimum_version"))
+    expected = _safe_status_text(record.get("expected_version"))
+    if state == "healthy":
+        value = installed or "verified"
+        if managed:
+            return f"{value} (managed, verified)"
+        if minimum:
+            return f"{value} (min: {minimum})"
+        if expected:
+            return f"{value} (expected: {expected})"
+        return value
+    details: list[str] = []
+    if installed:
+        details.append(f"detected: {installed}")
+    if minimum:
+        details.append(f"min: {minimum}")
+    if expected:
+        details.append(f"expected: {expected}")
+    return f"{state} ({'; '.join(details)})" if details else state
+
+
 def format_status_message(
     *,
     running: bool,
@@ -163,11 +218,21 @@ def format_status_message(
     # Config mismatches
     config_issues: list[dict[str, str]] | None = None,
     control_plane_error: str | None = None,
+    process_uptime_seconds: float | None = None,
+    unsupported_platform: bool = False,
     **kwargs: Any,
 ) -> str:
     """Format the full operational health dashboard for gobby status."""
     lines: list[str] = []
     data = api_data or {}
+    unhealthy_dependencies = _unhealthy_required_dependencies(deps_info)
+    starting = (
+        running
+        and control_plane_error is not None
+        and not unhealthy_dependencies
+        and process_uptime_seconds is not None
+        and process_uptime_seconds < STARTING_GRACE_SECONDS
+    )
 
     lines.append("=" * 70)
     lines.append("GOBBY DAEMON STATUS")
@@ -176,9 +241,16 @@ def format_status_message(
 
     # ---- Runtime ----
     lines.append("Runtime:")
-    if running:
-        if control_plane_error:
-            status_str = f"Degraded (PID: {pid}; HTTP unavailable)" if pid else "Degraded"
+    if unsupported_platform:
+        lines.append(f"  {'Status:':<{_LW}}Unsupported (native Windows; use WSL 2)")
+    elif running:
+        if starting:
+            status_str = f"Starting (PID: {pid})" if pid else "Starting"
+        elif control_plane_error or unhealthy_dependencies:
+            if control_plane_error:
+                status_str = f"Degraded (PID: {pid}; HTTP unavailable)" if pid else "Degraded"
+            else:
+                status_str = f"Degraded (PID: {pid})" if pid else "Degraded"
         else:
             status_str = f"Running (PID: {pid})" if pid else "Running"
         lines.append(f"  {'Status:':<{_LW}}{status_str}")
@@ -217,6 +289,11 @@ def format_status_message(
     else:
         lines.append(f"  {'Status:':<{_LW}}Stopped")
 
+    _, _, runtime_dependencies = _dependency_sections(deps_info)
+    python_status = runtime_dependencies.get("python")
+    if python_status:
+        lines.append(f"  {'Python:':<{_LW}}{_format_dependency_record(python_status)}")
+
     lines.append("")
 
     # ---- Network ----
@@ -228,7 +305,7 @@ def format_status_message(
             lines.append(f"  {'WebSocket:':<{_LW}}localhost:{websocket_port}")
 
         # Tailscale
-        ts_info = (deps_info or {}).get("dependencies", {}).get("tailscale")
+        ts_info = (deps_info or {}).get("integrations", {}).get("tailscale")
         if ts_info and isinstance(ts_info, dict) and ts_info.get("hostname"):
             ts_line = f"https://{ts_info['hostname']}"
             if ts_info.get("serving"):
@@ -288,14 +365,20 @@ def format_status_message(
     # ---- Services ----
     if running:
         lines.append("Services:")
-        dep = (deps_info or {}).get("dependencies", {})
+        services = (deps_info or {}).get("services", {})
+        integrations = (deps_info or {}).get("integrations", {})
 
-        # Docker
-        docker_ver = dep.get("docker")
-        if docker_ver:
-            docker_running = dep.get("docker_running", False)
-            status_str = "running" if docker_running else "stopped"
-            lines.append(f"  {'Docker:':<{_LW}}{status_str} (v{docker_ver})")
+        # Docker Engine and Compose
+        docker = services.get("docker") if isinstance(services, dict) else None
+        if docker:
+            docker_detail = _format_dependency_record(docker)
+            if isinstance(docker, dict) and docker.get("state") == "healthy":
+                docker_state = "running" if services.get("docker_running") else "stopped"
+                docker_detail = f"{docker_detail} ({docker_state})"
+            lines.append(f"  {'Docker Engine:':<{_LW}}{docker_detail}")
+        compose = services.get("docker_compose") if isinstance(services, dict) else None
+        if compose:
+            lines.append(f"  {'Docker Compose:':<{_LW}}{_format_dependency_record(compose)}")
 
         # PostgreSQL hub
         postgres_status = _format_postgres_service_status(data.get("postgres"))
@@ -323,9 +406,9 @@ def format_status_message(
                 lines.append(f"  {'FalkorDB:':<{_LW}}not installed")
 
         # Embeddings
-        configured_embeddings_provider = dep.get("embeddings_provider")
-        ollama = dep.get("ollama")
-        lmstudio = dep.get("lmstudio")
+        configured_embeddings_provider = integrations.get("embeddings_provider")
+        ollama = integrations.get("ollama")
+        lmstudio = integrations.get("lmstudio")
         if (
             isinstance(configured_embeddings_provider, dict)
             and configured_embeddings_provider.get("status") == "degraded"
@@ -382,24 +465,28 @@ def format_status_message(
         lines.append("")
 
     # ---- Dependencies ----
-    if deps_info and deps_info.get("dependencies"):
-        dep = deps_info["dependencies"]
-        dep_items: list[tuple[str, str | None]] = [
-            ("tmux", dep.get("tmux")),
-            ("git", dep.get("git")),
-            ("node", dep.get("node")),
-        ]
-        # Add tailscale version (not the full info dict)
-        ts = dep.get("tailscale")
-        ts_ver = ts.get("version") if isinstance(ts, dict) else None
-        dep_items.append(("tailscale", ts_ver))
+    required_dependencies, optional_dependencies, _ = _dependency_sections(deps_info)
+    if required_dependencies:
+        labels = {
+            "tmux": "tmux",
+            "git": "git",
+            "node": "node",
+            "srt": "SRT",
+        }
+        lines.append("Required Dependencies:")
+        for name, record in required_dependencies.items():
+            if name == "docker_compose":
+                continue
+            label = labels.get(name, name)
+            lines.append(
+                f"  {label + ':':<{_LW}}{_format_dependency_record(record, managed=name == 'srt')}"
+            )
+        lines.append("")
 
-        lines.append("Dependencies:")
-        for name, version in dep_items:
-            if version:
-                lines.append(f"  {name + ':':<{_LW}}{version}")
-            else:
-                lines.append(f"  {name + ':':<{_LW}}not installed")
+    if optional_dependencies:
+        lines.append("Optional Dependencies:")
+        for name, record in optional_dependencies.items():
+            lines.append(f"  {name + ':':<{_LW}}{_format_dependency_record(record)}")
         lines.append("")
 
     # ---- Active Work (only if non-zero) ----
@@ -442,8 +529,11 @@ def format_status_message(
     # ---- Health Issues (only if problems exist) ----
     health_issues: list[str] = []
 
-    if control_plane_error:
+    if control_plane_error and not starting:
         health_issues.append(f"Daemon control plane: {control_plane_error}")
+
+    for name, error in unhealthy_dependencies:
+        health_issues.append(f"Required dependency {name}: {error}")
 
     degraded_services = data.get("degraded_services")
     if isinstance(degraded_services, list):

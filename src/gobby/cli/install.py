@@ -430,23 +430,6 @@ def install(
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
 
-    falkordb_password: str | None = None
-    if falkordb_password_stdin:
-        falkordb_password = sys.stdin.read().strip()
-        if not falkordb_password:
-            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
-
-    if falkordb_flag:
-        service_results: dict[str, dict[str, Any]] = {}
-        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
-        service_results["container-restarts"] = apply_managed_service_restart_policy(
-            enabled=container_restarts_flag,
-            containers=(FALKORDB_CONTAINER,),
-        )
-        if not _echo_install_summary(service_results, no_interactive_flag):
-            sys.exit(1)
-        return
-
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
     if project_flag and agy_flag:
@@ -472,6 +455,7 @@ def install(
     clis_to_install: list[str] = []
 
     install_hooks = hooks_flag
+    no_supported_cli = False
 
     if all_flag:
         # Auto-detect installed CLIs
@@ -493,19 +477,8 @@ def install(
             install_hooks = True
 
         if not clis_to_install and not install_hooks:
-            click.echo("No supported AI coding CLIs detected.")
-            click.echo("\nSupported CLIs:")
-            click.echo("  - Claude Code: npm install -g @anthropic-ai/claude-code")
-            click.echo("  - Grok CLI:    install the Grok CLI")
-            click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
-            click.echo("  - Codex CLI:   npm install -g @openai/codex")
-            click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
-            click.echo("  - AGY CLI:     install Google Antigravity CLI")
-            click.echo(
-                "\nYou can still install manually with --claude, --grok, --qwen, "
-                "--agy, --codex, or --droid flags."
-            )
-            sys.exit(1)
+            no_supported_cli = True
+
     else:
         if claude_flag:
             clis_to_install.append("claude")
@@ -530,13 +503,44 @@ def install(
         install_dir=install_dir,
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
+        managed_services=is_full_install or falkordb_flag,
     )
+    if no_supported_cli:
+        click.echo("No supported AI coding CLIs detected.")
+        click.echo("\nSupported CLIs:")
+        click.echo("  - Claude Code: npm install -g @anthropic-ai/claude-code")
+        click.echo("  - Grok CLI:    install the Grok CLI")
+        click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
+        click.echo("  - Codex CLI:   npm install -g @openai/codex")
+        click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
+        click.echo("  - AGY CLI:     install Google Antigravity CLI")
+        click.echo(
+            "\nYou can still install manually with --claude, --grok, --qwen, "
+            "--agy, --codex, or --droid flags."
+        )
     for warning in preflight_warnings:
         click.echo(f"Warning: {warning}")
     if preflight_errors:
         for error in preflight_errors:
             click.echo(f"Error: {error}", err=True)
         sys.exit(1)
+
+    falkordb_password: str | None = None
+    if falkordb_password_stdin:
+        falkordb_password = sys.stdin.read().strip()
+        if not falkordb_password:
+            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
+
+    if falkordb_flag:
+        service_results: dict[str, dict[str, Any]] = {}
+        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
+        service_results["container-restarts"] = apply_managed_service_restart_policy(
+            enabled=container_restarts_flag,
+            containers=(FALKORDB_CONTAINER,),
+        )
+        if not _echo_install_summary(service_results, no_interactive_flag):
+            sys.exit(1)
+        return
 
     initialize_project_after_setup = not config_only_flag and _should_initialize_project(
         project_path,

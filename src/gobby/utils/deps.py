@@ -19,6 +19,7 @@ import psycopg
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.utils.dependency_requirements import collect_dependency_report
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
 if TYPE_CHECKING:
@@ -521,7 +522,7 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def collect_all_deps(db: HubDatabase) -> dict[str, Any]:
+def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, Any]:
     """Collect all dependency info for status display.
 
     Returns structured dict with all sections.
@@ -539,6 +540,10 @@ def collect_all_deps(db: HubDatabase) -> dict[str, Any]:
         logger.debug("Failed to probe embeddings provider for status", exc_info=True)
         embeddings_provider = {"status": "degraded", "error": type(exc).__name__}
 
+    dependency_payload = collect_dependency_report(
+        managed_services=managed_services,
+        include_srt=True,
+    ).to_payload()
     return {
         "gobby": {
             "gobby": get_gobby_version(),
@@ -558,12 +563,8 @@ def collect_all_deps(db: HubDatabase) -> dict[str, Any]:
             "agy": get_agy_cli_version(),
             "hooks": get_coding_cli_hooks_status(),
         },
-        "dependencies": {
-            "tmux": get_tmux_version(),
-            "docker": get_docker_version(),
-            "docker_running": get_docker_running(),
-            "git": get_git_version(),
-            "node": get_node_version(),
+        **dependency_payload,
+        "integrations": {
             "tailscale": get_tailscale_info(),
             "embeddings_provider": embeddings_provider,
             "ollama": get_ollama_info(),

@@ -24,9 +24,21 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _mock_required_docker_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+def _mock_daemon_command_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_daemon_config: MagicMock,
+) -> None:
     from gobby.cli.daemon import ServiceStartResult
 
+    monkeypatch.setattr(
+        "gobby.cli.runtime.CliRuntime.require_database",
+        lambda _runtime: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "gobby.cli.load_full_config_from_db",
+        lambda *_args, **_kwargs: mock_daemon_config,
+    )
+    monkeypatch.setattr("gobby.cli.daemon._start_dependency_errors", lambda: [])
     monkeypatch.setattr(
         "gobby.cli.daemon._services_start",
         lambda _home: ServiceStartResult("success", "Docker services started"),
@@ -266,6 +278,29 @@ class TestStartCommand:
 
         assert result.exit_code == 2
         assert "No such option '--docker'" in result.output
+
+    def test_start_rejects_unhealthy_dependency_before_services(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        runner: CliRunner,
+    ) -> None:
+        services_start = MagicMock()
+        monkeypatch.setattr(
+            "gobby.cli.daemon._start_dependency_errors",
+            lambda: [
+                "Git is outdated; detected 2.37.0, requires >=2.38.0. "
+                "Install Git 2.38.0 or newer and retry."
+            ],
+        )
+        monkeypatch.setattr("gobby.cli.daemon._services_start", services_start)
+
+        result = runner.invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert "Git is outdated" in result.output
+        assert "detected 2.37.0" in result.output
+        assert "requires >=2.38.0" in result.output
+        services_start.assert_not_called()
 
     @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
@@ -1457,6 +1492,21 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Show Gobby daemon operational health dashboard" in result.output
 
+    def test_status_reports_native_windows_as_unsupported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        runner: CliRunner,
+    ) -> None:
+        monkeypatch.setattr(
+            "gobby.cli.daemon.unsupported_platform_error",
+            lambda: "Native Windows is unsupported; use WSL 2.",
+        )
+
+        result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert "Unsupported (native Windows; use WSL 2)" in result.output
+
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.load_full_config_from_db")
@@ -1948,7 +1998,7 @@ class TestEdgeCases:
         mock_collect_deps.return_value = {
             "gobby": {},
             "coding_clis": {},
-            "dependencies": {
+            "integrations": {
                 "embeddings_provider": "lmstudio",
                 "ollama": {"version": "0.1.30", "running": True},
                 "lmstudio": {"running": True},

@@ -17,6 +17,7 @@ from gobby.config.embedding_keys import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import deps
+from gobby.utils.dependency_requirements import DependencyReport, DependencyStatus
 from gobby.utils.status import format_status_message
 
 
@@ -580,6 +581,14 @@ def test_check_config_mismatches_ignores_non_string_chat_candidates() -> None:
 
 
 def test_collect_all_deps() -> None:
+    healthy = DependencyStatus(
+        state="healthy",
+        installed_version="9",
+        minimum_version="1",
+        expected_version=None,
+        path="/bin/tool",
+        error=None,
+    )
     with (
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
@@ -590,24 +599,29 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_droid_cli_version", return_value="6.5"),
         patch("gobby.utils.deps.get_qwen_cli_version", return_value="6.7"),
         patch("gobby.utils.deps.get_coding_cli_hooks_status", return_value={}),
-        patch("gobby.utils.deps.get_tmux_version", return_value="7"),
-        patch("gobby.utils.deps.get_docker_version", return_value="8"),
-        patch("gobby.utils.deps.get_docker_running", return_value=True),
-        patch("gobby.utils.deps.get_git_version", return_value="9"),
-        patch("gobby.utils.deps.get_node_version", return_value="10"),
+        patch(
+            "gobby.utils.deps.collect_dependency_report",
+            return_value=DependencyReport(
+                runtime={"python": healthy},
+                required={"git": healthy},
+                optional={},
+                services={"docker_running": True},
+            ),
+        ),
         patch("gobby.utils.deps.get_tailscale_info", return_value={}),
         patch("gobby.utils.deps.get_configured_embedding_provider", return_value="lmstudio"),
         patch("gobby.utils.deps.get_ollama_info", return_value={}),
         patch("gobby.utils.deps.get_lmstudio_info", return_value={}),
     ):
-        res = deps.collect_all_deps(MagicMock())
+        res = deps.collect_all_deps(MagicMock(), managed_services=True)
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
         assert res["gobby"]["gwiki"] == "3.7"
         assert res["coding_clis"]["droid"] == "6.5"
         assert res["coding_clis"]["qwen"] == "6.7"
-        assert res["dependencies"]["docker_running"] is True
-        assert res["dependencies"]["embeddings_provider"] == "lmstudio"
+        assert res["services"]["docker_running"] is True
+        assert res["dependencies"]["required"]["git"]["state"] == "healthy"
+        assert res["integrations"]["embeddings_provider"] == "lmstudio"
 
 
 @pytest.mark.parametrize(
@@ -618,14 +632,25 @@ def test_collect_all_deps() -> None:
     ],
 )
 def test_collect_all_deps_degrades_when_embeddings_probe_fails(error: Exception) -> None:
-    with patch(
-        "gobby.utils.deps.get_configured_embedding_provider",
-        side_effect=error,
+    with (
+        patch(
+            "gobby.utils.deps.get_configured_embedding_provider",
+            side_effect=error,
+        ),
+        patch(
+            "gobby.utils.deps.collect_dependency_report",
+            return_value=DependencyReport(
+                runtime={},
+                required={},
+                optional={},
+                services={},
+            ),
+        ),
     ):
-        res = deps.collect_all_deps(MagicMock())
+        res = deps.collect_all_deps(MagicMock(), managed_services=False)
 
     error_name = type(error).__name__
-    assert res["dependencies"]["embeddings_provider"] == {
+    assert res["integrations"]["embeddings_provider"] == {
         "status": "degraded",
         "error": error_name,
     }

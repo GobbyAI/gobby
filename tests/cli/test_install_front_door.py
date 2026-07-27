@@ -10,10 +10,32 @@ from unittest.mock import MagicMock, call
 import pytest
 from click.testing import CliRunner
 
+from gobby.utils.dependency_requirements import (
+    DependencyReport,
+    DependencyState,
+    DependencyStatus,
+)
+
 daemon_module = importlib.import_module("gobby.cli._install_daemon")
 install_module = importlib.import_module("gobby.cli.install")
 
 pytestmark = pytest.mark.unit
+
+
+def _dependency(
+    state: DependencyState,
+    *,
+    name: str,
+    minimum: str,
+) -> DependencyStatus:
+    return DependencyStatus(
+        state=state,
+        installed_version=None,
+        minimum_version=minimum,
+        expected_version=None,
+        path=None,
+        error=f"{name} is missing; detected version unavailable, requires >={minimum}. Install it.",
+    )
 
 
 def test_port_available_sets_reuseaddr_before_timeout_and_bind(
@@ -65,6 +87,21 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
     monkeypatch.setattr(daemon_module, "_is_source_checkout_install", lambda _path: True)
     monkeypatch.setattr(daemon_module, "_port_available", lambda _port: True)
     monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        daemon_module,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(
+            runtime={},
+            required={
+                "tmux": _dependency("missing", name="tmux", minimum="3.2"),
+                "git": _dependency("missing", name="Git", minimum="2.38.0"),
+                "node": _dependency("missing", name="Node.js", minimum="20.11.0"),
+                "docker_compose": _dependency("missing", name="Docker Compose", minimum="2.7.0"),
+            },
+            optional={},
+            services={},
+        ),
+    )
 
     errors, warnings = daemon_module._run_install_preflight(
         is_full_install=True,
@@ -72,22 +109,36 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
         install_dir=Path("/repo/src/gobby/install"),
         embedding_url=None,
         embedding_provider=None,
+        managed_services=True,
     )
 
     assert any("Docker daemon" in error for error in errors)
     assert any("At least one supported coding CLI" in error for error in errors)
     assert any("tmux" in error for error in errors)
+    assert any("Git" in error for error in errors)
+    assert any("Node.js" in error for error in errors)
+    assert any("Docker Compose" in error for error in errors)
     assert any("uv" in error for error in errors)
     assert any("embedding provider" in warning for warning in warnings)
-    assert any("git was not found" in warning for warning in warnings)
+    assert not warnings or all("git" not in warning for warning in warnings)
 
 
-def test_targeted_preflight_skips_full_install_requirements(
+def test_targeted_preflight_still_requires_user_managed_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(daemon_module, "_docker_daemon_available", lambda: False)
     monkeypatch.setattr(daemon_module, "_port_available", lambda _port: True)
     monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        daemon_module,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(
+            runtime={},
+            required={"git": _dependency("missing", name="Git", minimum="2.38.0")},
+            optional={},
+            services={},
+        ),
+    )
 
     errors, warnings = daemon_module._run_install_preflight(
         is_full_install=False,
@@ -97,8 +148,39 @@ def test_targeted_preflight_skips_full_install_requirements(
         embedding_provider=None,
     )
 
-    assert errors == []
-    assert any("git was not found" in warning for warning in warnings)
+    assert any("Git is missing" in error for error in errors)
+    assert warnings == []
+
+
+def test_install_preflight_rejects_native_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        daemon_module,
+        "unsupported_platform_error",
+        lambda: "Native Windows is unsupported. Install and run Gobby inside WSL 2.",
+    )
+    monkeypatch.setattr(
+        daemon_module,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(
+            runtime={},
+            required={},
+            optional={},
+            services={},
+        ),
+    )
+    monkeypatch.setattr(daemon_module, "_port_available", lambda _port: True)
+
+    errors, _warnings = daemon_module._run_install_preflight(
+        is_full_install=False,
+        detected_clis=[],
+        install_dir=Path("/installed/gobby"),
+        embedding_url=None,
+        embedding_provider=None,
+    )
+
+    assert errors == ["Native Windows is unsupported. Install and run Gobby inside WSL 2."]
 
 
 def test_full_install_exits_before_provisioning_without_docker(
@@ -125,6 +207,65 @@ def test_full_install_exits_before_provisioning_without_docker(
     assert result.exit_code == 1
     assert "Docker daemon is required for full install" in result.output
     install_postgres.assert_not_called()
+
+
+def test_config_only_requires_git_before_provisioning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ensure_config = MagicMock()
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        install_module,
+        "_run_install_preflight",
+        lambda **_kwargs: (
+            [
+                "Git is missing; detected version unavailable, requires >=2.38.0. "
+                "Install Git 2.38.0 or newer and retry."
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(install_module, "_ensure_daemon_config", ensure_config)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--config-only", "--path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Git is missing" in result.output
+    ensure_config.assert_not_called()
+
+
+def test_config_only_allows_non_repository_personal_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "bootstrap.yaml"
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        install_module,
+        "_run_install_preflight",
+        lambda **_kwargs: ([], []),
+    )
+    monkeypatch.setattr(
+        install_module,
+        "_ensure_daemon_config",
+        lambda: {"created": False, "path": str(config_path)},
+    )
+    run_setup = MagicMock()
+    monkeypatch.setattr(install_module, "run_daemon_setup", run_setup)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--config-only", "--path", str(tmp_path)],
+    )
+
+    assert not (tmp_path / ".git").exists()
+    assert result.exit_code == 0
+    assert "Configuration and database initialization complete." in result.output
+    run_setup.assert_called_once()
 
 
 def test_should_initialize_project_auto_yes_only_for_no_interactive(tmp_path: Path) -> None:

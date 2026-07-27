@@ -317,7 +317,13 @@ class TestInstallCommand:
         mock_codex.return_value = False
         mock_droid.return_value = False
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        with (
+            patch(
+                "gobby.cli.runtime.CliRuntime.require_database",
+                return_value=MagicMock(),
+            ),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
             result = runner.invoke(cli, ["install"])
 
             assert result.exit_code == 1

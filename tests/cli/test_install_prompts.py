@@ -398,6 +398,7 @@ class TestInstallCommandSharedStores:
                 auth_mode="local",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
+                container_restarts_flag=True,
                 working_dir=tmp_path,
             )
 
@@ -469,6 +470,7 @@ class TestInstallCommandSharedStores:
                 auth_mode="disabled",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
+                container_restarts_flag=True,
                 working_dir=tmp_path,
             )
 
@@ -535,6 +537,7 @@ class TestInstallCommandSharedStores:
                 auth_mode="disabled",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
+                container_restarts_flag=True,
                 working_dir=tmp_path,
             )
 
@@ -626,6 +629,7 @@ class TestInstallCommandSharedStores:
                 auth_mode="disabled",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
+                container_restarts_flag=True,
                 working_dir=tmp_path,
             )
 

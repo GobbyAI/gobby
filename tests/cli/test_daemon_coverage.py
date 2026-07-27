@@ -401,11 +401,24 @@ class TestStatusCommand:
         assert "Running PID 123" in result.output
         assert mock_format.call_args.kwargs["deps_info"] == {
             "dependencies": {
+                "required": {
+                    "status": {
+                        "state": "invalid",
+                        "installed_version": None,
+                        "minimum_version": None,
+                        "expected_version": None,
+                        "path": None,
+                        "error": "Dependency status collection failed: RuntimeError",
+                    }
+                },
+                "optional": {},
+            },
+            "integrations": {
                 "embeddings_provider": {
                     "status": "degraded",
                     "error": "RuntimeError",
                 }
-            }
+            },
         }
 
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
