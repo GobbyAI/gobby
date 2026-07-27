@@ -408,7 +408,7 @@ def register_core_routes(
                         and first_activity_ms_ago >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS
                         and should_emit_statusline_gap_warning(session.id, now)
                     ):
-                        logger.warning(
+                        logger.debug(
                             "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
                             "first_activity_ms_ago=%s last_activity_ms_ago=%s",
                             session.id,

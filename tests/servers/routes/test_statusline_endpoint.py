@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,15 +21,15 @@ NOW_ISO = "2026-03-17T12:00:00+00:00"
 
 
 @pytest.fixture(autouse=True)
-def _reset_statusline_trackers():
+def _reset_statusline_trackers() -> Iterator[None]:
     """Keep module-level trackers isolated per test."""
     statusline_activity.reset_for_tests()
     yield
     statusline_activity.reset_for_tests()
 
 
-def _make_session(**overrides) -> MagicMock:
-    defaults = {
+def _make_session(**overrides: object) -> MagicMock:
+    defaults: dict[str, object] = {
         "id": "sess-abc123",
         "external_id": "ext-123",
         "machine_id": "machine-1",
@@ -84,7 +85,9 @@ def client(mock_server: MagicMock, mock_hook_manager: MagicMock) -> TestClient:
 class TestStatuslineEndpoint:
     """Tests for POST /statusline endpoint."""
 
-    def test_updates_usage_for_known_session(self, client, mock_server) -> None:
+    def test_updates_usage_for_known_session(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
         mock_server.session_manager.update_usage.return_value = True
@@ -123,7 +126,7 @@ class TestStatuslineEndpoint:
         )
 
     def test_preserves_one_million_session_model_in_storage_and_broadcast(
-        self, client, mock_server
+        self, client: TestClient, mock_server: MagicMock
     ) -> None:
         session = _make_session(model="claude-opus-4-8[1m]")
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -148,7 +151,7 @@ class TestStatuslineEndpoint:
         assert payload["context_window"] == 1_000_000
 
     def test_prunes_statusline_trackers_once_without_changing_activity(
-        self, client, mock_server
+        self, client: TestClient, mock_server: MagicMock
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -185,7 +188,9 @@ class TestStatuslineEndpoint:
         assert current_state.first_activity_since_statusline is None
         assert current_state.last_activity_since_statusline is None
 
-    def test_returns_warning_for_unknown_session(self, client, mock_server) -> None:
+    def test_returns_warning_for_unknown_session(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_server.session_manager.find_active_by_external_id.return_value = None
 
         response = client.post(
@@ -200,14 +205,14 @@ class TestStatuslineEndpoint:
         assert data["status"] == "ok"
         assert data["warning"] == "session_not_found"
 
-    def test_rejects_missing_session_id(self, client) -> None:
+    def test_rejects_missing_session_id(self, client: TestClient) -> None:
         response = client.post(
             "/api/sessions/statusline",
             json={"input_tokens": 100},
         )
         assert response.status_code == 400
 
-    def test_rejects_invalid_json(self, client) -> None:
+    def test_rejects_invalid_json(self, client: TestClient) -> None:
         response = client.post(
             "/api/sessions/statusline",
             content=b"not json",
@@ -215,7 +220,9 @@ class TestStatuslineEndpoint:
         )
         assert response.status_code == 400
 
-    def test_ignores_client_disconnect_while_reading_json(self, client, mock_server) -> None:
+    def test_ignores_client_disconnect_while_reading_json(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         with patch(
             "starlette.requests.Request.json",
             new=AsyncMock(side_effect=ClientDisconnect()),
@@ -231,7 +238,7 @@ class TestStatuslineEndpoint:
         mock_server.session_manager.find_active_by_external_id.assert_not_called()
         mock_server.session_manager.update_usage.assert_not_called()
 
-    def test_defaults_missing_fields(self, client, mock_server) -> None:
+    def test_defaults_missing_fields(self, client: TestClient, mock_server: MagicMock) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
         mock_server.session_manager.update_usage.return_value = True
@@ -264,7 +271,9 @@ class TestStatuslineEndpoint:
             "context_window_size",
         ],
     )
-    def test_rejects_invalid_usage_values(self, client, mock_server, field: str) -> None:
+    def test_rejects_invalid_usage_values(
+        self, client: TestClient, mock_server: MagicMock, field: str
+    ) -> None:
         response = client.post(
             "/api/sessions/statusline",
             json={"session_id": "ext-123", field: "invalid"},
@@ -275,7 +284,11 @@ class TestStatuslineEndpoint:
         mock_server.session_manager.update_usage.assert_not_called()
 
     def test_does_not_log_usage_gap_for_routine_updates(
-        self, client, mock_server, caplog, enable_log_propagation
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -298,8 +311,12 @@ class TestStatuslineEndpoint:
         assert response_two.status_code == 200
         assert "statusline_usage_gap" not in caplog.text
 
-    def test_warns_for_anomalous_gap_with_concurrent_session_activity(
-        self, client, mock_server, caplog, enable_log_propagation
+    def test_debug_logs_anomalous_gap_with_concurrent_session_activity(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -312,7 +329,7 @@ class TestStatuslineEndpoint:
                 autospec=True,
             ) as mock_datetime,
             patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
-            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.sessions.core"),
         ):
             mock_datetime.now.side_effect = [start, start + timedelta(seconds=605)]
 
@@ -330,6 +347,13 @@ class TestStatuslineEndpoint:
         assert "threshold_ms=600000" in caplog.text
         assert "first_activity_ms_ago=545000" in caplog.text
         assert "last_activity_ms_ago=5000" in caplog.text
+        gap_records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("statusline_usage_gap session_id=")
+        ]
+        assert len(gap_records) == 1
+        assert gap_records[0].levelno == logging.DEBUG
         mock_counter.assert_any_call(
             "statusline_usage_gap_warnings_total", attributes={"source": "claude"}
         )
@@ -338,7 +362,11 @@ class TestStatuslineEndpoint:
         )
 
     def test_suppresses_warning_for_recent_activity_pulse_after_long_gap(
-        self, client, mock_server, caplog, enable_log_propagation
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -367,8 +395,12 @@ class TestStatuslineEndpoint:
             {"attributes": {"source": "claude"}},
         ) not in [(call.args[0], call.kwargs) for call in mock_counter.call_args_list if call.args]
 
-    def test_throttles_repeated_anomalous_gap_warnings(
-        self, client, mock_server, caplog, enable_log_propagation
+    def test_throttles_repeated_anomalous_gap_debug_logs(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -381,7 +413,7 @@ class TestStatuslineEndpoint:
                 autospec=True,
             ) as mock_datetime,
             patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
-            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+            caplog.at_level(logging.DEBUG, logger="gobby.servers.routes.sessions.core"),
         ):
             mock_datetime.now.side_effect = [
                 start,
@@ -407,7 +439,11 @@ class TestStatuslineEndpoint:
         assert len(warning_counter_calls) == 1
 
     def test_suppresses_gap_when_session_is_otherwise_quiet(
-        self, client, mock_server, caplog, enable_log_propagation
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -431,7 +467,11 @@ class TestStatuslineEndpoint:
         assert "statusline_usage_gap" not in caplog.text
 
     def test_suppresses_gap_when_activity_predates_previous_statusline(
-        self, client, mock_server, caplog, enable_log_propagation
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
@@ -458,7 +498,11 @@ class TestStatuslineEndpoint:
         assert "statusline_usage_gap" not in caplog.text
 
     def test_no_warning_when_gap_under_threshold_even_with_activity(
-        self, client, mock_server, caplog, enable_log_propagation
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         session = _make_session()
         mock_server.session_manager.find_active_by_external_id.return_value = session
