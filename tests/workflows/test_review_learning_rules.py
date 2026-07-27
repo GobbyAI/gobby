@@ -153,7 +153,7 @@ class TestReviewLearningRule:
         assert json.loads(calls[0]["args"]["file_paths_json"]) == [
             "crates/gcode/src/config/services.rs"
         ]
-        assert calls[0]["args"]["session_id"] == PLATFORM_SESSION_ID
+        assert "session_id" not in calls[0]["args"]
 
     @pytest.mark.asyncio
     async def test_mutation_injects_before_write(self, temp_db: HubDatabase) -> None:

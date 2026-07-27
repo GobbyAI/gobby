@@ -379,7 +379,7 @@
     "workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml": "6d8c015447a39e8cfb4f719f2e0ec551229f8f1f2a3c607571daa268baa63e94",
     "workflows/rules/review-learning/inject-planner-lessons.yaml": "02592f81269e54ef3538844530b9de845fa8c4a4e6c3445a86ebb1ad854b0cf8",
     "workflows/rules/review-learning/inject-qa-reviewer-lessons.yaml": "39303e30b7395467192b759239993dd972feb56513bf28c8fb44ddf10bafdf1d",
-    "workflows/rules/review-learning/inject-review-lessons-for-touched-files.yaml": "7677ed115cb84c38fa9a4d5dbdfec0a9df23957ccb48c67bd86bb08a245fdf4d",
+    "workflows/rules/review-learning/inject-review-lessons-for-touched-files.yaml": "42311af2a39f6a0760674fdbc842cf2cf27724ce86b0b8cf961a57e97f1c1034",
     "workflows/rules/reviewer-lifecycle/terminal-verdict-after-validation.yaml": "9ac65c51f84737bf505a8477136a8b1a2a73cd5a0316c1f0a7d44b0a13264b01",
     "workflows/rules/skill-discovery/discover-skill-hubs-on-turn-start.yaml": "9887e546686c720dcec1de35c933e26c141be71bed480a533d000e539f056640",
     "workflows/rules/skill-discovery/require-bash-skill.yaml": "b1bc2ed3a04821b6f98dc4659972c90f9f6bbeaa205bddf660240b272da40806",
