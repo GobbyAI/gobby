@@ -223,7 +223,6 @@ class Task:
     category: str | None = None
     validation_criteria: str | None = None
     validation_fail_count: int = 0
-    validation_epoch: int = 0
     dispatch_failure_count: int = 0
     validation_override_reason: str | None = None  # Why agent bypassed validation
     merge_in_progress: bool = False
@@ -316,7 +315,6 @@ class Task:
             validation_fail_count=(
                 row["validation_fail_count"] if "validation_fail_count" in keys else 0
             ),
-            validation_epoch=row["validation_epoch"] if "validation_epoch" in keys else 0,
             dispatch_failure_count=(
                 row["dispatch_failure_count"] if "dispatch_failure_count" in keys else 0
             ),
@@ -388,7 +386,6 @@ class Task:
             "category": self.category,
             "validation_criteria": self.validation_criteria,
             "validation_fail_count": self.validation_fail_count,
-            "validation_epoch": self.validation_epoch,
             "dispatch_failure_count": self.dispatch_failure_count,
             "validation_override_reason": self.validation_override_reason,
             "merge_in_progress": self.merge_in_progress,
@@ -442,7 +439,6 @@ class Task:
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,
             "validation_fail_count": self.validation_fail_count,
-            "validation_epoch": self.validation_epoch,
             "dispatch_failure_count": self.dispatch_failure_count,
             "merge_in_progress": self.merge_in_progress,
             "blocked_by_merge": self.blocked_by_merge,

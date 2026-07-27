@@ -33,12 +33,10 @@ from gobby.hooks.session_ref_resolution import (
 )
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
-from gobby.hooks.verification_receipt_stage import ingest_hook_verification_receipt
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
-from gobby.workflows.verification_receipt_ingestion import VerificationReceiptIngestionError
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -256,8 +254,6 @@ class HookManager:
     def handle(
         self,
         event: HookEvent,
-        *,
-        fail_closed_verification_receipts: bool = False,
     ) -> HookResponse:
         """Handle a unified HookEvent from any CLI source."""
         with create_span(
@@ -272,16 +268,6 @@ class HookManager:
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
-            except VerificationReceiptIngestionError as e:
-                if span.is_recording():
-                    span.record_exception(e)
-                if fail_closed_verification_receipts:
-                    raise
-                self.logger.warning(
-                    "Verification receipt ingestion failed on non-HTTP hook path",
-                    extra={"identity": e.identity},
-                )
-                return HookResponse(decision="allow")
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)
@@ -290,8 +276,6 @@ class HookManager:
     async def handle_async(
         self,
         event: HookEvent,
-        *,
-        fail_closed_verification_receipts: bool = False,
     ) -> HookResponse:
         """Async entry point for event-loop hook callers."""
         with create_span(
@@ -306,16 +290,6 @@ class HookManager:
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
-            except VerificationReceiptIngestionError as e:
-                if span.is_recording():
-                    span.record_exception(e)
-                if fail_closed_verification_receipts:
-                    raise
-                self.logger.warning(
-                    "Verification receipt ingestion failed on non-HTTP hook path",
-                    extra={"identity": e.identity},
-                )
-                return HookResponse(decision="allow")
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)
@@ -412,11 +386,6 @@ class HookManager:
                     return HookResponse(decision="allow")
                 self._session_lookup.apply_session_mutations(event, platform_session_id)
             self._record_session_activity_pulse(event)
-            ingest_hook_verification_receipt(
-                event,
-                database=self._database,
-                logger=self.logger,
-            )
 
         self._record_machine_ingress(event)
 

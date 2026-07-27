@@ -32,14 +32,6 @@ from gobby.workflows.state_manager import (
 
 logger = logging.getLogger(__name__)
 
-PROTECTED_VERIFICATION_VARIABLES: frozenset[str] = frozenset(
-    {
-        "verification_evidence",
-        "verification_evidence_recorded",
-    }
-)
-
-
 def _coerce_value(
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
 ) -> str | int | float | bool | list[Any] | dict[str, Any] | None:
@@ -107,15 +99,6 @@ def set_variable(
 
     # Coerce value types
     value = _coerce_value(value)
-
-    if name in PROTECTED_VERIFICATION_VARIABLES:
-        return {
-            "success": False,
-            "error": (
-                f"{name} is managed by verification observers. Run a validation command "
-                "or use gobby-sessions:record_verification_evidence for non-command evidence."
-            ),
-        }
 
     if is_reserved_workflow_variable(name):
         return {

@@ -677,12 +677,9 @@ class SessionVariableManager:
         self,
         session_id: str,
         repo_relative_path: str,
-        *,
-        condition_name: str,
-        updates: dict[str, Any],
     ) -> bool:
         """Record a successful repo file edit in session and active-task ledgers."""
-        if not repo_relative_path and not updates:
+        if not repo_relative_path:
             return True
 
         from gobby.workflows.task_claim_state import active_task_id_for_edit
@@ -706,11 +703,6 @@ class SessionVariableManager:
 
             task_id = active_task_id_for_edit(current_vars)
             if task_id and repo_relative_path:
-                conn.execute(
-                    "UPDATE tasks SET validation_epoch = validation_epoch + 1, "
-                    "updated_at = %s WHERE id = %s",
-                    (now, task_id),
-                )
                 raw_task_files = current_vars.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
@@ -721,9 +713,6 @@ class SessionVariableManager:
                 task_files = dict(task_files)
                 task_files[task_id] = sorted(files_for_task)
                 current_vars["task_edited_files"] = task_files
-
-            if current_vars.get(condition_name) is True:
-                current_vars.update(updates)
 
             if row:
                 conn.execute(

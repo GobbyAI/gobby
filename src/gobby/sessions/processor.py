@@ -10,7 +10,6 @@ Supports two transcript formats:
 """
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
@@ -20,8 +19,6 @@ if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.normalization import normalize_tool_fields
 from gobby.sessions.context_usage import snapshot_from_token_usage, snapshot_from_window_metadata
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.processor_lifecycle import ProcessorLifecycleMixin
@@ -32,13 +29,10 @@ from gobby.sessions.processor_usage import ProcessorUsageMixin
 from gobby.sessions.transcript_index import TranscriptIndexAppender
 from gobby.sessions.transcript_renderer import RenderState
 from gobby.sessions.transcripts.base import TokenUsage, TranscriptParser
-from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.token_events import TokenEventStore
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 from gobby.telemetry.instruments import inc_counter
-
-logger = logging.getLogger(__name__)
 
 
 class SessionMessageProcessor(
@@ -135,48 +129,4 @@ class SessionMessageProcessor(
             source=source,
             context_window=context_window,
             model=model,
-        )
-
-    @staticmethod
-    def _build_codex_exec_outcome_event(
-        session: dict[str, Any],
-        outcome: CodexNestedExecOutcome,
-    ) -> HookEvent | None:
-        """Build one synthetic Bash completion from a correlated rollout result."""
-        external_id = session.get("external_id")
-        if not isinstance(external_id, str) or not external_id.strip():
-            logger.warning(
-                "Skipping Codex synthesized tool event without external_id",
-                extra={
-                    "platform_session_id": session.get("platform_session_id"),
-                    "tool_name": "Bash",
-                    "phase": "end",
-                },
-            )
-            return None
-
-        data: dict[str, Any] = {
-            "tool_name": "Bash",
-            "tool_input": {"command": outcome.command},
-            "tool_output": dict(outcome.result),
-            "call_id": outcome.identity,
-            "item_id": outcome.identity,
-            "raw_json": outcome.raw_json,
-        }
-        normalize_tool_fields(data)
-
-        metadata: dict[str, Any] = {"_codex_transcript_exec_outcome": True}
-        platform_session_id = session.get("platform_session_id")
-        if isinstance(platform_session_id, str) and platform_session_id:
-            metadata["_platform_session_id"] = platform_session_id
-
-        return HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id=external_id,
-            source=SessionSource.CODEX,
-            timestamp=outcome.timestamp,
-            data=data,
-            machine_id=session.get("machine_id"),
-            project_id=session.get("project_id"),
-            metadata=metadata,
         )

@@ -23,9 +23,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     register_escalate_task,
     register_reopen_task,
 )
-from gobby.mcp_proxy.tools.tasks._verification_receipts import (
-    register_verification_receipt_tools,
-)
 
 
 def _is_uuid(value: object) -> bool:
@@ -56,6 +53,5 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     register_claim_task(registry, ctx)
     register_escalate_task(registry, ctx)
     register_de_escalate_task(registry, ctx)
-    register_verification_receipt_tools(registry, ctx)
 
     return registry

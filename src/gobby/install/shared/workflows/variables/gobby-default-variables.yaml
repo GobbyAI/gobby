@@ -37,12 +37,6 @@ variables:
   require_commit_before_status:
     value: true
     description: Default require_commit_before_status to true
-  verification_evidence_recorded:
-    value: false
-    description: Default verification_evidence_recorded to false
-  verification_evidence:
-    value: []
-    description: Structured verification evidence recorded for completion readiness; newest 50 entries retained
   enforce_tdd:
     value: false
     description: "Enable TDD enforcement (block new code files until test is written first)"

@@ -392,12 +392,11 @@ class TaskBackupManager:
                     "labels": task.labels if task.labels else None,
                     "validation": (
                         {
-                            "state": task.validation_status,
-                            "feedback": task.validation_feedback,
-                            "fail_count": task.validation_fail_count,
-                            "epoch": task.validation_epoch,
-                            "criteria": task.validation_criteria,
-                            "override_reason": task.validation_override_reason,
+                "state": task.validation_status,
+                "feedback": task.validation_feedback,
+                "fail_count": task.validation_fail_count,
+                "criteria": task.validation_criteria,
+                "override_reason": task.validation_override_reason,
                         }
                         if task.validation_status or task.validation_criteria
                         else None
@@ -544,7 +543,6 @@ class TaskBackupManager:
                         validation_status = validation.get("state") or validation.get("status")
                         validation_feedback = validation.get("feedback")
                         validation_fail_count = validation.get("fail_count", 0)
-                        validation_epoch = validation.get("epoch", 0)
                         validation_criteria = validation.get("criteria")
                         validation_override_reason = validation.get("override_reason")
                         task_type = data.get("task_type", "task")
@@ -608,7 +606,6 @@ class TaskBackupManager:
                             "validation_status": validation_status,
                             "validation_feedback": validation_feedback,
                             "validation_fail_count": validation_fail_count,
-                            "validation_epoch": validation_epoch,
                             "validation_criteria": validation_criteria,
                             "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),

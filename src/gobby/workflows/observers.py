@@ -38,7 +38,6 @@ from gobby.workflows.observer_utils import (
     _json_safe,
     _shell_tool_succeeded,
 )
-from gobby.workflows.observer_verification import detect_verification_evidence
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -64,7 +63,6 @@ __all__ = [
     "detect_mcp_call",
     "detect_plan_mode_from_context",
     "detect_task_claim",
-    "detect_verification_evidence",
     "reconcile_claimed_tasks",
 ]
 

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from copy import deepcopy
-from typing import Any, cast
+from typing import cast
 
 import aiofiles
 import psycopg
@@ -23,12 +23,6 @@ from gobby.sessions.transcripts.base import (
     apply_adjustment,
     raw_lines_from_texts,
 )
-from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
-from gobby.workflows.verification_receipt_ingestion import (
-    VerificationReceiptIngestionError,
-    VerificationReceiptIngestionResult,
-    ingest_verification_receipt,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -43,80 +37,19 @@ def _parse_incremental_records(
     lines: list[str],
     *,
     start_index: int,
-) -> tuple[list[ParsedMessage | ParsedToolEvent], list[CodexNestedExecOutcome]]:
+) -> list[ParsedMessage | ParsedToolEvent]:
     if _parser_source(parser) != "codex":
-        return parser.parse_lines(lines, start_index=start_index), []
+        return parser.parse_lines(lines, start_index=start_index)
 
     records: list[ParsedMessage | ParsedToolEvent] = []
-    outcomes: list[CodexNestedExecOutcome] = []
     for event in parser.iter_parse_events(raw_lines_from_texts(lines), start_index):
         records.extend(event.records)
-        outcomes.extend(event.codex_exec_outcomes)
     for adjustment in parser.finalize():
         apply_adjustment(records, adjustment)
-    return records, outcomes
+    return records
 
 
 class ProcessorTranscriptMixin:
-    async def _dispatch_codex_exec_outcomes(
-        self: ProcessorHost,
-        session_id: str,
-        outcomes: list[CodexNestedExecOutcome],
-    ) -> list[VerificationReceiptIngestionResult]:
-        """Persist definitive nested Bash completions through the shared ingestor."""
-        if not outcomes:
-            return []
-
-        session_data: dict[str, Any] = {
-            "platform_session_id": session_id,
-            "external_id": session_id,
-        }
-        if self.session_manager is not None:
-            session = await self._run_db(self.session_manager.get, session_id)
-            if session is None:
-                logger.warning(
-                    "Skipping Codex transcript outcomes for missing session",
-                    extra={"session_id": session_id},
-                )
-                return []
-            session_data = session.to_dict()
-            session_data.setdefault("platform_session_id", session_id)
-
-        ingested: list[VerificationReceiptIngestionResult] = []
-        for outcome in outcomes:
-            event = self._build_codex_exec_outcome_event(session_data, outcome)
-            if event is None:
-                raise VerificationReceiptIngestionError(outcome.identity)
-            try:
-                result = await self._run_db(
-                    ingest_verification_receipt,
-                    event,
-                    session_id,
-                    db=self.db,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Codex transcript verification receipt ingestion failed",
-                    extra={"session_id": session_id, "identity": outcome.identity},
-                )
-                raise VerificationReceiptIngestionError(outcome.identity) from exc
-            if result is None:
-                raise VerificationReceiptIngestionError(outcome.identity)
-            ingested.append(result)
-        logger.debug(
-            "Codex transcript verification receipt batch acknowledged",
-            extra={
-                "session_id": session_id,
-                "receipt_count": len(ingested),
-                "replayed_count": sum(result.replayed for result in ingested),
-                "outcomes": [result.normalized_outcome for result in ingested],
-                "task_ids": sorted(
-                    {result.task_id for result in ingested if result.task_id is not None}
-                ),
-            },
-        )
-        return ingested
-
     def _filter_session_title_messages(
         self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]:
@@ -283,8 +216,7 @@ class ProcessorTranscriptMixin:
         if not parser:
             return
 
-        parser_state = deepcopy(parser.snapshot_state())
-        raw_records, codex_exec_outcomes = _parse_incremental_records(
+        raw_records = _parse_incremental_records(
             parser,
             new_lines,
             start_index=last_index + 1,
@@ -293,19 +225,6 @@ class ProcessorTranscriptMixin:
         parsed_messages: list[ParsedMessage] = [
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
-
-        try:
-            await self._dispatch_codex_exec_outcomes(session_id, codex_exec_outcomes)
-        except VerificationReceiptIngestionError:
-            parser.hydrate_state(parser_state)
-            logger.warning(
-                "Restored Codex transcript parser state after receipt ingestion failure",
-                extra={
-                    "session_id": session_id,
-                    "identities": [outcome.identity for outcome in codex_exec_outcomes],
-                },
-            )
-            raise
 
         latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
         parsed_messages = await self._run_db(

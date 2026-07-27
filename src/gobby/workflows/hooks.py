@@ -259,8 +259,6 @@ class WorkflowHookHandler:
             "call_id",
             "callId",
             "id",
-            "verification_execution_id",
-            "verification_source_event_id",
         ):
             value = data.get(key)
             if value not in (None, ""):
@@ -390,9 +388,6 @@ class WorkflowHookHandler:
             return
 
         if event.event_type == HookEventType.BEFORE_TOOL:
-            from .verification_receipt_ingestion import ensure_verification_execution_identity
-
-            ensure_verification_execution_identity(event)
             self._remember_tool_context(event.source, session_id, event.data)
             return
 
@@ -401,14 +396,7 @@ class WorkflowHookHandler:
 
         snapshot = self._match_tool_context(event.source, session_id, event.data)
         if snapshot is None:
-            from .verification_receipt_ingestion import ensure_verification_execution_identity
-
-            ensure_verification_execution_identity(event)
             return
-
-        for key in ("verification_execution_id", "verification_source_event_id"):
-            if snapshot.get(key):
-                event.data[key] = snapshot[key]
 
         if self._needs_tool_rehydration(event.data):
             for key, value in snapshot.items():
@@ -531,7 +519,6 @@ class WorkflowHookHandler:
             detect_commit_link,
             detect_mcp_call,
             detect_task_claim,
-            detect_verification_evidence,
             reconcile_claimed_tasks,
         )
 
@@ -581,14 +568,6 @@ class WorkflowHookHandler:
             )
             run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
             run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
-            run_observer(
-                "detect_verification_evidence",
-                detect_verification_evidence,
-                event,
-                variables,
-                session_id,
-                self._config,
-            )
             run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary
@@ -870,28 +849,6 @@ class WorkflowHookHandler:
                     changed = {
                         k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
                     }
-                    from gobby.workflows.verification_evidence import (
-                        MAX_VERIFICATION_EVIDENCE_ITEMS,
-                        VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
-                        VERIFICATION_EVIDENCE_VARIABLE,
-                    )
-
-                    evidence = changed.get(VERIFICATION_EVIDENCE_VARIABLE)
-                    if isinstance(evidence, list) and evidence:
-                        readiness_update = {}
-                        if VERIFICATION_EVIDENCE_RECORDED_VARIABLE in changed:
-                            readiness_update[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = changed.pop(
-                                VERIFICATION_EVIDENCE_RECORDED_VARIABLE
-                            )
-                        changed.pop(VERIFICATION_EVIDENCE_VARIABLE)
-                        await asyncio.to_thread(
-                            self._session_var_manager.append_to_bounded_list_variable,
-                            session_id,
-                            VERIFICATION_EVIDENCE_VARIABLE,
-                            evidence[-1],
-                            max_items=MAX_VERIFICATION_EVIDENCE_ITEMS,
-                            updates=readiness_update,
-                        )
                     if changed:
                         await asyncio.to_thread(
                             self._session_var_manager.merge_variables,

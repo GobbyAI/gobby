@@ -17,8 +17,6 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "step_workflow_complete",
         "tool_block_pending",
         "unlocked_tools",
-        "verification_evidence",
-        "verification_evidence_recorded",
     }
 )
 

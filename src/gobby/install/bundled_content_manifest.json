@@ -50,7 +50,7 @@
     "prompts/merge/resolve_hunks.md": "2464140b767c5136b1a5b52d972ae3ae466a810d218ec64f71210883d93f7337",
     "prompts/research/step.md": "d295af7cf200365537b4f1bf43d6b581cefa7143c24897fa08b20bed49eae60e",
     "prompts/validation/criteria.md": "52719e65bcc3f221d3756d8b7a09e621008000f1f5e717a3f390049b64e43fde",
-    "prompts/validation/validate.md": "e4f6f69ca947e1732b3bc607ec3aa5cf4dcf3cacbfc066ad89d8b4ba382afc5b",
+    "prompts/validation/validate.md": "004c10cd4b8c69e9027eb5514835545fe8df129a8d31b1eb9352a55d5924e3ae",
     "registry/build_profiles.yaml": "55f31f9d8b9dc9e7469335f7adcfa6db9195136866a59baedabd88e69f22bb77",
     "registry/stages.yaml": "e5dc3c71d8ed54dc84e51dd64c123a08a77be294fa6000179f78bfe04661c23a",
     "rules/build/build-agent-safety.yaml": "f9145fe63ea4e286352ebc5d3c9834fa06ee1922fd31bf8a6ae4ee8b3b94eef7",
@@ -412,7 +412,6 @@
     "workflows/rules/task-enforcement/block-native-task-tools.yaml": "eca2aeff8537a5e82a13090fbbe310e5f1961a03121079deb7954212c9f9db5a",
     "workflows/rules/task-enforcement/block-needs-review-interactive.yaml": "15ab2e10b4d7c786447d27740ac7b3212cd7c53680c3837b7acc6fba9d63abdf",
     "workflows/rules/task-enforcement/block-reopen-task.yaml": "e003d1791347945f6c7e288608cb3b259b19cbb31510721d5477f576807b3790",
-    "workflows/rules/task-enforcement/completion-readiness.yaml": "b47f191b257fc3709a793206119e5e19f3d506ea4836d24d0928c4626fc849eb",
     "workflows/rules/task-enforcement/require-claimed-task-required-skills.yaml": "32878895ce25fe86fcf63d012f7a738533c4f00b1b454c6244eecfb7c859e85a",
     "workflows/rules/task-enforcement/require-commit-before-status.yaml": "9e702b1220519347dc1777a00577fe9318774be613b9a09bc3410fe009304834",
     "workflows/rules/task-enforcement/require-task-before-edit.yaml": "5c0750a7720438cc21dd6ca11b02335246d50fd95a20eebd445b2de1177cc149",
@@ -448,7 +447,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "973757fc4f0ff6918b270c69e996a46ff33deb1cd849067e50ee13c2b751d754"
+    "workflows/variables/gobby-default-variables.yaml": "9ad99361899c380394a01afde1fa5b29f780ba9ce6ce4159135311eb7de51de2"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

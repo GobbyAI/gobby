@@ -41,9 +41,6 @@ from gobby.servers.tool_approvals import (
 from gobby.storage.config_store import ConfigStore
 from gobby.telemetry.instruments import inc_counter
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
-from gobby.workflows.verification_receipt_ingestion import (
-    VerificationReceiptIngestionError,
-)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -322,18 +319,11 @@ async def _run_adapter_hook(
     finished_at: float | None = None
     exception_type: str | None = None
 
-    class FailClosedHookManager:
-        def handle(self, event: Any) -> Any:
-            return hook_manager.handle(
-                event,
-                fail_closed_verification_receipts=True,
-            )
-
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
         try:
-            return cast(dict[str, Any], adapter.handle_native(payload, FailClosedHookManager()))
+            return cast(dict[str, Any], adapter.handle_native(payload, hook_manager))
         finally:
             finished_at = time.perf_counter()
 
@@ -855,28 +845,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     content={
                         "status": "retry",
                         "reason": "daemon_not_ready",
-                    },
-                )
-
-            except VerificationReceiptIngestionError as exc:
-                inc_counter("hooks_failed_total")
-                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
-                logger.error(
-                    "Retrying hook after verification receipt ingestion failure",
-                    extra=_hook_log_extra(
-                        hook_type,
-                        request_metadata,
-                        source=source,
-                        identity=exc.identity,
-                        envelope_id=envelope_id,
-                        processing_claim_released=released,
-                    ),
-                )
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "status": "retry",
-                        "reason": "verification_receipt_ingestion_failed",
                     },
                 )
 

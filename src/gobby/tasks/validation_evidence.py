@@ -1,91 +1,34 @@
-"""Structured evidence assembly for task validation prompts."""
+"""Bounded diff shaping for the task-close criteria review."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.*?) b/(.*?)$", re.MULTILINE)
 _BINARY_FILES_RE: re.Pattern[str] = re.compile(
-    r"^Binary files (?P<left>\S+) and (?P<right>\S+) differ$", re.MULTILINE
+    r"^Binary files (?P<left>\S+) and (?P<right>\S+) differ$",
+    re.MULTILINE,
 )
-_HUNK_HEADER_RE = re.compile(r"^@@ .* @@")
-
-_DOC_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".adoc"}
-_CONFIG_FILENAMES = {
-    ".env",
-    ".gitignore",
-    "dockerfile",
-    "makefile",
-    "package.json",
-    "pyproject.toml",
-    "requirements.txt",
-    "setup.cfg",
-    "tox.ini",
-    "uv.lock",
-}
-_CONFIG_EXTENSIONS = {".cfg", ".conf", ".ini", ".json", ".toml", ".yaml", ".yml"}
-_UI_EXTENSIONS = {".css", ".jsx", ".sass", ".scss", ".svelte", ".tsx", ".vue"}
-_SOURCE_EXTENSIONS = {
-    ".c",
-    ".cc",
-    ".cpp",
-    ".cs",
-    ".go",
-    ".h",
-    ".hpp",
-    ".java",
-    ".js",
-    ".kt",
-    ".mjs",
-    ".php",
-    ".py",
-    ".rb",
-    ".rs",
-    ".sh",
-    ".swift",
-    ".ts",
-}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ChangedFileEvidence:
-    """One changed file parsed from a git diff."""
+    """One changed file extracted from a unified Git diff."""
 
     path: str
     additions: int
     deletions: int
-    category: str
     diff: str
 
 
-@dataclass(frozen=True)
-class EvidenceOmission:
-    """Named evidence omitted or shortened from the validation prompt."""
-
-    path: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class ValidationEvidence:
-    """Rendered validation evidence and its manifest metadata."""
-
-    text: str
-    manifest: tuple[ChangedFileEvidence, ...]
-    omissions: tuple[EvidenceOmission, ...]
-    agent_summary_included: bool = False
-
-
 class ValidationEvidenceTooLarge(ValueError):
-    """The complete diff manifest cannot fit in the bounded close prompt."""
+    """Raised when a complete file manifest cannot fit the bounded prompt."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CloseDiffEvidence:
-    """Complete file manifest plus bounded criteria-prioritized diff excerpts."""
+    """Bounded criteria-review input with a complete file manifest."""
 
     text: str
     manifest_count: int
@@ -101,9 +44,8 @@ def build_close_diff_evidence(
     max_excerpt_chars: int = 4_000,
 ) -> CloseDiffEvidence:
     """Shape the linked diff for the bounded task-close criteria review."""
-    parsed_files = _parse_diff_files(diff or "")
     by_path: dict[str, ChangedFileEvidence] = {}
-    for item in parsed_files:
+    for item in _parse_diff_files(diff or ""):
         previous = by_path.get(item.path)
         if previous is None:
             by_path[item.path] = item
@@ -112,7 +54,6 @@ def build_close_diff_evidence(
             path=item.path,
             additions=previous.additions + item.additions,
             deletions=previous.deletions + item.deletions,
-            category=item.category,
             diff=f"{previous.diff}\n{item.diff}",
         )
     files = list(by_path.values())
@@ -120,13 +61,14 @@ def build_close_diff_evidence(
         text = "Changed files: none.\nDiff excerpts: none."
         return CloseDiffEvidence(text, 0, len(text), 0)
 
-    total_additions = sum(item.additions for item in files)
-    total_deletions = sum(item.deletions for item in files)
-    manifest_lines = [
-        f"Changed files ({len(files)} total, +{total_additions}/-{total_deletions}):",
-        *(f"- {item.path} (+{item.additions}/-{item.deletions})" for item in files),
-    ]
-    manifest = "\n".join(manifest_lines)
+    additions = sum(item.additions for item in files)
+    deletions = sum(item.deletions for item in files)
+    manifest = "\n".join(
+        [
+            f"Changed files ({len(files)} total, +{additions}/-{deletions}):",
+            *(f"- {item.path} (+{item.additions}/-{item.deletions})" for item in files),
+        ]
+    )
     separator = "\n\nDiff excerpts:\n"
     if len(manifest) + len(separator) > max_chars:
         raise ValidationEvidenceTooLarge(
@@ -140,7 +82,7 @@ def build_close_diff_evidence(
         key=lambda item: (
             0
             if item.path.casefold() in criteria_folded
-            or PurePosixPath(item.path).name.casefold() in criteria_folded
+            or item.path.rsplit("/", 1)[-1].casefold() in criteria_folded
             else 1,
             item.path,
         ),
@@ -167,108 +109,6 @@ def build_close_diff_evidence(
     )
 
 
-def build_diff_validation_evidence(
-    diff: str | None,
-    *,
-    max_chars: int,
-    max_hunk_lines: int = 60,
-    priority_files: Sequence[str] | None = None,
-    agent_summary: str | None = None,
-    agent_summary_max_chars: int = 2000,
-) -> ValidationEvidence:
-    """Render a git diff with complete manifest and explicit named omissions."""
-    if diff is None:
-        return ValidationEvidence(text="", manifest=(), omissions=())
-    if not diff:
-        return ValidationEvidence(text="", manifest=(), omissions=())
-
-    files = tuple(_parse_diff_files(diff))
-    if not files:
-        text, agent_summary_included = _append_agent_summary(
-            f"Raw Change Evidence:\n{_shorten_text(diff, max_chars, label='raw change evidence')}",
-            agent_summary,
-            max_chars=max_chars,
-            max_summary_chars=agent_summary_max_chars,
-        )
-        return ValidationEvidence(
-            text=_fit_evidence_text(text, max_chars),
-            manifest=(),
-            omissions=(),
-            agent_summary_included=agent_summary_included,
-        )
-
-    ordered_files = tuple(sorted(files, key=lambda file: _priority_key(file.path, priority_files)))
-    header = _render_manifest(ordered_files)
-    full_diff_text = f"{header}\nFull Raw Diff:\n{diff.rstrip()}\n"
-    if len(full_diff_text) <= max_chars:
-        full_text, agent_summary_included = _append_agent_summary(
-            full_diff_text,
-            agent_summary,
-            max_chars=max_chars,
-            max_summary_chars=agent_summary_max_chars,
-        )
-        return ValidationEvidence(
-            text=full_text,
-            manifest=ordered_files,
-            omissions=(),
-            agent_summary_included=agent_summary_included,
-        )
-
-    text, omissions = _render_excerpted_diff(
-        header,
-        ordered_files,
-        max_chars=max_chars,
-        max_hunk_lines=max_hunk_lines,
-    )
-    text, agent_summary_included = _append_agent_summary(
-        text,
-        agent_summary,
-        max_chars=max_chars,
-        max_summary_chars=agent_summary_max_chars,
-    )
-    text = _fit_evidence_text(text, max_chars)
-    return ValidationEvidence(
-        text=text,
-        manifest=ordered_files,
-        omissions=tuple(omissions),
-        agent_summary_included=agent_summary_included,
-    )
-
-
-def build_summary_validation_evidence(summary: str, *, max_chars: int) -> str:
-    """Render non-diff agent prose with an explicit shortening notice."""
-    return _strip_and_shorten(summary, max_chars=max_chars, label="agent changes summary")
-
-
-def build_file_context_evidence(file_context: str, *, max_chars: int) -> str:
-    """Render file context with an explicit shortening notice."""
-    return _strip_and_shorten(file_context, max_chars=max_chars, label="file context")
-
-
-def categorize_changed_path(path: str) -> str:
-    """Return the coarse validation category for a changed path."""
-    pure = PurePosixPath(path)
-    suffix = pure.suffix.lower()
-    name = pure.name.lower()
-    parts = {part.lower() for part in pure.parts}
-
-    if "tests" in parts or "test" in parts or name.startswith("test_"):
-        return "test"
-    if name.endswith(("_test.py", ".test.js", ".test.jsx", ".test.ts", ".test.tsx")):
-        return "test"
-    if name.endswith((".spec.js", ".spec.jsx", ".spec.ts", ".spec.tsx")):
-        return "test"
-    if "docs" in parts or suffix in _DOC_EXTENSIONS:
-        return "docs"
-    if name in _CONFIG_FILENAMES or suffix in _CONFIG_EXTENSIONS:
-        return "config"
-    if suffix in _UI_EXTENSIONS:
-        return "ui"
-    if suffix in _SOURCE_EXTENSIONS:
-        return "source"
-    return "other"
-
-
 def _parse_diff_files(diff: str) -> list[ChangedFileEvidence]:
     matches = list(_DIFF_HEADER_RE.finditer(diff))
     files: list[ChangedFileEvidence] = []
@@ -278,29 +118,14 @@ def _parse_diff_files(diff: str) -> list[ChangedFileEvidence]:
         file_diff = diff[start:end].rstrip()
         path = _normalize_diff_path(match.group(2) or match.group(1))
         additions, deletions = _count_file_stats(file_diff)
-        files.append(
-            ChangedFileEvidence(
-                path=path,
-                additions=additions,
-                deletions=deletions,
-                category=categorize_changed_path(path),
-                diff=file_diff,
-            )
-        )
-    known_paths = {file.path for file in files}
+        files.append(ChangedFileEvidence(path, additions, deletions, file_diff))
+
+    known_paths = {item.path for item in files}
     for match in _BINARY_FILES_RE.finditer(diff):
         path = _normalize_binary_diff_path(match.group("left"), match.group("right"))
         if path in known_paths:
             continue
-        files.append(
-            ChangedFileEvidence(
-                path=path,
-                additions=0,
-                deletions=0,
-                category=categorize_changed_path(path),
-                diff=match.group(0),
-            )
-        )
+        files.append(ChangedFileEvidence(path, 0, 0, match.group(0)))
         known_paths.add(path)
     return files
 
@@ -311,15 +136,14 @@ def _normalize_diff_path(path: str) -> str:
 
 def _normalize_binary_diff_path(left: str, right: str) -> str:
     candidate = right if right != "/dev/null" else left
-    candidate = candidate.removeprefix("b/").removeprefix("a/")
-    return _normalize_diff_path(candidate)
+    return _normalize_diff_path(candidate.removeprefix("b/").removeprefix("a/"))
 
 
 def _count_file_stats(file_diff: str) -> tuple[int, int]:
     additions = 0
     deletions = 0
     for line in file_diff.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith(("+++", "---")):
             continue
         if line.startswith("+"):
             additions += 1
@@ -328,306 +152,8 @@ def _count_file_stats(file_diff: str) -> tuple[int, int]:
     return additions, deletions
 
 
-def _render_manifest(files: Sequence[ChangedFileEvidence]) -> str:
-    total_additions = sum(file.additions for file in files)
-    total_deletions = sum(file.deletions for file in files)
-    source_ui = [file for file in files if file.category in {"source", "ui"}]
-    tests = [file for file in files if file.category == "test"]
-    docs_config = [file for file in files if file.category in {"docs", "config"}]
-    lines = [
-        "Changed File Manifest (authoritative):",
-        f"Total files changed: {len(files)} (+{total_additions}/-{total_deletions})",
-        f"Source/UI files changed: {_format_category_summary(source_ui)}",
-        f"Test files changed: {_format_category_summary(tests)}",
-        f"Docs/config files changed: {_format_category_summary(docs_config)}",
-        "",
-        "Files:",
-    ]
-    lines.extend(
-        f"- {file.path} (+{file.additions}/-{file.deletions}) [{file.category}]" for file in files
-    )
-    return "\n".join(lines) + "\n"
-
-
-def _format_category_summary(files: Sequence[ChangedFileEvidence]) -> str:
-    if not files:
-        return "none"
-    return ", ".join(f"{file.path} [{file.category}]" for file in files)
-
-
-def _render_excerpted_diff(
-    header: str,
-    files: Sequence[ChangedFileEvidence],
-    *,
-    max_chars: int,
-    max_hunk_lines: int,
-) -> tuple[str, list[EvidenceOmission]]:
-    omissions: list[EvidenceOmission] = []
-    parts = [header, "\nDiff Excerpts:\n"]
-    if len("".join(parts)) >= max_chars:
-        omissions.extend(
-            EvidenceOmission(file.path, "diff details omitted; manifest consumed target budget")
-            for file in files
-        )
-        parts.append(_render_omissions(omissions))
-        return "".join(parts), omissions
-
-    for index, file in enumerate(files):
-        remaining_files = files[index:]
-        current = "".join(parts)
-        remaining_budget = max_chars - len(current)
-        omission_reserve = 160 * len(remaining_files)
-        section_prefix = f"\n### {file.path}\n"
-        section_overhead = len(section_prefix) + 1
-        available = remaining_budget - omission_reserve - section_overhead
-        if available < 240:
-            omissions.append(
-                EvidenceOmission(file.path, "diff details omitted; evidence budget exhausted")
-            )
-            continue
-
-        # Fair share proportional to this file's diff size among the files
-        # still to render, so an early large file cannot starve later files
-        # of their evidence; unused share carries over via remaining_budget.
-        remaining_diff_chars = sum(len(candidate.diff) for candidate in remaining_files) or 1
-        share = int(available * len(file.diff) / remaining_diff_chars)
-        allowed = min(available, max(240, share))
-
-        excerpt, file_omissions = _excerpt_file_diff(
-            file,
-            max_chars=allowed,
-            max_hunk_lines=max_hunk_lines,
-        )
-        omissions.extend(file_omissions)
-        parts.append(f"{section_prefix}{excerpt.rstrip()}\n")
-
-    if omissions:
-        omission_text = _render_omissions(omissions)
-        omission_budget = max_chars - len("".join(parts))
-        if omission_budget > 0:
-            parts.append(
-                _shorten_text(
-                    omission_text,
-                    omission_budget,
-                    label="omission details",
-                )
-            )
-    return "".join(parts), omissions
-
-
-def _excerpt_file_diff(
-    file: ChangedFileEvidence,
-    *,
-    max_chars: int,
-    max_hunk_lines: int,
-) -> tuple[str, list[EvidenceOmission]]:
-    # Truncation keeps head AND tail around an elision marker: appended
-    # code (new tests especially) lives at hunk and file tails, so
-    # head-only cuts systematically drop the evidence validators need.
-    omissions: list[EvidenceOmission] = []
-    all_lines = file.diff.splitlines()
-    lines: list[str] = []
-    index = 0
-    while index < len(all_lines) and not _HUNK_HEADER_RE.match(all_lines[index]):
-        lines.append(all_lines[index])
-        index += 1
-    while index < len(all_lines):
-        hunk_header = all_lines[index]
-        index += 1
-        body: list[str] = []
-        while index < len(all_lines) and not _HUNK_HEADER_RE.match(all_lines[index]):
-            body.append(all_lines[index])
-            index += 1
-        lines.append(hunk_header)
-        if len(body) <= max_hunk_lines:
-            lines.extend(body)
-            continue
-        head_count = max(1, max_hunk_lines * 3 // 5)
-        tail_count = max(1, max_hunk_lines - head_count)
-        omitted_body = body[head_count : len(body) - tail_count]
-        signatures = _added_signature_names(
-            omitted_body,
-            test_first=file.category == "test",
-        )
-        signature_note = f"; omitted definitions: {', '.join(signatures)}" if signatures else ""
-        lines.extend(body[:head_count])
-        lines.append(
-            f"... [hunk truncated for {file.path}: {hunk_header}; "
-            f"{len(omitted_body)} middle lines omitted{signature_note}] ..."
-        )
-        lines.extend(body[-tail_count:])
-        omissions.append(
-            EvidenceOmission(
-                file.path,
-                f"hunk {hunk_header} kept {head_count} head and {tail_count} tail "
-                f"of {len(body)} lines",
-            )
-        )
-
-    excerpt = "\n".join(lines)
-    if len(excerpt) <= max_chars:
-        return excerpt, omissions
-
-    omissions.append(
-        EvidenceOmission(file.path, "diff excerpt shortened to fit validation evidence budget")
-    )
-    base_marker = f"\n... [diff excerpt truncated for {file.path}; middle omitted] ...\n"
-    keep_chars = max(0, max_chars - len(base_marker))
-    head_chars = keep_chars * 3 // 5
-    tail_chars = keep_chars - head_chars
-    signatures = _added_signature_names(
-        excerpt[head_chars : len(excerpt) - tail_chars].splitlines(),
-        test_first=file.category == "test",
-    )
-    marker = (
-        f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
-        f"omitted definitions: {', '.join(signatures)}] ...\n"
-        if signatures
-        else base_marker
-    )
-    if len(marker) >= max_chars:
-        return marker[:max_chars], omissions
-    keep_chars = max_chars - len(marker)
-    head_chars = keep_chars * 3 // 5
-    tail_chars = keep_chars - head_chars
-    signatures = _added_signature_names(
-        excerpt[head_chars : len(excerpt) - tail_chars].splitlines(),
-        test_first=file.category == "test",
-    )
-    marker = (
-        f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
-        f"omitted definitions: {', '.join(signatures)}] ...\n"
-        if signatures
-        else base_marker
-    )
-    if len(marker) >= max_chars:
-        return marker[:max_chars], omissions
-    keep_chars = max_chars - len(marker)
-    head_chars = keep_chars * 3 // 5
-    tail_chars = keep_chars - head_chars
-    head = excerpt[:head_chars].rstrip()
-    tail = excerpt[len(excerpt) - tail_chars :].lstrip() if tail_chars > 0 else ""
-    return head + marker + tail, omissions
-
-
-_SIGNATURE_LINE_RE = re.compile(
-    r"^\+\s*(?:async\s+def|def|class|(?:pub\s+)?(?:async\s+)?fn|function)\s+([\w:]+)"
-)
-
-
-def _added_signature_names(
-    lines: Sequence[str],
-    limit: int = 12,
-    *,
-    test_first: bool = False,
-) -> list[str]:
-    """Names of added definitions in omitted diff lines, so elision markers
-    still prove the definitions exist."""
-    names: list[str] = []
-    seen: set[str] = set()
-    for line in lines:
-        match = _SIGNATURE_LINE_RE.match(line)
-        if not match:
-            continue
-        name = match.group(1)
-        if name in seen:
-            continue
-        seen.add(name)
-        names.append(name)
-    if test_first:
-        tests = [name for name in names if name.casefold().startswith("test")]
-        helpers = [name for name in names if not name.casefold().startswith("test")]
-        names = tests + helpers
-    return names[:limit]
-
-
-def _render_omissions(omissions: Sequence[EvidenceOmission]) -> str:
-    lines = ["\nOmitted Evidence:"]
-    lines.extend(f"- {omission.path}: {omission.reason}" for omission in omissions)
-    return "\n".join(lines) + "\n"
-
-
-def _append_agent_summary(
-    text: str,
-    summary: str | None,
-    *,
-    max_chars: int,
-    max_summary_chars: int,
-) -> tuple[str, bool]:
-    if not summary:
-        return text, False
-    summary = summary.strip()
-    if not summary:
-        return text, False
-    block = f"\nAgent Changes Summary (supplemental):\n{summary}\n"
-    if len(text) + len(block) <= max_chars and len(summary) <= max_summary_chars:
-        return text + block, True
-
-    notice = (
-        "\nAgent Changes Summary (supplemental): omitted due to length "
-        f"({len(summary)} chars); authoritative diff evidence is above.\n"
-    )
-    available = max_chars - len(text) - len(notice)
-    if available < 240:
-        # Supplemental prose must never displace authoritative diff evidence.
-        if len(text) <= max_chars:
-            return text, False
-        if len(notice) >= max_chars:
-            return _shorten_text(notice, max_chars, label="agent changes summary notice"), False
-        return (
-            _shorten_text(
-                text,
-                max_chars - len(notice),
-                label="validation evidence",
-            )
-            + notice,
-            False,
-        )
-
-    excerpt = _shorten_text(
-        summary,
-        min(available, max_summary_chars),
-        label="agent changes summary",
-    )
-    return f"{text}\nAgent Changes Summary (supplemental):\n{excerpt}\n", True
-
-
-def _shorten_text(text: str, max_chars: int, *, label: str) -> str:
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    marker = f"\n... [{label} shortened due to length; omitted {len(text) - max_chars} chars] ...\n"
-    if len(marker) >= max_chars:
-        return marker[:max_chars]
-    keep_chars = max(0, max_chars - len(marker))
-    return text[:keep_chars].rstrip() + marker
-
-
-def _fit_evidence_text(text: str, max_chars: int) -> str:
-    return _shorten_text(text, max_chars, label="validation evidence")
-
-
-def _strip_and_shorten(text: str, *, max_chars: int, label: str) -> str:
-    stripped = text.strip()
-    if len(stripped) <= max_chars:
-        return stripped
-    return _shorten_text(stripped, max_chars, label=label)
-
-
-def _priority_key(path: str, priority_files: Sequence[str] | None) -> tuple[int, str]:
-    if priority_files and any(
-        _path_matches_reference(path, reference) for reference in priority_files
-    ):
-        return (0, path)
-    return (1, path)
-
-
-def _path_matches_reference(path: str, reference: str) -> bool:
-    normalized_path = path.strip("/")
-    normalized_reference = reference.strip("/")
-    return (
-        normalized_path == normalized_reference
-        or normalized_path.endswith(f"/{normalized_reference}")
-        or normalized_reference.endswith(f"/{normalized_path}")
-    )
+__all__ = [
+    "CloseDiffEvidence",
+    "ValidationEvidenceTooLarge",
+    "build_close_diff_evidence",
+]

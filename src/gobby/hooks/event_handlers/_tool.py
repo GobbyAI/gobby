@@ -372,35 +372,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if rel_path is None:
                 return
 
-            from gobby.workflows.verification_evidence import (
-                VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
-                VERIFICATION_EVIDENCE_RESET_UPDATES,
-            )
-
             db = getattr(self._session_manager, "db", None)
             if db:
                 manager = SessionVariableManager(db)
                 try:
-                    manager.record_edited_file(
-                        session_id,
-                        rel_path,
-                        condition_name=VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
-                        updates=VERIFICATION_EVIDENCE_RESET_UPDATES,
-                    )
+                    manager.record_edited_file(session_id, rel_path)
                 except Exception:
                     logger.warning(
-                        "Failed to track session edited file; resetting verification evidence",
+                        "Failed to track session edited file",
                         exc_info=True,
                     )
-                    try:
-                        manager.merge_variables(
-                            session_id,
-                            VERIFICATION_EVIDENCE_RESET_UPDATES,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to reset verification evidence after edit-tracking failure",
-                        )
         except Exception as e:
             logger.warning("Failed to track session edited file: %s", e, exc_info=True)
 

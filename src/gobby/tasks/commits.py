@@ -5,7 +5,6 @@ Provides utilities for linking commits to tasks and computing diffs.
 
 import logging
 import re
-import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,12 +25,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_diff_path_prefix(path: str) -> str:
-    if path.startswith("a/") or path.startswith("b/"):
-        return path[2:]
-    return path
 
 
 def collect_task_diff_text(
@@ -102,127 +95,6 @@ def collect_commit_diff_text(
 
 # Doc file extensions that don't need LLM validation
 DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc", ".markdown"}
-
-
-@dataclass(frozen=True)
-class _DiffFile:
-    path: str
-    additions: int
-    deletions: int
-    diff: str
-
-
-_FILE_DIFF_TRUNCATION_MARKER = "\n... [file diff truncated] ...\n"
-_DIFF_TRUNCATION_MARKER = "\n... [diff truncated] ...\n"
-_DIFF_TOO_LARGE_MESSAGE = (
-    "## Diff Summary\n\n"
-    "Diff too large to validate safely: the changed-file manifest does not fit "
-    "inside the validation budget. Close-task validation should return pending "
-    "instead of treating omitted files as missing.\n"
-)
-
-
-def _diff_path_from_header(header: str) -> str:
-    try:
-        parts = shlex.split(header.removeprefix("diff --git "))
-    except ValueError:
-        parts = []
-    if len(parts) >= 2:
-        old_path = _strip_diff_path_prefix(parts[0])
-        new_path = _strip_diff_path_prefix(parts[1])
-        return new_path if new_path != "/dev/null" else old_path
-
-    match = re.match(r"diff --git a/(.+?) b/", header)
-    return match.group(1) if match else "(unknown)"
-
-
-def _parse_diff_files(diff: str) -> list[_DiffFile]:
-    file_diffs = re.split(r"(?=^diff --git )", diff, flags=re.MULTILINE)
-    parsed: list[_DiffFile] = []
-    for file_diff in file_diffs:
-        if not file_diff.strip():
-            continue
-        lines = file_diff.splitlines()
-        path = _diff_path_from_header(lines[0] if lines else "")
-        additions = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
-        deletions = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
-        parsed.append(
-            _DiffFile(path=path, additions=additions, deletions=deletions, diff=file_diff)
-        )
-    return parsed
-
-
-def changed_files_from_diff(diff: str | None) -> list[str]:
-    """Return changed file paths from a git diff in diff order."""
-    if not diff:
-        return []
-    return [file.path for file in _parse_diff_files(diff)]
-
-
-def _priority_key(path: str, priority_files: list[str] | None) -> tuple[int, str]:
-    if not priority_files:
-        return (1, path)
-    normalized = path.lstrip("./")
-    for priority in priority_files:
-        cleaned = priority.lstrip("./")
-        if normalized == cleaned or normalized.endswith(f"/{cleaned}"):
-            return (0, path)
-        if "/" not in cleaned and Path(normalized).name == cleaned:
-            return (0, path)
-    return (1, path)
-
-
-def _limit_hunk_lines(file_diff: str, max_hunk_lines: int) -> str:
-    if max_hunk_lines <= 0:
-        return file_diff
-
-    kept: list[str] = []
-    hunk_line_count = 0
-    truncated = False
-    in_hunk = False
-    for line in file_diff.splitlines(keepends=True):
-        if line.startswith("@@"):
-            in_hunk = True
-            hunk_line_count = 0
-            kept.append(line)
-            continue
-        if in_hunk and line and line[0] in "+- ":
-            hunk_line_count += 1
-            if hunk_line_count > max_hunk_lines:
-                truncated = True
-                continue
-        kept.append(line)
-
-    limited = "".join(kept)
-    if truncated:
-        limited = limited.rstrip() + _FILE_DIFF_TRUNCATION_MARKER
-    return limited
-
-
-def summarize_diff_for_validation(
-    diff: str | None,
-    max_chars: int = 30000,
-    max_hunk_lines: int = 50,
-    priority_files: list[str] | None = None,
-) -> str | None:
-    """Render structured diff evidence for LLM validation.
-
-    The changed-file manifest is complete and authoritative. Large raw details
-    are excerpted with named omissions instead of anonymous truncation markers.
-    """
-    if diff is None:
-        return None
-    if not diff:
-        return diff
-
-    from gobby.tasks.validation_evidence import build_diff_validation_evidence
-
-    return build_diff_validation_evidence(
-        diff,
-        max_chars=max_chars,
-        max_hunk_lines=max_hunk_lines,
-        priority_files=priority_files,
-    ).text
 
 
 def _build_file_patterns(

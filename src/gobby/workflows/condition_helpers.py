@@ -11,7 +11,6 @@ import logging
 import re
 import textwrap
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -22,10 +21,6 @@ from gobby.config.validation_detection import (
     shell_command_segments,
 )
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.workflows.verification_evidence import (
-    VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION,
-    VERIFICATION_EVIDENCE_VARIABLE,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -521,169 +516,6 @@ def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
         module_tokens = _python_module_tokens(tokens[1:])
         return module_tokens is not None and module_tokens[:2] == ["gobby", "build"]
     return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
-
-
-def _normalized_task_evidence_refs(value: Any) -> set[str]:
-    if not isinstance(value, (str, int)):
-        return set()
-    raw_value = str(value).strip()
-    if not raw_value:
-        return set()
-    if raw_value.startswith("task_id:"):
-        raw_value = raw_value.removeprefix("task_id:").strip()
-    if not raw_value:
-        return set()
-
-    refs = {raw_value}
-    if raw_value.isdigit():
-        refs.add(f"#{raw_value}")
-    elif raw_value.startswith("#") and raw_value[1:].isdigit():
-        refs.add(raw_value[1:])
-    return refs
-
-
-def _evidence_task_refs(evidence: Mapping[str, Any]) -> set[str]:
-    refs = _normalized_task_evidence_refs(evidence.get("task_id"))
-    supports = evidence.get("supports")
-    if isinstance(supports, str) and supports.strip().startswith("task_id:"):
-        refs.update(_normalized_task_evidence_refs(supports))
-    return refs
-
-
-def _target_task_refs(variables: Mapping[str, Any], task_ref: Any) -> set[str]:
-    refs = _normalized_task_evidence_refs(task_ref)
-    claimed_tasks = variables.get("claimed_tasks")
-    if not refs or not isinstance(claimed_tasks, Mapping):
-        return refs
-
-    for task_id, display_ref in claimed_tasks.items():
-        task_id_refs = _normalized_task_evidence_refs(task_id)
-        display_refs = _normalized_task_evidence_refs(display_ref)
-        if refs & (task_id_refs | display_refs):
-            refs.update(task_id_refs)
-            refs.update(display_refs)
-    return refs
-
-
-@dataclass(frozen=True, slots=True)
-class _CompletionEvidenceState:
-    ready: bool
-    evidence_seen: bool
-    unknown_outcome_seen: bool
-    failed_outcome_seen: bool
-
-
-def _completion_evidence_items(
-    variables: Mapping[str, Any] | None,
-    task_ref: Any = None,
-) -> list[Any]:
-    if not isinstance(variables, Mapping):
-        return []
-
-    evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
-    if not isinstance(evidence_items, list):
-        return []
-
-    target_refs = _target_task_refs(variables, task_ref)
-    if target_refs:
-        matching_evidence: list[Any] = []
-        unscoped_evidence: list[Any] = []
-        for item in evidence_items:
-            if not isinstance(item, Mapping):
-                unscoped_evidence.append(item)
-                continue
-            evidence_refs = _evidence_task_refs(item)
-            if evidence_refs & target_refs:
-                matching_evidence.append(item)
-            elif not evidence_refs:
-                unscoped_evidence.append(item)
-        evidence_items = matching_evidence or unscoped_evidence
-    return evidence_items
-
-
-def _completion_evidence_state(
-    variables: Mapping[str, Any] | None,
-    task_ref: Any = None,
-) -> _CompletionEvidenceState:
-    evidence_items = _completion_evidence_items(variables, task_ref)
-    projection_items = [
-        item
-        for item in evidence_items
-        if isinstance(item, Mapping)
-        and item.get("evidence_type") == VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION
-    ]
-    if projection_items:
-        evidence_items = projection_items
-
-    successful_evidence_seen = False
-    evidence_seen = False
-    unknown_outcome_seen = False
-    failed_outcome_seen = False
-
-    for item in evidence_items:
-        if not isinstance(item, Mapping):
-            continue
-        evidence_type = item.get("evidence_type")
-        if not isinstance(evidence_type, str):
-            continue
-        evidence_seen = True
-
-        success = item.get("success")
-        if success is None:
-            unknown_outcome_seen = True
-        elif success is False:
-            failed_outcome_seen = True
-        if success is True:
-            successful_evidence_seen = True
-
-    return _CompletionEvidenceState(
-        ready=successful_evidence_seen,
-        evidence_seen=evidence_seen,
-        unknown_outcome_seen=unknown_outcome_seen,
-        failed_outcome_seen=failed_outcome_seen,
-    )
-
-
-def completion_evidence_ready(
-    variables: Mapping[str, Any] | None,
-    task_ref: Any = None,
-) -> bool:
-    """Return whether evidence is sufficient for the requested task's completion.
-
-    Task-scoped evidence takes precedence over the shared session stream. When
-    no evidence names the target task, unscoped evidence remains the conservative
-    fallback.
-    """
-    return _completion_evidence_state(variables, task_ref).ready
-
-
-_VALIDATION_RECOVERY = (
-    "Recover from the CLI that ran the command. Claude Code and Qwen must reach a terminal "
-    "PostToolUse hook; Droid and Grok must retain their structured terminal result; Codex must "
-    "preserve the literal command and follow every wait or polling token to termination."
-)
-
-
-def completion_evidence_diagnostic(
-    variables: Mapping[str, Any] | None,
-    task_ref: Any = None,
-) -> str:
-    """Explain why completion verification evidence is not ready."""
-    state = _completion_evidence_state(variables, task_ref)
-    if state.failed_outcome_seen:
-        return "Completion readiness is blocked by failed verification evidence."
-    if state.unknown_outcome_seen:
-        return (
-            "Completion readiness has verification evidence with an unknown outcome; "
-            "the provider did not expose a definitive machine result. "
-            f"{_VALIDATION_RECOVERY}"
-        )
-    if not state.evidence_seen:
-        return (
-            "Completion readiness has no verification evidence for this task. "
-            f"{_VALIDATION_RECOVERY}"
-        )
-    return "Completion readiness has no successful verification evidence for this task."
 
 
 def _strip_env_assignments(tokens: list[str]) -> list[str]:

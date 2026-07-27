@@ -777,12 +777,7 @@ def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
     mgr = SessionVariableManager(db)
     mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
 
-    mgr.record_edited_file(
-        S1,
-        "src/app.py",
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
-    )
+    mgr.record_edited_file(S1, "src/app.py")
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
@@ -795,12 +790,7 @@ def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:
     _install_variable_default(db, "session_edited_files", ["seed.py"])
     mgr = SessionVariableManager(db)
 
-    mgr.record_edited_file(
-        S1,
-        "src/app.py",
-        condition_name="verification_evidence_recorded",
-        updates={},
-    )
+    mgr.record_edited_file(S1, "src/app.py")
 
     assert _stored_variables(db, S1)["session_edited_files"] == ["seed.py", "src/app.py"]
 
@@ -825,12 +815,7 @@ def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> N
 
     mgr = SessionVariableManager(db)
 
-    mgr.record_edited_file(
-        S1,
-        "src/app.py",
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
-    )
+    mgr.record_edited_file(S1, "src/app.py")
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
@@ -850,12 +835,7 @@ def test_record_edited_file_uses_active_task_when_multiple_claimed(db: Any) -> N
         },
     )
 
-    mgr.record_edited_file(
-        S1,
-        "src/app.py",
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
-    )
+    mgr.record_edited_file(S1, "src/app.py")
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
@@ -869,12 +849,7 @@ def test_record_edited_file_does_not_guess_with_multiple_claims(db: Any) -> None
     mgr = SessionVariableManager(db)
     mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1", "task-2": "#2"}})
 
-    mgr.record_edited_file(
-        S1,
-        "src/app.py",
-        condition_name="verification_evidence_recorded",
-        updates={"verification_evidence_recorded": False, "verification_evidence": []},
-    )
+    mgr.record_edited_file(S1, "src/app.py")
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
