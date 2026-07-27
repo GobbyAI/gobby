@@ -7,6 +7,8 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+VALIDATION_CRITERIA = "Storage fixture task; behavior asserted by the test."
+
 
 def test_build_history_records_runs_and_events_in_newest_order(temp_db) -> None:
     from gobby.storage.build_history import BuildHistoryStorage
@@ -77,7 +79,9 @@ def test_build_history_start_and_finish_updates_root_and_status(temp_db) -> None
     from gobby.storage.tasks import LocalTaskManager
 
     project = LocalProjectManager(temp_db).create("build-history-finish", repo_path="/tmp/history")
-    task = LocalTaskManager(temp_db).create_task(project.id, "Build root")
+    task = LocalTaskManager(temp_db).create_task(
+        project.id, "Build root", validation_criteria=VALIDATION_CRITERIA
+    )
     history = BuildHistoryStorage(temp_db)
 
     run = history.start_run(project_id=project.id, input_ref="plan.md", action="build")
@@ -175,10 +179,22 @@ def test_build_history_finds_latest_coordinated_ancestor_run(temp_db) -> None:
     )
     tasks = LocalTaskManager(temp_db)
     root = tasks.create_task(project.id, "Build root", task_type="epic")
-    child = tasks.create_task(project.id, "Build child", parent_task_id=root.id)
-    leaf = tasks.create_task(project.id, "Build leaf", parent_task_id=child.id)
-    unrelated = tasks.create_task(project.id, "Unrelated")
-    other_project_task = tasks.create_task(other_project.id, "Other project")
+    child = tasks.create_task(
+        project.id,
+        "Build child",
+        parent_task_id=root.id,
+        validation_criteria=VALIDATION_CRITERIA,
+    )
+    leaf = tasks.create_task(
+        project.id,
+        "Build leaf",
+        parent_task_id=child.id,
+        validation_criteria=VALIDATION_CRITERIA,
+    )
+    unrelated = tasks.create_task(project.id, "Unrelated", validation_criteria=VALIDATION_CRITERIA)
+    other_project_task = tasks.create_task(
+        other_project.id, "Other project", validation_criteria=VALIDATION_CRITERIA
+    )
     history = BuildHistoryStorage(temp_db)
 
     root_run = history.record_run(

@@ -412,6 +412,7 @@ class TestLocalCloneManagerGetByTask:
         task = LocalTaskManager(temp_db).create_task(
             project_id=str(sample_project["id"]),
             title="Clone ordering",
+            validation_criteria="Storage fixture task; behavior asserted by the test.",
         )
         manager = LocalCloneManager(temp_db)
         older_active = manager.create(

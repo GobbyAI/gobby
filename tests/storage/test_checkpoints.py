@@ -34,13 +34,19 @@ def _seed_parents(temp_db: HubDatabase) -> None:
             (SESSION_ID, PROJECT_ID),
         )
         conn.execute(
-            "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES (%s, %s, 'test task', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            "INSERT INTO tasks "
+            "(id, project_id, title, task_type, category, validation_criteria, created_at, updated_at) "
+            "VALUES (%s, %s, 'test task', 'task', 'code', "
+            "'Storage fixture task; behavior asserted by the test.', "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (TASK_1, PROJECT_ID),
         )
         conn.execute(
-            "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES (%s, %s, 'test task 2', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            "INSERT INTO tasks "
+            "(id, project_id, title, task_type, category, validation_criteria, created_at, updated_at) "
+            "VALUES (%s, %s, 'test task 2', 'task', 'code', "
+            "'Storage fixture task; behavior asserted by the test.', "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (TASK_2, PROJECT_ID),
         )
         for i in range(5):

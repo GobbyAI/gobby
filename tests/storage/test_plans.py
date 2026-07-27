@@ -21,7 +21,11 @@ def _project(temp_db: HubDatabase, root: Path) -> str:
 
 
 def _root_task_ref(temp_db: HubDatabase, project_id: str) -> str:
-    task = LocalTaskManager(temp_db).create_task(project_id=project_id, title="Plan root")
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Plan root",
+        validation_criteria="Storage fixture task; behavior asserted by the test.",
+    )
     return f"#{task.seq_num}"
 
 

@@ -21,6 +21,10 @@ SCAN_ROOTS = (PROJECT_ROOT / "src" / "gobby", PROJECT_ROOT / "tests")
 DB_SQL_METHODS = {"execute", "executemany", "fetchone", "fetchall"}
 RAW_PERCENT_RE = re.compile(r"(?<!%)%(?!%|\(|s\b|b\b|t\b)")
 DOLLAR_PLACEHOLDER_RE = re.compile(r"\$[1-9][0-9]*\b")
+# PostgreSQL's jsonb key-exists operator (``col ? %s`` / ``col ? 'key'``) is
+# legitimate SQL, not a qmark placeholder: a qmark placeholder is never
+# directly followed by a bound %s parameter or a quoted literal.
+JSONB_KEY_EXISTS_RE = re.compile(r"\?(?=\s*(?:%s|'))")
 
 
 def test_db_call_sql_literals_use_psycopg_placeholders() -> None:
@@ -103,7 +107,9 @@ def _literal_sql(node: ast.AST) -> str | None:
 
 
 def _scrub_sql(sql: str) -> str:
-    return _scrub_quoted_strings(_scrub_comments_and_dollar_quotes(sql))
+    scrubbed = _scrub_comments_and_dollar_quotes(sql)
+    scrubbed = JSONB_KEY_EXISTS_RE.sub(" ", scrubbed)
+    return _scrub_quoted_strings(scrubbed)
 
 
 def _scrub_comments_and_dollar_quotes(sql: str) -> str:

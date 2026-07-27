@@ -17,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_crossrefs import MemoryCrossRefMixin
 from gobby.storage.memories_dreams import MemoryDreamMixin
 from gobby.storage.memories_query import MemoryQueryMixin
+from gobby.storage.memories_scope import ALL_MEMORIES
 from gobby.storage.sessions._usage import _UsageMixin
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -63,9 +64,15 @@ class _RecordingTransaction:
 class _RecordingDB:
     dialect = "postgres"
 
-    def __init__(self, *, fetchone_row: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fetchone_row: Mapping[str, Any] | None = None,
+        execute_row: Mapping[str, Any] | None = None,
+    ) -> None:
         self.calls: list[_RecordedCall] = []
         self._fetchone_row = fetchone_row
+        self._execute_row = execute_row
 
     def transaction(self) -> _RecordingTransaction:
         return _RecordingTransaction(self)
@@ -79,7 +86,7 @@ class _RecordingDB:
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> _RecordingCursor:
         self.calls.append(_RecordedCall(sql, params))
-        return _RecordingCursor(rowcount=1)
+        return _RecordingCursor(row=self._execute_row, rowcount=1)
 
     def fetchone(
         self,
@@ -162,7 +169,9 @@ def test_session_context_usage_binds_snapshot_timestamp_as_datetime() -> None:
 
 
 def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
-    db = _RecordingDB()
+    # restore_memory SELECTs the row under FOR UPDATE before writing; give the
+    # execute-cursor a row so the existence check passes.
+    db = _RecordingDB(execute_row={"vector_needs_reindex": False})
     crossrefs = MemoryCrossRefMixin(db)  # type: ignore[arg-type]
     access = MemoryQueryMixin(db)  # type: ignore[arg-type]
     dreams = MemoryDreamMixin(db)  # type: ignore[arg-type]
@@ -183,10 +192,10 @@ def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
     dreams.restore_memory("memory-1", when=timestamp)
     _assert_aware_utc(_params(db.calls[-1])[0])
 
-    dreams.list_dream_candidates(limit=10, redream_cutoff=timestamp)
+    dreams.list_dream_candidates(limit=10, redream_cutoff=timestamp, scope=ALL_MEMORIES)
     _assert_aware_utc(_params(db.calls[-1])[0])
 
-    dreams.list_dream_project_ids(redream_cutoff=timestamp)
+    dreams.list_dream_scopes(redream_cutoff=timestamp)
     _assert_aware_utc(_params(db.calls[-1])[0])
 
 

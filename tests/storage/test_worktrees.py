@@ -440,6 +440,7 @@ class TestLocalWorktreeManagerGetBy:
         task = LocalTaskManager(temp_db).create_task(
             project_id=str(sample_project["id"]),
             title="Worktree ordering",
+            validation_criteria="Storage fixture task; behavior asserted by the test.",
         )
         manager = LocalWorktreeManager(temp_db)
         active = manager.create(

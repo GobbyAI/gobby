@@ -117,16 +117,17 @@ def _insert_task(
     session_manager.db.execute(
         """
         INSERT INTO tasks (
-            id, project_id, title,
+            id, project_id, title, validation_criteria,
             seq_num, claimed_by_session_id, created_in_session_id, closed_in_session_id,
             created_at, updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             str(uuid.uuid4()),
             sample_project["id"],
             f"Task {task_id}",
+            "Storage fixture task; behavior asserted by the test.",
             seq_num,
             claimed_by,
             created_in,

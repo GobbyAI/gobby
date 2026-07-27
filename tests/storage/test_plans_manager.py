@@ -16,6 +16,8 @@ from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 
 pytestmark = pytest.mark.unit
 
+VALIDATION_CRITERIA = "Storage fixture task; behavior asserted by the test."
+
 
 def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
     plan_dir = root / ".gobby" / "plans"
@@ -47,8 +49,12 @@ def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
 def _project(temp_db: HubDatabase, root: Path) -> str:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
     tasks = LocalTaskManager(temp_db)
-    first = tasks.create_task(project_id=project_id, title="Plan root 100")
-    second = tasks.create_task(project_id=project_id, title="Plan root 101")
+    first = tasks.create_task(
+        project_id=project_id, title="Plan root 100", validation_criteria=VALIDATION_CRITERIA
+    )
+    second = tasks.create_task(
+        project_id=project_id, title="Plan root 101", validation_criteria=VALIDATION_CRITERIA
+    )
     temp_db.execute("UPDATE tasks SET seq_num = 100 WHERE id = %s", (first.id,))
     temp_db.execute("UPDATE tasks SET seq_num = 101 WHERE id = %s", (second.id,))
     return project_id
@@ -93,7 +99,9 @@ def test_create_plan_rolls_back_when_manifest_generation_fails(
 
 def test_create_plan_emits_initial_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
-    LocalTaskManager(temp_db).create_task(project_id=project_id, title="Root")
+    LocalTaskManager(temp_db).create_task(
+        project_id=project_id, title="Root", validation_criteria=VALIDATION_CRITERIA
+    )
     plan_path = _write_plan(tmp_path)
 
     record = LocalPlanManager(temp_db).create_plan(

@@ -206,14 +206,21 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
         db.executemany(
             """
             INSERT INTO tasks (
-                id, project_id, parent_task_id, title, task_type, closed_at,
-                created_at, updated_at
+                id, project_id, parent_task_id, title, task_type, validation_criteria,
+                closed_at, created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             [
-                (root_task_id, project_id, None, "Root", "epic"),
-                (child_task_id, project_id, root_task_id, "Child", "task"),
+                (root_task_id, project_id, None, "Root", "epic", None),
+                (
+                    child_task_id,
+                    project_id,
+                    root_task_id,
+                    "Child",
+                    "task",
+                    "Storage fixture task; behavior asserted by the test.",
+                ),
             ],
         )
 

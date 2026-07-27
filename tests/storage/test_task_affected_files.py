@@ -24,9 +24,17 @@ def db(temp_db: HubDatabase):
     )
     for tid in (TASK_1, TASK_2, TASK_3):
         database.execute(
-            "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            (tid, f"Task {tid}", PROJECT_ID, "task", 2),
+            "INSERT INTO tasks "
+            "(id, title, project_id, task_type, priority, validation_criteria, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (
+                tid,
+                f"Task {tid}",
+                PROJECT_ID,
+                "task",
+                2,
+                "Storage fixture task; behavior asserted by the test.",
+            ),
         )
     yield database
 

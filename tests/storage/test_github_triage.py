@@ -139,6 +139,7 @@ def test_issue_record_upsert_preserves_task_link_and_latest_decision(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Implement issue",
+        validation_criteria="Storage fixture task; behavior asserted by the test.",
     )
     store = GitHubTriageStore(temp_db)
 

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -61,6 +62,7 @@ class TestLocalMemoryManagerMediaRemoved:
     ) -> None:
         memory = memory_manager.create_memory(
             content="Plain text memory",
+            project_id=PERSONAL_PROJECT_ID,
             memory_type="fact",
         )
 
