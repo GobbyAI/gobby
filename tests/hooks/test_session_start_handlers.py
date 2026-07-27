@@ -1089,10 +1089,10 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_new_session_mark_parent_expired_error(
+    def test_compact_state_transfer_error_expires_child_and_blocks_activation(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
-        """Test error marking parent as expired is handled gracefully."""
+        """A failed compact transfer preserves the parent and blocks child activation."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
 
         mock_parent = MagicMock()
@@ -1102,8 +1102,8 @@ class TestSessionStartNewSession:
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
-        mock_dependencies["session_manager"].mark_session_expired.side_effect = Exception(
-            "Failed to expire"
+        mock_dependencies["session_manager"].transfer_compact_handoff_state.side_effect = Exception(
+            "Failed to transfer"
         )
 
         handlers = EventHandlers(**mock_dependencies)
@@ -1116,11 +1116,15 @@ class TestSessionStartNewSession:
             },
         )
 
-        response = handlers.handle_session_start(event)
+        with patch.object(handlers, "_activate_default_agent") as activate_agent:
+            response = handlers.handle_session_start(event)
 
-        # Should still allow despite error
-        assert response.decision == "allow"
-        assert mock_dependencies["session_manager"].mark_session_expired.call_count == 1
+        assert response.decision == "block"
+        assert "child activation was blocked" in (response.reason or "")
+        mock_dependencies["session_manager"].mark_session_expired.assert_called_once_with(
+            "new-sess-456"
+        )
+        activate_agent.assert_not_called()
 
     def test_new_session_coordinator_registration_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock

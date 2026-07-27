@@ -133,9 +133,11 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_session_end(event)
+        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+            handlers.handle_session_end(event)
 
         mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once()
+        manager_cls.return_value.delete_instances_for_session.assert_called_once_with("sess-123")
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_count == 1
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_args is not None
 
@@ -290,7 +292,7 @@ class TestSessionEndHandling:
         """Test SESSION_END marks handoff_ready when event reason is 'compact'."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
-        mock_session.agent_run_id = None
+        mock_session.agent_run_id = "run-456"
         mock_session.status = "active"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
@@ -302,12 +304,15 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        response = handlers.handle_session_end(event)
+        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+            response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status.assert_called_once_with(
             "sess-123", "handoff_ready"
         )
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+        manager_cls.return_value.delete_instances_for_session.assert_not_called()
 
     def test_session_end_expires_stale_handoff_ready_without_handoff_reason(
         self, mock_dependencies: dict
@@ -361,7 +366,7 @@ class TestSessionEndHandling:
         """Idle eviction keeps a durable web-chat row resumable."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
-        mock_session.agent_run_id = None
+        mock_session.agent_run_id = "run-456"
         mock_session.session_type = "web_chat"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
@@ -373,12 +378,15 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        response = handlers.handle_session_end(event)
+        with patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls:
+            response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status.assert_called_once_with(
             "sess-123", "paused"
         )
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+        manager_cls.return_value.delete_instances_for_session.assert_not_called()
 
     def test_session_end_idle_reason_expires_terminal_session(
         self, mock_dependencies: dict

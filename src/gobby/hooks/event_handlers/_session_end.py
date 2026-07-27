@@ -55,6 +55,22 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to fetch session %s: %s", session_id, e)
 
+        try:
+            end_reason = SessionEndReason(event.data.get("reason"))
+        except (TypeError, ValueError):
+            end_reason = SessionEndReason.OTHER
+        if end_reason == SessionEndReason.COMPACT:
+            end_status = "handoff_ready"
+        elif (
+            end_reason == SessionEndReason.IDLE
+            and session is not None
+            and session.session_type == "web_chat"
+        ):
+            end_status = "paused"
+        else:
+            end_status = "expired"
+        terminal_outcome = end_status == "expired"
+
         # Auto-link commits made during this session to tasks
         if session and self._task_manager and self._session_manager:
             try:
@@ -83,7 +99,7 @@ class SessionEndMixin(EventHandlersBase):
                 self.logger.warning("Failed to auto-link session commits: %s", e)
 
         # Complete agent run if this is a terminal-mode agent session
-        if session and session.agent_run_id and self._session_coordinator:
+        if terminal_outcome and session and session.agent_run_id and self._session_coordinator:
             try:
                 self._session_coordinator.complete_agent_run(session)
             except Exception as e:
@@ -91,7 +107,12 @@ class SessionEndMixin(EventHandlersBase):
 
         # Session-bound workflow instances must be cleared when the session ends
         # so agent-only step enforcement cannot leak onto later requests.
-        if session_id and self._workflow_handler and self._workflow_handler.rule_engine:
+        if (
+            terminal_outcome
+            and session_id
+            and self._workflow_handler
+            and self._workflow_handler.rule_engine
+        ):
             try:
                 deleted_count = WorkflowInstanceManager(
                     self._workflow_handler.rule_engine.db
@@ -161,20 +182,6 @@ class SessionEndMixin(EventHandlersBase):
         # AFTER_AGENT/STOP as paused.
         if session_id and self._session_manager:
             try:
-                try:
-                    end_reason: SessionEndReason = SessionEndReason(event.data.get("reason"))
-                except (TypeError, ValueError):
-                    end_reason = SessionEndReason.OTHER
-                if end_reason == SessionEndReason.COMPACT:
-                    end_status = "handoff_ready"
-                elif (
-                    end_reason == SessionEndReason.IDLE
-                    and session is not None
-                    and session.session_type == "web_chat"
-                ):
-                    end_status = "paused"
-                else:
-                    end_status = "expired"
                 self._session_manager.update_status(session_id, end_status)
             except Exception as e:
                 self.logger.warning("Failed to update session %s status on end: %s", session_id, e)

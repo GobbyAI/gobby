@@ -46,6 +46,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "expire_if_active": "(self, session_id: 'str') -> 'Session | None'",
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
+    "transfer_compact_handoff_state": "(self, parent_session_id: 'str', "
+    "child_session_id: 'str') -> 'int'",
     "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
     "'dict[str, _TaskRefsByRole]'",
     "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",

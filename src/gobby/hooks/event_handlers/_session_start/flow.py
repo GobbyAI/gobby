@@ -521,11 +521,48 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         )
 
     if parent_session_id and handler._session_manager:
-        try:
-            handler._session_manager.mark_session_expired(parent_session_id)
-            handler.logger.debug("Marked parent session %s as expired", parent_session_id)
-        except Exception as e:
-            handler.logger.warning("Failed to mark parent session as expired: %s", e)
+        if session_source == "compact":
+            if session_id is None:
+                return HookResponse(
+                    decision="block",
+                    reason="Compact handoff child registration did not return a session ID.",
+                )
+            try:
+                moved_count = handler._session_manager.transfer_compact_handoff_state(
+                    parent_session_id,
+                    session_id,
+                )
+                handler.logger.debug(
+                    "Transferred %s workflow instances from compact parent %s to child %s",
+                    moved_count,
+                    parent_session_id,
+                    session_id,
+                )
+            except Exception as e:
+                try:
+                    handler._session_manager.mark_session_expired(session_id)
+                except Exception as expiry_error:
+                    handler.logger.warning(
+                        "Failed to expire unactivated compact child %s: %s",
+                        session_id,
+                        expiry_error,
+                    )
+                handler.logger.exception(
+                    "Failed to transfer compact handoff state from %s to %s: %s",
+                    parent_session_id,
+                    session_id,
+                    e,
+                )
+                return HookResponse(
+                    decision="block",
+                    reason="Failed to preserve compact handoff state; child activation was blocked.",
+                )
+        else:
+            try:
+                handler._session_manager.mark_session_expired(parent_session_id)
+                handler.logger.debug("Marked parent session %s as expired", parent_session_id)
+            except Exception as e:
+                handler.logger.warning("Failed to mark parent session as expired: %s", e)
 
     _expire_stale_terminal_sessions_for_context(
         handler,

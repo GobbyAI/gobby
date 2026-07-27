@@ -19,6 +19,16 @@ class _LifecycleDelegateMixin:
 
         return _expire(self.db, timeout_hours)
 
+    def transfer_compact_handoff_state(
+        self: _ManagerState,
+        parent_session_id: str,
+        child_session_id: str,
+    ) -> int:
+        """Move compact-resume state to a child before it is activated."""
+        from gobby.storage.session_lifecycle import transfer_compact_handoff_state
+
+        return transfer_compact_handoff_state(self.db, parent_session_id, child_session_id)
+
     def expire_orphaned_handoff_sessions(self: _ManagerState, timeout_minutes: int = 30) -> int:
         """Expire orphaned handoff_ready sessions. Delegates to session_lifecycle."""
         from gobby.storage.session_lifecycle import (

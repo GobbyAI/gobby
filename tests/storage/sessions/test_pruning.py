@@ -6,12 +6,48 @@ from uuid import uuid4
 import pytest
 
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
 
 class TestSessionManagerPruning:
     """Tests split from the SessionManager storage monolith."""
+
+    def test_expire_orphaned_handoff_deletes_retained_workflow_instances(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="orphaned-compact-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "handoff_ready")
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        workflow_manager.save_instance(
+            WorkflowInstance(
+                id=str(uuid4()),
+                session_id=session.id,
+                workflow_name="developer",
+                current_step="implement",
+            )
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+
+        expired = session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30)
+
+        assert expired == 1
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.status == "expired"
+        assert workflow_manager.get_active_instances(session.id) == []
 
     def test_expire_stale_sessions(
         self,
@@ -369,10 +405,17 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             """
             INSERT INTO tasks (
-                id, project_id, title, created_in_session_id, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                id, project_id, title, validation_criteria,
+                created_in_session_id, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (str(uuid4()), sample_project["id"], "Retained task history", task_ref.id),
+            (
+                str(uuid4()),
+                sample_project["id"],
+                "Retained task history",
+                "Retained task remains referenced.",
+                task_ref.id,
+            ),
         )
         session_manager.db.execute(
             """

@@ -158,6 +158,11 @@ class TestSessionStartHandoff:
         assert response.context is not None
         assert "Parent session: parent-sess-123" in response.context
         mock_dependencies["session_storage"].find_parent.assert_called_once()
+        mock_dependencies["session_manager"].transfer_compact_handoff_state.assert_called_once_with(
+            "parent-sess-123",
+            "new-sess-456",
+        )
+        mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_bounds_large_summary_with_breadcrumb(

@@ -2,18 +2,237 @@
 
 import uuid
 
+import psycopg
 import pytest
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
 
 class TestSessionManagerLifecycle:
     """Tests split from the SessionManager storage monolith."""
+
+    def test_transfer_compact_handoff_state_moves_all_workflows_and_run(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        parent = session_manager.register(
+            external_id="compact-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="compact-child",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+        )
+        session_manager.update_status(parent.id, "handoff_ready")
+
+        run_manager = LocalAgentRunManager(session_manager.db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=parent.id,
+            provider="claude",
+            prompt="Continue compacted work",
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run.id, parent.id),
+        )
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        for workflow_name, step in (("developer", "implement"), ("task-guard", "verify")):
+            workflow_manager.save_instance(
+                WorkflowInstance(
+                    id=str(uuid.uuid4()),
+                    session_id=parent.id,
+                    workflow_name=workflow_name,
+                    current_step=step,
+                    variables={"step": step},
+                )
+            )
+
+        moved = session_manager.transfer_compact_handoff_state(parent.id, child.id)
+
+        assert moved == 2
+        assert workflow_manager.get_active_instances(parent.id) == []
+        moved_instances = workflow_manager.get_active_instances(child.id)
+        assert {instance.workflow_name for instance in moved_instances} == {
+            "developer",
+            "task-guard",
+        }
+        assert {instance.current_step for instance in moved_instances} == {
+            "implement",
+            "verify",
+        }
+        updated_parent = session_manager.get(parent.id)
+        updated_child = session_manager.get(child.id)
+        updated_run = run_manager.get(run.id)
+        assert updated_parent is not None
+        assert updated_parent.status == "expired"
+        assert updated_parent.agent_run_id is None
+        assert updated_child is not None
+        assert updated_child.agent_run_id == run.id
+        assert updated_run is not None
+        assert updated_run.child_session_id == child.id
+
+    def test_transfer_compact_handoff_state_without_workflows_still_moves_run(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        parent = session_manager.register(
+            external_id="compact-empty-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="compact-empty-child",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+        )
+        session_manager.update_status(parent.id, "handoff_ready")
+        run_manager = LocalAgentRunManager(session_manager.db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=parent.id,
+            provider="claude",
+            prompt="Continue compacted work",
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run.id, parent.id),
+        )
+
+        moved = session_manager.transfer_compact_handoff_state(parent.id, child.id)
+
+        assert moved == 0
+        updated_parent = session_manager.get(parent.id)
+        updated_child = session_manager.get(child.id)
+        assert updated_parent is not None
+        assert updated_parent.status == "expired"
+        assert updated_parent.agent_run_id is None
+        assert updated_child is not None
+        assert updated_child.agent_run_id == run.id
+
+    def test_transfer_compact_handoff_state_rejects_destination_workflow_state(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        parent = session_manager.register(
+            external_id="compact-conflict-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="compact-conflict-child",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+        )
+        session_manager.update_status(parent.id, "handoff_ready")
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        for session_id in (parent.id, child.id):
+            workflow_manager.save_instance(
+                WorkflowInstance(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    workflow_name="developer",
+                    current_step="implement",
+                )
+            )
+
+        with pytest.raises(ValueError, match="already owns workflow state"):
+            session_manager.transfer_compact_handoff_state(parent.id, child.id)
+
+        preserved_parent = session_manager.get(parent.id)
+        assert preserved_parent is not None
+        assert preserved_parent.status == "handoff_ready"
+        assert len(workflow_manager.get_active_instances(parent.id)) == 1
+        assert len(workflow_manager.get_active_instances(child.id)) == 1
+
+    def test_transfer_compact_handoff_state_rolls_back_all_ownership_moves(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        parent = session_manager.register(
+            external_id="compact-rollback-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="compact-rollback-child",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+        )
+        session_manager.update_status(parent.id, "handoff_ready")
+        run_manager = LocalAgentRunManager(session_manager.db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=parent.id,
+            provider="claude",
+            prompt="Continue compacted work",
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run.id, parent.id),
+        )
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        workflow_manager.save_instance(
+            WorkflowInstance(
+                id=str(uuid.uuid4()),
+                session_id=parent.id,
+                workflow_name="developer",
+                current_step="implement",
+            )
+        )
+        session_manager.db.execute(
+            """
+            ALTER TABLE sessions
+            ADD CONSTRAINT test_compact_handoff_rollback
+            CHECK (external_id != 'compact-rollback-parent' OR status != 'expired')
+            """
+        )
+        try:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                session_manager.transfer_compact_handoff_state(parent.id, child.id)
+        finally:
+            session_manager.db.execute(
+                "ALTER TABLE sessions DROP CONSTRAINT test_compact_handoff_rollback"
+            )
+
+        preserved_parent = session_manager.get(parent.id)
+        preserved_child = session_manager.get(child.id)
+        preserved_run = run_manager.get(run.id)
+        assert preserved_parent is not None
+        assert preserved_parent.status == "handoff_ready"
+        assert preserved_parent.agent_run_id == run.id
+        assert preserved_child is not None
+        assert preserved_child.agent_run_id is None
+        assert preserved_run is not None
+        assert preserved_run.child_session_id == parent.id
+        assert len(workflow_manager.get_active_instances(parent.id)) == 1
+        assert workflow_manager.get_active_instances(child.id) == []
 
     def test_update_status(
         self,
