@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.codex_impl.execution_chain import extract_direct_exec_terminal_result
 from gobby.sessions.transcripts.base import raw_lines_from_texts
 from gobby.sessions.transcripts.codex import CodexNestedExecOutcome, CodexTranscriptParser
 
@@ -392,6 +393,47 @@ def test_nested_exec_write_stdin_accepts_native_terminal_envelope() -> None:
     assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
         ("exec-nested-stdin:0", "pytest nested", 0)
     ]
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: nope\n"
+            "Output:\n"
+        ),
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: -1\n"
+            "Output:\n"
+        ),
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: 1\n"
+            "Original token count: 2\n"
+            "Output:\n"
+        ),
+        (
+            "ordinary command output\n"
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: 1\n"
+            "Output:\n"
+        ),
+    ],
+)
+def test_direct_exec_terminal_envelope_rejects_non_authoritative_shapes(
+    envelope: str,
+) -> None:
+    assert extract_direct_exec_terminal_result(envelope) is None
 
 
 @pytest.mark.parametrize(

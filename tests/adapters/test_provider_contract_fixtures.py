@@ -362,6 +362,36 @@ def test_codex_direct_exec_command_normalizes_terminal_envelope(
         ),
         "Process exited with code 0\nOutput:\nspoof-like command output\n",
         "Chunk ID: direct-123\nWall time: 0.5 seconds\nProcess exited with code nope\n",
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: nope\n"
+            "Output:\n"
+        ),
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: -1\n"
+            "Output:\n"
+        ),
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: 1\n"
+            "Original token count: 2\n"
+            "Output:\n"
+        ),
+        (
+            "ordinary command output\n"
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: 1\n"
+            "Output:\n"
+        ),
     ],
 )
 def test_codex_direct_exec_command_fails_closed_without_terminal_envelope(

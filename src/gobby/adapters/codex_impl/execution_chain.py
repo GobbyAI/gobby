@@ -20,6 +20,8 @@ _DIRECT_EXEC_COMPLETION_RE = re.compile(
     r"\AChunk ID: [^\r\n]+\r?\n"
     r"Wall time: [^\r\n]+\r?\n"
     r"Process exited with code (?P<exit_code>-?\d+)\r?\n"
+    r"(?:Original token count: [0-9]+\r?\n)?"
+    r"(?:Output|Final output):\r?\n"
 )
 _DIRECT_EXEC_RUNNING_RE = re.compile(
     r"\AChunk ID: [^\r\n]+\r?\n"
