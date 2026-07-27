@@ -20,8 +20,8 @@ from datetime import UTC, datetime, timedelta
 from gobby.storage.hub.protocol import HubDatabase
 
 # Exponential backoff schedule for consecutive infrastructure failures.
-BASE_BACKOFF_SECONDS = 300.0  # first retry ~5 min out
-MAX_BACKOFF_SECONDS = 3600.0  # capped at 1 hour
+BASE_BACKOFF_SECONDS = 15.0
+MAX_BACKOFF_SECONDS = 120.0
 # Escalate (surface to a human) after this many consecutive infra failures.
 MAX_CONSECUTIVE_INFRA_FAILURES = 5
 
