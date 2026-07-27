@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,7 +13,7 @@ from gobby.hooks.session_lookup import SessionLookupService
 pytestmark = pytest.mark.unit
 
 
-def _event(metadata: dict | None = None) -> HookEvent:
+def _event(metadata: dict[str, Any] | None = None) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="claude-external",
@@ -232,9 +233,53 @@ def test_task_context_uses_stage_native_state() -> None:
     service.resolve(event)
 
     assert event.task_id == "task-1"
+    assert event.metadata["_task_id_origin"] == "session_context"
     assert event.metadata["_task_title"] == "Stage-native task"
     assert event.metadata["_task_context"] == {
         "id": "task-1",
         "title": "Stage-native task",
         "state": "in_progress",
+    }
+
+
+def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> None:
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id="platform-session", project_id="project-1"
+    )
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    latest_task = SimpleNamespace(
+        id="task-latest",
+        title="Latest session task",
+        stages=[],
+        closed_at=None,
+        is_escalated=False,
+        active_blocked_by=[],
+    )
+    explicit_task = SimpleNamespace(
+        id="task-explicit",
+        title="Explicit event task",
+        stages=[],
+        closed_at=None,
+        is_escalated=False,
+        active_blocked_by=[],
+    )
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = [
+        {"task": latest_task, "action": "worked_on"},
+        {"task": explicit_task, "action": "worked_on"},
+    ]
+    service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
+    event = _event({"_platform_session_id": "platform-session"})
+    event.task_id = explicit_task.id
+
+    service.resolve(event)
+
+    assert event.task_id == "task-explicit"
+    assert event.metadata["_task_id_origin"] == "explicit"
+    assert event.metadata["_task_title"] == "Explicit event task"
+    assert event.metadata["_task_context"] == {
+        "id": "task-explicit",
+        "title": "Explicit event task",
+        "state": "ready",
     }

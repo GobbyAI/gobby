@@ -119,6 +119,7 @@ def test_hook_event_task_id(mock_hook_manager: Any) -> None:
 
     # Verify task_id was populated on the event object
     assert event.task_id == task_id
+    assert event.metadata["_task_id_origin"] == "session_context"
     assert event.metadata["_task_title"] == task_title
     assert event.metadata["_platform_session_id"] == platform_session_id
 

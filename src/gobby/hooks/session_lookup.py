@@ -359,15 +359,26 @@ class SessionLookupService:
 
     def _enrich_task_context(self, platform_session_id: str, event: HookEvent) -> None:
         """Add active task context to event metadata."""
+        explicit_task_id = event.task_id
+        if explicit_task_id is not None:
+            event.metadata["_task_id_origin"] = "explicit"
         try:
             # Get tasks linked with 'worked_on' action which implies active focus
             session_tasks = self._session_task_manager.get_session_tasks(platform_session_id)
             # Filter for active 'worked_on' tasks - taking the most recent one
             active_tasks = [t for t in session_tasks if t.get("action") == "worked_on"]
-            if active_tasks:
-                # Use the most recent task - populate full task context
+            task = None
+            if explicit_task_id is not None:
+                task = next(
+                    (link["task"] for link in active_tasks if link["task"].id == explicit_task_id),
+                    None,
+                )
+            elif active_tasks:
                 task = active_tasks[0]["task"]
                 event.task_id = task.id
+                event.metadata["_task_id_origin"] = "session_context"
+
+            if task is not None:
                 event.metadata["_task_context"] = {
                     "id": task.id,
                     "title": task.title,

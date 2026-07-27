@@ -174,11 +174,16 @@ def ingest_verification_receipt(
     variables = variable_manager.get_variables(session_id)
     store = VerificationReceiptStore(db)
     active_task_ref = variables.get("active_task_id")
+    task_id_origin = event.metadata.get("_task_id_origin")
+    session_task_ref = event.task_id if task_id_origin == "session_context" else None
+    explicit_task_ref = event.task_id if task_id_origin != "session_context" else None
     task_id, attribution_source = store.resolve_attribution(
         project_id=project_id,
         session_id=session_id,
         active_task_ref=active_task_ref if isinstance(active_task_ref, str) else None,
-        explicit_task_ref=event.task_id,
+        explicit_task_ref=explicit_task_ref,
+        execution_cwd=event.cwd,
+        session_task_ref=session_task_ref,
     )
     validation_epoch: int | None = None
     if task_id is not None:

@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -16,7 +17,12 @@ from gobby.utils.datetime import utc_now
 
 VerificationOutcome = Literal["pending", "success", "failure", "unknown", "conflicting"]
 AttributionSource = Literal[
-    "active_task", "sole_claim", "explicit_task", "manual_assignment", "unassigned"
+    "active_task",
+    "sole_claim",
+    "explicit_task",
+    "worktree_task",
+    "manual_assignment",
+    "unassigned",
 ]
 
 _OUTPUT_EXCERPT_BYTES = 4096
@@ -210,20 +216,42 @@ class VerificationReceiptStore:
         session_id: str,
         active_task_ref: str | None = None,
         explicit_task_ref: str | None = None,
+        execution_cwd: str | None = None,
+        session_task_ref: str | None = None,
     ) -> tuple[str | None, AttributionSource]:
-        candidates: tuple[tuple[str | None, AttributionSource, bool], ...] = (
-            (explicit_task_ref, "explicit_task", True),
-            (active_task_ref, "active_task", False),
+        explicit_task_id = self.resolve_task_ref(project_id, explicit_task_ref)
+        if explicit_task_id and self._is_open_claim(
+            explicit_task_id,
+            project_id,
+            session_id,
+            allow_owner_ancestor=True,
+        ):
+            return explicit_task_id, "explicit_task"
+
+        worktree_task_id = self._resolve_worktree_task(
+            project_id=project_id,
+            session_id=session_id,
+            execution_cwd=execution_cwd,
         )
-        for task_ref, source, allow_owner_ancestor in candidates:
-            task_id = self.resolve_task_ref(project_id, task_ref)
-            if task_id and self._is_open_claim(
-                task_id,
-                project_id,
-                session_id,
-                allow_owner_ancestor=allow_owner_ancestor,
-            ):
-                return task_id, source
+        if worktree_task_id is not None:
+            return worktree_task_id, "worktree_task"
+
+        session_task_id = self.resolve_task_ref(project_id, session_task_ref)
+        if session_task_id and self._is_open_claim(
+            session_task_id,
+            project_id,
+            session_id,
+            allow_owner_ancestor=True,
+        ):
+            return session_task_id, "active_task"
+
+        active_task_id = self.resolve_task_ref(project_id, active_task_ref)
+        if active_task_id and self._is_open_claim(
+            active_task_id,
+            project_id,
+            session_id,
+        ):
+            return active_task_id, "active_task"
 
         rows = self.db.fetchall(
             """
@@ -239,6 +267,55 @@ class VerificationReceiptStore:
         if len(rows) == 1:
             return str(rows[0]["id"]), "sole_claim"
         return None, "unassigned"
+
+    def _resolve_worktree_task(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        execution_cwd: str | None,
+    ) -> str | None:
+        if execution_cwd is None:
+            return None
+        try:
+            cwd = Path(execution_cwd)
+            if not cwd.is_absolute():
+                return None
+            resolved_cwd = cwd.resolve(strict=False)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+
+        rows = self.db.fetchall(
+            """
+            SELECT task_id, worktree_path
+            FROM worktrees
+            WHERE project_id = %s AND task_id IS NOT NULL
+            """,
+            (project_id,),
+        )
+        matches: list[str] = []
+        for row in rows:
+            try:
+                worktree_path = Path(str(row["worktree_path"]))
+                if not worktree_path.is_absolute():
+                    continue
+                resolved_worktree = worktree_path.resolve(strict=False)
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if resolved_cwd == resolved_worktree or resolved_cwd.is_relative_to(resolved_worktree):
+                matches.append(str(row["task_id"]))
+
+        if len(matches) != 1:
+            return None
+        task_id = matches[0]
+        if self._is_open_claim(
+            task_id,
+            project_id,
+            session_id,
+            allow_owner_ancestor=True,
+        ):
+            return task_id
+        return None
 
     def _is_open_claim(
         self,

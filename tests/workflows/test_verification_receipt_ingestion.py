@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,9 +14,11 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.verification_receipts import VerificationReceiptStore
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_receipt_ingestion import (
+    VerificationReceiptIngestionResult,
     ensure_verification_execution_identity,
     ingest_verification_receipt,
 )
@@ -43,6 +47,7 @@ def _event(
     execution_id: str | None = None,
     timestamp_offset: int = 0,
     exit_code: int | None = None,
+    cwd: str = "/repo",
 ) -> HookEvent:
     data: dict[str, object] = {
         "tool_name": "exec_command",
@@ -60,7 +65,7 @@ def _event(
         source=source,
         timestamp=utc_now() + timedelta(seconds=timestamp_offset),
         data=data,
-        cwd="/repo",
+        cwd=cwd,
     )
 
 
@@ -165,6 +170,41 @@ def test_explicit_task_attribution_accepts_claim_owner_ancestor(
     assert result.task_id == task.id
     assert result.attribution_source == "explicit_task"
     assert result.normalized_outcome == "success"
+    assert result.receipt.session_id == child.id
+    assert result.receipt.attribution_actor == child.id
+
+
+def test_session_context_task_attribution_accepts_claim_owner_ancestor(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    owner = _session(session_manager, sample_project["id"], suffix="session-context-owner")
+    child = _session(
+        session_manager,
+        sample_project["id"],
+        suffix="session-context-child",
+        parent_session_id=owner.id,
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        "Session-context child receipt task",
+        claimed_by_session_id=owner.id,
+        validation_criteria="Session-derived context remains authorized through owner ancestry.",
+    )
+    event = _event(
+        event_type=HookEventType.AFTER_TOOL,
+        execution_id="session-context-child-validation",
+        exit_code=0,
+    )
+    event.task_id = task.id
+    event.metadata["_task_id_origin"] = "session_context"
+
+    result = ingest_verification_receipt(event, child.id, db=temp_db)
+
+    assert result is not None
+    assert result.task_id == task.id
+    assert result.attribution_source == "active_task"
     assert result.receipt.session_id == child.id
     assert result.receipt.attribution_actor == child.id
 
@@ -274,3 +314,96 @@ def test_terminal_receipt_without_machine_outcome_is_unknown(
     assert total == 1
     assert receipts[0].normalized_outcome == "unknown"
     assert receipts[0].task_id is None
+
+
+def test_parallel_ingestion_attributes_each_worktree_to_its_registered_task(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    owner = _session(session_manager, sample_project["id"], suffix="parallel-owner")
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        sample_project["id"],
+        "Parallel receipt parent",
+        task_type="epic",
+    )
+    first_task, second_task = [
+        task_manager.create_task(
+            sample_project["id"],
+            title,
+            parent_task_id=parent.id,
+            claimed_by_session_id=owner.id,
+            validation_criteria=f"{title} receives only its own worktree receipt.",
+        )
+        for title in ("First sibling", "Second sibling")
+    ]
+    first_path = tmp_path / "first-sibling"
+    second_path = tmp_path / "second-sibling"
+    worktree_manager = LocalWorktreeManager(temp_db)
+    worktree_manager.create(
+        sample_project["id"],
+        "first-sibling",
+        str(first_path),
+        task_id=first_task.id,
+    )
+    worktree_manager.create(
+        sample_project["id"],
+        "second-sibling",
+        str(second_path),
+        task_id=second_task.id,
+    )
+    SessionVariableManager(temp_db).set_variable(owner.id, "active_task_id", second_task.id)
+    events = [
+        _event(
+            event_type=HookEventType.AFTER_TOOL,
+            execution_id=f"parallel-{index}",
+            exit_code=0,
+            cwd=str(path),
+        )
+        for index, path in enumerate((first_path, second_path), start=1)
+    ]
+    for event in events:
+        event.task_id = second_task.id
+        event.metadata["_task_id_origin"] = "session_context"
+
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    results: list[VerificationReceiptIngestionResult] = []
+    errors: list[BaseException] = []
+
+    def _ingest(event: HookEvent) -> None:
+        try:
+            barrier.wait(timeout=5)
+            result = ingest_verification_receipt(event, owner.id, db=temp_db)
+            assert result is not None
+            with lock:
+                results.append(result)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_ingest, args=(event,)) for event in events]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert {result.task_id: result.attribution_source for result in results} == {
+        first_task.id: "worktree_task",
+        second_task.id: "worktree_task",
+    }
+    assert all(result.projection is not None and result.projection.ready for result in results)
+    receipt_store = VerificationReceiptStore(temp_db)
+    assert {
+        task_id: [
+            (receipt.task_id, receipt.attribution_source)
+            for receipt in receipt_store.list_for_task(sample_project["id"], task_id)
+        ]
+        for task_id in (first_task.id, second_task.id)
+    } == {
+        first_task.id: [(first_task.id, "worktree_task")],
+        second_task.id: [(second_task.id, "worktree_task")],
+    }
