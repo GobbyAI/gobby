@@ -2776,3 +2776,941 @@ requirement exists for this reason.
 ```json plan-review-round
 {"evidence_id":"0d5bec33-c32d-4198-8a15-e0435323ae7f","plan_hash":"b589b492f303682f3394a95ba21d030e8be262bf4d09dd99f1eaaad827fe463f","round_number":22,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"08ecac40dd8e0835b2a763525c3f29d2f0a04c9e6eff755407266024b02e528b","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":0,"total":2},"evidence_id":"0d5bec33-c32d-4198-8a15-e0435323ae7f","lanes":[{"candidate_count":0,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":1,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":26,"manifest_digest":"e1b6a9d9913556bed015f17077c9dd4849321de183a3a64f2d9591b99b9ff75a","status":"valid"},"source_digest":"69cc18ebb0a16313e4c0d83fc1a7434aa8c2ebaa03e9b9e2949bbde4b515c337","version":1},"findings":[],"manifest_entries":[{"category":"code","depends_on":[],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:1.1:1.1.1","covers:adversary-convergence-improvements:1.1:1.1.2","covers:adversary-convergence-improvements:1.1:1.1.3","covers:adversary-convergence-improvements:1.1:1.1.4","covers:adversary-convergence-improvements:1.1:1.1.5","covers:adversary-convergence-improvements:1.1:1.1.6","covers:adversary-convergence-improvements:1.1:1.1.7"],"source_section":"1.1","task_type":"feature","tdd":true,"title":"Extend finding severities and require failure traces on blocking","validation_criteria":"1.1.1: `FINDING_SEVERITIES` contains exactly blocking, major, minor, nit. symbol: `gobby.plans.review_findings.FINDING_SEVERITIES`.\n1.1.2: A `blocking` finding without a well-formed `failure_trace` is rejected with a diagnostic naming the missing sub-field. test: `tests/plans/test_review_findings.py::test_blocking_requires_failure_trace`.\n1.1.3: `major` and `minor` findings validate without a `failure_trace`, and a malformed trace on any severity is rejected all-or-nothing. test: `tests/plans/test_review_findings.py::test_failure_trace_all_or_nothing`.\n1.1.4: The invalid-severity diagnostic enumerates the four-value vocabulary derived from `FINDING_SEVERITIES`. test: `tests/plans/test_review_findings.py::test_invalid_severity_diagnostic_derives_from_constant`.\n1.1.5: `minimal_repair` is the single canonical remedy field on **findings** across the validator, its renderer, and the taskless result contract; no `fix` or `suggested_fix` key remains on a finding. Lane candidates keep their own `suggested_fix` field, which this rename does not touch. test: `tests/plans/test_review_findings.py::test_single_canonical_remedy_field`.\n1.1.6: The stage-native review schema accepts all four severities, and a payload emitted verbatim by the taskless contract validates. test: `tests/mcp_proxy/test_stage_review_schema.py::test_severity_enum_parity_with_findings`.\n1.1.7: Every in-repo literal finding producer builds `minimal_repair` with valid `failure_trace` on blocking fixtures, and no test constructs a finding with `fix`. test: `tests/review_learning/test_round_diff.py::test_findings_use_canonical_remedy_field`."},{"category":"code","depends_on":["1.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:2.1:2.1.1","covers:adversary-convergence-improvements:2.1:2.1.2","covers:adversary-convergence-improvements:2.1:2.1.3"],"source_section":"2.1","task_type":"feature","tdd":true,"title":"Migration 343: quality ledger and repair attestation columns","validation_criteria":"2.1.1: Migration adds all three JSONB columns with CHECK constraints. file: `src/gobby/storage/migrations/343_plan_review_quality_ledger.sql`.\n2.1.2: Baseline schema carries the same columns and constraints. file: `src/gobby/storage/postgres_baseline_schema.sql`.\n2.1.3: Typed model and store round-trip all three columns: written values deserialize identically through the store's read paths, and rewriting is idempotent. test: `tests/plans/test_review_evidence_store.py::test_evidence_jsonb_columns_round_trip`."},{"category":"code","depends_on":["2.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:2.2:2.2.1","covers:adversary-convergence-improvements:2.2:2.2.2","covers:adversary-convergence-improvements:2.2:2.2.3","covers:adversary-convergence-improvements:2.2:2.2.4","covers:adversary-convergence-improvements:2.2:2.2.5","covers:adversary-convergence-improvements:2.2:2.2.6","covers:adversary-convergence-improvements:2.2:2.2.7","covers:adversary-convergence-improvements:2.2:2.2.8"],"source_section":"2.2","task_type":"feature","tdd":true,"title":"Repair attestation gate in round preparation","validation_criteria":"2.2.1: Attestation validation module exists with the ten-field record shape. file: `src/gobby/plans/review_repair.py`.\n2.2.2: Preparation refuses when a repair-decided prior finding lacks an attestation. test: `tests/plans/test_review_repair.py::test_unattested_finding_refuses_preparation`.\n2.2.3: Preparation refuses when a claimed `changed_section_ids` is not a non-empty subset of the real hash-diff, and rejects duplicate, unknown, or check-key-mismatched attestations. test: `tests/plans/test_review_repair.py::test_attestation_must_match_hash_diff`.\n2.2.4: Resolution records with `decision: carry` are accepted only for non-blocking findings and route into the ledger; a mixed repair/carry preparation succeeds with exactly the repair set attested. test: `tests/plans/test_review_repair.py::test_mixed_repair_carry_preparation`.\n2.2.5: The resolution universe is loaded from the finalized prior round server-side; omitting a resolution record for any prior finding refuses preparation naming that finding. test: `tests/plans/test_review_repair.py::test_omitted_resolution_record_refuses`.\n2.2.6: One candidate's `suggested_fix` flows into a finding's `minimal_repair` and then into an attestation's `deviation_from_minimal_repair` without field collision, and each schema rejects the other two's remedy key. test: `tests/plans/test_review_repair.py::test_remedy_vocabulary_round_trip`.\n2.2.7: The taskless producer builds resolution records and attestations from recorded votes and a supplied edit diff, and the wrapper schema transports them unchanged; an incomplete record set is refused naming what is missing. test: `tests/plans/test_review_repair.py::test_taskless_producer_builds_records`.\n2.2.8: The staged producer serializes one typed round-bound submission payload and consumes it idempotently from injected stage state, so a replayed consumption yields the same records exactly once. test: `tests/plans/test_review_repair.py::test_staged_submission_payload_round_trip`."},{"category":"code","depends_on":["2.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:2.3:2.3.1","covers:adversary-convergence-improvements:2.3:2.3.2","covers:adversary-convergence-improvements:2.3:2.3.3"],"source_section":"2.3","task_type":"feature","tdd":true,"title":"Deviation proof","validation_criteria":"2.3.1: A deviating attestation without the three proof fields is rejected; one with them passes. test: `tests/plans/test_review_repair.py::test_deviation_requires_proof`.\n2.3.2: A deviation without counterexample validation evidence or without an explicit `accepted_risk` value is rejected. test: `tests/plans/test_review_repair.py::test_deviation_counterexample_and_risk`.\n2.3.3: One named five-key schema defines the object, and every producer, validator, and renderer resolves to that same definition: a payload valid under one surface validates under all of them, and an extra or missing key is rejected everywhere. test: `tests/plans/test_review_repair.py::test_deviation_schema_parity_across_surfaces`."},{"category":"code","depends_on":["2.3"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:2.4:2.4.1","covers:adversary-convergence-improvements:2.4:2.4.2"],"source_section":"2.4","task_type":"feature","tdd":true,"title":"Causal routing in the next-round snapshot","validation_criteria":"2.4.1: The context builder produces a `prior_round_context` structure carrying prior finding IDs, check keys, attestations, changed acceptance-item IDs, and changed section targets from injected round-N inputs. test: `tests/plans/test_review_repair.py::test_prior_round_context_structure`.\n2.4.2: Lane validation still requires every lane to cover every deliverable section. test: `tests/plans/test_review_coverage.py::test_lanes_still_cover_all_sections`."},{"assigned_agent":"backend-developer","category":"test","depends_on":["2.6","8.1"],"labels":["covers:adversary-convergence-improvements:2.5:2.5.1","covers:adversary-convergence-improvements:2.5:2.5.2","covers:adversary-convergence-improvements:2.5:2.5.3"],"source_section":"2.5","task_type":"feature","tdd":false,"title":"Two-round refusal end-to-end coverage","validation_criteria":"2.5.1: End-to-end test drives two rounds and asserts refusal-before-spawn with the specific missing attestation named. test: `tests/plans/test_repair_gate_e2e.py::test_omitted_consumer_refuses_round_two`.\n2.5.2: Omitting one prior finding's resolution record end-to-end refuses round-2 preparation naming that finding. test: `tests/plans/test_repair_gate_e2e.py::test_omitted_resolution_refuses_round_two`.\n2.5.3: An attestation that looks complete but sweeps a strict subset of the server-derived universe refuses round-2 preparation before spawn, naming the omitted site. test: `tests/plans/test_repair_gate_e2e.py::test_subset_attestation_refuses_before_spawn`."},{"category":"code","depends_on":["2.4","5.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:2.6:2.6.1","covers:adversary-convergence-improvements:2.6:2.6.4","covers:adversary-convergence-improvements:2.6:2.6.2","covers:adversary-convergence-improvements:2.6:2.6.3"],"source_section":"2.6","task_type":"feature","tdd":true,"title":"Server-derived repair universe","validation_criteria":"2.6.1: The sweep universe is derived server-side from the prior round plus the site inventory; an attestation covering a strict subset with no deferrals is refused naming the missing sites. test: `tests/plans/test_review_repair.py::test_sweep_universe_subset_refused`.\n2.6.4: The registered read-only operation returns the typed site graph and its canonical digest for a given worktree state, and the helper rejects attestations built against a different digest. test: `tests/plans/test_review_repair.py::test_universe_visible_before_attestation`.\n2.6.2: A zero-result sweep claim without query evidence is refused. test: `tests/plans/test_review_repair.py::test_zero_result_requires_query_evidence`.\n2.6.3: Adjacency is computed over the union of shared section, `check_key`, changed contract, and changed target/resource: two accepted findings on *different* sections that touch the same contract or target are adjacent and require a cross-repair interaction record, whose absence refuses preparation. test: `tests/plans/test_review_repair.py::test_repair_bundle_interaction_edges`."},{"category":"code","depends_on":["1.1","2.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:3.1:3.1.1","covers:adversary-convergence-improvements:3.1:3.1.2","covers:adversary-convergence-improvements:3.1:3.1.3","covers:adversary-convergence-improvements:3.1:3.1.4","covers:adversary-convergence-improvements:3.1:3.1.5","covers:adversary-convergence-improvements:3.1:3.1.7","covers:adversary-convergence-improvements:3.1:3.1.6"],"source_section":"3.1","task_type":"feature","tdd":true,"title":"end_agent_run completion guard and session-resolution fix","validation_criteria":"3.1.1: `PlanReviewEvidenceStore` gains a dispatch-run-keyed accessor. symbol: `gobby.plans.review_evidence_store.PlanReviewEvidenceStore.get_by_dispatch_run`.\n3.1.2: `end_agent_run` with bound live evidence refuses when the result is missing, fails `validate_round_result`, or attests a different `evidence_id`; with a valid delivered result it completes. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_end_agent_run_refuses_without_round_result`.\n3.1.3: A run whose session context fails ContextVar resolution still terminates via the request-level run identity; a caller-supplied or mismatched run ID is ignored and cannot bind another run. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_end_agent_run_run_identity_fallback_and_spoofing`.\n3.1.4: `create_agents_registry` (`mcp_proxy/tools/agents_registry.py:33`) injects both the evidence store and the run-identity getter, exercised through the production constructor rather than a test double. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_registry_constructor_injects_dependencies`.\n3.1.5: The validator is verdict-discriminated: reviewed verdicts require canonical coverage, while `needs_requirements` and `inconclusive` require `evidence_id` plus typed reason data and terminate cleanly. A real source-drift run that never completed a lane terminates without fabricating an attestation. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_verdict_discriminated_terminal_branches`.\n3.1.7: The published union covers every verdict and every `reason_code` (`source_drift`, `missing_requirements`, `index_mismatch`, `timeout`), and a payload emitted verbatim by each producer surface validates against it. test: `tests/plans/test_review_evidence_models.py::test_terminal_branch_union_producer_parity`.\n3.1.6: The run ID survives the stdio-proxy → execution-endpoint → ContextVar chain end to end: headers forward, the endpoint binds server-side and seeds/resets the ContextVar, and forged, absent, and mismatched IDs are each rejected at the endpoint rather than trusted downstream. test: `tests/servers/test_mcp_execution_context.py::test_run_identity_transport_chain`."},{"category":"code","depends_on":["1.1","2.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:4.1:4.1.1","covers:adversary-convergence-improvements:4.1:4.1.2","covers:adversary-convergence-improvements:4.1:4.1.3","covers:adversary-convergence-improvements:4.1:4.1.4"],"source_section":"4.1","task_type":"feature","tdd":true,"title":"Carry-forward quality ledger module","validation_criteria":"4.1.1: Ledger module merges, carries, and stales entries across three synthetic rounds. test: `tests/plans/test_review_ledger.py::test_merge_and_staleness_across_rounds`.\n4.1.2: Ledger entry validation shares category and check-key vocabulary with findings. symbol: `gobby.plans.review_ledger`.\n4.1.3: A reworded finding with a new round-local ID coalesces into its existing `ledger_entry_id`; a source-hash change stales the old entry and creates a fresh one; and the same section set supplied in a different order coalesces to the same entry. test: `tests/plans/test_review_ledger.py::test_canonical_coalescing_order_and_hash_split`.\n4.1.4: The merge builds dismissed entries only from disposition records carried in the canonical round result, and rejects a result whose `disposition_counts` disagree with the records it carries. test: `tests/plans/test_review_ledger.py::test_dismissed_entries_from_canonical_result`."},{"category":"code","depends_on":["2.4","4.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:4.2:4.2.1","covers:adversary-convergence-improvements:4.2:4.2.2"],"source_section":"4.2","task_type":"feature","tdd":true,"title":"Dismissal do-not-reopen injection","validation_criteria":"4.2.1: A dismissed candidate appears in the next snapshot's context and is marked reopenable only on hash change. test: `tests/plans/test_review_ledger.py::test_dismissal_injection_and_reopen_rule`.\n4.2.2: Coverage validation rejects a candidate that reopens a ledger dismissal under unchanged plan and source hashes, and accepts the same identity once its named source or section hash changes. test: `tests/plans/test_review_coverage.py::test_unchanged_dismissal_reopen_rejected`."},{"category":"code","depends_on":["2.6","3.1","4.1","5.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:4.3:4.3.1","covers:adversary-convergence-improvements:4.3:4.3.2","covers:adversary-convergence-improvements:4.3:4.3.3","covers:adversary-convergence-improvements:4.3:4.3.4","covers:adversary-convergence-improvements:4.3:4.3.5","covers:adversary-convergence-improvements:4.3:4.3.6"],"source_section":"4.3","task_type":"feature","tdd":true,"title":"Approval condition and surfacing","validation_criteria":"4.3.1: Approval validation passes with open major/minor ledger entries and fails with any blocking finding. test: `tests/plans/test_review_coverage.py::test_approval_condition_blocking_only`.\n4.3.2: Skill, contract, and agent definition document the four-tier severity model with the shared decision matrix, table-driven boundary examples, and ledger surfacing. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.\n4.3.3: Three-round unresolved carry mints a no-fix-policy lesson through the existing recorder. test: `tests/review_learning/test_no_fix_policy_lesson.py::test_carry_three_rounds_mints_lesson`.\n4.3.4: Ordinary finding-derived lesson minting still requires `severity == \"blocking\"`; the no-fix-policy path requires all three eligibility conditions. test: `tests/review_learning/test_no_fix_policy_lesson.py::test_minting_eligibility_paths`.\n4.3.5: Both coordinator approval displays render the ledger from the server-derived approved envelope: the taskless plan skill enumerates it beside `routing_decisions` and `manifest_entries`, and the staged display reads it from the same envelope. Neither accepts it as an input. file: `src/gobby/install/shared/skills/plan/SKILL.md`.\n4.3.6: Neither staged approve/reject nor the facade exposes a ledger parameter, and the persisted and displayed ledger equals the server derivation from the persisted prior ledger and the delivered result: a caller that supplies its own value cannot change what is stored or shown. Derivation precedes stage mutation, and a derivation failure leaves stage state unchanged. test: `tests/storage/test_stage_review_findings.py::test_approval_ledger_is_server_derived`."},{"category":"code","depends_on":["2.4","5.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:5.1:5.1.1","covers:adversary-convergence-improvements:5.1:5.1.2","covers:adversary-convergence-improvements:5.1:5.1.3","covers:adversary-convergence-improvements:5.1:5.1.4","covers:adversary-convergence-improvements:5.1:5.1.5"],"source_section":"5.1","task_type":"feature","tdd":true,"title":"Structured sweep records replace attested booleans","validation_criteria":"5.1.1: Attestation booleans are computed as empty set differences between server-derived required sweep keys and validated records; hand-computed fixtures match. test: `tests/plans/test_review_coverage.py::test_derived_sweep_booleans`.\n5.1.2: A candidate referenced by no sweep record fails validation with a diagnostic naming it. test: `tests/plans/test_review_coverage.py::test_unreferenced_candidate_rejected`.\n5.1.3: Fixtures cover empty-valid, partial, zero-result (with and without query evidence), and extra-record cases. test: `tests/plans/test_review_coverage.py::test_sweep_universe_fixtures`.\n5.1.4: Validation rejects a result whose `candidate_dispositions` do not reconcile with its `disposition_counts`, so the counts cannot disagree with the records that back them. test: `tests/plans/test_review_coverage.py::test_dispositions_reconcile_with_counts`.\n5.1.5: Coverage validation returns one canonical validated record bundle — sweep records plus dispositions with identities and rationales — rather than reducing them to the compact attestation, and that same bundle is what the round result carries. A bundle dropped between validation and the result is detected. test: `tests/plans/test_review_coverage.py::test_validator_returns_canonical_record_bundle`."},{"category":"code","depends_on":["4.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:5.2:5.2.1","covers:adversary-convergence-improvements:5.2:5.2.2","covers:adversary-convergence-improvements:5.2:5.2.4","covers:adversary-convergence-improvements:5.2:5.2.5","covers:adversary-convergence-improvements:5.2:5.2.8","covers:adversary-convergence-improvements:5.2:5.2.11","covers:adversary-convergence-improvements:5.2:5.2.7","covers:adversary-convergence-improvements:5.2:5.2.9","covers:adversary-convergence-improvements:5.2:5.2.10"],"source_section":"5.2","task_type":"feature","tdd":true,"title":"Machine-generated consumer inventory","validation_criteria":"5.2.1: File consumers include import-edge results, not only symbol-call-derived ones. test: `tests/plans/test_consumer_sweep.py::test_import_edge_file_consumers`.\n5.2.2: Inter-round changed symbols produce a typed candidate site inventory in the next-round snapshot's `prior_round_context`. test: `tests/plans/test_consumer_sweep.py::test_inter_round_site_inventory`.\n5.2.4: An unavailable index raises the typed `inventory_unavailable` error from the sweep rather than returning a partial or empty inventory. test: `tests/plans/test_consumer_sweep.py::test_inventory_unavailable_raises_typed_error`.\n5.2.5: Token capture accepts only when the digests bracketing the index operation agree; a mutation landing between the index and the digest read forces a rerun, the token is rechecked after inventory derivation, and retry exhaustion is reported rather than silently accepted. test: `tests/plans/test_consumer_sweep.py::test_index_token_brackets_index_operation`.\n5.2.8: A read-only verifier sits beside the token producer, consumes exactly the producer's digest inputs, and returns a typed match/mismatch result. symbol: `gobby.agents.code_index.verify_index_token`.\n5.2.11: A thin stateless read-only wrapper exposes the verifier and is reachable through the review-evidence tool surface with a typed result, so no caller needs an unplanned access path. test: `tests/plans/test_consumer_sweep.py::test_index_verifier_wrapper_registered`.\n5.2.7: A changed target in a language the sweep cannot resolve is recorded as `language_unsupported` instead of being omitted from the inventory. test: `tests/plans/test_consumer_sweep.py::test_unsupported_language_marked_not_omitted`.\n5.2.9: Under continuous repository mutation the settle helper stops at three attempts or its monotonic deadline, whichever comes first, and raises typed `index_unstable` rather than looping. test: `tests/plans/test_consumer_sweep.py::test_index_settle_retry_is_bounded`.\n5.2.10: The spawn plan gate converts a typed unavailable-sweep error into its existing structured no-spawn outcome rather than letting it escape, and the CLI caller keeps its own reporting: both callers are asserted against the same raised error. test: `tests/plans/test_consumer_sweep.py::test_typed_sweep_error_handled_by_both_callers`."},{"category":"code","depends_on":["6.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:5.3:5.3.1","covers:adversary-convergence-improvements:5.3:5.3.2","covers:adversary-convergence-improvements:5.3:5.3.3"],"source_section":"5.3","task_type":"feature","tdd":true,"title":"Strict MCP schemas for review-evidence tools","validation_criteria":"5.3.1: Every structured payload parameter carries a nested schema with properties and required lists, and `shadow_manifest_status` is absent from the input surface — the validator takes `routing_decisions` and emits only the derived compact status. file: `src/gobby/mcp_proxy/tools/plans/review_evidence.py`.\n5.3.2: A malformed disposition record is rejected at the schema layer with a field-level diagnostic. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_disposition_schema_rejects_malformed`.\n5.3.3: `prepare_plan_review_round` publishes strict schemas for its `repair_attestations` and resolution-record parameters, and a wrapper round trip carries both through to the service boundary unchanged. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_preparation_payload_schema_round_trip`."},{"assigned_agent":"backend-developer","category":"config","depends_on":["3.1","5.2","7.1"],"labels":["covers:adversary-convergence-improvements:6.1:6.1.1","covers:adversary-convergence-improvements:6.1:6.1.2","covers:adversary-convergence-improvements:6.1:6.1.3","covers:adversary-convergence-improvements:6.1:6.1.4","covers:adversary-convergence-improvements:6.1:6.1.5","covers:adversary-convergence-improvements:6.1:6.1.6"],"source_section":"6.1","task_type":"feature","tdd":true,"title":"Pin one code-index generation by protocol","validation_criteria":"6.1.1: The plan skill's spawn step relies on preparation's single indexing site and instructs no separate pre-spawn `gcode index`. file: `src/gobby/install/shared/skills/plan/SKILL.md`.\n6.1.2: The adversary definition and review skill instruct `--no-freshness` on all lane searches. file: `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`.\n6.1.3: The review skill and adversary definition instruct lanes to verify the snapshot's `index_token` before and after searching and to report a mismatch rather than proceeding. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.\n6.1.4: The verifier classifies a repository mutation and a reindex as mismatches against a captured token, returning the typed mismatch result rather than a bare boolean. test: `tests/plans/test_consumer_sweep.py::test_verifier_classifies_mutation_and_reindex`.\n6.1.5: The review skill and adversary definitions require every lane to invoke the canonical verifier immediately before analysis and, on mismatch, to emit the typed `inconclusive` index-mismatch result and terminate rather than rerunning in place. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.\n6.1.6: The verifier wrapper is present in the reviewer's `allowed_mcp_tools` on both adversary definitions, and a lane invokes it before and after its searches on the real path with no unplanned access route. test: `tests/plans/test_review_coverage.py::test_lane_verifier_invocation_and_allowlist`."},{"category":"code","depends_on":["5.2","6.3"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:6.2:6.2.1","covers:adversary-convergence-improvements:6.2:6.2.2","covers:adversary-convergence-improvements:6.2:6.2.4","covers:adversary-convergence-improvements:6.2:6.2.5","covers:adversary-convergence-improvements:6.2:6.2.6","covers:adversary-convergence-improvements:6.2:6.2.7"],"source_section":"6.2","task_type":"feature","tdd":true,"title":"Fix snapshot transport","validation_criteria":"6.2.1: Every page of a 140 KB snapshot stays under the offload threshold and carries `snapshot_hash`, `total_sections`, and `next_offset`. test: `tests/plans/test_snapshot_transport.py::test_paged_fetch_under_threshold`.\n6.2.2: Repeated coverage validation with unchanged routing reuses the cached manifest instead of re-rendering. test: `tests/plans/test_snapshot_transport.py::test_manifest_cache_hit`.\n6.2.4: The page union equals the section manifest exactly and the concatenated pages hash to `snapshot_hash`, so a reader detects a missed or duplicated page locally. test: `tests/plans/test_snapshot_transport.py::test_page_union_and_local_hash_verification`.\n6.2.5: The shared plan-review skill and both adversary definitions drive a deterministic `next_offset` loop to exhaustion with local hash verification. The direct integration seam at `tests/mcp_proxy/test_plans_tools.py:140,204`, which today asserts a whole snapshot returned inline, is migrated to page through `next_offset` and verify per-page size, reconstructed hash, and section union. test: `tests/mcp_proxy/test_plans_tools.py::test_snapshot_pages_to_exhaustion`.\n6.2.6: The staged dispatch prompt carries the evidence handle instead of inline snapshot bytes: no `<plan-review-snapshot>` body is embedded, the stage-native reviewer reconstructs the plan by paging to exhaustion and verifying `snapshot_hash`, and `prior_round_context` is visible on that path. The inline-shape assertion at `tests/storage/test_stage_review_findings.py:424-425` is migrated to the handle contract. test: `tests/storage/test_stage_review_findings.py::test_staged_prompt_uses_evidence_handle`.\n6.2.7: A round whose requirements bundle, ledger, and consumer inventory each exceed the offload threshold pages every record class under it, and the reader reconstructs all four classes against their per-record hashes and the bundle digest before review begins. Every response stays under the threshold after serialization overhead. The regression pins this plan itself as a fixture — whose §7.2 exceeds 15,000 characters and whose V1 changelog exceeds 200,000 bytes — and round-trips it: pages align to UTF-8 code-point boundaries, concatenation matches `snapshot_hash`, and every record class parses out of the reassembled envelope. No record size causes a refusal. test: `tests/plans/test_snapshot_transport.py::test_sidecar_records_paged_and_bounded`."},{"category":"code","depends_on":["3.1","6.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:6.3:6.3.1","covers:adversary-convergence-improvements:6.3:6.3.2","covers:adversary-convergence-improvements:6.3:6.3.3","covers:adversary-convergence-improvements:6.3:6.3.4"],"source_section":"6.3","task_type":"feature","tdd":true,"title":"Bound the adversary run","validation_criteria":"6.3.1: Both adversary definitions carry the same nonzero `timeout:` enforced by the health monitor, so neither the taskless nor the stage-native reviewer can run unbounded. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.\n6.3.2: The plan skill documents the timeout transition as expire-then-fresh-retry with no checkpoint consumer, pinned to 3.1's `timeout` reason code. file: `src/gobby/install/shared/skills/plan/SKILL.md`.\n6.3.3: Spawning a claude-provider agent whose definition relies on native subagents logs an explicit diagnostic. test: `tests/agents/test_spawn_executor.py::test_native_subagent_strip_warns`.\n6.3.4: The adversary definition declares the native-lane duration limitation explicitly rather than implying a guarantee the runtime does not provide. file: `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`."},{"category":"code","depends_on":[],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:6.4:6.4.1","covers:adversary-convergence-improvements:6.4:6.4.2"],"source_section":"6.4","task_type":"feature","tdd":true,"title":"Reviewer compaction isolation","validation_criteria":"6.4.1: A no-edit session's summary context contains no path outside its transcript-derived `files_modified`. test: `tests/sessions/test_summary_context.py::test_no_edit_session_excludes_repo_noise`.\n6.4.2: An unrelated commit no longer changes a no-edit session's `source_context_hash`. test: `tests/sessions/test_summary_context.py::test_hash_stable_across_unrelated_commits`."},{"category":"code","depends_on":["6.2","6.3","7.2"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:6.5:6.5.3","covers:adversary-convergence-improvements:6.5:6.5.4","covers:adversary-convergence-improvements:6.5:6.5.5","covers:adversary-convergence-improvements:6.5:6.5.6","covers:adversary-convergence-improvements:6.5:6.5.7","covers:adversary-convergence-improvements:6.5:6.5.8","covers:adversary-convergence-improvements:6.5:6.5.9","covers:adversary-convergence-improvements:6.5:6.5.10","covers:adversary-convergence-improvements:6.5:6.5.12","covers:adversary-convergence-improvements:6.5:6.5.11"],"source_section":"6.5","task_type":"feature","tdd":true,"title":"Immutable requirements bundle","validation_criteria":"6.5.3: Both adversary definitions and the review skill direct the traceability lane to the bundle's requirement IDs, and the staged definition no longer declares live parent-task context canonical. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.\n6.5.4: The marker parser is exercised against canonical, duplicate, fenced-code, outside-project, missing, unreadable, malformed, and ordinary-reference fixtures; only declared sources enter the bundle and malformed markers fail preparation closed. test: `tests/plans/test_review_requirements.py::test_requirement_marker_grammar`.\n6.5.5: A stage-native review with no live task access still traces requirements from the immutable bundle. test: `tests/plans/test_review_requirements.py::test_stage_native_no_live_task_access`.\n6.5.6: The assembled bundle is observed directly for both task-bound and taskless modes: exact source set, stable compact IDs across reassembly, lowercase SHA-256 content hashes, duplicate collapse, ordinary-reference exclusion, and a changed source producing a changed hash under the same ID. test: `tests/plans/test_review_requirements.py::test_bundle_representation_properties`.\n6.5.7: Given an anchored session state, the bundle assembler reuses the round-1 anchor for later rounds rather than re-reading the transcript, and a missing anchor raises the fail-closed error. test: `tests/plans/test_review_requirements.py::test_anchor_reuse_and_missing_anchor_fails_closed`.\n6.5.8: The anchor is written by the plan-mode entry observer from the event's own request bytes before the plan skill loads, and no model-supplied or fixture-supplied value can satisfy it: a session whose skill-authored value disagrees with the observed request keeps the observed bytes. test: `tests/workflows/test_observer_plan_mode.py::test_entry_observer_owns_request_anchor`.\n6.5.9: The anchor is established on every server-recognized plan-mode entry, parameterized across all six activation paths as separate fixtures — web-chat metadata, structured hook mode, Codex collaboration mode, provider-native hook state, workflow variables, and the marker-only prompt fallback, which is asserted independently of the workflow-mode case because it writes `plan_mode` without `_apply_resolved_mode`. A branch whose event carries request content authors the anchor from those bytes — including web-chat and Codex first entries, which are asserted with content present and must not fail closed; a transition whose payload genuinely lacks content reuses the persisted anchor, and fails closed only when none exists. Neither fabricates content. No path reaches `load_skill: plan` with a manufactured anchor; later turns and a restart reuse the initial bytes without overwrite. test: `tests/workflows/test_observer_plan_mode.py::test_anchor_written_on_every_entry_branch`.\n6.5.10: No production writer sets `plan_mode` true outside the anchor-aware transition helper; a direct assignment added anywhere in the observer fails the check. test: `tests/workflows/test_observer_plan_mode.py::test_single_plan_mode_activation_path`.\n6.5.12: A requirement citation naming a `requirement_id` and `content_sha256` from the bound bundle validates without touching the worktree, a repository citation still validates by path and SHA, and a requirement citation whose hash disagrees with the bundle is rejected. The union round-trips through lane candidates, failure traces, and the strict schemas. test: `tests/plans/test_review_coverage.py::test_citation_union_repository_and_requirement`.\n6.5.11: `plan-draft` emits a `requirement-source:` marker when the user designates a repository document as canonical, preserves existing markers across a revision, and emits none when no document is designated — so a plan authored through the real drafting path yields a non-empty bundle. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`."},{"category":"code","depends_on":["1.1","4.3"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:7.1:7.1.1"],"source_section":"7.1","task_type":"feature","tdd":true,"title":"Split defect from minimal repair","validation_criteria":"7.1.1: Findings carry a validated `minimal_repair` and a `repair_scope` discriminant; `new_deliverable` without `new_deliverable_justification` is rejected, `existing_sections` carrying that justification is rejected, and the discriminant round-trips through the taskless, staged, and contract schemas. Both adversary result contracts declare the field, so a reviewer following either contract produces a result the shared validator accepts. test: `tests/plans/test_review_findings.py::test_minimal_repair_required`."},{"category":"code","depends_on":["4.3","5.3","6.2","6.3","7.1"],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:7.2:7.2.2","covers:adversary-convergence-improvements:7.2:7.2.3","covers:adversary-convergence-improvements:7.2:7.2.4","covers:adversary-convergence-improvements:7.2:7.2.5","covers:adversary-convergence-improvements:7.2:7.2.11","covers:adversary-convergence-improvements:7.2:7.2.6","covers:adversary-convergence-improvements:7.2:7.2.7","covers:adversary-convergence-improvements:7.2:7.2.12","covers:adversary-convergence-improvements:7.2:7.2.13","covers:adversary-convergence-improvements:7.2:7.2.14","covers:adversary-convergence-improvements:7.2:7.2.15","covers:adversary-convergence-improvements:7.2:7.2.16","covers:adversary-convergence-improvements:7.2:7.2.10","covers:adversary-convergence-improvements:7.2:7.2.8","covers:adversary-convergence-improvements:7.2:7.2.9"],"source_section":"7.2","task_type":"feature","tdd":true,"title":"Convergence telemetry","validation_criteria":"7.2.2: Every reviewer-miss and fixer-induced classification carries its contributing finding/ledger IDs and classification inputs, and the E1 comparison artifact is derivable from the stored records alone. test: `tests/plans/test_review_telemetry.py::test_classification_provenance`.\n7.2.3: The wrapper publishes the strict `convergence_telemetry` schema and rejects a malformed object at the schema layer. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_convergence_telemetry_schema`.\n7.2.4: Run aggregates are derived from the bound `AgentRun` for successful, timed-out, and failed runs, and per-lane figures that have no source carry an explicit `unavailable` reason rather than being omitted. test: `tests/plans/test_review_telemetry.py::test_daemon_derived_aggregates_across_terminal_states`.\n7.2.5: Aggregates merge before the parent wakes: a parent that finalizes immediately on wake still observes the merged values, and the merge is idempotent under retry. test: `tests/plans/test_review_telemetry.py::test_merge_precedes_parent_wake`.\n7.2.11: A timed-out adversary run is classified `inconclusive`/`timeout` per 3.1's union, retains its terminal result, and wakes only the direct parent session. On the staged variant the same helper additionally expires the old evidence and restores the stage to its pre-review state, after which fresh evidence prepares and dispatches; a run left mid-review restores no differently than one that never started. test: `tests/agents/test_adversary_timeout.py::test_timeout_classification_retention_and_wake_isolation`.\n7.2.6: The delivered state validates reviewer-owned fields only, so the completion guard accepts a result before enrichment; finalization requires the enriched state and rejects missing daemon fields. Every terminal path routes through the one extracted helper. test: `tests/plans/test_review_telemetry.py::test_delivered_and_enriched_states`.\n7.2.7: Every route in the terminal-path table is exercised with bound evidence — SESSION_END provider exit, workflow termination via the lifecycle terminalizer, the `complete_and_notify_agent_run` fallback, explicit kill including its `run_storage.fail` error branch, and cancellation including its lifecycle-less direct transition — and each fails the run and expires its evidence unless a delivered result is present, in which case it enriches and notifies in that order. A run with no bound evidence is unaffected. test: `tests/agents/test_terminal_paths.py::test_no_terminal_route_bypasses_guard`.\n7.2.12: Delivered state is persisted and validated before parent delivery is acknowledged, and result writes are compare-and-set: a mailbox success with a failed result write is detected, a duplicate retry is idempotent, and a late send racing enrichment cannot regress an enriched or terminal result. test: `tests/agents/test_terminal_paths.py::test_result_state_is_monotonic`.\n7.2.13: The terminal helper orders staged verdict handling as settle → enrich → finalize → commit stage → verdict-dependent effects → wake, driven against injected run and evidence state; a crash injected before and after each boundary replays to the same durable state, and no verdict-dependent effect runs before durable intent. test: `tests/agents/test_terminal_paths.py::test_staged_verdict_terminal_ordering`.\n7.2.14: Every verdict-dependent effect — signoff relay, artifact linking, claim release, lesson minting, workflow tick, and parent wake — survives a crash injected after its durable write and before its checkpoint, replaying to exactly one durable effect. The deterministic identity reaches the message primary key, so a replayed signoff relay conflicts with and reuses its own row instead of inserting a second. The wake is at-least-once: a duplicate wake is asserted harmless because the recipient consumes the deterministic result idempotently. test: `tests/agents/test_terminal_paths.py::test_verdict_effects_idempotent_across_replay`.\n7.2.15: Reviewer-result delivery is retry-safe across its two durable writes: a crash after the parent mailbox insert and before the `AgentRun.result` write replays to exactly one canonical round-result message, and a crash after the result write and before acknowledgement does not produce a second. test: `tests/agents/test_terminal_paths.py::test_delivery_mailbox_and_result_are_one_identity`.\n7.2.16: The deferred tmux health check routes its terminal decision through the extracted helper once evidence is bound, on both sides of the bind race: firing immediately before `bind_evidence_run` keeps the existing pre-bind spawn-failure behavior, and firing immediately after settles, expires the evidence, and wakes only the direct parent rather than calling `run_storage.fail` and delivering directly. Unregister cancellation routes through the same helper. test: `tests/agents/test_terminal_paths.py::test_deferred_health_check_respects_evidence_bind`.\n7.2.10: A search for run-terminalizing call sites (`run_storage.fail` / `run_storage.complete` and the lifecycle terminalizers) finds none that reaches a terminal state for an evidence-bound run without the extracted helper, so the table cannot silently fall out of date. test: `tests/agents/test_terminal_paths.py::test_all_terminalizing_call_sites_route_through_helper`.\n7.2.8: The shared skill and both adversary result contracts specify the exact `convergence_telemetry` fields, provenance, zero-value semantics, and per-verdict availability; a payload emitted verbatim by each producer survives `send_message`, delivery enrichment, and finalization. test: `tests/plans/test_review_telemetry.py::test_producer_contract_survives_delivery`.\n7.2.9: Entering through `LocalTaskManager`, telemetry emitted by the staged reviewer survives `approve_review` and `reject_review` — across the facade's signature forwarding and the transition's result construction — into the persisted canonical round result at finalization; the concrete result-builder lives in a sibling module, leaving `_transitions.py` under 1,000 lines. test: `tests/plans/test_review_telemetry.py::test_staged_path_carries_telemetry`."},{"assigned_agent":"backend-developer","category":"refactor","depends_on":["2.6","4.3","5.1","6.2","6.5","7.2"],"labels":["covers:adversary-convergence-improvements:8.1:8.1.1","covers:adversary-convergence-improvements:8.1:8.1.2","covers:adversary-convergence-improvements:8.1:8.1.3","covers:adversary-convergence-improvements:8.1:8.1.4","covers:adversary-convergence-improvements:8.1:8.1.5","covers:adversary-convergence-improvements:8.1:8.1.6","covers:adversary-convergence-improvements:8.1:8.1.7","covers:adversary-convergence-improvements:8.1:8.1.8","covers:adversary-convergence-improvements:8.1:8.1.9","covers:adversary-convergence-improvements:8.1:8.1.10","covers:adversary-convergence-improvements:8.1:8.1.11","covers:adversary-convergence-improvements:8.1:8.1.12","covers:adversary-convergence-improvements:8.1:8.1.13","covers:adversary-convergence-improvements:8.1:8.1.15","covers:adversary-convergence-improvements:8.1:8.1.17","covers:adversary-convergence-improvements:8.1:8.1.16","covers:adversary-convergence-improvements:8.1:8.1.14"],"source_section":"8.1","task_type":"feature","tdd":false,"title":"review_evidence.py integration owner","validation_criteria":"8.1.1: `review_evidence.py` is under 1,000 lines after all wiring lands. file: `src/gobby/plans/review_evidence.py`.\n8.1.2: Preparation, snapshot assembly, coverage validation, and finalization each invoke their upstream module through this file, with no duplicated logic. test: `tests/plans/test_review_evidence.py::test_service_integration_call_sites`.\n8.1.3: The full plan-review service suite passes end to end with every phase wired: prepare → snapshot → coverage → finalize → next-round context. test: `tests/plans/test_review_evidence.py::test_full_round_lifecycle_integration`.\n8.1.4: Every upstream deliverable's acceptance passes against its module and the MCP wrapper alone, with this file's wiring absent. The check enumerates the helper-local criteria each upstream leaf retains — validation, refusal, merge, derivation, classification, and parsing against injected inputs — and asserts that no upstream item names production preparation, snapshot assembly, finalization, or evidence expiry. test: `tests/plans/test_review_evidence.py::test_upstream_leaves_close_independently`.\n8.1.5: Preparation persists the whole `prior_round_context` atomically; a failure mid-preparation leaves no partially populated context and no evidence row, and a later read reconstructs it from the row alone after the live sources have changed. test: `tests/plans/test_review_evidence.py::test_prior_round_context_atomic_and_source_independent`.\n8.1.6: A non-empty consumer inventory succeeds on its first preparation call with no coordinator pre-disposition, and its sites appear in the required sweep universe. test: `tests/plans/test_review_evidence.py::test_inventory_first_call_succeeds`.\n8.1.7: The settled `index_token` is stored in `prior_round_context` and survives a restart round-trip; a mismatch between inventory time and verification time is detected. test: `tests/plans/test_review_evidence.py::test_index_token_persistence`.\n8.1.8: Preparation snapshots the requirements bundle into the evidence row, and traceability succeeds from that bundle alone when live task access is unavailable. test: `tests/plans/test_review_evidence.py::test_requirements_bundle_persisted_and_sufficient`.\n8.1.9: Finalization persists the merged quality ledger and the next round's preparation reads it back. test: `tests/plans/test_review_evidence.py::test_ledger_round_trip_through_finalize`.\n8.1.10: The evidence-bound finalize path rejects a round result whose findings fail the finding validator and refuses approval while any blocking finding remains. test: `tests/plans/test_review_evidence.py::test_finalize_validates_findings_and_blocks_approval`.\n8.1.11: Each finalized round validates and persists the `convergence_telemetry` object in `round_result` and reads it back durably, with repeated check keys counted across rounds. test: `tests/plans/test_review_evidence.py::test_telemetry_persisted_at_finalize`.\n8.1.12: The production round-N+1 `snapshot_payload` carries `prior_round_context` end to end, assembled from the persisted evidence row rather than recomputed from live state. test: `tests/plans/test_review_evidence.py::test_snapshot_carries_prior_round_context`.\n8.1.13: An unavailable index rolls the whole preparation back: no evidence row is written, spawn is refused, and a fresh preparation succeeds after recovery. test: `tests/plans/test_review_evidence.py::test_inventory_unavailable_aborts_preparation`.\n8.1.15: A finalized approval carries the server-derived merged ledger beside the manifest in the same envelope, and non-empty carried `major`/`minor` and dismissed entries survive derivation, V1 checkpoint rendering, and finalization with the same entries at every stage. The assertion fails if the ledger is empty, so a no-op derivation cannot pass. test: `tests/plans/test_review_evidence.py::test_approval_surfaces_carried_ledger`.\n8.1.17: The production edit → derive → attest → submit sequence closes on both routes: a round containing newly derived sites succeeds on its first preparation call, preparation rederives and accepts the matching digest, and a drifted digest is rejected back to a live producer — the taskless coordinator still in its turn, or the staged path through the existing failed-dispatch rollback — which rebuilds the attestation and succeeds. test: `tests/plans/test_review_evidence.py::test_repair_universe_production_sequence`.\n8.1.16: The real production paths that upstream leaves prove only against injected inputs are exercised here end to end: a taskless round-1 rejection, revision, and round-2 preparation with no fixture; a staged resubmission whose payload survives a restart before dispatch and is consumed exactly once; a settle exhaustion that rolls the whole preparation back leaving no evidence row and no spawn, with a later preparation succeeding; a real taskless plan-entry session anchoring at plan start and reusing that anchor across turns and a restart; and a real staged approve and reject reaching `end_agent_run` with a delivered result and no `send_message`, having mutated no stage state at verdict time. test: `tests/plans/test_review_evidence.py::test_production_paths_end_to_end`.\n8.1.14: An index-token mismatch drives the whole replacement transition: the bound child's typed `inconclusive` result expires the old evidence, the parent prepares a new evidence ID with fresh snapshot, inventory, and token, binds a distinct reviewer run, reruns all three lanes under it, and reuses no lane result from the old generation. test: `tests/plans/test_review_evidence.py::test_index_token_mismatch_replaces_run`."},{"category":"code","depends_on":[],"implementation_domain":"backend","labels":["covers:adversary-convergence-improvements:9.1:9.1.1","covers:adversary-convergence-improvements:9.1:9.1.2","covers:adversary-convergence-improvements:9.1:9.1.3"],"source_section":"9.1","task_type":"feature","tdd":true,"title":"Collapsed block reasons keep their recovery directive","validation_criteria":"9.1.1: A collapsed repeat block still carries its one-line recovery directive. test: `tests/workflows/test_block_rendering.py::test_collapsed_reason_keeps_directive`.\n9.1.2: Reasons without an actionable directive collapse to the bare stub unchanged. test: `tests/workflows/test_block_rendering.py::test_no_directive_collapses_clean`.\n9.1.3: Fixtures are derived from an inventory of the actionable reasons in the enabled bundled rules rather than a hand-listed set, covering at minimum single-line `call_tool`, a `call_tool` split across physical lines, direct MCP-tool calls, a `set_variable` directive with no `call_tool`, backticked shell or `gcode` commands, and alternative-command lists. Each collapsed reason carries a complete executable command rather than a fragment, and the inventory check fails when an enabled rule introduces a form the extractor cannot render. test: `tests/workflows/test_block_rendering.py::test_directive_forms_survive_collapse`."},{"assigned_agent":"backend-developer","category":"refactor","depends_on":[],"labels":["covers:adversary-convergence-improvements:9.2:9.2.1","covers:adversary-convergence-improvements:9.2:9.2.2","covers:adversary-convergence-improvements:9.2:9.2.3","covers:adversary-convergence-improvements:9.2:9.2.4","covers:adversary-convergence-improvements:9.2:9.2.5","covers:adversary-convergence-improvements:9.2:9.2.6","covers:adversary-convergence-improvements:9.2:9.2.7","covers:adversary-convergence-improvements:9.2:9.2.8"],"source_section":"9.2","task_type":"feature","tdd":false,"title":"Remove the orphaned search_memories injection renderer","validation_criteria":"9.2.1: All listed `mcp.py` symbols are removed and no `src/` reference to them remains. file: `src/gobby/hooks/dispatchers/mcp.py`.\n9.2.2: `_format_search_memories_result` and the duplicate `_is_review_lesson_memory` are removed. file: `src/gobby/workflows/engine/delivery_formatting.py`.\n9.2.3: The `search_memories` inject-dispatch branch is removed and the review-lessons branch is untouched. file: `src/gobby/workflows/engine/effects.py`.\n9.2.4: The four generic tracking helpers and `_record_payload_drop` are removed; `_filter_and_track_new_review_lessons` is untouched. file: `src/gobby/workflows/engine/injection_tracking.py`.\n9.2.5: The `injection_outcome_recorder` wiring is removed from engine core and hook factory. file: `src/gobby/workflows/engine/core.py`.\n9.2.6: Tests pinning the dead path are updated or deleted. file: `tests/workflows/test_delivery_pipeline.py`.\n9.2.7: The live review-lessons injection path still renders end to end via `inject-review-lessons-for-touched-files`. test: `tests/workflows/test_delivery_pipeline.py::test_review_lessons_path_survives_orphan_removal`.\n9.2.8: The memory-usefulness contract describes the surviving delivery paths and retains no reference to any deleted symbol. file: `docs/contracts/memory-usefulness-label.md`."},{"assigned_agent":"backend-developer","category":"config","depends_on":["6.1","6.3","6.5"],"labels":["covers:adversary-convergence-improvements:9.3:9.3.1","covers:adversary-convergence-improvements:9.3:9.3.2"],"source_section":"9.3","task_type":"feature","tdd":true,"title":"Harden the recall-gate block reasons and refresh the bundled manifest","validation_criteria":"9.3.1: Both rule reasons carry the only-permitted-call directive and the solo-call instruction. file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml`.\n9.3.2: The committed bundled-content manifest matches the shared tree after every bundled edit in this plan. test: `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`."},{"assigned_agent":"backend-developer","category":"test","depends_on":["6.4","7.2","8.1","9.1","9.2","9.3"],"labels":["covers:adversary-convergence-improvements:E1.1:E1.1.1","covers:adversary-convergence-improvements:E1.1:E1.1.3","covers:adversary-convergence-improvements:E1.1:E1.1.2"],"source_section":"E1.1","task_type":"feature","tdd":false,"title":"Live convergence regression","validation_criteria":"E1.1.1: The live regression runs `/gobby plan` against `.gobby/plans/completed/context-mode-borrowings.md` and writes a comparison artifact carrying rounds-to-approval, fixer-induced count, repeated check keys, per-round wall time, and ledger entries carried, each read from persisted telemetry rather than recomputed. test: `tests/plans/test_convergence_regression.py::test_live_regression_writes_comparison_artifact`.\nE1.1.3: The regression **fails** when convergence regresses, asserting the stated targets over persisted telemetry rather than only recording them: rounds-to-approval in single digits, zero exact `check_key` repeats, no two consecutive rounds sharing a `check_key_class`, and a strictly decaying finding tail. Exhaustive lane coverage is unchanged, and wall-time variance is bounded separately so a slow run alone does not fail it. test: `tests/plans/test_convergence_regression.py::test_convergence_targets_asserted`.\nE1.1.2: A reviewer summary produced with concurrent editors and overlapping plan artifacts in the worktree contains no path outside its own transcript-derived `files_modified`. test: `tests/plans/test_convergence_regression.py::test_compaction_isolation_under_concurrent_editors`."}],"reviewer_session":"#9732","round":22,"round_number":22,"routing_decisions":{"1.1":{"category":"code","depends_on":[],"implementation_domain":"backend","task_type":"feature","tdd":true},"2.1":{"category":"code","depends_on":["1.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"2.2":{"category":"code","depends_on":["2.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"2.3":{"category":"code","depends_on":["2.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"2.4":{"category":"code","depends_on":["2.3"],"implementation_domain":"backend","task_type":"feature","tdd":true},"2.5":{"assigned_agent":"backend-developer","category":"test","depends_on":["2.6","8.1"],"task_type":"feature","tdd":false},"2.6":{"category":"code","depends_on":["2.4","5.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"3.1":{"category":"code","depends_on":["1.1","2.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"4.1":{"category":"code","depends_on":["1.1","2.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"4.2":{"category":"code","depends_on":["2.4","4.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"4.3":{"category":"code","depends_on":["2.6","3.1","4.1","5.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"5.1":{"category":"code","depends_on":["2.4","5.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"5.2":{"category":"code","depends_on":["4.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"5.3":{"category":"code","depends_on":["6.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"6.1":{"assigned_agent":"backend-developer","category":"config","depends_on":["3.1","5.2","7.1"],"task_type":"feature","tdd":true},"6.2":{"category":"code","depends_on":["5.2","6.3"],"implementation_domain":"backend","task_type":"feature","tdd":true},"6.3":{"category":"code","depends_on":["3.1","6.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"6.4":{"category":"code","depends_on":[],"implementation_domain":"backend","task_type":"feature","tdd":true},"6.5":{"category":"code","depends_on":["6.2","6.3","7.2"],"implementation_domain":"backend","task_type":"feature","tdd":true},"7.1":{"category":"code","depends_on":["1.1","4.3"],"implementation_domain":"backend","task_type":"feature","tdd":true},"7.2":{"category":"code","depends_on":["4.3","5.3","6.2","6.3","7.1"],"implementation_domain":"backend","task_type":"feature","tdd":true},"8.1":{"assigned_agent":"backend-developer","category":"refactor","depends_on":["2.6","4.3","5.1","6.2","6.5","7.2"],"task_type":"feature","tdd":false},"9.1":{"category":"code","depends_on":[],"implementation_domain":"backend","task_type":"feature","tdd":true},"9.2":{"assigned_agent":"backend-developer","category":"refactor","depends_on":[],"task_type":"feature","tdd":false},"9.3":{"assigned_agent":"backend-developer","category":"config","depends_on":["6.1","6.3","6.5"],"task_type":"feature","tdd":true},"E1.1":{"assigned_agent":"backend-developer","category":"test","depends_on":["6.4","7.2","8.1","9.1","9.2","9.3"],"task_type":"feature","tdd":false}},"verdict":"approved"},"session_id":"ec2116d4-00d1-45fc-a323-f713633f4dd7"}
 ```
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Extend finding severities and require failure traces on blocking
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `FINDING_SEVERITIES` contains exactly blocking, major,
+    minor, nit. symbol: `gobby.plans.review_findings.FINDING_SEVERITIES`.
+
+    1.1.2: A `blocking` finding without a well-formed `failure_trace` is rejected
+    with a diagnostic naming the missing sub-field. test: `tests/plans/test_review_findings.py::test_blocking_requires_failure_trace`.
+
+    1.1.3: `major` and `minor` findings validate without a `failure_trace`, and a
+    malformed trace on any severity is rejected all-or-nothing. test: `tests/plans/test_review_findings.py::test_failure_trace_all_or_nothing`.
+
+    1.1.4: The invalid-severity diagnostic enumerates the four-value vocabulary derived
+    from `FINDING_SEVERITIES`. test: `tests/plans/test_review_findings.py::test_invalid_severity_diagnostic_derives_from_constant`.
+
+    1.1.5: `minimal_repair` is the single canonical remedy field on **findings** across
+    the validator, its renderer, and the taskless result contract; no `fix` or `suggested_fix`
+    key remains on a finding. Lane candidates keep their own `suggested_fix` field,
+    which this rename does not touch. test: `tests/plans/test_review_findings.py::test_single_canonical_remedy_field`.
+
+    1.1.6: The stage-native review schema accepts all four severities, and a payload
+    emitted verbatim by the taskless contract validates. test: `tests/mcp_proxy/test_stage_review_schema.py::test_severity_enum_parity_with_findings`.
+
+    1.1.7: Every in-repo literal finding producer builds `minimal_repair` with valid
+    `failure_trace` on blocking fixtures, and no test constructs a finding with `fix`.
+    test: `tests/review_learning/test_round_diff.py::test_findings_use_canonical_remedy_field`.'
+  labels:
+  - covers:adversary-convergence-improvements:1.1:1.1.1
+  - covers:adversary-convergence-improvements:1.1:1.1.2
+  - covers:adversary-convergence-improvements:1.1:1.1.3
+  - covers:adversary-convergence-improvements:1.1:1.1.4
+  - covers:adversary-convergence-improvements:1.1:1.1.5
+  - covers:adversary-convergence-improvements:1.1:1.1.6
+  - covers:adversary-convergence-improvements:1.1:1.1.7
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: 'Migration 343: quality ledger and repair attestation columns'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: Migration adds all three JSONB columns with CHECK constraints.
+    file: `src/gobby/storage/migrations/343_plan_review_quality_ledger.sql`.
+
+    2.1.2: Baseline schema carries the same columns and constraints. file: `src/gobby/storage/postgres_baseline_schema.sql`.
+
+    2.1.3: Typed model and store round-trip all three columns: written values deserialize
+    identically through the store''s read paths, and rewriting is idempotent. test:
+    `tests/plans/test_review_evidence_store.py::test_evidence_jsonb_columns_round_trip`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.1:2.1.1
+  - covers:adversary-convergence-improvements:2.1:2.1.2
+  - covers:adversary-convergence-improvements:2.1:2.1.3
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Repair attestation gate in round preparation
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Attestation validation module exists with the ten-field
+    record shape. file: `src/gobby/plans/review_repair.py`.
+
+    2.2.2: Preparation refuses when a repair-decided prior finding lacks an attestation.
+    test: `tests/plans/test_review_repair.py::test_unattested_finding_refuses_preparation`.
+
+    2.2.3: Preparation refuses when a claimed `changed_section_ids` is not a non-empty
+    subset of the real hash-diff, and rejects duplicate, unknown, or check-key-mismatched
+    attestations. test: `tests/plans/test_review_repair.py::test_attestation_must_match_hash_diff`.
+
+    2.2.4: Resolution records with `decision: carry` are accepted only for non-blocking
+    findings and route into the ledger; a mixed repair/carry preparation succeeds
+    with exactly the repair set attested. test: `tests/plans/test_review_repair.py::test_mixed_repair_carry_preparation`.
+
+    2.2.5: The resolution universe is loaded from the finalized prior round server-side;
+    omitting a resolution record for any prior finding refuses preparation naming
+    that finding. test: `tests/plans/test_review_repair.py::test_omitted_resolution_record_refuses`.
+
+    2.2.6: One candidate''s `suggested_fix` flows into a finding''s `minimal_repair`
+    and then into an attestation''s `deviation_from_minimal_repair` without field
+    collision, and each schema rejects the other two''s remedy key. test: `tests/plans/test_review_repair.py::test_remedy_vocabulary_round_trip`.
+
+    2.2.7: The taskless producer builds resolution records and attestations from recorded
+    votes and a supplied edit diff, and the wrapper schema transports them unchanged;
+    an incomplete record set is refused naming what is missing. test: `tests/plans/test_review_repair.py::test_taskless_producer_builds_records`.
+
+    2.2.8: The staged producer serializes one typed round-bound submission payload
+    and consumes it idempotently from injected stage state, so a replayed consumption
+    yields the same records exactly once. test: `tests/plans/test_review_repair.py::test_staged_submission_payload_round_trip`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.2:2.2.1
+  - covers:adversary-convergence-improvements:2.2:2.2.2
+  - covers:adversary-convergence-improvements:2.2:2.2.3
+  - covers:adversary-convergence-improvements:2.2:2.2.4
+  - covers:adversary-convergence-improvements:2.2:2.2.5
+  - covers:adversary-convergence-improvements:2.2:2.2.6
+  - covers:adversary-convergence-improvements:2.2:2.2.7
+  - covers:adversary-convergence-improvements:2.2:2.2.8
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Deviation proof
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: A deviating attestation without the three proof fields
+    is rejected; one with them passes. test: `tests/plans/test_review_repair.py::test_deviation_requires_proof`.
+
+    2.3.2: A deviation without counterexample validation evidence or without an explicit
+    `accepted_risk` value is rejected. test: `tests/plans/test_review_repair.py::test_deviation_counterexample_and_risk`.
+
+    2.3.3: One named five-key schema defines the object, and every producer, validator,
+    and renderer resolves to that same definition: a payload valid under one surface
+    validates under all of them, and an extra or missing key is rejected everywhere.
+    test: `tests/plans/test_review_repair.py::test_deviation_schema_parity_across_surfaces`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.3:2.3.1
+  - covers:adversary-convergence-improvements:2.3:2.3.2
+  - covers:adversary-convergence-improvements:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Causal routing in the next-round snapshot
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: The context builder produces a `prior_round_context`
+    structure carrying prior finding IDs, check keys, attestations, changed acceptance-item
+    IDs, and changed section targets from injected round-N inputs. test: `tests/plans/test_review_repair.py::test_prior_round_context_structure`.
+
+    2.4.2: Lane validation still requires every lane to cover every deliverable section.
+    test: `tests/plans/test_review_coverage.py::test_lanes_still_cover_all_sections`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.4:2.4.1
+  - covers:adversary-convergence-improvements:2.4:2.4.2
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: frontend
+- title: Two-round refusal end-to-end coverage
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.6'
+  - '8.1'
+  validation_criteria: '2.5.1: End-to-end test drives two rounds and asserts refusal-before-spawn
+    with the specific missing attestation named. test: `tests/plans/test_repair_gate_e2e.py::test_omitted_consumer_refuses_round_two`.
+
+    2.5.2: Omitting one prior finding''s resolution record end-to-end refuses round-2
+    preparation naming that finding. test: `tests/plans/test_repair_gate_e2e.py::test_omitted_resolution_refuses_round_two`.
+
+    2.5.3: An attestation that looks complete but sweeps a strict subset of the server-derived
+    universe refuses round-2 preparation before spawn, naming the omitted site. test:
+    `tests/plans/test_repair_gate_e2e.py::test_subset_attestation_refuses_before_spawn`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.5:2.5.1
+  - covers:adversary-convergence-improvements:2.5:2.5.2
+  - covers:adversary-convergence-improvements:2.5:2.5.3
+  tdd: false
+  source_section: '2.5'
+  assigned_agent: backend-developer
+- title: Server-derived repair universe
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '5.2'
+  validation_criteria: '2.6.1: The sweep universe is derived server-side from the
+    prior round plus the site inventory; an attestation covering a strict subset with
+    no deferrals is refused naming the missing sites. test: `tests/plans/test_review_repair.py::test_sweep_universe_subset_refused`.
+
+    2.6.4: The registered read-only operation returns the typed site graph and its
+    canonical digest for a given worktree state, and the helper rejects attestations
+    built against a different digest. test: `tests/plans/test_review_repair.py::test_universe_visible_before_attestation`.
+
+    2.6.2: A zero-result sweep claim without query evidence is refused. test: `tests/plans/test_review_repair.py::test_zero_result_requires_query_evidence`.
+
+    2.6.3: Adjacency is computed over the union of shared section, `check_key`, changed
+    contract, and changed target/resource: two accepted findings on *different* sections
+    that touch the same contract or target are adjacent and require a cross-repair
+    interaction record, whose absence refuses preparation. test: `tests/plans/test_review_repair.py::test_repair_bundle_interaction_edges`.'
+  labels:
+  - covers:adversary-convergence-improvements:2.6:2.6.1
+  - covers:adversary-convergence-improvements:2.6:2.6.4
+  - covers:adversary-convergence-improvements:2.6:2.6.2
+  - covers:adversary-convergence-improvements:2.6:2.6.3
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: end_agent_run completion guard and session-resolution fix
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: "3.1.1: `PlanReviewEvidenceStore` gains a dispatch-run-keyed\
+    \ accessor. symbol: `gobby.plans.review_evidence_store.PlanReviewEvidenceStore.get_by_dispatch_run`.\n\
+    3.1.2: `end_agent_run` with bound live evidence refuses when the result is missing,\
+    \ fails `validate_round_result`, or attests a different `evidence_id`; with a\
+    \ valid delivered result it completes. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_end_agent_run_refuses_without_round_result`.\n\
+    3.1.3: A run whose session context fails ContextVar resolution still terminates\
+    \ via the request-level run identity; a caller-supplied or mismatched run ID is\
+    \ ignored and cannot bind another run. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_end_agent_run_run_identity_fallback_and_spoofing`.\n\
+    3.1.4: `create_agents_registry` (`mcp_proxy/tools/agents_registry.py:33`) injects\
+    \ both the evidence store and the run-identity getter, exercised through the production\
+    \ constructor rather than a test double. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_registry_constructor_injects_dependencies`.\n\
+    3.1.5: The validator is verdict-discriminated: reviewed verdicts require canonical\
+    \ coverage, while `needs_requirements` and `inconclusive` require `evidence_id`\
+    \ plus typed reason data and terminate cleanly. A real source-drift run that never\
+    \ completed a lane terminates without fabricating an attestation. test: `tests/mcp_proxy/test_agents_lifecycle.py::test_verdict_discriminated_terminal_branches`.\n\
+    3.1.7: The published union covers every verdict and every `reason_code` (`source_drift`,\
+    \ `missing_requirements`, `index_mismatch`, `timeout`), and a payload emitted\
+    \ verbatim by each producer surface validates against it. test: `tests/plans/test_review_evidence_models.py::test_terminal_branch_union_producer_parity`.\n\
+    3.1.6: The run ID survives the stdio-proxy \u2192 execution-endpoint \u2192 ContextVar\
+    \ chain end to end: headers forward, the endpoint binds server-side and seeds/resets\
+    \ the ContextVar, and forged, absent, and mismatched IDs are each rejected at\
+    \ the endpoint rather than trusted downstream. test: `tests/servers/test_mcp_execution_context.py::test_run_identity_transport_chain`."
+  labels:
+  - covers:adversary-convergence-improvements:3.1:3.1.1
+  - covers:adversary-convergence-improvements:3.1:3.1.2
+  - covers:adversary-convergence-improvements:3.1:3.1.3
+  - covers:adversary-convergence-improvements:3.1:3.1.4
+  - covers:adversary-convergence-improvements:3.1:3.1.5
+  - covers:adversary-convergence-improvements:3.1:3.1.7
+  - covers:adversary-convergence-improvements:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Carry-forward quality ledger module
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: '4.1.1: Ledger module merges, carries, and stales entries across
+    three synthetic rounds. test: `tests/plans/test_review_ledger.py::test_merge_and_staleness_across_rounds`.
+
+    4.1.2: Ledger entry validation shares category and check-key vocabulary with findings.
+    symbol: `gobby.plans.review_ledger`.
+
+    4.1.3: A reworded finding with a new round-local ID coalesces into its existing
+    `ledger_entry_id`; a source-hash change stales the old entry and creates a fresh
+    one; and the same section set supplied in a different order coalesces to the same
+    entry. test: `tests/plans/test_review_ledger.py::test_canonical_coalescing_order_and_hash_split`.
+
+    4.1.4: The merge builds dismissed entries only from disposition records carried
+    in the canonical round result, and rejects a result whose `disposition_counts`
+    disagree with the records it carries. test: `tests/plans/test_review_ledger.py::test_dismissed_entries_from_canonical_result`.'
+  labels:
+  - covers:adversary-convergence-improvements:4.1:4.1.1
+  - covers:adversary-convergence-improvements:4.1:4.1.2
+  - covers:adversary-convergence-improvements:4.1:4.1.3
+  - covers:adversary-convergence-improvements:4.1:4.1.4
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Dismissal do-not-reopen injection
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '4.1'
+  validation_criteria: '4.2.1: A dismissed candidate appears in the next snapshot''s
+    context and is marked reopenable only on hash change. test: `tests/plans/test_review_ledger.py::test_dismissal_injection_and_reopen_rule`.
+
+    4.2.2: Coverage validation rejects a candidate that reopens a ledger dismissal
+    under unchanged plan and source hashes, and accepts the same identity once its
+    named source or section hash changes. test: `tests/plans/test_review_coverage.py::test_unchanged_dismissal_reopen_rejected`.'
+  labels:
+  - covers:adversary-convergence-improvements:4.2:4.2.1
+  - covers:adversary-convergence-improvements:4.2:4.2.2
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Approval condition and surfacing
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  - '3.1'
+  - '4.1'
+  - '5.1'
+  validation_criteria: '4.3.1: Approval validation passes with open major/minor ledger
+    entries and fails with any blocking finding. test: `tests/plans/test_review_coverage.py::test_approval_condition_blocking_only`.
+
+    4.3.2: Skill, contract, and agent definition document the four-tier severity model
+    with the shared decision matrix, table-driven boundary examples, and ledger surfacing.
+    file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.
+
+    4.3.3: Three-round unresolved carry mints a no-fix-policy lesson through the existing
+    recorder. test: `tests/review_learning/test_no_fix_policy_lesson.py::test_carry_three_rounds_mints_lesson`.
+
+    4.3.4: Ordinary finding-derived lesson minting still requires `severity == "blocking"`;
+    the no-fix-policy path requires all three eligibility conditions. test: `tests/review_learning/test_no_fix_policy_lesson.py::test_minting_eligibility_paths`.
+
+    4.3.5: Both coordinator approval displays render the ledger from the server-derived
+    approved envelope: the taskless plan skill enumerates it beside `routing_decisions`
+    and `manifest_entries`, and the staged display reads it from the same envelope.
+    Neither accepts it as an input. file: `src/gobby/install/shared/skills/plan/SKILL.md`.
+
+    4.3.6: Neither staged approve/reject nor the facade exposes a ledger parameter,
+    and the persisted and displayed ledger equals the server derivation from the persisted
+    prior ledger and the delivered result: a caller that supplies its own value cannot
+    change what is stored or shown. Derivation precedes stage mutation, and a derivation
+    failure leaves stage state unchanged. test: `tests/storage/test_stage_review_findings.py::test_approval_ledger_is_server_derived`.'
+  labels:
+  - covers:adversary-convergence-improvements:4.3:4.3.1
+  - covers:adversary-convergence-improvements:4.3:4.3.2
+  - covers:adversary-convergence-improvements:4.3:4.3.3
+  - covers:adversary-convergence-improvements:4.3:4.3.4
+  - covers:adversary-convergence-improvements:4.3:4.3.5
+  - covers:adversary-convergence-improvements:4.3:4.3.6
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Structured sweep records replace attested booleans
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '5.2'
+  validation_criteria: "5.1.1: Attestation booleans are computed as empty set differences\
+    \ between server-derived required sweep keys and validated records; hand-computed\
+    \ fixtures match. test: `tests/plans/test_review_coverage.py::test_derived_sweep_booleans`.\n\
+    5.1.2: A candidate referenced by no sweep record fails validation with a diagnostic\
+    \ naming it. test: `tests/plans/test_review_coverage.py::test_unreferenced_candidate_rejected`.\n\
+    5.1.3: Fixtures cover empty-valid, partial, zero-result (with and without query\
+    \ evidence), and extra-record cases. test: `tests/plans/test_review_coverage.py::test_sweep_universe_fixtures`.\n\
+    5.1.4: Validation rejects a result whose `candidate_dispositions` do not reconcile\
+    \ with its `disposition_counts`, so the counts cannot disagree with the records\
+    \ that back them. test: `tests/plans/test_review_coverage.py::test_dispositions_reconcile_with_counts`.\n\
+    5.1.5: Coverage validation returns one canonical validated record bundle \u2014\
+    \ sweep records plus dispositions with identities and rationales \u2014 rather\
+    \ than reducing them to the compact attestation, and that same bundle is what\
+    \ the round result carries. A bundle dropped between validation and the result\
+    \ is detected. test: `tests/plans/test_review_coverage.py::test_validator_returns_canonical_record_bundle`."
+  labels:
+  - covers:adversary-convergence-improvements:5.1:5.1.1
+  - covers:adversary-convergence-improvements:5.1:5.1.2
+  - covers:adversary-convergence-improvements:5.1:5.1.3
+  - covers:adversary-convergence-improvements:5.1:5.1.4
+  - covers:adversary-convergence-improvements:5.1:5.1.5
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Machine-generated consumer inventory
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '5.2.1: File consumers include import-edge results, not only
+    symbol-call-derived ones. test: `tests/plans/test_consumer_sweep.py::test_import_edge_file_consumers`.
+
+    5.2.2: Inter-round changed symbols produce a typed candidate site inventory in
+    the next-round snapshot''s `prior_round_context`. test: `tests/plans/test_consumer_sweep.py::test_inter_round_site_inventory`.
+
+    5.2.4: An unavailable index raises the typed `inventory_unavailable` error from
+    the sweep rather than returning a partial or empty inventory. test: `tests/plans/test_consumer_sweep.py::test_inventory_unavailable_raises_typed_error`.
+
+    5.2.5: Token capture accepts only when the digests bracketing the index operation
+    agree; a mutation landing between the index and the digest read forces a rerun,
+    the token is rechecked after inventory derivation, and retry exhaustion is reported
+    rather than silently accepted. test: `tests/plans/test_consumer_sweep.py::test_index_token_brackets_index_operation`.
+
+    5.2.8: A read-only verifier sits beside the token producer, consumes exactly the
+    producer''s digest inputs, and returns a typed match/mismatch result. symbol:
+    `gobby.agents.code_index.verify_index_token`.
+
+    5.2.11: A thin stateless read-only wrapper exposes the verifier and is reachable
+    through the review-evidence tool surface with a typed result, so no caller needs
+    an unplanned access path. test: `tests/plans/test_consumer_sweep.py::test_index_verifier_wrapper_registered`.
+
+    5.2.7: A changed target in a language the sweep cannot resolve is recorded as
+    `language_unsupported` instead of being omitted from the inventory. test: `tests/plans/test_consumer_sweep.py::test_unsupported_language_marked_not_omitted`.
+
+    5.2.9: Under continuous repository mutation the settle helper stops at three attempts
+    or its monotonic deadline, whichever comes first, and raises typed `index_unstable`
+    rather than looping. test: `tests/plans/test_consumer_sweep.py::test_index_settle_retry_is_bounded`.
+
+    5.2.10: The spawn plan gate converts a typed unavailable-sweep error into its
+    existing structured no-spawn outcome rather than letting it escape, and the CLI
+    caller keeps its own reporting: both callers are asserted against the same raised
+    error. test: `tests/plans/test_consumer_sweep.py::test_typed_sweep_error_handled_by_both_callers`.'
+  labels:
+  - covers:adversary-convergence-improvements:5.2:5.2.1
+  - covers:adversary-convergence-improvements:5.2:5.2.2
+  - covers:adversary-convergence-improvements:5.2:5.2.4
+  - covers:adversary-convergence-improvements:5.2:5.2.5
+  - covers:adversary-convergence-improvements:5.2:5.2.8
+  - covers:adversary-convergence-improvements:5.2:5.2.11
+  - covers:adversary-convergence-improvements:5.2:5.2.7
+  - covers:adversary-convergence-improvements:5.2:5.2.9
+  - covers:adversary-convergence-improvements:5.2:5.2.10
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Strict MCP schemas for review-evidence tools
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: "5.3.1: Every structured payload parameter carries a nested\
+    \ schema with properties and required lists, and `shadow_manifest_status` is absent\
+    \ from the input surface \u2014 the validator takes `routing_decisions` and emits\
+    \ only the derived compact status. file: `src/gobby/mcp_proxy/tools/plans/review_evidence.py`.\n\
+    5.3.2: A malformed disposition record is rejected at the schema layer with a field-level\
+    \ diagnostic. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_disposition_schema_rejects_malformed`.\n\
+    5.3.3: `prepare_plan_review_round` publishes strict schemas for its `repair_attestations`\
+    \ and resolution-record parameters, and a wrapper round trip carries both through\
+    \ to the service boundary unchanged. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_preparation_payload_schema_round_trip`."
+  labels:
+  - covers:adversary-convergence-improvements:5.3:5.3.1
+  - covers:adversary-convergence-improvements:5.3:5.3.2
+  - covers:adversary-convergence-improvements:5.3:5.3.3
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Pin one code-index generation by protocol
+  category: config
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '5.2'
+  - '7.1'
+  validation_criteria: '6.1.1: The plan skill''s spawn step relies on preparation''s
+    single indexing site and instructs no separate pre-spawn `gcode index`. file:
+    `src/gobby/install/shared/skills/plan/SKILL.md`.
+
+    6.1.2: The adversary definition and review skill instruct `--no-freshness` on
+    all lane searches. file: `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`.
+
+    6.1.3: The review skill and adversary definition instruct lanes to verify the
+    snapshot''s `index_token` before and after searching and to report a mismatch
+    rather than proceeding. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.
+
+    6.1.4: The verifier classifies a repository mutation and a reindex as mismatches
+    against a captured token, returning the typed mismatch result rather than a bare
+    boolean. test: `tests/plans/test_consumer_sweep.py::test_verifier_classifies_mutation_and_reindex`.
+
+    6.1.5: The review skill and adversary definitions require every lane to invoke
+    the canonical verifier immediately before analysis and, on mismatch, to emit the
+    typed `inconclusive` index-mismatch result and terminate rather than rerunning
+    in place. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.
+
+    6.1.6: The verifier wrapper is present in the reviewer''s `allowed_mcp_tools`
+    on both adversary definitions, and a lane invokes it before and after its searches
+    on the real path with no unplanned access route. test: `tests/plans/test_review_coverage.py::test_lane_verifier_invocation_and_allowlist`.'
+  labels:
+  - covers:adversary-convergence-improvements:6.1:6.1.1
+  - covers:adversary-convergence-improvements:6.1:6.1.2
+  - covers:adversary-convergence-improvements:6.1:6.1.3
+  - covers:adversary-convergence-improvements:6.1:6.1.4
+  - covers:adversary-convergence-improvements:6.1:6.1.5
+  - covers:adversary-convergence-improvements:6.1:6.1.6
+  tdd: true
+  source_section: '6.1'
+  assigned_agent: backend-developer
+- title: Fix snapshot transport
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  - '6.3'
+  validation_criteria: "6.2.1: Every page of a 140 KB snapshot stays under the offload\
+    \ threshold and carries `snapshot_hash`, `total_sections`, and `next_offset`.\
+    \ test: `tests/plans/test_snapshot_transport.py::test_paged_fetch_under_threshold`.\n\
+    6.2.2: Repeated coverage validation with unchanged routing reuses the cached manifest\
+    \ instead of re-rendering. test: `tests/plans/test_snapshot_transport.py::test_manifest_cache_hit`.\n\
+    6.2.4: The page union equals the section manifest exactly and the concatenated\
+    \ pages hash to `snapshot_hash`, so a reader detects a missed or duplicated page\
+    \ locally. test: `tests/plans/test_snapshot_transport.py::test_page_union_and_local_hash_verification`.\n\
+    6.2.5: The shared plan-review skill and both adversary definitions drive a deterministic\
+    \ `next_offset` loop to exhaustion with local hash verification. The direct integration\
+    \ seam at `tests/mcp_proxy/test_plans_tools.py:140,204`, which today asserts a\
+    \ whole snapshot returned inline, is migrated to page through `next_offset` and\
+    \ verify per-page size, reconstructed hash, and section union. test: `tests/mcp_proxy/test_plans_tools.py::test_snapshot_pages_to_exhaustion`.\n\
+    6.2.6: The staged dispatch prompt carries the evidence handle instead of inline\
+    \ snapshot bytes: no `<plan-review-snapshot>` body is embedded, the stage-native\
+    \ reviewer reconstructs the plan by paging to exhaustion and verifying `snapshot_hash`,\
+    \ and `prior_round_context` is visible on that path. The inline-shape assertion\
+    \ at `tests/storage/test_stage_review_findings.py:424-425` is migrated to the\
+    \ handle contract. test: `tests/storage/test_stage_review_findings.py::test_staged_prompt_uses_evidence_handle`.\n\
+    6.2.7: A round whose requirements bundle, ledger, and consumer inventory each\
+    \ exceed the offload threshold pages every record class under it, and the reader\
+    \ reconstructs all four classes against their per-record hashes and the bundle\
+    \ digest before review begins. Every response stays under the threshold after\
+    \ serialization overhead. The regression pins this plan itself as a fixture \u2014\
+    \ whose \xA77.2 exceeds 15,000 characters and whose V1 changelog exceeds 200,000\
+    \ bytes \u2014 and round-trips it: pages align to UTF-8 code-point boundaries,\
+    \ concatenation matches `snapshot_hash`, and every record class parses out of\
+    \ the reassembled envelope. No record size causes a refusal. test: `tests/plans/test_snapshot_transport.py::test_sidecar_records_paged_and_bounded`."
+  labels:
+  - covers:adversary-convergence-improvements:6.2:6.2.1
+  - covers:adversary-convergence-improvements:6.2:6.2.2
+  - covers:adversary-convergence-improvements:6.2:6.2.4
+  - covers:adversary-convergence-improvements:6.2:6.2.5
+  - covers:adversary-convergence-improvements:6.2:6.2.6
+  - covers:adversary-convergence-improvements:6.2:6.2.7
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: fullstack
+- title: Bound the adversary run
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '6.1'
+  validation_criteria: '6.3.1: Both adversary definitions carry the same nonzero `timeout:`
+    enforced by the health monitor, so neither the taskless nor the stage-native reviewer
+    can run unbounded. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.
+
+    6.3.2: The plan skill documents the timeout transition as expire-then-fresh-retry
+    with no checkpoint consumer, pinned to 3.1''s `timeout` reason code. file: `src/gobby/install/shared/skills/plan/SKILL.md`.
+
+    6.3.3: Spawning a claude-provider agent whose definition relies on native subagents
+    logs an explicit diagnostic. test: `tests/agents/test_spawn_executor.py::test_native_subagent_strip_warns`.
+
+    6.3.4: The adversary definition declares the native-lane duration limitation explicitly
+    rather than implying a guarantee the runtime does not provide. file: `src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml`.'
+  labels:
+  - covers:adversary-convergence-improvements:6.3:6.3.1
+  - covers:adversary-convergence-improvements:6.3:6.3.2
+  - covers:adversary-convergence-improvements:6.3:6.3.3
+  - covers:adversary-convergence-improvements:6.3:6.3.4
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: Reviewer compaction isolation
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '6.4.1: A no-edit session''s summary context contains no path
+    outside its transcript-derived `files_modified`. test: `tests/sessions/test_summary_context.py::test_no_edit_session_excludes_repo_noise`.
+
+    6.4.2: An unrelated commit no longer changes a no-edit session''s `source_context_hash`.
+    test: `tests/sessions/test_summary_context.py::test_hash_stable_across_unrelated_commits`.'
+  labels:
+  - covers:adversary-convergence-improvements:6.4:6.4.1
+  - covers:adversary-convergence-improvements:6.4:6.4.2
+  tdd: true
+  source_section: '6.4'
+  implementation_domain: backend
+- title: Immutable requirements bundle
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  - '6.3'
+  - '7.2'
+  validation_criteria: "6.5.3: Both adversary definitions and the review skill direct\
+    \ the traceability lane to the bundle's requirement IDs, and the staged definition\
+    \ no longer declares live parent-task context canonical. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.\n\
+    6.5.4: The marker parser is exercised against canonical, duplicate, fenced-code,\
+    \ outside-project, missing, unreadable, malformed, and ordinary-reference fixtures;\
+    \ only declared sources enter the bundle and malformed markers fail preparation\
+    \ closed. test: `tests/plans/test_review_requirements.py::test_requirement_marker_grammar`.\n\
+    6.5.5: A stage-native review with no live task access still traces requirements\
+    \ from the immutable bundle. test: `tests/plans/test_review_requirements.py::test_stage_native_no_live_task_access`.\n\
+    6.5.6: The assembled bundle is observed directly for both task-bound and taskless\
+    \ modes: exact source set, stable compact IDs across reassembly, lowercase SHA-256\
+    \ content hashes, duplicate collapse, ordinary-reference exclusion, and a changed\
+    \ source producing a changed hash under the same ID. test: `tests/plans/test_review_requirements.py::test_bundle_representation_properties`.\n\
+    6.5.7: Given an anchored session state, the bundle assembler reuses the round-1\
+    \ anchor for later rounds rather than re-reading the transcript, and a missing\
+    \ anchor raises the fail-closed error. test: `tests/plans/test_review_requirements.py::test_anchor_reuse_and_missing_anchor_fails_closed`.\n\
+    6.5.8: The anchor is written by the plan-mode entry observer from the event's\
+    \ own request bytes before the plan skill loads, and no model-supplied or fixture-supplied\
+    \ value can satisfy it: a session whose skill-authored value disagrees with the\
+    \ observed request keeps the observed bytes. test: `tests/workflows/test_observer_plan_mode.py::test_entry_observer_owns_request_anchor`.\n\
+    6.5.9: The anchor is established on every server-recognized plan-mode entry, parameterized\
+    \ across all six activation paths as separate fixtures \u2014 web-chat metadata,\
+    \ structured hook mode, Codex collaboration mode, provider-native hook state,\
+    \ workflow variables, and the marker-only prompt fallback, which is asserted independently\
+    \ of the workflow-mode case because it writes `plan_mode` without `_apply_resolved_mode`.\
+    \ A branch whose event carries request content authors the anchor from those bytes\
+    \ \u2014 including web-chat and Codex first entries, which are asserted with content\
+    \ present and must not fail closed; a transition whose payload genuinely lacks\
+    \ content reuses the persisted anchor, and fails closed only when none exists.\
+    \ Neither fabricates content. No path reaches `load_skill: plan` with a manufactured\
+    \ anchor; later turns and a restart reuse the initial bytes without overwrite.\
+    \ test: `tests/workflows/test_observer_plan_mode.py::test_anchor_written_on_every_entry_branch`.\n\
+    6.5.10: No production writer sets `plan_mode` true outside the anchor-aware transition\
+    \ helper; a direct assignment added anywhere in the observer fails the check.\
+    \ test: `tests/workflows/test_observer_plan_mode.py::test_single_plan_mode_activation_path`.\n\
+    6.5.12: A requirement citation naming a `requirement_id` and `content_sha256`\
+    \ from the bound bundle validates without touching the worktree, a repository\
+    \ citation still validates by path and SHA, and a requirement citation whose hash\
+    \ disagrees with the bundle is rejected. The union round-trips through lane candidates,\
+    \ failure traces, and the strict schemas. test: `tests/plans/test_review_coverage.py::test_citation_union_repository_and_requirement`.\n\
+    6.5.11: `plan-draft` emits a `requirement-source:` marker when the user designates\
+    \ a repository document as canonical, preserves existing markers across a revision,\
+    \ and emits none when no document is designated \u2014 so a plan authored through\
+    \ the real drafting path yields a non-empty bundle. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`."
+  labels:
+  - covers:adversary-convergence-improvements:6.5:6.5.3
+  - covers:adversary-convergence-improvements:6.5:6.5.4
+  - covers:adversary-convergence-improvements:6.5:6.5.5
+  - covers:adversary-convergence-improvements:6.5:6.5.6
+  - covers:adversary-convergence-improvements:6.5:6.5.7
+  - covers:adversary-convergence-improvements:6.5:6.5.8
+  - covers:adversary-convergence-improvements:6.5:6.5.9
+  - covers:adversary-convergence-improvements:6.5:6.5.10
+  - covers:adversary-convergence-improvements:6.5:6.5.12
+  - covers:adversary-convergence-improvements:6.5:6.5.11
+  tdd: true
+  source_section: '6.5'
+  implementation_domain: backend
+- title: Split defect from minimal repair
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '4.3'
+  validation_criteria: '7.1.1: Findings carry a validated `minimal_repair` and a `repair_scope`
+    discriminant; `new_deliverable` without `new_deliverable_justification` is rejected,
+    `existing_sections` carrying that justification is rejected, and the discriminant
+    round-trips through the taskless, staged, and contract schemas. Both adversary
+    result contracts declare the field, so a reviewer following either contract produces
+    a result the shared validator accepts. test: `tests/plans/test_review_findings.py::test_minimal_repair_required`.'
+  labels:
+  - covers:adversary-convergence-improvements:7.1:7.1.1
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Convergence telemetry
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  - '5.3'
+  - '6.2'
+  - '6.3'
+  - '7.1'
+  validation_criteria: "7.2.2: Every reviewer-miss and fixer-induced classification\
+    \ carries its contributing finding/ledger IDs and classification inputs, and the\
+    \ E1 comparison artifact is derivable from the stored records alone. test: `tests/plans/test_review_telemetry.py::test_classification_provenance`.\n\
+    7.2.3: The wrapper publishes the strict `convergence_telemetry` schema and rejects\
+    \ a malformed object at the schema layer. test: `tests/mcp_proxy/test_review_evidence_schemas.py::test_convergence_telemetry_schema`.\n\
+    7.2.4: Run aggregates are derived from the bound `AgentRun` for successful, timed-out,\
+    \ and failed runs, and per-lane figures that have no source carry an explicit\
+    \ `unavailable` reason rather than being omitted. test: `tests/plans/test_review_telemetry.py::test_daemon_derived_aggregates_across_terminal_states`.\n\
+    7.2.5: Aggregates merge before the parent wakes: a parent that finalizes immediately\
+    \ on wake still observes the merged values, and the merge is idempotent under\
+    \ retry. test: `tests/plans/test_review_telemetry.py::test_merge_precedes_parent_wake`.\n\
+    7.2.11: A timed-out adversary run is classified `inconclusive`/`timeout` per 3.1's\
+    \ union, retains its terminal result, and wakes only the direct parent session.\
+    \ On the staged variant the same helper additionally expires the old evidence\
+    \ and restores the stage to its pre-review state, after which fresh evidence prepares\
+    \ and dispatches; a run left mid-review restores no differently than one that\
+    \ never started. test: `tests/agents/test_adversary_timeout.py::test_timeout_classification_retention_and_wake_isolation`.\n\
+    7.2.6: The delivered state validates reviewer-owned fields only, so the completion\
+    \ guard accepts a result before enrichment; finalization requires the enriched\
+    \ state and rejects missing daemon fields. Every terminal path routes through\
+    \ the one extracted helper. test: `tests/plans/test_review_telemetry.py::test_delivered_and_enriched_states`.\n\
+    7.2.7: Every route in the terminal-path table is exercised with bound evidence\
+    \ \u2014 SESSION_END provider exit, workflow termination via the lifecycle terminalizer,\
+    \ the `complete_and_notify_agent_run` fallback, explicit kill including its `run_storage.fail`\
+    \ error branch, and cancellation including its lifecycle-less direct transition\
+    \ \u2014 and each fails the run and expires its evidence unless a delivered result\
+    \ is present, in which case it enriches and notifies in that order. A run with\
+    \ no bound evidence is unaffected. test: `tests/agents/test_terminal_paths.py::test_no_terminal_route_bypasses_guard`.\n\
+    7.2.12: Delivered state is persisted and validated before parent delivery is acknowledged,\
+    \ and result writes are compare-and-set: a mailbox success with a failed result\
+    \ write is detected, a duplicate retry is idempotent, and a late send racing enrichment\
+    \ cannot regress an enriched or terminal result. test: `tests/agents/test_terminal_paths.py::test_result_state_is_monotonic`.\n\
+    7.2.13: The terminal helper orders staged verdict handling as settle \u2192 enrich\
+    \ \u2192 finalize \u2192 commit stage \u2192 verdict-dependent effects \u2192\
+    \ wake, driven against injected run and evidence state; a crash injected before\
+    \ and after each boundary replays to the same durable state, and no verdict-dependent\
+    \ effect runs before durable intent. test: `tests/agents/test_terminal_paths.py::test_staged_verdict_terminal_ordering`.\n\
+    7.2.14: Every verdict-dependent effect \u2014 signoff relay, artifact linking,\
+    \ claim release, lesson minting, workflow tick, and parent wake \u2014 survives\
+    \ a crash injected after its durable write and before its checkpoint, replaying\
+    \ to exactly one durable effect. The deterministic identity reaches the message\
+    \ primary key, so a replayed signoff relay conflicts with and reuses its own row\
+    \ instead of inserting a second. The wake is at-least-once: a duplicate wake is\
+    \ asserted harmless because the recipient consumes the deterministic result idempotently.\
+    \ test: `tests/agents/test_terminal_paths.py::test_verdict_effects_idempotent_across_replay`.\n\
+    7.2.15: Reviewer-result delivery is retry-safe across its two durable writes:\
+    \ a crash after the parent mailbox insert and before the `AgentRun.result` write\
+    \ replays to exactly one canonical round-result message, and a crash after the\
+    \ result write and before acknowledgement does not produce a second. test: `tests/agents/test_terminal_paths.py::test_delivery_mailbox_and_result_are_one_identity`.\n\
+    7.2.16: The deferred tmux health check routes its terminal decision through the\
+    \ extracted helper once evidence is bound, on both sides of the bind race: firing\
+    \ immediately before `bind_evidence_run` keeps the existing pre-bind spawn-failure\
+    \ behavior, and firing immediately after settles, expires the evidence, and wakes\
+    \ only the direct parent rather than calling `run_storage.fail` and delivering\
+    \ directly. Unregister cancellation routes through the same helper. test: `tests/agents/test_terminal_paths.py::test_deferred_health_check_respects_evidence_bind`.\n\
+    7.2.10: A search for run-terminalizing call sites (`run_storage.fail` / `run_storage.complete`\
+    \ and the lifecycle terminalizers) finds none that reaches a terminal state for\
+    \ an evidence-bound run without the extracted helper, so the table cannot silently\
+    \ fall out of date. test: `tests/agents/test_terminal_paths.py::test_all_terminalizing_call_sites_route_through_helper`.\n\
+    7.2.8: The shared skill and both adversary result contracts specify the exact\
+    \ `convergence_telemetry` fields, provenance, zero-value semantics, and per-verdict\
+    \ availability; a payload emitted verbatim by each producer survives `send_message`,\
+    \ delivery enrichment, and finalization. test: `tests/plans/test_review_telemetry.py::test_producer_contract_survives_delivery`.\n\
+    7.2.9: Entering through `LocalTaskManager`, telemetry emitted by the staged reviewer\
+    \ survives `approve_review` and `reject_review` \u2014 across the facade's signature\
+    \ forwarding and the transition's result construction \u2014 into the persisted\
+    \ canonical round result at finalization; the concrete result-builder lives in\
+    \ a sibling module, leaving `_transitions.py` under 1,000 lines. test: `tests/plans/test_review_telemetry.py::test_staged_path_carries_telemetry`."
+  labels:
+  - covers:adversary-convergence-improvements:7.2:7.2.2
+  - covers:adversary-convergence-improvements:7.2:7.2.3
+  - covers:adversary-convergence-improvements:7.2:7.2.4
+  - covers:adversary-convergence-improvements:7.2:7.2.5
+  - covers:adversary-convergence-improvements:7.2:7.2.11
+  - covers:adversary-convergence-improvements:7.2:7.2.6
+  - covers:adversary-convergence-improvements:7.2:7.2.7
+  - covers:adversary-convergence-improvements:7.2:7.2.12
+  - covers:adversary-convergence-improvements:7.2:7.2.13
+  - covers:adversary-convergence-improvements:7.2:7.2.14
+  - covers:adversary-convergence-improvements:7.2:7.2.15
+  - covers:adversary-convergence-improvements:7.2:7.2.16
+  - covers:adversary-convergence-improvements:7.2:7.2.10
+  - covers:adversary-convergence-improvements:7.2:7.2.8
+  - covers:adversary-convergence-improvements:7.2:7.2.9
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: review_evidence.py integration owner
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.6'
+  - '4.3'
+  - '5.1'
+  - '6.2'
+  - '6.5'
+  - '7.2'
+  validation_criteria: "8.1.1: `review_evidence.py` is under 1,000 lines after all\
+    \ wiring lands. file: `src/gobby/plans/review_evidence.py`.\n8.1.2: Preparation,\
+    \ snapshot assembly, coverage validation, and finalization each invoke their upstream\
+    \ module through this file, with no duplicated logic. test: `tests/plans/test_review_evidence.py::test_service_integration_call_sites`.\n\
+    8.1.3: The full plan-review service suite passes end to end with every phase wired:\
+    \ prepare \u2192 snapshot \u2192 coverage \u2192 finalize \u2192 next-round context.\
+    \ test: `tests/plans/test_review_evidence.py::test_full_round_lifecycle_integration`.\n\
+    8.1.4: Every upstream deliverable's acceptance passes against its module and the\
+    \ MCP wrapper alone, with this file's wiring absent. The check enumerates the\
+    \ helper-local criteria each upstream leaf retains \u2014 validation, refusal,\
+    \ merge, derivation, classification, and parsing against injected inputs \u2014\
+    \ and asserts that no upstream item names production preparation, snapshot assembly,\
+    \ finalization, or evidence expiry. test: `tests/plans/test_review_evidence.py::test_upstream_leaves_close_independently`.\n\
+    8.1.5: Preparation persists the whole `prior_round_context` atomically; a failure\
+    \ mid-preparation leaves no partially populated context and no evidence row, and\
+    \ a later read reconstructs it from the row alone after the live sources have\
+    \ changed. test: `tests/plans/test_review_evidence.py::test_prior_round_context_atomic_and_source_independent`.\n\
+    8.1.6: A non-empty consumer inventory succeeds on its first preparation call with\
+    \ no coordinator pre-disposition, and its sites appear in the required sweep universe.\
+    \ test: `tests/plans/test_review_evidence.py::test_inventory_first_call_succeeds`.\n\
+    8.1.7: The settled `index_token` is stored in `prior_round_context` and survives\
+    \ a restart round-trip; a mismatch between inventory time and verification time\
+    \ is detected. test: `tests/plans/test_review_evidence.py::test_index_token_persistence`.\n\
+    8.1.8: Preparation snapshots the requirements bundle into the evidence row, and\
+    \ traceability succeeds from that bundle alone when live task access is unavailable.\
+    \ test: `tests/plans/test_review_evidence.py::test_requirements_bundle_persisted_and_sufficient`.\n\
+    8.1.9: Finalization persists the merged quality ledger and the next round's preparation\
+    \ reads it back. test: `tests/plans/test_review_evidence.py::test_ledger_round_trip_through_finalize`.\n\
+    8.1.10: The evidence-bound finalize path rejects a round result whose findings\
+    \ fail the finding validator and refuses approval while any blocking finding remains.\
+    \ test: `tests/plans/test_review_evidence.py::test_finalize_validates_findings_and_blocks_approval`.\n\
+    8.1.11: Each finalized round validates and persists the `convergence_telemetry`\
+    \ object in `round_result` and reads it back durably, with repeated check keys\
+    \ counted across rounds. test: `tests/plans/test_review_evidence.py::test_telemetry_persisted_at_finalize`.\n\
+    8.1.12: The production round-N+1 `snapshot_payload` carries `prior_round_context`\
+    \ end to end, assembled from the persisted evidence row rather than recomputed\
+    \ from live state. test: `tests/plans/test_review_evidence.py::test_snapshot_carries_prior_round_context`.\n\
+    8.1.13: An unavailable index rolls the whole preparation back: no evidence row\
+    \ is written, spawn is refused, and a fresh preparation succeeds after recovery.\
+    \ test: `tests/plans/test_review_evidence.py::test_inventory_unavailable_aborts_preparation`.\n\
+    8.1.15: A finalized approval carries the server-derived merged ledger beside the\
+    \ manifest in the same envelope, and non-empty carried `major`/`minor` and dismissed\
+    \ entries survive derivation, V1 checkpoint rendering, and finalization with the\
+    \ same entries at every stage. The assertion fails if the ledger is empty, so\
+    \ a no-op derivation cannot pass. test: `tests/plans/test_review_evidence.py::test_approval_surfaces_carried_ledger`.\n\
+    8.1.17: The production edit \u2192 derive \u2192 attest \u2192 submit sequence\
+    \ closes on both routes: a round containing newly derived sites succeeds on its\
+    \ first preparation call, preparation rederives and accepts the matching digest,\
+    \ and a drifted digest is rejected back to a live producer \u2014 the taskless\
+    \ coordinator still in its turn, or the staged path through the existing failed-dispatch\
+    \ rollback \u2014 which rebuilds the attestation and succeeds. test: `tests/plans/test_review_evidence.py::test_repair_universe_production_sequence`.\n\
+    8.1.16: The real production paths that upstream leaves prove only against injected\
+    \ inputs are exercised here end to end: a taskless round-1 rejection, revision,\
+    \ and round-2 preparation with no fixture; a staged resubmission whose payload\
+    \ survives a restart before dispatch and is consumed exactly once; a settle exhaustion\
+    \ that rolls the whole preparation back leaving no evidence row and no spawn,\
+    \ with a later preparation succeeding; a real taskless plan-entry session anchoring\
+    \ at plan start and reusing that anchor across turns and a restart; and a real\
+    \ staged approve and reject reaching `end_agent_run` with a delivered result and\
+    \ no `send_message`, having mutated no stage state at verdict time. test: `tests/plans/test_review_evidence.py::test_production_paths_end_to_end`.\n\
+    8.1.14: An index-token mismatch drives the whole replacement transition: the bound\
+    \ child's typed `inconclusive` result expires the old evidence, the parent prepares\
+    \ a new evidence ID with fresh snapshot, inventory, and token, binds a distinct\
+    \ reviewer run, reruns all three lanes under it, and reuses no lane result from\
+    \ the old generation. test: `tests/plans/test_review_evidence.py::test_index_token_mismatch_replaces_run`."
+  labels:
+  - covers:adversary-convergence-improvements:8.1:8.1.1
+  - covers:adversary-convergence-improvements:8.1:8.1.2
+  - covers:adversary-convergence-improvements:8.1:8.1.3
+  - covers:adversary-convergence-improvements:8.1:8.1.4
+  - covers:adversary-convergence-improvements:8.1:8.1.5
+  - covers:adversary-convergence-improvements:8.1:8.1.6
+  - covers:adversary-convergence-improvements:8.1:8.1.7
+  - covers:adversary-convergence-improvements:8.1:8.1.8
+  - covers:adversary-convergence-improvements:8.1:8.1.9
+  - covers:adversary-convergence-improvements:8.1:8.1.10
+  - covers:adversary-convergence-improvements:8.1:8.1.11
+  - covers:adversary-convergence-improvements:8.1:8.1.12
+  - covers:adversary-convergence-improvements:8.1:8.1.13
+  - covers:adversary-convergence-improvements:8.1:8.1.15
+  - covers:adversary-convergence-improvements:8.1:8.1.17
+  - covers:adversary-convergence-improvements:8.1:8.1.16
+  - covers:adversary-convergence-improvements:8.1:8.1.14
+  tdd: false
+  source_section: '8.1'
+  assigned_agent: backend-developer
+- title: Collapsed block reasons keep their recovery directive
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '9.1.1: A collapsed repeat block still carries its one-line
+    recovery directive. test: `tests/workflows/test_block_rendering.py::test_collapsed_reason_keeps_directive`.
+
+    9.1.2: Reasons without an actionable directive collapse to the bare stub unchanged.
+    test: `tests/workflows/test_block_rendering.py::test_no_directive_collapses_clean`.
+
+    9.1.3: Fixtures are derived from an inventory of the actionable reasons in the
+    enabled bundled rules rather than a hand-listed set, covering at minimum single-line
+    `call_tool`, a `call_tool` split across physical lines, direct MCP-tool calls,
+    a `set_variable` directive with no `call_tool`, backticked shell or `gcode` commands,
+    and alternative-command lists. Each collapsed reason carries a complete executable
+    command rather than a fragment, and the inventory check fails when an enabled
+    rule introduces a form the extractor cannot render. test: `tests/workflows/test_block_rendering.py::test_directive_forms_survive_collapse`.'
+  labels:
+  - covers:adversary-convergence-improvements:9.1:9.1.1
+  - covers:adversary-convergence-improvements:9.1:9.1.2
+  - covers:adversary-convergence-improvements:9.1:9.1.3
+  tdd: true
+  source_section: '9.1'
+  implementation_domain: backend
+- title: Remove the orphaned search_memories injection renderer
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '9.2.1: All listed `mcp.py` symbols are removed and no `src/`
+    reference to them remains. file: `src/gobby/hooks/dispatchers/mcp.py`.
+
+    9.2.2: `_format_search_memories_result` and the duplicate `_is_review_lesson_memory`
+    are removed. file: `src/gobby/workflows/engine/delivery_formatting.py`.
+
+    9.2.3: The `search_memories` inject-dispatch branch is removed and the review-lessons
+    branch is untouched. file: `src/gobby/workflows/engine/effects.py`.
+
+    9.2.4: The four generic tracking helpers and `_record_payload_drop` are removed;
+    `_filter_and_track_new_review_lessons` is untouched. file: `src/gobby/workflows/engine/injection_tracking.py`.
+
+    9.2.5: The `injection_outcome_recorder` wiring is removed from engine core and
+    hook factory. file: `src/gobby/workflows/engine/core.py`.
+
+    9.2.6: Tests pinning the dead path are updated or deleted. file: `tests/workflows/test_delivery_pipeline.py`.
+
+    9.2.7: The live review-lessons injection path still renders end to end via `inject-review-lessons-for-touched-files`.
+    test: `tests/workflows/test_delivery_pipeline.py::test_review_lessons_path_survives_orphan_removal`.
+
+    9.2.8: The memory-usefulness contract describes the surviving delivery paths and
+    retains no reference to any deleted symbol. file: `docs/contracts/memory-usefulness-label.md`.'
+  labels:
+  - covers:adversary-convergence-improvements:9.2:9.2.1
+  - covers:adversary-convergence-improvements:9.2:9.2.2
+  - covers:adversary-convergence-improvements:9.2:9.2.3
+  - covers:adversary-convergence-improvements:9.2:9.2.4
+  - covers:adversary-convergence-improvements:9.2:9.2.5
+  - covers:adversary-convergence-improvements:9.2:9.2.6
+  - covers:adversary-convergence-improvements:9.2:9.2.7
+  - covers:adversary-convergence-improvements:9.2:9.2.8
+  tdd: false
+  source_section: '9.2'
+  assigned_agent: backend-developer
+- title: Harden the recall-gate block reasons and refresh the bundled manifest
+  category: config
+  task_type: feature
+  depends_on:
+  - '6.1'
+  - '6.3'
+  - '6.5'
+  validation_criteria: '9.3.1: Both rule reasons carry the only-permitted-call directive
+    and the solo-call instruction. file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml`.
+
+    9.3.2: The committed bundled-content manifest matches the shared tree after every
+    bundled edit in this plan. test: `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`.'
+  labels:
+  - covers:adversary-convergence-improvements:9.3:9.3.1
+  - covers:adversary-convergence-improvements:9.3:9.3.2
+  tdd: true
+  source_section: '9.3'
+  assigned_agent: backend-developer
+- title: Live convergence regression
+  category: test
+  task_type: feature
+  depends_on:
+  - '6.4'
+  - '7.2'
+  - '8.1'
+  - '9.1'
+  - '9.2'
+  - '9.3'
+  validation_criteria: 'E1.1.1: The live regression runs `/gobby plan` against `.gobby/plans/completed/context-mode-borrowings.md`
+    and writes a comparison artifact carrying rounds-to-approval, fixer-induced count,
+    repeated check keys, per-round wall time, and ledger entries carried, each read
+    from persisted telemetry rather than recomputed. test: `tests/plans/test_convergence_regression.py::test_live_regression_writes_comparison_artifact`.
+
+    E1.1.3: The regression **fails** when convergence regresses, asserting the stated
+    targets over persisted telemetry rather than only recording them: rounds-to-approval
+    in single digits, zero exact `check_key` repeats, no two consecutive rounds sharing
+    a `check_key_class`, and a strictly decaying finding tail. Exhaustive lane coverage
+    is unchanged, and wall-time variance is bounded separately so a slow run alone
+    does not fail it. test: `tests/plans/test_convergence_regression.py::test_convergence_targets_asserted`.
+
+    E1.1.2: A reviewer summary produced with concurrent editors and overlapping plan
+    artifacts in the worktree contains no path outside its own transcript-derived
+    `files_modified`. test: `tests/plans/test_convergence_regression.py::test_compaction_isolation_under_concurrent_editors`.'
+  labels:
+  - covers:adversary-convergence-improvements:E1.1:E1.1.1
+  - covers:adversary-convergence-improvements:E1.1:E1.1.3
+  - covers:adversary-convergence-improvements:E1.1:E1.1.2
+  tdd: false
+  source_section: E1.1
+  assigned_agent: backend-developer
+```
