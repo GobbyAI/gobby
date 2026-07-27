@@ -52,6 +52,8 @@ class CompletedTurnRecoveryHost(Protocol):
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None: ...
 
+    async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool: ...
+
     async def _log_transcript_snapshot(
         self,
         run: AgentRun,
@@ -142,6 +144,17 @@ async def recover_completed_turn(
     if decision == "duplicate":
         return 0
     if decision == "exhausted":
+        # A run parked on a satisfied exit condition has no workflow progress
+        # left to make, so failing it would report finished work as an error.
+        if await host._complete_if_step_workflow_finished(run):
+            await host._log_transcript_snapshot(
+                run,
+                reason="completing idle agent parked on a satisfied workflow exit condition",
+                snapshot=snapshot,
+                level=logging.INFO,
+            )
+            return 1
+
         logger.error(
             "Agent %s completed another turn without workflow progress after %s recovery "
             "reprompts — failing",

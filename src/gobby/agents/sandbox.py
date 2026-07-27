@@ -603,6 +603,7 @@ def compute_sandbox_paths(
         default_write_paths,
         gobby_read_exceptions,
         gobby_write_exceptions,
+        mcp_config_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
         sensitive_home_roots,
@@ -626,6 +627,7 @@ def compute_sandbox_paths(
             str(workspace),
             *write_paths,
             *gobby_read_exceptions(policy_env),
+            *mcp_config_read_exceptions(workspace),
             *(
                 provider_read_exceptions(
                     provider,

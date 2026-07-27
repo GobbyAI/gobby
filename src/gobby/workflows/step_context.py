@@ -28,6 +28,16 @@ class StepWorkflowContext:
     exit_condition: str | None
 
 
+@dataclass(frozen=True)
+class IncompleteStepWorkflow:
+    """An active step workflow that has not reached its exit condition."""
+
+    workflow_name: str
+    current_step: str
+    exit_condition: str | None
+    eval_error: Exception | None = None
+
+
 def get_active_step_workflow_context(
     db: HubDatabase,
     session_id: str | None,
@@ -109,6 +119,75 @@ def _definition_log_extra(instance: Any, definition_row: Any, session_id: str) -
         "workflow_definition_json": getattr(definition_row, "definition_json", None),
         "workflow_definition_row": row_context,
     }
+
+
+def first_incomplete_step_workflow(
+    db: HubDatabase,
+    session_id: str,
+) -> IncompleteStepWorkflow | None:
+    """Return the first active step workflow whose exit condition is not satisfied.
+
+    ``None`` means no active step workflow is holding the session open — either
+    every active instance reached its exit condition or the session owns none.
+    Callers that need to distinguish those cases pair this with
+    :func:`get_active_step_workflow_context`.
+    """
+    from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    instance_manager = WorkflowInstanceManager(db)
+    definition_manager = LocalWorkflowDefinitionManager(db)
+    session_variables = SessionVariableManager(db).get_variables(session_id)
+
+    for instance in instance_manager.get_active_instances(session_id):
+        if not instance.current_step:
+            continue
+
+        variables = {**session_variables, **instance.variables}
+        if variables.get("step_workflow_complete") is True:
+            continue
+
+        row = definition_manager.get_by_name(instance.workflow_name)
+        if not row or row.workflow_type == "pipeline":
+            continue
+
+        definition = WorkflowDefinition(**json.loads(row.definition_json))
+        if not definition.steps:
+            continue
+
+        if not definition.exit_condition:
+            return IncompleteStepWorkflow(
+                workflow_name=instance.workflow_name,
+                current_step=instance.current_step,
+                exit_condition=definition.exit_condition,
+            )
+
+        ctx = {
+            "current_step": instance.current_step,
+            "vars": variables,
+            "variables": variables,
+        }
+        try:
+            exit_met = SafeExpressionEvaluator(
+                context=ctx,
+                allowed_funcs=build_condition_helpers(context=ctx),
+            ).evaluate(definition.exit_condition)
+        except Exception as exc:
+            return IncompleteStepWorkflow(
+                workflow_name=instance.workflow_name,
+                current_step=instance.current_step,
+                exit_condition=definition.exit_condition,
+                eval_error=exc,
+            )
+
+        if not exit_met:
+            return IncompleteStepWorkflow(
+                workflow_name=instance.workflow_name,
+                current_step=instance.current_step,
+                exit_condition=definition.exit_condition,
+            )
+
+    return None
 
 
 def has_active_step_workflow(db: HubDatabase, session_id: str | None) -> bool:

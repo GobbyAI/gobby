@@ -12,7 +12,6 @@ Classes:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import threading
@@ -715,74 +714,23 @@ class SessionCoordinator:
             return None
 
         try:
-            from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-            from gobby.workflows.definitions import WorkflowDefinition
-            from gobby.workflows.safe_evaluator import (
-                SafeExpressionEvaluator,
-                build_condition_helpers,
-            )
-            from gobby.workflows.state_manager import (
-                SessionVariableManager,
-                WorkflowInstanceManager,
-            )
+            from gobby.workflows.step_context import first_incomplete_step_workflow
 
-            instance_manager = WorkflowInstanceManager(db)
-            definition_manager = LocalWorkflowDefinitionManager(db)
-            session_variables = SessionVariableManager(db).get_variables(session_id)
-
-            for instance in instance_manager.get_active_instances(session_id):
-                if not instance.current_step:
-                    continue
-
-                variables = {**session_variables, **instance.variables}
-                if variables.get("step_workflow_complete") is True:
-                    continue
-
-                row = definition_manager.get_by_name(instance.workflow_name)
-                if not row or row.workflow_type == "pipeline":
-                    continue
-
-                definition = WorkflowDefinition(**json.loads(row.definition_json))
-                if not definition.steps:
-                    continue
-
-                if not definition.exit_condition:
-                    return _format_incomplete_step_workflow_error(
-                        instance.workflow_name,
-                        instance.current_step,
-                        definition.exit_condition,
-                    )
-
-                ctx = {
-                    "current_step": instance.current_step,
-                    "vars": variables,
-                    "variables": variables,
-                }
-                try:
-                    exit_met = SafeExpressionEvaluator(
-                        context=ctx,
-                        allowed_funcs=build_condition_helpers(context=ctx),
-                    ).evaluate(definition.exit_condition)
-                except Exception as e:
-                    return _format_incomplete_step_workflow_error(
-                        instance.workflow_name,
-                        instance.current_step,
-                        definition.exit_condition,
-                        eval_error=e,
-                    )
-
-                if not exit_met:
-                    return _format_incomplete_step_workflow_error(
-                        instance.workflow_name,
-                        instance.current_step,
-                        definition.exit_condition,
-                    )
+            incomplete = first_incomplete_step_workflow(db, session_id)
         except Exception as e:
             self.logger.warning(
                 "Failed to inspect step workflow completion for session %s: %s", session_id, e
             )
+            return None
 
-        return None
+        if incomplete is None:
+            return None
+        return _format_incomplete_step_workflow_error(
+            incomplete.workflow_name,
+            incomplete.current_step,
+            incomplete.exit_condition,
+            eval_error=incomplete.eval_error,
+        )
 
     def _notify_agent_completion(self, run_id: str, status: str) -> None:
         """Fire completion event for an agent run (fail-open, idempotent).

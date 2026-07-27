@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -152,6 +153,36 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
         paths.extend([uv_path, uv_path.resolve(strict=False)])
     paths.append(Path("~/.local/share/uv").expanduser())
     return canonical_paths([str(path) for path in paths])
+
+
+def mcp_config_read_exceptions(workspace: Path) -> list[str]:
+    """Return project roots the workspace's own MCP servers resolve from.
+
+    Isolated agents get a generated ``.mcp.json`` whose gobby entry runs
+    ``uv run --project <main repo> gobby mcp-server`` so the proxy executes the
+    main repo's Gobby code (``_patch_mcp_config_for_isolation``). The sandbox
+    denies the operator home, so without a matching read grant ``uv`` cannot
+    open the main repo's ``pyproject.toml``, the MCP subprocess dies, and the
+    agent starts with no proxy tools at all (#19097). Read access is enough:
+    the isolated workspace stays the only writable source tree.
+    """
+    try:
+        config = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    servers = config.get("mcpServers") if isinstance(config, dict) else None
+    if not isinstance(servers, dict):
+        return []
+
+    roots: list[str] = []
+    for server in servers.values():
+        args = server.get("args") if isinstance(server, dict) else None
+        if not isinstance(args, list):
+            continue
+        for arg in args:
+            if isinstance(arg, str) and Path(arg).is_absolute() and Path(arg).is_dir():
+                roots.append(arg)
+    return canonical_paths(roots)
 
 
 def provider_read_exceptions(

@@ -937,3 +937,88 @@ class TestComputeSandboxPaths:
         assert _resolve_from(worktree, git_dir) in paths.write_paths
         assert _resolve_from(worktree, common_dir) in paths.write_paths
         assert len(paths.write_paths) == len(set(paths.write_paths))
+
+    def test_isolated_mcp_project_root_is_readable_but_not_writable(self, tmp_path: Path) -> None:
+        """The MCP server's `uv run --project <main repo>` target must be readable.
+
+        Without it the proxy subprocess dies on the main repo's pyproject.toml
+        and the agent starts with no gobby tools at all (#19097).
+        """
+        main_repo = tmp_path / "main-repo"
+        main_repo.mkdir()
+        (main_repo / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        workspace = tmp_path / "worktree"
+        workspace.mkdir()
+        (workspace / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "--project", str(main_repo), "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+        )
+
+        assert str(main_repo.resolve()) in paths.read_paths
+        assert str(main_repo.resolve()) not in paths.write_paths
+
+    def test_missing_or_malformed_mcp_config_grants_nothing_extra(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "worktree"
+        workspace.mkdir()
+        baseline = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+        )
+
+        (workspace / ".mcp.json").write_text("{not json", encoding="utf-8")
+        malformed = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+        )
+
+        assert malformed.read_paths == baseline.read_paths
+
+    def test_mcp_config_args_that_are_not_directories_are_ignored(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "worktree"
+        workspace.mkdir()
+        missing_dir = tmp_path / "gone"
+        regular_file = tmp_path / "note.txt"
+        regular_file.write_text("x\n", encoding="utf-8")
+        (workspace / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": [
+                                "run",
+                                "--project",
+                                str(missing_dir),
+                                str(regular_file),
+                                "relative/path",
+                                None,
+                            ],
+                        },
+                        "broken": "not-a-mapping",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+        )
+
+        assert str(missing_dir) not in paths.read_paths
+        assert str(regular_file) not in paths.read_paths

@@ -20,7 +20,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.workflows.step_context import StepWorkflowContext
+from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -1154,6 +1154,120 @@ async def test_completed_turn_recovery_retains_max_attempt_failure(
 
 
 @pytest.mark.asyncio
+async def test_exhausted_recovery_completes_agent_parked_on_satisfied_exit_condition(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """A terminal step the agent cannot act on is a completion, not a failure.
+
+    Every bundled agent's terminate step allows only the gobby MCP proxy
+    tools, so an agent whose proxy never started has no permitted action left
+    once its exit condition is satisfied (#19097).
+    """
+    transcript_path = tmp_path / "codex-terminal-step.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1030",
+        transcript_path=transcript_path,
+    )
+    monitor._idle_detector.get_state(run.id).reprompt_count = 2
+    terminate_context = StepWorkflowContext(
+        workflow_name="expansion-qa-steps",
+        current_step="terminate",
+        description=None,
+        status_message=None,
+        exit_condition="current_step == 'terminate'",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        patch(
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
+            return_value=terminate_context,
+        ),
+        patch(
+            "gobby.agents.watchdog.recovery.first_incomplete_step_workflow",
+            return_value=None,
+        ) as mock_incomplete,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    mock_send.assert_not_awaited()
+    mock_incomplete.assert_called_once()
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "success"
+    assert updated_run.error is None
+    assert "reached its exit condition" in (updated_run.result or "")
+
+
+@pytest.mark.asyncio
+async def test_exhausted_recovery_still_fails_when_exit_condition_is_unmet(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    """An unfinished workflow keeps the existing failure outcome."""
+    transcript_path = tmp_path / "codex-midway-step.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1031",
+        transcript_path=transcript_path,
+    )
+    monitor._idle_detector.get_state(run.id).reprompt_count = 2
+    qa_context = StepWorkflowContext(
+        workflow_name="expansion-qa-steps",
+        current_step="qa_check",
+        description=None,
+        status_message=None,
+        exit_condition="current_step == 'terminate'",
+    )
+    incomplete = IncompleteStepWorkflow(
+        workflow_name="expansion-qa-steps",
+        current_step="qa_check",
+        exit_condition="current_step == 'terminate'",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
+        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        patch(
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
+            return_value=qa_context,
+        ),
+        patch(
+            "gobby.agents.watchdog.recovery.first_incomplete_step_workflow",
+            return_value=incomplete,
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+
+
+@pytest.mark.asyncio
 async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -1440,6 +1554,75 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
         record.levelno == logging.ERROR
         and "completed another turn without workflow progress" in record.getMessage()
         for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_recovery_completes_run_parked_on_satisfied_exit_condition(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exhausting completed-turn recovery on a finished workflow completes the run.
+
+    This is the incident path: the agent kept completing turns at the
+    terminate step but could not call end_agent_run because its MCP proxy
+    never started (#19097).
+    """
+    transcript_path = tmp_path / "codex-terminal-budget.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1032",
+        transcript_path=transcript_path,
+        max_reprompt_attempts=3,
+    )
+    caplog.set_level(logging.INFO)
+    terminate_context = StepWorkflowContext(
+        workflow_name="expansion-qa-steps",
+        current_step="terminate",
+        description=None,
+        status_message=None,
+        exit_condition="current_step == 'terminate'",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
+        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        patch(
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
+            return_value=terminate_context,
+        ),
+        patch(
+            "gobby.agents.watchdog.recovery.first_incomplete_step_workflow",
+            return_value=None,
+        ),
+    ):
+        for attempt in range(3):
+            _write_codex_lifecycle_transcript(transcript_path, age_seconds=120 + attempt)
+            monitor._idle_detector.reset_idle(run.id)
+            assert await monitor.check_idle_agents() == 1
+
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=123)
+        monitor._idle_detector.reset_idle(run.id)
+        assert await monitor.check_idle_agents() == 1
+
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "success"
+    assert not any(
+        "completed another turn without workflow progress" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any(
+        "exit condition already satisfied" in record.getMessage() for record in caplog.records
     )
 
 

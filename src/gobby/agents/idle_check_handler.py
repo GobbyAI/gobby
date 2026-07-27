@@ -281,6 +281,13 @@ class IdleCheckHandler:
                     run.id,
                 )
                 return 0
+            if await self._recovery._complete_if_step_workflow_finished(run):
+                await self._recovery._log_transcript_snapshot(
+                    run,
+                    reason="completing idle agent parked on a satisfied workflow exit condition",
+                    level=logging.INFO,
+                )
+                return 1
             logger.info(
                 "Agent %s still idle after %s reprompts — failing",
                 run.id,

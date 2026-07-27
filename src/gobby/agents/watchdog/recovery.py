@@ -17,7 +17,11 @@ from gobby.agents.watchdog.completed_turn_recovery import (
     recover_completed_turn,
 )
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
-from gobby.workflows.step_context import StepWorkflowContext, get_active_step_workflow_context
+from gobby.workflows.step_context import (
+    StepWorkflowContext,
+    first_incomplete_step_workflow,
+    get_active_step_workflow_context,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -461,6 +465,103 @@ class WatchdogRecoveryCoordinator:
         self._idle_detector.clear_state(run.id)
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
         self.discard(run.id)
+
+    async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool:
+        """Complete an idle agent whose step workflow already reached its exit condition.
+
+        Every bundled agent's terminate step allows only the four gobby MCP
+        proxy tools, so an agent whose proxy never started has no permitted
+        action left once the workflow is over. Failing it there would report
+        finished work as an error (#19097). Returns whether the run was
+        terminalized as a completion.
+        """
+        step_context, _lookup_succeeded = await self._load_step_workflow_context(run)
+        if step_context is None or not await self._step_workflow_exit_condition_met(run):
+            return False
+
+        logger.info(
+            "Agent %s is idle at step %s/%s with its exit condition already satisfied — "
+            "completing instead of failing",
+            run.id,
+            step_context.workflow_name,
+            step_context.current_step,
+        )
+        await self._complete_idle_agent(
+            run,
+            reason=(
+                f"step workflow '{step_context.workflow_name}' reached its exit condition at "
+                f"step '{step_context.current_step}' but the agent never called end_agent_run"
+            ),
+        )
+        return True
+
+    async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None:
+        """Complete an idle agent whose step workflow already finished."""
+        payload = f"Agent completed by watchdog: {reason}"
+        if run.tmux_session_name:
+
+            async def terminalize(
+                _action: TerminalAction,
+                captured: str | None,
+            ) -> AgentRun | None:
+                await self._cleanup_handler.cleanup_agent(
+                    run,
+                    terminal_payload=captured or payload,
+                    is_success=True,
+                )
+                return cast(
+                    "AgentRun | None",
+                    await self._run_db(self._agent_run_manager.get, run.id),
+                )
+
+            result = await terminate_managed_tmux_async(
+                storage=self._agent_run_manager,
+                run=run,
+                tmux=self._tmux,
+                action="complete",
+                reason=payload,
+                terminalize=terminalize,
+            )
+            if not result.success:
+                logger.warning(
+                    "Idle-agent completion failed for run %s: %s (%s)",
+                    run.id,
+                    result.error,
+                    result.error_code,
+                )
+                return
+
+            self._idle_detector.clear_state(run.id)
+            self.discard(run.id)
+            return
+
+        self._idle_detector.clear_state(run.id)
+        await self._cleanup_handler.cleanup_agent(
+            run,
+            terminal_payload=payload,
+            is_success=True,
+        )
+        self.discard(run.id)
+
+    async def _step_workflow_exit_condition_met(self, run: AgentRun) -> bool:
+        """Return whether every active step workflow on the child session is finished."""
+        session_id = run.child_session_id
+        if not session_id:
+            return False
+        try:
+            incomplete = await self._run_db(
+                first_incomplete_step_workflow,
+                self.db,
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to evaluate step workflow completion for idle run %s session %s",
+                run.id,
+                session_id,
+            )
+            return False
+        return incomplete is None
 
     async def _log_transcript_snapshot(
         self,
