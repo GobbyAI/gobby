@@ -154,7 +154,11 @@ def render_srt_settings(paths: Any) -> dict[str, Any]:
         "strictAllowlist": True,
         "allowUnixSockets": paths.allow_unix_sockets,
         "allowAllUnixSockets": False,
-        "allowLocalBinding": False,
+        # Loopback egress: ghook and `gobby mcp-server` POST to the daemon
+        # HTTP port and gcode connects directly to the hub Postgres. SRT only
+        # exposes a boolean (it renders `remote ip "localhost:*"`); the
+        # external-domain allowlist stays enforced for non-loopback egress.
+        "allowLocalBinding": True,
     }
     if credentials:
         network["tlsTerminate"] = {}
@@ -169,7 +173,10 @@ def render_srt_settings(paths: Any) -> dict[str, Any]:
         },
         "allowPty": True,
         "enableWeakerNestedSandbox": False,
-        "enableWeakerNetworkIsolation": False,
+        # Only adds the com.apple.trustd.agent mach-lookup: native TLS
+        # verification (codex's hosted-apps MCP client, curl, git, Go tools)
+        # fails its handshake without it. Egress stays proxy-filtered.
+        "enableWeakerNetworkIsolation": True,
         "allowAppleEvents": False,
     }
     if credentials:

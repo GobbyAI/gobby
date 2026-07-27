@@ -603,15 +603,22 @@ def compute_sandbox_paths(
         gobby_read_exceptions,
         gobby_write_exceptions,
         provider_read_exceptions,
+        provider_write_exceptions,
         sensitive_home_roots,
         sensitive_write_roots,
+        tmux_socket_roots,
     )
 
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
     git_paths = _git_metadata_write_paths(workspace)
     write_paths = canonical_paths(
-        [*default_write_paths(config, workspace), *git_paths, *gobby_write_exceptions()]
+        [
+            *default_write_paths(config, workspace),
+            *git_paths,
+            *gobby_write_exceptions(),
+            *(provider_write_exceptions(provider) if provider else []),
+        ]
     )
     read_paths = canonical_paths(
         [
@@ -646,7 +653,9 @@ def compute_sandbox_paths(
             dict.fromkeys(domain.lower() for domain in config.denied_domains if domain)
         ),
         loopback_ports=list(dict.fromkeys((gobby_daemon_port, gobby_websocket_port))),
-        allow_unix_sockets=canonical_paths(config.allow_unix_sockets, base=workspace),
+        allow_unix_sockets=canonical_paths(
+            [*config.allow_unix_sockets, *tmux_socket_roots()], base=workspace
+        ),
         credential_env_vars=(
             [item for item in credential_env_vars(provider, api_base) if item.name in policy_env]
             if provider

@@ -851,7 +851,7 @@ class TestComputeSandboxPaths:
         assert str(real_workspace) in paths.write_paths
         assert str(linked_workspace) not in paths.write_paths
 
-    def test_srt_policy_denies_sensitive_home_without_blanket_gobby_read(
+    def test_srt_policy_denies_home_but_grants_gobby_home(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -868,10 +868,9 @@ class TestComputeSandboxPaths:
             env={"PATH": ""},
         )
 
-        assert str(gobby_home.resolve()) in paths.deny_read_paths
-        assert str(gobby_home.resolve()) not in paths.write_paths
-        assert str((gobby_home / "hooks" / "inbox").resolve()) in paths.write_paths
-        assert str(gobby_home.resolve()) not in paths.read_paths
+        assert str(gobby_home.resolve()) not in paths.deny_read_paths
+        assert str(gobby_home.resolve()) in paths.write_paths
+        assert str(gobby_home.resolve()) in paths.read_paths
         assert str(Path.home().resolve()) in paths.deny_read_paths
         assert str(workspace.resolve()) in paths.write_paths
 

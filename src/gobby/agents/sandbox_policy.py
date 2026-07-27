@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,10 +80,14 @@ def canonical_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
 
 
 def sensitive_home_roots() -> list[str]:
-    """Return broad home roots denied before narrow read exceptions are applied."""
+    """Return broad home roots denied before narrow read exceptions are applied.
+
+    ~/.gobby is deliberately absent: sandboxed agents get full access to the
+    Gobby home (daemon config, hooks, logs, personal project state) — the
+    boundary protects the rest of the operator home, not Gobby itself.
+    """
     home = Path.home().resolve(strict=False)
-    roots = [str(home), canonical_path(get_gobby_home())]
-    return list(dict.fromkeys(roots))
+    return [str(home)]
 
 
 def sensitive_write_roots() -> list[str]:
@@ -99,17 +104,49 @@ def sensitive_write_roots() -> list[str]:
 
 
 def gobby_write_exceptions() -> list[str]:
-    """Return the hook spool that must remain writable for lifecycle delivery."""
-    return canonical_paths([str(get_gobby_home() / "hooks" / "inbox")])
+    """Return Gobby-owned and shared-temp roots agents must write at runtime.
+
+    Agents own their Gobby surface: hook spools, logs, personal project state,
+    and gcode/gwiki state all live under ~/.gobby. Shared temp roots give
+    agents scratchpads beyond their per-session sandbox tmp;
+    tempfile.gettempdir() covers the platform default (per-user /var/folders
+    on macOS, %TEMP% on Windows).
+    """
+    home = Path.home()
+    return canonical_paths(
+        [
+            str(get_gobby_home()),
+            "/tmp",  # noqa: S108 - policy root, not a file creation site
+            "/var/tmp",  # noqa: S108
+            tempfile.gettempdir(),
+            # uv's default cache: MCP-server subprocesses run `uv run` with a
+            # provider-scrubbed env, so the per-session UV_CACHE_DIR redirect
+            # never reaches them and uv falls back to these roots.
+            str(home / ".cache" / "uv"),
+            str(home / "Library" / "Caches" / "uv"),
+        ]
+    )
 
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     """Return exact machine, hook, binary, and prompt resources needed by agents."""
-    home = get_gobby_home()
-    paths = [home / "machine_id", home / "bin", home / "hooks"]
+    # The whole Gobby home: bootstrap.yaml is the root of trust for daemon
+    # and hub discovery (ghook, `gobby mcp-server`, gcode, and gwiki re-read
+    # it per invocation), and agents read hook config, binaries, the local
+    # CLI token, and personal project state from here.
+    paths = [get_gobby_home()]
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file:
         paths.append(Path(prompt_file))
+    # Workspace tooling: `uv run` backs both agent shell commands and the
+    # spawned `gobby mcp-server` stdio process. The uv binary and its managed
+    # interpreters (venv symlink targets) live outside the workspace and stay
+    # read-only.
+    uv_binary = shutil.which("uv", path=env.get("PATH"))
+    if uv_binary:
+        uv_path = Path(uv_binary).expanduser().absolute()
+        paths.extend([uv_path, uv_path.resolve(strict=False)])
+    paths.append(Path("~/.local/share/uv").expanduser())
     return canonical_paths([str(path) for path in paths])
 
 
@@ -133,6 +170,31 @@ def provider_read_exceptions(provider: str, env: Mapping[str, str]) -> list[str]
         if package_root is not None:
             paths.append(str(package_root))
     return canonical_paths(paths)
+
+
+def tmux_socket_roots() -> list[str]:
+    """Return the tmux server socket directory for agent coordination IPC.
+
+    Gobby runs agents inside a dedicated tmux server; in-sandbox tools that
+    coordinate through it (statusline, pane messaging) connect to sockets
+    under this per-uid directory.
+    """
+    if not hasattr(os, "getuid"):
+        return []
+    tmux_tmpdir = os.environ.get("TMUX_TMPDIR", "/tmp")  # noqa: S108
+    return canonical_paths([str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}")])
+
+
+def provider_write_exceptions(provider: str) -> list[str]:
+    """Return provider-owned state roots the CLI must write at runtime.
+
+    Every hosted CLI persists runtime state inside its auth root (Codex keeps
+    its sqlite state DB and session rollouts in ~/.codex, Droid writes
+    ~/.factory, token refresh rewrites auth files). Read-only auth roots make
+    the provider exit at bootstrap. Sensitive roots stay protected because
+    seatbelt deny rules (sensitive_write_roots) take precedence over allows.
+    """
+    return canonical_paths(list(_PROVIDER_AUTH_PATHS.get(provider, ())))
 
 
 def _nearest_package_root(executable: Path) -> Path | None:

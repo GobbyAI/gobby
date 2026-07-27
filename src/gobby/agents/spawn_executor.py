@@ -231,6 +231,11 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     if sandbox_failure is not None:
         return sandbox_failure
     assert launch is not None
+    if launch.enforced and launch.backend == "srt":
+        # Claude's own Bash sandbox cannot nest inside the SRT seatbelt;
+        # CLI --settings outranks user settings, so pin it off regardless
+        # of ~/.claude/settings.json. SRT is the authoritative boundary.
+        cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
     cmd.extend(launch.provider_args)
     if request.prompt:
         cmd.append(request.prompt)
@@ -556,6 +561,11 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         *_codex_mcp_config_overrides(request.project_path),
         *request.codex_config_overrides,
     ]
+    if launch.enforced and launch.backend == "srt":
+        # Codex's internal seatbelt cannot nest inside the SRT sandbox
+        # (sandbox_apply: Operation not permitted kills its shell and
+        # node_repl kernels). SRT is the authoritative boundary.
+        config_overrides.append('sandbox_mode="danger-full-access"')
     cmd, _cmd_env = build_cli_command(
         cli="codex",
         prompt=request.prompt or "",
