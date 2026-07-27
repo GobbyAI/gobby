@@ -59,7 +59,6 @@ from gobby.sessions.compact_continuation import (
     clear_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
-    schedule_compact_self_continuation_fallback,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
@@ -536,12 +535,6 @@ def register_terminal_tools(
             if failure_detail is not None:
                 failure_result.update(failure_detail)
             return failure_result
-        if continuation_pending:
-            schedule_compact_self_continuation_fallback(
-                db,
-                pending_session_id=resolved_session_id,
-                target_session=session,
-            )
         background_refresh_scheduled = False
         if refresh_result.get("background_refresh_needed"):
             background_refresh_scheduled = _schedule_compact_handoff_background_refresh(

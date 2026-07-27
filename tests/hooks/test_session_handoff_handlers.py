@@ -38,6 +38,7 @@ pytestmark = pytest.mark.unit
 
 COMPACT_EXTERNAL_ID = "cccccccc-0000-4000-8000-000000000001"
 CLI_EXTERNAL_IDS = {
+    "claude": COMPACT_EXTERNAL_ID,
     "codex": "cccccccc-0000-4000-8000-000000000002",
     "qwen": "cccccccc-0000-4000-8000-000000000003",
     "droid": "cccccccc-0000-4000-8000-000000000004",
@@ -608,12 +609,17 @@ class TestCompactSelfContinuation:
 
         return _consume
 
+    @pytest.mark.parametrize("cli_source", ["claude", "codex", "qwen", "droid"])
     def test_compact_start_with_pending_flag_clears_and_schedules_continuation(
-        self, hub_db: HubDatabase, mock_dependencies: dict
+        self, hub_db: HubDatabase, mock_dependencies: dict, cli_source: str
     ) -> None:
         """A self-initiated compact schedules one continuation when the pending flag is fresh."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session(db)
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS[cli_source],
+            source=cli_source,
+        )
         mark_compact_self_continuation_pending(db, session.id)
         mock_dependencies["session_storage"].db = db
         mock_dependencies["session_storage"].get.return_value = session
@@ -623,6 +629,7 @@ class TestCompactSelfContinuation:
         event = make_event(
             HookEventType.SESSION_START,
             session_id=session.id,
+            source=cli_source,
             data={"source": "compact", "cwd": "/some/dir"},
             metadata={},
         )
@@ -636,18 +643,20 @@ class TestCompactSelfContinuation:
             ) as mock_schedule,
         ):
             response = handlers.handle_session_start(event)
+            duplicate_response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
+        assert duplicate_response.decision == "allow"
         variables = SessionVariableManager(db).get_variables(session.id)
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
-        mock_schedule.assert_called_once()
+        assert mock_schedule.call_count == 2
         assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
 
-    @pytest.mark.parametrize("cli_source", ["codex", "qwen", "droid"])
-    def test_pending_flag_schedules_continuation_without_compact_source(
+    @pytest.mark.parametrize("cli_source", ["claude", "codex", "qwen", "droid"])
+    def test_non_compact_start_preserves_pending_continuation(
         self, hub_db: HubDatabase, mock_dependencies: dict, cli_source: str
     ) -> None:
-        """Providers that omit source='compact' still resume after compact_self."""
+        """An unrelated session start cannot consume a compact continuation."""
         db = self._make_db(hub_db)
         session = self._make_precreated_session(
             db,
@@ -680,9 +689,9 @@ class TestCompactSelfContinuation:
 
         assert response.decision == "allow"
         variables = SessionVariableManager(db).get_variables(session.id)
-        assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
-        mock_schedule.assert_called_once()
-        assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
+        assert COMPACT_SELF_CONTINUE_VARIABLE in variables
+        mock_schedule.assert_not_called()
+        assert scheduled == []
 
     def test_manual_compact_without_pending_flag_does_not_schedule_continuation(
         self, hub_db: HubDatabase, mock_dependencies: dict

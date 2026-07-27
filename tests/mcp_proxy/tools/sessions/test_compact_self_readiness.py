@@ -1,4 +1,4 @@
-"""Regression tests for compact_self continuation fallback scheduling."""
+"""Regression tests for compact_self continuation readiness gating."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class _TestRegistry(InternalToolRegistry):
 
 
 @pytest.mark.asyncio
-async def test_terminal_compact_self_schedules_pending_marker_fallback() -> None:
+async def test_terminal_compact_self_waits_for_compact_session_start() -> None:
     registry = _TestRegistry(name="test", description="test")
     session = MagicMock()
     session.id = "s1"
@@ -34,7 +34,7 @@ The compact handoff summary is ready, and the terminal session can proceed with 
 
 ## Next Steps
 
-Send the compact command and schedule the pending continuation marker fallback.
+Send the compact command and wait for the compact SessionStart hook.
 """
     session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
@@ -70,7 +70,7 @@ Send the compact command and schedule the pending continuation marker fallback.
         ),
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal.schedule_compact_self_continuation_fallback",
-            return_value=True,
+            create=True,
         ) as mock_schedule,
         session_context_for_test("s1"),
     ):
@@ -78,8 +78,4 @@ Send the compact command and schedule the pending continuation marker fallback.
 
     assert result["compacted"] is True
     assert result["continuation_pending"] is True
-    mock_schedule.assert_called_once_with(
-        db,
-        pending_session_id="s1",
-        target_session=session,
-    )
+    mock_schedule.assert_not_called()

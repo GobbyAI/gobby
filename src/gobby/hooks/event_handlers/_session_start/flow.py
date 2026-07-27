@@ -100,11 +100,12 @@ def _log_session_start_timing(
 def _consume_pending_compact_self_continuation(
     handler: Any,
     *,
+    session_source: str,
     pending_session_id: str | None,
     target_session: Any,
 ) -> bool:
-    """Consume compact_self markers for providers that do not tag compact restarts."""
-    if not handler._session_manager:
+    """Consume compact_self markers after a confirmed compact restart."""
+    if session_source != "compact" or not handler._session_manager:
         return False
     return bool(
         _compat_module().consume_and_schedule_compact_self_continuation(
@@ -666,6 +667,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if session_obj:
         _consume_pending_compact_self_continuation(
             handler,
+            session_source=session_source,
             pending_session_id=session_id,
             target_session=session_obj,
         )
@@ -860,6 +862,7 @@ def handle_pre_created_session(
 
     _consume_pending_compact_self_continuation(
         handler,
+        session_source=session_source,
         pending_session_id=session_id,
         target_session=session_obj,
     )
