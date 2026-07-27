@@ -21,7 +21,9 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _CLI_COMPACT_COMMANDS,
+    _CODEX_INTERRUPT_SETTLE_SECONDS,
     _send_codex_compaction_command,
+    _send_terminal_compaction_command,
     register_terminal_tools,
 )
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -159,17 +161,14 @@ async def _await_direct_compact_self(
 
 
 class TestCompactSelfCLIMap:
-    def test_claude_maps_to_slash_compact(self) -> None:
-        assert _CLI_COMPACT_COMMANDS["claude"] == "/compact"
-
-    def test_codex_maps_to_slash_compact(self) -> None:
-        assert _CLI_COMPACT_COMMANDS["codex"] == "/compact"
-
-    def test_qwen_maps_to_slash_compress(self) -> None:
-        assert _CLI_COMPACT_COMMANDS["qwen"] == "/compress"
-
-    def test_droid_maps_to_slash_compress(self) -> None:
-        assert _CLI_COMPACT_COMMANDS["droid"] == "/compress"
+    def test_provider_command_matrix(self) -> None:
+        assert _CLI_COMPACT_COMMANDS == {
+            "claude": "/compact",
+            "codex": "/compact",
+            "grok": "/compact",
+            "qwen": "/compress",
+            "droid": "/compress",
+        }
 
 
 class TestCompactSelfTerminalPath:
@@ -185,8 +184,10 @@ class TestCompactSelfTerminalPath:
         assert "session_id" not in input_schema.get("required", [])
         description = schema["description"]
         assert "interrupt the active turn before sending the slash command" in description
+        assert "provider-specific compaction command" in description
         assert "rejected or cancelled compact_self tool-use message" in description
-        assert "expected self-compaction delivery, not user refusal" in description
+        assert "`Error: interrupted` and `Conversation interrupted`" in description
+        assert "followed by `Context compacted`" in description
 
     def test_claude_session_fires_slash_compact_via_send_keys(self) -> None:
         session = _make_terminal_session("claude")
@@ -238,6 +239,129 @@ class TestCompactSelfTerminalPath:
             call("%12", "C-c", literal=False),
             call("%12", "/compact\n", literal=True),
         ]
+
+    @pytest.mark.parametrize(
+        ("cli_source", "interrupt_key"),
+        [("codex", "C-c"), ("grok", "Escape")],
+    )
+    @pytest.mark.asyncio
+    async def test_interrupt_settles_before_marking_and_compacting(
+        self,
+        cli_source: str,
+        interrupt_key: str,
+    ) -> None:
+        events: list[tuple[str, str | float]] = []
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            _ = literal
+            events.append(("tmux", keys))
+            return True
+
+        async def sleep(delay: float) -> None:
+            events.append(("sleep", delay))
+
+        def mark_pending() -> bool:
+            events.append(("mark", "s1"))
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal_tmux.asyncio.sleep",
+            side_effect=sleep,
+        ):
+            (
+                ok,
+                reason,
+                continuation_pending,
+                failure_detail,
+            ) = await _send_terminal_compaction_command(
+                tmux,
+                "%12",
+                "/compact",
+                "s1",
+                cli_source=cli_source,
+                mark_continuation_pending=mark_pending,
+                clear_continuation_pending=lambda: True,
+            )
+
+        assert _CODEX_INTERRUPT_SETTLE_SECONDS == 1.0
+        assert ok is True
+        assert reason is None
+        assert continuation_pending is True
+        assert failure_detail is None
+        assert events[:4] == [
+            ("tmux", interrupt_key),
+            ("sleep", 1.0),
+            ("mark", "s1"),
+            ("tmux", "/compact\n"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_codex_schedules_readiness_after_marker_before_compacting(self) -> None:
+        events: list[str] = []
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="before")
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            _ = literal
+            events.append(keys)
+            return True
+
+        def mark_pending() -> bool:
+            events.append("mark")
+            return True
+
+        def schedule_readiness(before_command: str | None) -> bool:
+            assert before_command == "before"
+            events.append("readiness")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+
+        result = await _send_terminal_compaction_command(
+            tmux,
+            "%12",
+            "/compact",
+            "s1",
+            cli_source="codex",
+            mark_continuation_pending=mark_pending,
+            clear_continuation_pending=lambda: True,
+            schedule_continuation_readiness=schedule_readiness,
+            settle_seconds=0,
+        )
+
+        assert result == (True, None, True, None)
+        assert events == ["C-c", "mark", "readiness", "/compact\n"]
+
+    @pytest.mark.asyncio
+    async def test_codex_readiness_schedule_failure_aborts_before_compacting(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="before")
+        tmux.send_keys = AsyncMock(return_value=True)
+        clear_pending = MagicMock(return_value=True)
+
+        result = await _send_terminal_compaction_command(
+            tmux,
+            "%12",
+            "/compact",
+            "s1",
+            cli_source="codex",
+            mark_continuation_pending=lambda: True,
+            clear_continuation_pending=clear_pending,
+            schedule_continuation_readiness=lambda _before: False,
+            settle_seconds=0,
+        )
+
+        assert result == (
+            False,
+            "failed to schedule compact_self continuation readiness",
+            False,
+            None,
+        )
+        clear_pending.assert_called_once_with()
+        assert tmux.send_keys.await_args_list == [call("%12", "C-c", literal=False)]
 
     @pytest.mark.asyncio
     async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
@@ -294,6 +418,21 @@ class TestCompactSelfTerminalPath:
         assert tmux.send_keys.await_args_list == [
             call("%12", "Escape", literal=False),
             call("%12", "/compress\n", literal=True),
+        ]
+
+    def test_grok_session_fires_slash_compact(self) -> None:
+        session = _make_terminal_session("grok")
+        registry, tmux = _register_compact_self(session)
+
+        result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["command"] == "/compact"
+        assert result["cli"] == "grok"
+        assert result["continuation_pending"] is True
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compact\n", literal=True),
         ]
 
     def test_current_session_backfills_tmux_context_from_same_external_id_sibling(
@@ -462,6 +601,7 @@ class TestCompactSelfTerminalPath:
         tmux.capture_pane = AsyncMock(
             side_effect=[
                 old_output,
+                old_output,
                 old_output + "/compact\n'/compact' is disabled while a task is in progress\n",
             ]
         )
@@ -492,6 +632,7 @@ class TestCompactSelfTerminalPath:
         ]
         assert tmux.capture_pane.await_args_list == [
             call("%12", lines=30),
+            call("%12", lines=100),
             call("%12", lines=30),
         ]
         mock_mark.assert_called_once()

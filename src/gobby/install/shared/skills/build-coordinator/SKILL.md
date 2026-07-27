@@ -187,9 +187,10 @@ inside `arguments`. Set `rule_name` only when a workflow or rule specifically
 requires attribution.
 
 For terminal sessions, `compact_self` interrupts the active turn before sending
-`/compact` or `/compress`. If the tool-use message is rejected or cancelled and
-is immediately followed by the slash command, treat it as expected
-self-compaction delivery, not user refusal.
+the provider-specific compaction command. A rejected or cancelled tool-use
+message immediately followed by that command signals expected self-compaction
+delivery. For Codex, `Error: interrupted` and `Conversation interrupted` are
+expected when followed by `Context compacted`.
 
 Before compacting, leave enough state in the conversation or task notes for the
 continuation to resume without rediscovery.

@@ -157,7 +157,9 @@ def test_build_coordinator_documents_compact_self_tool_path() -> None:
     assert 'call_tool("gobby-sessions", "compact_self", {})' in body
     assert "top-level `call_tool.session_id`" in body
     assert "interrupts the active turn before sending" in normalized
-    assert "expected self-compaction delivery, not user refusal" in normalized
+    assert "provider-specific compaction command" in normalized
+    assert "`Error: interrupted` and `Conversation interrupted`" in normalized
+    assert "followed by `Context compacted`" in normalized
 
 
 def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> None:

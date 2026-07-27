@@ -41,6 +41,7 @@ rules:
         template: |
           You closed a task, but this session still has multiple claimed tasks or a claimed epic.
           Call `gobby-sessions:compact_self` for this session before continuing.
-          In terminal sessions, compact_self interrupts the active turn before sending `/compact` or `/compress`;
-          a rejected or cancelled tool-use message immediately followed by that slash command is expected
-          self-compaction delivery, not user refusal.
+          In terminal sessions, compact_self interrupts the active turn before sending the provider-specific
+          compaction command. A rejected or cancelled tool-use message immediately followed by that command
+          signals expected self-compaction delivery. For Codex, `Error: interrupted` and
+          `Conversation interrupted` are expected when followed by `Context compacted`.

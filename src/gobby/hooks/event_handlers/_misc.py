@@ -8,7 +8,7 @@ from typing import Any
 
 from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 from gobby.hooks.normalization import notification_type_from_payload
 from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
 from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -213,6 +214,15 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     session.source,
                 )
                 return HookResponse(decision="allow")
+        except Exception:
+            self.logger.warning(
+                "POST_COMPACT: failed to load session %s",
+                session_id,
+                exc_info=True,
+            )
+            return HookResponse(decision="allow")
+
+        try:
             snapshot = ContextUsageSnapshot.window_only(
                 source=source,
                 context_window=session.context_window,
@@ -229,6 +239,21 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 session_id,
                 exc_info=True,
             )
+
+        if source == "grok" and event.source is SessionSource.GROK:
+            try:
+                consume_and_schedule_compact_self_continuation(
+                    self._session_manager.db,
+                    pending_session_id=session_id,
+                    target_session=session,
+                    loop=getattr(self._session_coordinator, "_event_loop", None),
+                )
+            except Exception:
+                self.logger.warning(
+                    "POST_COMPACT: failed to schedule compact_self continuation for session %s",
+                    session_id,
+                    exc_info=True,
+                )
         return HookResponse(decision="allow")
 
     def handle_stop_failure(self, event: HookEvent) -> HookResponse:

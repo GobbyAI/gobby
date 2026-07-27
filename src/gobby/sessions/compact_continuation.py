@@ -40,6 +40,9 @@ COMPACT_SELF_CONTINUE_PROMPT = (
 )
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
+_CODEX_COMPACT_READY_MARKER = "Context compacted"
+_CODEX_COMPACT_READY_POLL_SECONDS = 0.25
+CODEX_COMPACT_READY_CAPTURE_LINES = 100
 LOADING_SKILLS_NAME = "loading-skills"
 COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
     "required_skills",
@@ -227,6 +230,48 @@ def schedule_compact_self_continuation(
     return _schedule_coroutine(coro, loop=loop)
 
 
+def schedule_codex_compact_self_continuation_readiness(
+    db: HubDatabase,
+    *,
+    pending_session_id: str,
+    target_session: Any,
+    before_command: str | None,
+    loop: Any | None = None,
+    poll_seconds: float = _CODEX_COMPACT_READY_POLL_SECONDS,
+) -> bool:
+    """Wait for Codex's terminal completion signal before submitting continuation."""
+    if before_command is None:
+        logger.debug(
+            "Cannot schedule Codex compact readiness for session %s; baseline capture failed",
+            pending_session_id,
+        )
+        return False
+
+    ctx = parse_terminal_context_value(getattr(target_session, "terminal_context", None))
+    if ctx is None:
+        logger.debug("Cannot schedule Codex compact readiness; no terminal context")
+        return False
+
+    target = ctx.get("tmux_pane") or ctx.get("tmux_session")
+    if not target:
+        logger.debug(
+            "Cannot schedule Codex compact readiness for session %s; no tmux target",
+            pending_session_id,
+        )
+        return False
+
+    tmux = get_tmux_manager_for_context(ctx)
+    coro = _continue_after_codex_compaction_ready(
+        db,
+        tmux=tmux,
+        target=str(target),
+        pending_session_id=pending_session_id,
+        before_command=before_command,
+        poll_seconds=poll_seconds,
+    )
+    return _schedule_coroutine(coro, loop=loop)
+
+
 def consume_and_schedule_compact_self_continuation(
     db: HubDatabase,
     *,
@@ -236,8 +281,8 @@ def consume_and_schedule_compact_self_continuation(
 ) -> bool:
     """Consume a fresh marker from a session and schedule its continuation prompt.
 
-    Compaction is an in-place handoff, so the pending marker always lives on
-    the same session row that restarts.
+    Compaction is an in-place handoff, so the pending marker lives on the same
+    session row that emits the provider's readiness event.
     """
     if not pending_session_id:
         return False
@@ -271,7 +316,7 @@ async def _send_compact_self_continuation(
     session_id: str,
     *,
     delay_seconds: float,
-) -> None:
+) -> bool:
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
@@ -282,9 +327,114 @@ async def _send_compact_self_continuation(
             session_id,
             exc_info=True,
         )
-        return
+        return False
     if not ok:
         logger.warning("tmux send-keys returned false for compact_self continuation %s", session_id)
+    return bool(ok)
+
+
+async def _continue_after_codex_compaction_ready(
+    db: HubDatabase,
+    *,
+    tmux: Any,
+    target: str,
+    pending_session_id: str,
+    before_command: str | None,
+    poll_seconds: float,
+    fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+) -> None:
+    """Consume and submit only after Codex renders a fresh completion marker."""
+    baseline_count = (before_command or "").count(_CODEX_COMPACT_READY_MARKER)
+    deadline = asyncio.get_running_loop().time() + fresh_seconds
+
+    while asyncio.get_running_loop().time() <= deadline:
+        try:
+            variables = await asyncio.to_thread(
+                _load_session_variables,
+                db,
+                pending_session_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to load Codex compact continuation marker for session %s",
+                pending_session_id,
+                exc_info=True,
+            )
+            return
+        if COMPACT_SELF_CONTINUE_VARIABLE not in variables:
+            return
+
+        try:
+            output = await tmux.capture_pane(
+                target,
+                lines=CODEX_COMPACT_READY_CAPTURE_LINES,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to inspect Codex compact readiness for session %s",
+                pending_session_id,
+                exc_info=True,
+            )
+            output = None
+
+        fresh_output = (
+            _fresh_terminal_output(before_command or "", output) if isinstance(output, str) else ""
+        )
+        ready = isinstance(output, str) and (
+            output.count(_CODEX_COMPACT_READY_MARKER) > baseline_count
+            or _CODEX_COMPACT_READY_MARKER in fresh_output
+        )
+        if ready:
+            if poll_seconds > 0:
+                await asyncio.sleep(poll_seconds)
+            pending = await asyncio.to_thread(
+                _take_compact_self_continuation_pending,
+                db,
+                pending_session_id,
+            )
+            if pending is None:
+                return
+            prompt, payload = pending
+            sent = await _send_compact_self_continuation(
+                tmux,
+                target,
+                prompt,
+                pending_session_id,
+                delay_seconds=0,
+            )
+            if not sent:
+                await asyncio.to_thread(
+                    _restore_session_variable_if_absent,
+                    db,
+                    pending_session_id,
+                    COMPACT_SELF_CONTINUE_VARIABLE,
+                    payload,
+                )
+            return
+
+        if poll_seconds > 0:
+            await asyncio.sleep(poll_seconds)
+
+    logger.warning(
+        "Timed out waiting for Codex compact readiness for session %s",
+        pending_session_id,
+    )
+
+
+def _fresh_terminal_output(before: str, after: str) -> str:
+    """Return output appended after a pane snapshot, including a rolling window."""
+    if not before:
+        return after
+    if after.startswith(before):
+        return after[len(before) :]
+
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    max_overlap = min(len(before_lines), len(after_lines))
+    for overlap in range(max_overlap, 0, -1):
+        if before_lines[-overlap:] == after_lines[:overlap]:
+            return "\n".join(after_lines[overlap:])
+    return ""
 
 
 def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:

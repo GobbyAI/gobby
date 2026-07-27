@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "claude": "/compact",
     "codex": "/compact",
+    "grok": "/compact",
     "qwen": "/compress",
     "droid": "/compress",
 }
@@ -28,7 +29,7 @@ _DEFAULT_COMPACT_INTERRUPT_KEY = "Escape"
 _CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
     "codex": "C-c",
 }
-_CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
+_CODEX_INTERRUPT_SETTLE_SECONDS = 1.0
 _COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
@@ -55,11 +56,16 @@ def _fresh_output_delta(before: str, after: str) -> str:
     return ""
 
 
-async def _capture_pane_snapshot(tmux: TmuxSessionManager, target: str) -> str | None:
+async def _capture_pane_snapshot(
+    tmux: TmuxSessionManager,
+    target: str,
+    *,
+    lines: int = _COMPACTION_REJECTION_CAPTURE_LINES,
+) -> str | None:
     try:
-        output = await tmux.capture_pane(target, lines=_COMPACTION_REJECTION_CAPTURE_LINES)
+        output = await tmux.capture_pane(target, lines=lines)
     except (TimeoutError, OSError, RuntimeError):
-        logger.debug("Failed to capture tmux target %s for compaction rejection check", target)
+        logger.debug("Failed to capture tmux target %s for compaction state check", target)
         return None
     if isinstance(output, str):
         return output
@@ -142,6 +148,8 @@ async def _send_terminal_compaction_command(
     cli_source: str | None,
     mark_continuation_pending: Callable[[], bool],
     clear_continuation_pending: Callable[[], bool],
+    schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
+    continuation_readiness_capture_lines: int | None = None,
     settle_seconds: float | None = None,
     interrupt_settle_seconds: float = _CODEX_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
@@ -163,7 +171,33 @@ async def _send_terminal_compaction_command(
         await asyncio.sleep(delay)
 
     before_command = await _capture_pane_snapshot(tmux, target)
+    readiness_before_command = before_command
+    if (
+        schedule_continuation_readiness is not None
+        and continuation_readiness_capture_lines is not None
+    ):
+        readiness_before_command = await _capture_pane_snapshot(
+            tmux,
+            target,
+            lines=continuation_readiness_capture_lines,
+        )
     continuation_pending = bool(mark_continuation_pending())
+    if schedule_continuation_readiness is not None:
+        if not continuation_pending:
+            return (
+                False,
+                "failed to persist compact_self continuation before compaction",
+                False,
+                None,
+            )
+        if not schedule_continuation_readiness(readiness_before_command):
+            clear_continuation_pending()
+            return (
+                False,
+                "failed to schedule compact_self continuation readiness",
+                False,
+                None,
+            )
     ok, reason = await _send_compaction_command(tmux, target, command, session_id)
     if not ok:
         if continuation_pending:

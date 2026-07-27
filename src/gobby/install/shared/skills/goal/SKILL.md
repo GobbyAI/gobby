@@ -167,9 +167,11 @@ On approval, set `status: active` and ask where it runs:
    compaction. If it did not fire, call `gobby-sessions:compact_self`
    directly: pass the current session ref as the top-level
    `call_tool.session_id`, not inside `arguments`. In terminal sessions,
-   compact_self interrupts the active turn before sending `/compact` or
-   `/compress`; a rejected or cancelled tool-use immediately followed by that
-   slash command is expected self-compaction delivery, not user refusal.
+   compact_self interrupts the active turn before sending the provider-specific
+   compaction command. A rejected or cancelled tool-use immediately followed by
+   that command signals expected self-compaction delivery. For Codex,
+   `Error: interrupted` and `Conversation interrupted` are expected when followed
+   by `Context compacted`.
 5. After the compaction resume, the injected context names the goal file —
    re-read it if it is not in context, check budgets and stop conditions
    against the Progress Log, and go to step 1.

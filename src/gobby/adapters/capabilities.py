@@ -365,6 +365,7 @@ GROK_EVENT_MAP: dict[str, HookEventType] = {
     "post_tool_use": HookEventType.AFTER_TOOL,
     "post_tool_use_failure": HookEventType.AFTER_TOOL,
     "pre_compact": HookEventType.PRE_COMPACT,
+    "post_compact": HookEventType.POST_COMPACT,
     "stop": HookEventType.STOP,
     "notification": HookEventType.NOTIFICATION,
 }
@@ -377,6 +378,7 @@ GROK_HOOK_ALIASES: dict[str, str] = {
     "PostToolUse": "post_tool_use",
     "PostToolUseFailure": "post_tool_use_failure",
     "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
     "Stop": "stop",
     "Notification": "notification",
 }
@@ -408,7 +410,12 @@ def _grok_capabilities() -> ProviderCapabilities:
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
         elif hook_name in {"pre_compact", "stop"}:
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"session_start", "user_prompt_submit", "post_tool_use"}:
+        elif hook_name in {
+            "session_start",
+            "user_prompt_submit",
+            "post_tool_use",
+            "post_compact",
+        }:
             decision_style = ProviderDecisionStyle.NONE
 
         events[hook_name] = HookCapability(

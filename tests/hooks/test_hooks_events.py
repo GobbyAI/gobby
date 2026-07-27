@@ -214,6 +214,12 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["codex"] == "PostToolUse"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["codex"] == "SessionEnd"
 
+    def test_grok_support(self) -> None:
+        """Test Grok CLI support in mapping."""
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["grok"] == "session_start"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["grok"] == "pre_compact"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.POST_COMPACT]["grok"] == "post_compact"
+
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""
         # Qwen's current terminal contract no longer exposes legacy ACP model events.

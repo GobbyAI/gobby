@@ -32,6 +32,7 @@ _HOOK_TYPE_MAP = {
     "PostToolUse": "post_tool_use",
     "PostToolUseFailure": "post_tool_use_failure",
     "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
     "Stop": "stop",
     "Notification": "notification",
 }

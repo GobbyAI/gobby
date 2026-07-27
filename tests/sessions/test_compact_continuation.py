@@ -15,12 +15,14 @@ from gobby.sessions.compact_continuation import (
     _COMPACT_SELF_CONTINUATION_TASKS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
     build_compact_self_continue_prompt,
     consume_and_schedule_compact_self_continuation,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
+    schedule_codex_compact_self_continuation_readiness,
     schedule_compact_self_continuation,
 )
 from gobby.skills.formatting import skill_fetch_batch_directive
@@ -90,6 +92,113 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
         await drain_asyncio_tasks()
 
     assert not _COMPACT_SELF_CONTINUATION_TASKS
+
+
+@pytest.mark.asyncio
+async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
+    session_db: HubDatabase,
+) -> None:
+    prompt = "Continue the claimed task."
+    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    before_command = "Earlier output\nContext compacted\n›"
+
+    class ReadinessTmux(_FakeTmux):
+        def __init__(self) -> None:
+            super().__init__()
+            self.outputs = iter(
+                [
+                    before_command,
+                    f"{before_command}\nCompacting conversation",
+                    f"{before_command}\nContext compacted\n›",
+                ]
+            )
+
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            assert pane_id == "%12"
+            assert lines == 100
+            return next(self.outputs)
+
+    tmux = ReadinessTmux()
+
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        tmux=tmux,
+        target="%12",
+        pending_session_id=SESSION_ID,
+        before_command=before_command,
+        poll_seconds=0,
+    )
+
+    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+
+
+@pytest.mark.asyncio
+async def test_codex_send_failure_restores_pending_marker(session_db: HubDatabase) -> None:
+    prompt = "Continue the claimed task."
+    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+
+    class FailingTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return "Context compacted"
+
+        async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+            self.sent_keys.append((pane_id, text, literal))
+            return False
+
+    tmux = FailingTmux()
+
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        tmux=tmux,
+        target="%12",
+        pending_session_id=SESSION_ID,
+        before_command="Compacting conversation",
+        poll_seconds=0,
+    )
+
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["prompt"] == prompt
+
+
+@pytest.mark.asyncio
+async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
+    session_db: HubDatabase,
+) -> None:
+    prompt = "Continue the claimed task."
+    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    before_command = "old\nContext compacted\nshared one\nshared two"
+
+    class RollingTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            assert pane_id == "%12"
+            assert lines == 100
+            return "shared one\nshared two\nContext compacted\n›"
+
+    tmux = RollingTmux()
+
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        tmux=tmux,
+        target="%12",
+        pending_session_id=SESSION_ID,
+        before_command=before_command,
+        poll_seconds=0,
+    )
+
+    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+
+
+def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
+    session = SimpleNamespace(terminal_context={"tmux_pane": "%12"})
+
+    assert not schedule_codex_compact_self_continuation_readiness(
+        session_db,
+        pending_session_id=SESSION_ID,
+        target_session=session,
+        before_command=None,
+    )
 
 
 def test_merge_session_variable_serializes_with_workflow_first_write(

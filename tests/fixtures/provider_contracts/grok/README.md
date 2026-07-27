@@ -8,6 +8,9 @@ The focused shell-outcome fixture was recaptured against Grok
 0.1.216 payloads expose only `toolResult.status: "completed"` for both outcomes
 and remain as the ambiguous legacy contract fixture.
 
+The `PostCompact(source=manual)` record was captured against Grok Build
+`0.2.112` on 2026-07-27 after successful conversation-state replacement.
+
 Capture procedure:
 
 1. Record `grok version`, `grok --help`, `grok agent --help`, `grok models`,

@@ -55,10 +55,12 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
 )
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import _compact_live_web_chat_fallback
 from gobby.sessions.compact_continuation import (
+    CODEX_COMPACT_READY_CAPTURE_LINES,
     build_compact_self_continue_prompt,
     clear_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
+    schedule_codex_compact_self_continuation_readiness,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
@@ -202,6 +204,8 @@ async def _send_terminal_compaction_command(
     cli_source: str | None,
     mark_continuation_pending: Callable[[], bool],
     clear_continuation_pending: Callable[[], bool],
+    schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
+    continuation_readiness_capture_lines: int | None = None,
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, str] | None]:
     """Interrupt the active prompt, mark continuation pending, then compact."""
@@ -213,6 +217,8 @@ async def _send_terminal_compaction_command(
         cli_source=cli_source,
         mark_continuation_pending=mark_continuation_pending,
         clear_continuation_pending=clear_continuation_pending,
+        schedule_continuation_readiness=schedule_continuation_readiness,
+        continuation_readiness_capture_lines=continuation_readiness_capture_lines,
         settle_seconds=settle_seconds,
         interrupt_settle_seconds=_CODEX_INTERRUPT_SETTLE_SECONDS,
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
@@ -398,16 +404,16 @@ def register_terminal_tools(
         name="compact_self",
         description=(
             "Trigger context compaction in the current MCP caller's CLI by firing "
-            "the appropriate slash command (/compact for Claude Code, "
-            "/compact for Codex, /compress for other supported CLIs). Designed "
+            "the provider-specific compaction command. Designed "
             "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after "
             "spawning plan-adversary so the coordinator's bulky requirements-gathering "
             "context is summarized away while the sub-agent runs. Web-chat "
             "sessions use the live daemon ChatSession registry. Terminal sessions "
             "interrupt the active turn before sending the slash command. A rejected "
             "or cancelled compact_self tool-use message immediately followed by "
-            "/compact or /compress is expected self-compaction delivery, not user "
-            "refusal."
+            "the provider-specific compaction command is expected self-compaction "
+            "delivery. For Codex, `Error: interrupted` and `Conversation interrupted` "
+            "are expected when followed by `Context compacted`."
         ),
     )
     async def compact_self(rule_name: str | None = None) -> dict[str, Any]:
@@ -509,6 +515,18 @@ def register_terminal_tools(
             required_skills,
             summary_session_id=resolved_session_id,
         )
+        schedule_continuation_readiness: Callable[[str | None], bool] | None = None
+        if source == "codex":
+
+            def schedule_codex_readiness(before_command: str | None) -> bool:
+                return schedule_codex_compact_self_continuation_readiness(
+                    db,
+                    pending_session_id=resolved_session_id,
+                    target_session=session,
+                    before_command=before_command,
+                )
+
+            schedule_continuation_readiness = schedule_codex_readiness
         ok, reason, continuation_pending, failure_detail = await _send_terminal_compaction_command(
             tmux,
             target,
@@ -524,6 +542,10 @@ def register_terminal_tools(
             clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
                 db,
                 resolved_session_id,
+            ),
+            schedule_continuation_readiness=schedule_continuation_readiness,
+            continuation_readiness_capture_lines=(
+                CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
             ),
         )
 

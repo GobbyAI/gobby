@@ -87,6 +87,18 @@
         ]
       }
     ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-post-compact",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=post_compact",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

@@ -42,6 +42,7 @@ CLI_EXTERNAL_IDS = {
     "codex": "cccccccc-0000-4000-8000-000000000002",
     "qwen": "cccccccc-0000-4000-8000-000000000003",
     "droid": "cccccccc-0000-4000-8000-000000000004",
+    "grok": "cccccccc-0000-4000-8000-000000000005",
 }
 TERMINAL_CONTEXT = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
@@ -652,7 +653,156 @@ class TestCompactSelfContinuation:
         assert mock_schedule.call_count == 2
         assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
 
-    @pytest.mark.parametrize("cli_source", ["claude", "codex", "qwen", "droid"])
+    def test_grok_post_compact_consumes_once_and_schedules_same_session(
+        self, hub_db: HubDatabase, mock_dependencies: dict
+    ) -> None:
+        """Grok PostCompact consumes one fresh marker and duplicate events are safe."""
+        db = self._make_db(hub_db)
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS["grok"],
+            source="grok",
+        )
+        mark_compact_self_continuation_pending(db, session.id)
+        mock_dependencies["session_manager"].db = db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            session_id=session.external_id,
+            source="grok",
+            data={"source": "manual", "cwd": "/some/dir"},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        scheduled: list[tuple[object, str]] = []
+        with patch(
+            "gobby.hooks.event_handlers._misc.consume_and_schedule_compact_self_continuation",
+            side_effect=self._fake_compact_self_consumer(scheduled),
+        ) as mock_schedule:
+            response = handlers.handle_post_compact(event)
+            duplicate_response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        assert duplicate_response.decision == "allow"
+        variables = SessionVariableManager(db).get_variables(session.id)
+        assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+        assert mock_schedule.call_count == 2
+        assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
+
+    def test_grok_post_compact_without_marker_schedules_nothing(
+        self, hub_db: HubDatabase, mock_dependencies: dict
+    ) -> None:
+        db = self._make_db(hub_db)
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS["grok"],
+            source="grok",
+        )
+        mock_dependencies["session_manager"].db = db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            session_id=session.external_id,
+            source="grok",
+            data={"source": "manual", "cwd": "/some/dir"},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        with patch(
+            "gobby.sessions.compact_continuation.schedule_compact_self_continuation"
+        ) as mock_schedule:
+            response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        mock_schedule.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("event_source", "include_platform_session"),
+        [("codex", True), ("grok", False)],
+        ids=["non-grok-event", "missing-platform-session"],
+    )
+    def test_non_grok_or_missing_post_compact_preserves_marker(
+        self,
+        hub_db: HubDatabase,
+        mock_dependencies: dict,
+        event_source: str,
+        include_platform_session: bool,
+    ) -> None:
+        db = self._make_db(hub_db)
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS["grok"],
+            source="grok",
+        )
+        mark_compact_self_continuation_pending(db, session.id)
+        mock_dependencies["session_manager"].db = db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        metadata = {"_platform_session_id": session.id} if include_platform_session else {}
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            session_id=session.external_id,
+            source=event_source,
+            data={"source": "manual", "cwd": "/some/dir"},
+            metadata=metadata,
+        )
+
+        with patch(
+            "gobby.sessions.compact_continuation.schedule_compact_self_continuation"
+        ) as mock_schedule:
+            response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        variables = SessionVariableManager(db).get_variables(session.id)
+        assert COMPACT_SELF_CONTINUE_VARIABLE in variables
+        mock_schedule.assert_not_called()
+
+    def test_grok_post_compact_schedule_failure_restores_marker(
+        self, hub_db: HubDatabase, mock_dependencies: dict
+    ) -> None:
+        db = self._make_db(hub_db)
+        session = self._make_precreated_session(
+            db,
+            external_id=CLI_EXTERNAL_IDS["grok"],
+            source="grok",
+        )
+        mark_compact_self_continuation_pending(db, session.id)
+        variables_before = SessionVariableManager(db).get_variables(session.id)
+        pending_before = variables_before[COMPACT_SELF_CONTINUE_VARIABLE]
+        mock_dependencies["session_manager"].db = db
+        mock_dependencies["session_manager"].get.return_value = session
+        mock_dependencies["session_manager"].update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            session_id=session.external_id,
+            source="grok",
+            data={"source": "manual", "cwd": "/some/dir"},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        with patch(
+            "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+            return_value=False,
+        ) as mock_schedule:
+            response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        variables_after = SessionVariableManager(db).get_variables(session.id)
+        assert variables_after[COMPACT_SELF_CONTINUE_VARIABLE] == pending_before
+        mock_schedule.assert_called_once_with(
+            session,
+            COMPACT_SELF_CONTINUE_PROMPT,
+            loop=mock_dependencies["session_coordinator"]._event_loop,
+        )
+
+    @pytest.mark.parametrize("cli_source", ["claude", "codex", "qwen", "droid", "grok"])
     def test_non_compact_start_preserves_pending_continuation(
         self, hub_db: HubDatabase, mock_dependencies: dict, cli_source: str
     ) -> None:

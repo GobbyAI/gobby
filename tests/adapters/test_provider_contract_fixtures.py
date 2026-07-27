@@ -117,6 +117,8 @@ def test_grok_hook_payload_fixture_translates_to_unified_events() -> None:
     assert by_native_event["pre_tool_use"].data["tool_name"] == "Bash"
     assert by_native_event["post_tool_use"].event_type is HookEventType.AFTER_TOOL
     assert by_native_event["post_tool_use"].data["tool_name"] == "Bash"
+    assert by_native_event["post_compact"].event_type is HookEventType.POST_COMPACT
+    assert by_native_event["post_compact"].data["source"] == "manual"
 
     legacy_nonzero = next(
         record for record in records if record["event"] == "post_tool_use_nonzero_exit"

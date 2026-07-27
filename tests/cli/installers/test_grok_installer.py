@@ -27,6 +27,7 @@ def _write_grok_template(install_dir: Path) -> None:
                     "SessionStart": [{"hooks": [{"type": "command", "command": "legacy"}]}],
                     "PreToolUse": [{"hooks": [{"type": "command", "command": "legacy"}]}],
                     "Stop": [{"hooks": [{"type": "command", "command": "legacy"}]}],
+                    "PostCompact": [{"hooks": [{"type": "command", "command": "legacy"}]}],
                 }
             }
         ),
@@ -104,7 +105,7 @@ def test_install_grok_writes_native_hook_file(
     hook_file = temp_dir / ".grok" / "hooks" / "gobby.json"
     assert result["success"] is True
     assert result["config_path"] == str(hook_file)
-    assert result["hooks_installed"] == ["SessionStart", "PreToolUse", "Stop"]
+    assert result["hooks_installed"] == ["SessionStart", "PreToolUse", "Stop", "PostCompact"]
 
     config = json.loads(hook_file.read_text(encoding="utf-8"))
     assert (
@@ -116,6 +117,9 @@ def test_install_grok_writes_native_hook_file(
         == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=grok --type=pre_tool_use"
     )
     assert config["hooks"]["Stop"][0]["hooks"][0]["command"].endswith("--cli=grok --type=stop")
+    assert config["hooks"]["PostCompact"][0]["hooks"][0]["command"].endswith(
+        "--cli=grok --type=post_compact"
+    )
 
     grok_config_file = temp_dir / ".grok" / "config.toml"
     grok_config = tomlkit.parse(grok_config_file.read_text(encoding="utf-8"))

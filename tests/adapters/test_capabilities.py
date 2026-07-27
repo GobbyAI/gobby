@@ -19,7 +19,7 @@ from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.servers.routes.mcp.hooks import _graceful_error_response
 
 pytestmark = pytest.mark.unit
@@ -123,10 +123,12 @@ def test_grok_0_2_hook_capabilities_are_declared() -> None:
 
     assert capabilities.get_hook("PreToolUse") is capabilities.get_hook("pre_tool_use")
     assert capabilities.get_hook("PreCompact") is capabilities.get_hook("pre_compact")
+    assert capabilities.get_hook("PostCompact") is capabilities.get_hook("post_compact")
     assert capabilities.get_hook("Stop") is capabilities.get_hook("stop")
 
     pre_tool = capabilities.get_hook("pre_tool_use")
     pre_compact = capabilities.get_hook("pre_compact")
+    post_compact = capabilities.get_hook("post_compact")
     post_tool = capabilities.get_hook("post_tool_use")
 
     assert pre_tool is not None
@@ -139,6 +141,11 @@ def test_grok_0_2_hook_capabilities_are_declared() -> None:
     assert pre_compact is not None
     assert pre_compact.context_channel is ContextChannel.SYSTEM_MESSAGE
     assert pre_compact.decision_style is ProviderDecisionStyle.HARD_STOP
+
+    assert post_compact is not None
+    assert post_compact.event_type is HookEventType.POST_COMPACT
+    assert post_compact.context_channel is ContextChannel.NONE
+    assert post_compact.decision_style is ProviderDecisionStyle.NONE
 
     assert post_tool is not None
     assert post_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT

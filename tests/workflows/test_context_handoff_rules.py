@@ -528,10 +528,13 @@ class TestAutoCompactAfterTaskClose:
         fallback_nudge = fallback_nudges[0]
         assert "compact_call_queue_failed" in (fallback_nudge.when or "")
         assert fallback_nudge.template is not None
+
         assert "compact_self" in fallback_nudge.template
         fallback_template = " ".join(fallback_nudge.template.split())
         assert "interrupts the active turn before sending" in fallback_template
-        assert "expected self-compaction delivery, not user refusal" in fallback_template
+        assert "provider-specific compaction command" in fallback_template
+        assert "`Error: interrupted` and `Conversation interrupted`" in fallback_template
+        assert "followed by `Context compacted`" in fallback_template
 
     def test_condition_references_close_task_and_helpers(self, db, manager) -> None:
         _sync_bundled(db)
