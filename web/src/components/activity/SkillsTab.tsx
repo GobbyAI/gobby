@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
@@ -13,6 +14,7 @@ import {
   exportSkill,
   moveSkillToInstalled,
   moveSkillToProject,
+  restoreSkill,
   toggleSkill,
   updateSkill,
   type SkillUpdatePayload,
@@ -75,6 +77,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
     category: "all",
   });
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
+  const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
   const refreshSkills = useCallback(async () => {
     setIsLoading(true);
@@ -260,9 +263,37 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
   const handleDelete = useCallback(
     (skill: ActivitySkill) => {
       void withSkillBusy(skill, async () => {
-        if (!window.confirm(`Delete ${skill.name}?`)) return;
+        const purge = Boolean(skill.deleted_at);
+        const confirmed = await confirm(
+          purge
+            ? {
+                title: `Permanently delete ${skill.name}?`,
+                description:
+                  "This skill is already deleted. Deleting it again removes it and its files forever — it cannot be restored.",
+                confirmLabel: "Delete forever",
+                destructive: true,
+              }
+            : {
+                title: `Delete ${skill.name}?`,
+                description: "The skill moves to Deleted and can be restored later.",
+                confirmLabel: "Delete",
+                destructive: true,
+              },
+        );
+        if (!confirmed) return;
         const deleted = await deleteSkill(skill.id);
         if (!deleted) throw new Error(`Failed to delete ${skill.name}`);
+        await refreshSkills();
+      });
+    },
+    [confirm, refreshSkills, withSkillBusy],
+  );
+
+  const handleRestore = useCallback(
+    (skill: ActivitySkill) => {
+      void withSkillBusy(skill, async () => {
+        const restored = await restoreSkill(skill.id);
+        if (!restored) throw new Error(`Failed to restore ${skill.name}`);
         await refreshSkills();
       });
     },
@@ -386,6 +417,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
                 onMoveToProject={handleMoveToProject}
                 onMoveToInstalled={handleMoveToInstalled}
                 onExport={handleExport}
+                onRestore={handleRestore}
                 onDelete={handleDelete}
               />
             )}
@@ -414,6 +446,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
           )}
         </div>
       )}
+      {ConfirmDialogElement}
     </div>
   );
 });

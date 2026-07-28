@@ -343,3 +343,32 @@ class TestSkillFileCRUD:
 
         stored = storage.get_skill_files(sample_skill.id, exclude_license=False)
         assert len(stored) == 3
+
+    def test_hard_delete_purges_skill_and_files(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(sample_skill.id, _build_skill_files(sample_skill.id))
+        storage.delete_skill(sample_skill.id)
+
+        assert storage.hard_delete(sample_skill.id) is True
+
+        with pytest.raises(ValueError, match="not found"):
+            storage.get_skill(sample_skill.id, include_deleted=True)
+        with storage.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM skill_files WHERE skill_id = %s",
+                (sample_skill.id,),
+            ).fetchone()
+        assert row is not None and row["n"] == 0
+
+    def test_restore_after_hard_delete_fails(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.delete_skill(sample_skill.id)
+        storage.hard_delete(sample_skill.id)
+
+        with pytest.raises(ValueError, match="not found"):
+            storage.restore(sample_skill.id)
+
+    def test_hard_delete_missing_skill_returns_false(self, storage: LocalSkillManager) -> None:
+        assert storage.hard_delete("00000000-0000-0000-0000-0000000000ff") is False

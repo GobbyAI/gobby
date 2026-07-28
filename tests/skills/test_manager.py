@@ -123,6 +123,26 @@ class TestSkillManagerCRUD:
         # Verify it's gone
         assert manager.get_by_name("delete-test") is None
 
+    def test_hard_delete_skill(self, db: HubDatabase) -> None:
+        """Test permanently deleting a soft-deleted skill through manager."""
+        from gobby.skills.manager import SkillManager
+
+        manager = SkillManager(db)
+        created = manager.create_skill(
+            name="purge-test",
+            description="To be purged",
+            content="Content",
+        )
+        manager.delete_skill(created.id)
+
+        # Soft-deleted skills stay fetchable with include_deleted
+        assert manager.get_skill(created.id, include_deleted=True).deleted_at is not None
+
+        assert manager.hard_delete_skill(created.id) is True
+        with pytest.raises(ValueError):
+            manager.get_skill(created.id, include_deleted=True)
+        assert manager.hard_delete_skill(created.id) is False
+
     def test_list_skills(self, db) -> None:
         """Test listing skills through manager."""
         from gobby.skills.manager import SkillManager
@@ -329,7 +349,7 @@ class TestSkillManagerProjectScope:
 
         assert skill.project_id is None
 
-    def test_list_global_skills(self, db) -> None:
+    def test_list_global_skills(self, db: HubDatabase) -> None:
         """Test listing global skills."""
         from gobby.skills.manager import SkillManager
 

@@ -229,11 +229,12 @@ class SkillManager:
             **kwargs,
         )
 
-    def get_skill(self, skill_id: str) -> Skill:
+    def get_skill(self, skill_id: str, include_deleted: bool = False) -> Skill:
         """Get a skill by ID.
 
         Args:
             skill_id: The skill ID
+            include_deleted: If True, also return soft-deleted skills
 
         Returns:
             The Skill
@@ -241,7 +242,7 @@ class SkillManager:
         Raises:
             ValueError: If not found
         """
-        return self._storage.get_skill(skill_id)
+        return self._storage.get_skill(skill_id, include_deleted=include_deleted)
 
     def get_skills_by_ids(self, skill_ids: list[str]) -> list[Skill]:
         """Get multiple skills by ID in a single query.
@@ -302,7 +303,7 @@ class SkillManager:
         )
 
     def delete_skill(self, skill_id: str) -> bool:
-        """Delete a skill.
+        """Soft-delete a skill.
 
         Args:
             skill_id: ID of the skill to delete
@@ -311,6 +312,17 @@ class SkillManager:
             True if deleted, False if not found
         """
         return self._storage.delete_skill(skill_id)
+
+    def hard_delete_skill(self, skill_id: str) -> bool:
+        """Permanently delete a skill; it cannot be restored afterwards.
+
+        Args:
+            skill_id: ID of the skill to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self._storage.hard_delete(skill_id)
 
     def list_skills(
         self,

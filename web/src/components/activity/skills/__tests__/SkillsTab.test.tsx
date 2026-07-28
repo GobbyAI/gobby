@@ -36,6 +36,13 @@ vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
 }));
 
+// Capture the confirm options so tests can assert the permanent-delete warning
+// copy without driving the Radix dialog internals.
+const confirmMock = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("../../../../hooks/useConfirmDialog", () => ({
+  useConfirmDialog: () => ({ confirm: confirmMock, ConfirmDialogElement: null }),
+}));
+
 vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
@@ -148,6 +155,10 @@ function setupFetch(skills: SkillRecord[]) {
   mockFetch.mockJsonResponse(/\/api\/skills\/[^/]+\/move-to-installed$/, {
     skill: skills[0],
   });
+  mockFetch.mockJsonResponse(/\/api\/skills\/[^/]+\/restore$/, {
+    restored: true,
+    skill: { ...skills[0], deleted_at: null },
+  });
   mockFetch.mockJsonResponse(/\/api\/skills\/[^/]+$/, { ...skills[0], enabled: false });
 }
 
@@ -160,9 +171,19 @@ function lastJsonBodyFor(pathPart: string) {
   return init?.body ? JSON.parse(String(init.body)) : null;
 }
 
+function callWithMethod(pathPart: string, method: string) {
+  return mockFetch.fn.mock.calls.find(
+    ([url, init]) =>
+      String(url).includes(pathPart) &&
+      (init as RequestInit | undefined)?.method === method,
+  );
+}
+
 describe("Skills activity Installed segment", () => {
   beforeEach(() => {
     window.localStorage.removeItem("gobby-skills-segment-v1");
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -271,6 +292,98 @@ describe("Skills activity Installed segment", () => {
     expect(
       within(projectMenu).getByRole("menuitem", { name: "Move to installed" }),
     ).toBeInTheDocument();
+  });
+
+  it("limits deleted skill menus to Restore, Export, and Delete forever (#19162)", async () => {
+    setupFetch([
+      makeSkill({ id: "sk-live", name: "Live skill" }),
+      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await screen.findByRole("button", { name: "Select Live skill" });
+    expect(screen.queryByText("Old skill")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Filter skills" }));
+    await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
+
+    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    const menu = screen.getByRole("menu", { name: "Actions for Old skill" });
+    expect(within(menu).getByRole("menuitem", { name: "Restore" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Export" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete forever" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Disable" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /Move to/ })).toBeNull();
+  });
+
+  it("purges a soft-deleted skill after a permanent-delete confirm (#19162)", async () => {
+    setupFetch([
+      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Filter skills" }));
+    await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
+    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete forever" }));
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Permanently delete Old skill?",
+          description: expect.stringContaining("cannot be restored"),
+          confirmLabel: "Delete forever",
+          destructive: true,
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(callWithMethod("/api/skills/sk-gone", "DELETE")).toBeTruthy();
+    });
+  });
+
+  it("keeps the skill when the delete confirm is cancelled (#19162)", async () => {
+    confirmMock.mockResolvedValue(false);
+    setupFetch([makeSkill({ id: "sk-live", name: "Live skill" })]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await screen.findByRole("button", { name: "Select Live skill" });
+    await user.click(screen.getByRole("button", { name: "Open actions for Live skill" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Delete Live skill?",
+          description: expect.stringContaining("restored"),
+        }),
+      );
+    });
+    expect(callWithMethod("/api/skills/sk-live", "DELETE")).toBeUndefined();
+  });
+
+  it("restores a soft-deleted skill from the row menu (#19162)", async () => {
+    setupFetch([
+      makeSkill({ id: "sk-gone", name: "Old skill", deleted_at: "2026-07-01T00:00:00Z" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Filter skills" }));
+    await user.selectOptions(screen.getByLabelText("Skill source"), "deleted");
+    await user.click(screen.getByRole("button", { name: "Open actions for Old skill" }));
+    await user.click(screen.getByRole("menuitem", { name: "Restore" }));
+
+    await waitFor(() => {
+      expect(callWithMethod("/api/skills/sk-gone/restore", "POST")).toBeTruthy();
+    });
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 
   it("saves and discards draft field edits from installed detail", async () => {

@@ -18,6 +18,7 @@ interface SkillsInstalledListProps {
   onMoveToProject: (skill: ActivitySkill) => void;
   onMoveToInstalled: (skill: ActivitySkill) => void;
   onExport: (skill: ActivitySkill) => void;
+  onRestore: (skill: ActivitySkill) => void;
   onDelete: (skill: ActivitySkill) => void;
 }
 
@@ -41,6 +42,7 @@ export function SkillsInstalledList({
   onMoveToProject,
   onMoveToInstalled,
   onExport,
+  onRestore,
   onDelete,
 }: SkillsInstalledListProps) {
   return (
@@ -51,26 +53,39 @@ export function SkillsInstalledList({
         const source = skillSourceKey(skill);
         const canMoveToProject = Boolean(projectId) && source !== "project" && !skill.deleted_at;
         const canMoveToInstalled = source === "project" && !skill.deleted_at;
-        const menuItems: QuickMenuItem[] = [
-          {
-            label: skill.enabled ? "Disable" : "Enable",
-            disabled: busy || Boolean(skill.deleted_at),
-            onSelect: () => onToggle(skill),
-          },
-          {
-            label: source === "project" ? "Move to installed" : "Move to project",
-            disabled: busy || (!canMoveToProject && !canMoveToInstalled),
-            onSelect: () =>
-              source === "project" ? onMoveToInstalled(skill) : onMoveToProject(skill),
-          },
-          { label: "Export", disabled: busy, onSelect: () => onExport(skill) },
-          {
-            label: "Delete",
-            destructive: true,
-            disabled: busy || Boolean(skill.deleted_at),
-            onSelect: () => onDelete(skill),
-          },
-        ];
+        // Soft-deleted skills can only be restored, exported, or purged; deleting
+        // again is permanent, so the label says so.
+        const menuItems: QuickMenuItem[] = skill.deleted_at
+          ? [
+              { label: "Restore", disabled: busy, onSelect: () => onRestore(skill) },
+              { label: "Export", disabled: busy, onSelect: () => onExport(skill) },
+              {
+                label: "Delete forever",
+                destructive: true,
+                disabled: busy,
+                onSelect: () => onDelete(skill),
+              },
+            ]
+          : [
+              {
+                label: skill.enabled ? "Disable" : "Enable",
+                disabled: busy,
+                onSelect: () => onToggle(skill),
+              },
+              {
+                label: source === "project" ? "Move to installed" : "Move to project",
+                disabled: busy || (!canMoveToProject && !canMoveToInstalled),
+                onSelect: () =>
+                  source === "project" ? onMoveToInstalled(skill) : onMoveToProject(skill),
+              },
+              { label: "Export", disabled: busy, onSelect: () => onExport(skill) },
+              {
+                label: "Delete",
+                destructive: true,
+                disabled: busy,
+                onSelect: () => onDelete(skill),
+              },
+            ];
 
         return (
           <div

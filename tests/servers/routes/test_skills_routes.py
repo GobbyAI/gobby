@@ -716,18 +716,46 @@ class TestUpdateSkill:
 
 
 class TestDeleteSkill:
-    def test_delete_skill(self, client: TestClient, skill_manager, websocket_server) -> None:
+    def test_delete_live_skill_soft_deletes(
+        self, client: TestClient, skill_manager: MagicMock, websocket_server: MagicMock
+    ) -> None:
+        skill_manager.get_skill.return_value = MagicMock(deleted_at=None)
         skill_manager.delete_skill.return_value = True
         response = client.delete("/api/skills/1")
         assert response.status_code == 200
+        assert response.json() == {"deleted": True, "purged": False, "id": "1"}
+        skill_manager.get_skill.assert_called_once_with("1", include_deleted=True)
+        skill_manager.delete_skill.assert_called_once_with("1")
+        skill_manager.hard_delete_skill.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_deleted", "1")
 
-    def test_delete_skill_not_found(self, client: TestClient, skill_manager) -> None:
+    def test_delete_soft_deleted_skill_purges(
+        self, client: TestClient, skill_manager: MagicMock, websocket_server: MagicMock
+    ) -> None:
+        skill_manager.get_skill.return_value = MagicMock(deleted_at="2026-07-28T00:00:00+00:00")
+        skill_manager.hard_delete_skill.return_value = True
+        response = client.delete("/api/skills/1")
+        assert response.status_code == 200
+        assert response.json() == {"deleted": True, "purged": True, "id": "1"}
+        skill_manager.hard_delete_skill.assert_called_once_with("1")
+        skill_manager.delete_skill.assert_not_called()
+        websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_deleted", "1")
+
+    def test_delete_skill_not_found(self, client: TestClient, skill_manager: MagicMock) -> None:
+        skill_manager.get_skill.side_effect = ValueError("NF")
+        response = client.delete("/api/skills/1")
+        assert response.status_code == 404
+
+    def test_delete_skill_gone_before_delete(
+        self, client: TestClient, skill_manager: MagicMock
+    ) -> None:
+        skill_manager.get_skill.return_value = MagicMock(deleted_at=None)
         skill_manager.delete_skill.return_value = False
         response = client.delete("/api/skills/1")
         assert response.status_code == 404
 
-    def test_delete_skill_error(self, client: TestClient, skill_manager) -> None:
+    def test_delete_skill_error(self, client: TestClient, skill_manager: MagicMock) -> None:
+        skill_manager.get_skill.return_value = MagicMock(deleted_at=None)
         skill_manager.delete_skill.side_effect = Exception("err")
         response = client.delete("/api/skills/1")
         assert response.status_code == 500
@@ -837,12 +865,12 @@ class TestExportSkill:
         assert response.status_code == 200
         assert "content" in response.json()["content"]
 
-    def test_export_skill_not_found(self, client: TestClient, skill_manager) -> None:
+    def test_export_skill_not_found(self, client: TestClient, skill_manager: MagicMock) -> None:
         skill_manager.get_skill.side_effect = ValueError("NF")
         response = client.get("/api/skills/1/export")
         assert response.status_code == 404
 
-    def test_export_skill_err(self, client: TestClient, skill_manager) -> None:
+    def test_export_skill_err(self, client: TestClient, skill_manager: MagicMock) -> None:
         skill_manager.get_skill.side_effect = Exception("E")
         response = client.get("/api/skills/1/export")
         assert response.status_code == 500

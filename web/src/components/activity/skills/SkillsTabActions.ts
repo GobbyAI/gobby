@@ -142,6 +142,14 @@ export async function deleteSkill(skillId: string): Promise<boolean> {
   return response.ok;
 }
 
+export async function restoreSkill(skillId: string): Promise<ActivitySkill | null> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/restore`,
+    { method: "POST" },
+  );
+  return parseSkillResponse(response);
+}
+
 export async function toggleSkill(skill: ActivitySkill): Promise<ActivitySkill | null> {
   return updateSkill(skill.id, { enabled: !skill.enabled });
 }
