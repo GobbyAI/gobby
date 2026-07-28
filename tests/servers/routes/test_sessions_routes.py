@@ -1467,7 +1467,7 @@ class TestGenerateSummary:
                 return_value=MagicMock(),
             ),
             patch(
-                "gobby.workflows.summary_actions.generate_summary",
+                "gobby.sessions.summary_generation.generate_summary",
                 new_callable=AsyncMock,
                 return_value={"status": "ok"},
             ),
@@ -1515,7 +1515,7 @@ class TestGenerateSummary:
                 return_value=MagicMock(),
             ),
             patch(
-                "gobby.workflows.summary_actions.generate_summary",
+                "gobby.sessions.summary_generation.generate_summary",
                 new_callable=AsyncMock,
                 return_value={"error": "No transcript data available"},
             ),

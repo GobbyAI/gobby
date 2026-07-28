@@ -994,7 +994,7 @@ class TestSessionStartNewSession:
         mock_parent.id = "parent-sess-123"
         mock_parent.terminal_context = {}
 
-        mock_dependencies["session_storage"].get.side_effect = [None, new_session]
+        mock_dependencies["session_storage"].get.side_effect = [None, new_session, new_session]
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent
         mock_dependencies["session_manager"].register_session.return_value = new_session.id
         mock_dependencies["task_manager"].list_tasks.return_value = []
@@ -1088,19 +1088,13 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_compact_registration_failure_blocks_without_expiry(
+    def test_missing_compact_session_degrades_to_start_without_expiry(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
-        """A compact start whose registration returns no session id blocks cleanly."""
+        """A missing compact row degrades to startup without expiring another session."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
 
-        row = MagicMock()
-        row.id = "sess-123"
-        row.status = "handoff_ready"
-        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-
         mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_storage"].find_by_external_id.return_value = row
         mock_dependencies["session_manager"].register_session.return_value = ""
 
         handlers = EventHandlers(**mock_dependencies)
@@ -1116,8 +1110,7 @@ class TestSessionStartNewSession:
         with patch.object(handlers, "_activate_default_agent") as activate_agent:
             response = handlers.handle_session_start(event)
 
-        assert response.decision == "block"
-        assert "did not return a session ID" in (response.reason or "")
+        assert response.decision == "allow"
         assert "_platform_session_id" not in event.metadata
         mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
         activate_agent.assert_not_called()

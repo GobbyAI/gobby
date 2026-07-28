@@ -96,11 +96,11 @@ async def _build_summary_prompt_context(
     run_db: Callable[..., Awaitable[Any]] | None = None,
     project_path: str | None = None,
 ) -> dict[str, Any]:
-    from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
-    from gobby.workflows.summary_actions import (
+    from gobby.sessions.summary_formatting import (
         _format_structured_context,
         format_turns_for_llm,
     )
+    from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
 
     digest_markdown = _digest_markdown_for_summary(session)
     source = getattr(session, "source", None) or "claude"

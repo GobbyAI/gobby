@@ -24,6 +24,8 @@ def mock_dependencies() -> dict[str, Any]:
     session_storage = MagicMock()
     session_manager = session_storage
     session_storage.find_parent.return_value = None
+    session_storage.find_by_external_id.return_value = None
+    session_storage.find_by_external_id_any_project.return_value = None
     session_storage.update.return_value = None
     session_storage.backfill_terminal_context.return_value = (None, False)
     return {

@@ -366,7 +366,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
     ) -> None:
         session_id = updated.id
         try:
-            from gobby.workflows.summary_actions import schedule_tmux_window_rename
+            from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 
             schedule_tmux_window_rename(updated, title)
         except Exception:

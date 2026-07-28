@@ -43,16 +43,16 @@ from gobby.runner_tmux_repair import (
     _tmux_repair_pane_key as _tmux_repair_pane_key,
 )
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
+from gobby.sessions.tmux_window_naming import (
+    enforce_window_name_if_unmanaged,
+    resolve_tmux_repair_owner,
+)
 from gobby.shutdown_intent import (
     ShutdownIntent,
     ShutdownIntentRecord,
     format_shutdown_source,
     read_shutdown_intent,
     recover_stale_restart_intent,
-)
-from gobby.workflows.summary_actions import (
-    enforce_window_name_if_unmanaged,
-    resolve_tmux_repair_owner,
 )
 
 if TYPE_CHECKING:

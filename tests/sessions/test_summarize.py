@@ -406,7 +406,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -904,7 +904,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -953,7 +953,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -1016,7 +1016,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -1056,7 +1056,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch("gobby.sessions.summarize._generate_delta_summary") as mock_delta,
@@ -1093,7 +1093,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -1297,10 +1297,10 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
+            patch("gobby.sessions.summary_formatting.format_turns_for_llm", return_value="turns"),
         ):
             MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Droid:\n{transcript_summary}"
@@ -1346,10 +1346,10 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
+            patch("gobby.sessions.summary_formatting.format_turns_for_llm", return_value="turns"),
         ):
             MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Qwen:\n{transcript_summary}"
@@ -1393,10 +1393,10 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+            patch("gobby.sessions.summary_formatting.format_turns_for_llm") as mock_format,
         ):
             MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
@@ -1440,10 +1440,10 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+            patch("gobby.sessions.summary_formatting.format_turns_for_llm") as mock_format,
         ):
             MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
@@ -1492,10 +1492,10 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+            patch("gobby.sessions.summary_formatting.format_turns_for_llm") as mock_format,
         ):
             MockPromptLoader.return_value.load.return_value.content = _valid_summary_prompt(
                 "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
@@ -1547,7 +1547,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -1606,7 +1606,7 @@ class TestGenerateSessionSummaries:
             ) as files,
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value="diff") as diff,
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
@@ -1650,11 +1650,11 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
             patch(
-                "gobby.workflows.summary_actions.format_turns_for_llm",
+                "gobby.sessions.summary_formatting.format_turns_for_llm",
                 return_value=formatted,
             ) as mock_format,
         ):
@@ -1794,7 +1794,7 @@ class TestGenerateSessionSummaries:
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
             patch(
-                "gobby.workflows.summary_actions._format_structured_context",
+                "gobby.sessions.summary_formatting._format_structured_context",
                 return_value="structured",
             ),
         ):
@@ -1831,7 +1831,7 @@ class TestGenerateSessionSummaries:
         )
 
         with (
-            caplog.at_level(logging.INFO, logger="gobby.sessions.summarize"),
+            caplog.at_level(logging.INFO, logger="gobby.sessions.summary_generation"),
             pytest.raises(asyncio.CancelledError),
         ):
             await _generate_full_summary(

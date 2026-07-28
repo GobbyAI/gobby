@@ -82,8 +82,8 @@ def register_analytics_routes(
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
+            from gobby.sessions.summary_generation import generate_summary
             from gobby.sessions.transcripts import get_parser
-            from gobby.workflows.summary_actions import generate_summary
 
             transcript_processor = get_parser(session.source or "claude", session_id=session_id)
 

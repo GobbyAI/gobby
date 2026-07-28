@@ -26,13 +26,13 @@ from gobby.sessions.compact_continuation import (
     mark_compact_self_continuation_pending,
 )
 from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.sessions.summary_formatting import format_unresolved_errors
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.summary_actions import format_unresolved_errors
 
 from ._event_handler_helpers import make_event
 

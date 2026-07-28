@@ -1,0 +1,379 @@
+"""Tmux window naming and repair for persisted sessions."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from typing import Any
+
+from gobby.hooks.background_tasks import create_background_task
+from gobby.memory.title_heuristics import normalize_title_candidate
+from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.terminal_ownership import (
+    PaneOwnershipDecision,
+    log_pane_ownership_decision,
+    resolve_pane_ownership,
+    terminal_session_identity,
+)
+
+logger = logging.getLogger(__name__)
+
+_UNRESOLVED_SESSION_REF_RE = re.compile(
+    r"(?<![a-z0-9_])(?:#session_ref|#\{session_ref\}|\{session_ref\})(?![a-z0-9_])"
+)
+
+
+def schedule_tmux_window_rename(
+    session: Any,
+    title: str,
+    *,
+    loop: Any | None = None,
+) -> None:
+    """Run ``_rename_tmux_window`` from sync code using the best available loop."""
+    coro = _rename_tmux_window(session, title)
+
+    try:
+        running_loop = asyncio.get_running_loop()
+        create_background_task(coro, loop=running_loop)
+        return
+    except RuntimeError:
+        pass
+
+    if loop is not None:
+        try:
+            loop_is_usable = not loop.is_closed()
+        except Exception:
+            loop_is_usable = False
+
+        if loop_is_usable:
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+            except Exception:
+                logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
+                coro.close()
+                return
+
+    try:
+        asyncio.run(coro)
+    except Exception:
+        logger.debug("Failed to run tmux rename synchronously", exc_info=True)
+
+
+def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
+    """Synthesize a fallback title for a session that still has no title.
+
+    Deliberately never derives from terminal paths (cwd / project_path /
+    workspace_path / repo_path basename): a path basename is indistinguishable
+    from a real title and is exactly what made title-less sessions masquerade as
+    the project directory (the original ``#N gobby`` bug). Falls back to the
+    session ``source`` (e.g. ``claude``), then a neutral ``"untitled"`` label.
+
+    Persisted sessions receive a canonical provisional title at registration
+    and a digest title after successful full turns, so this branch is only a
+    defensive fallback for terminal window naming.
+
+    Args:
+        session: The session object
+        terminal_context: Parsed terminal context dict (unused; retained for the
+            stable call signature shared with ``_resolve_window_title``)
+
+    Returns:
+        A fallback title string
+    """
+    session_source = getattr(session, "source", None)
+    if session_source:
+        return str(session_source)
+
+    return "untitled"
+
+
+def _contains_unresolved_session_ref(value: Any) -> bool:
+    return isinstance(value, str) and _UNRESOLVED_SESSION_REF_RE.search(value.lower()) is not None
+
+
+def _strip_window_ref_prefix(title: str, ref: str | None) -> str:
+    title = title.strip()
+    if not ref:
+        return title
+    if title == ref:
+        return ""
+    prefix_re = re.compile(rf"^(?:{re.escape(ref)}(?::\s*|\s+))+")
+    return prefix_re.sub("", title).strip()
+
+
+def _sanitize_tmux_window_title(value: str) -> str:
+    """Return a tmux-safe window title while preserving readable punctuation."""
+    return re.sub(r"\s+", " ", re.sub(r"\s*:\s*", " - ", value)).strip()
+
+
+def _session_ref_for_window_title(session: Any) -> str | None:
+    seq_num = getattr(session, "seq_num", None)
+    if isinstance(seq_num, int) and seq_num > 0:
+        return f"#{seq_num}"
+
+    ref = getattr(session, "ref", None)
+    if not isinstance(ref, str):
+        return None
+    ref = ref.strip()
+    if not ref or _contains_unresolved_session_ref(ref):
+        return None
+    return ref
+
+
+def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title: str) -> str:
+    """Resolve the final tmux window title: fallback when empty, ref-prefixed.
+
+    Prepends the session ref (e.g. ``#3605``) so the window reads ``#N title``.
+    """
+    ref = _session_ref_for_window_title(session)
+    if not title or _contains_unresolved_session_ref(title):
+        title = _synthesize_fallback_title(session, terminal_context)
+    title = _strip_window_ref_prefix(str(title), ref)
+    resolved_title = normalize_title_candidate(title)
+    if not resolved_title:
+        fallback_title = _strip_window_ref_prefix(
+            _synthesize_fallback_title(session, terminal_context),
+            ref,
+        )
+        resolved_title = normalize_title_candidate(fallback_title) or ""
+    resolved_title = _sanitize_tmux_window_title(resolved_title)
+    if ref:
+        return f"{ref} {resolved_title}".strip()
+    return resolved_title
+
+
+def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> Any:
+    """Build a tmux manager for *session*'s recorded server context."""
+    agent_depth = getattr(session, "agent_depth", 0) or 0
+    default_socket_name = "gobby" if agent_depth > 0 else ""
+    return get_tmux_manager_for_context(terminal_context, default_socket_name=default_socket_name)
+
+
+async def _apply_window_rename(
+    session: Any,
+    terminal_context: dict[str, Any],
+    pane: str,
+    title: str,
+) -> bool:
+    """Rename *pane*'s window for *session*, logging the structured outcome.
+
+    Failures are logged but never propagated. Returns True only when tmux
+    confirms the rename was applied.
+    """
+    resolved = _resolve_window_title(session, terminal_context, title)
+    ref = getattr(session, "ref", "?")
+    socket = (
+        terminal_context.get("tmux_socket_path")
+        or terminal_context.get("tmux_socket_name")
+        or "default"
+    )
+    try:
+        mgr = _tmux_manager_for_session(session, terminal_context)
+        applied = bool(await mgr.rename_window(pane, resolved))
+    except Exception as e:
+        logger.warning(
+            "tmux window rename errored for %s pane=%s socket=%s: %s",
+            ref,
+            pane,
+            socket,
+            e,
+        )
+        return False
+    if applied:
+        logger.debug(
+            "Renamed tmux window for %s pane=%s socket=%s title=%r",
+            ref,
+            pane,
+            socket,
+            resolved,
+        )
+    else:
+        logger.debug(
+            "tmux window rename did not apply for %s pane=%s socket=%s "
+            "(target missing or tmux error)",
+            ref,
+            pane,
+            socket,
+        )
+    return applied
+
+
+async def _managed_window_name_needs_repair(
+    mgr: Any,
+    pane: str,
+    session: Any,
+    terminal_context: dict[str, Any],
+) -> bool:
+    getter = getattr(mgr, "get_window_name", None)
+    if getter is None:
+        return False
+    try:
+        window_name = await getter(pane)
+    except Exception:
+        logger.debug("Failed to read window name for pane %s", pane, exc_info=True)
+        return False
+    if _contains_unresolved_session_ref(window_name):
+        return True
+    if not isinstance(window_name, str):
+        return False
+    current = window_name.strip()
+    if not current:
+        return False
+    persisted_title = getattr(session, "title", None)
+    title = persisted_title if isinstance(persisted_title, str) else ""
+    return _resolve_window_title(session, terminal_context, title) != current
+
+
+async def _rename_tmux_window(session: Any, title: str) -> None:
+    """Rename the tmux window for a session after title synthesis.
+
+    Uses the tmux server recorded in terminal context when present. Falls back
+    to the default user server for user sessions and Gobby's isolated socket for
+    spawned agents.
+    Failures are logged but never propagated.
+    """
+    has_persisted_identity = isinstance(getattr(session, "id", None), str)
+    persisted_session = await _reload_persisted_session(session)
+    if has_persisted_identity:
+        if persisted_session is None:
+            return
+        session = persisted_session
+        ownership = await _resolve_tmux_pane_ownership(session)
+        if ownership is None or not ownership.requested_session_owns_pane:
+            return
+        title = getattr(session, "title", None) or ""
+
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not tc:
+        return
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return
+    await _apply_window_rename(session, tc, pane, title)
+
+
+async def _reload_persisted_session(session: Any) -> Any | None:
+    """Reload a queued rename's session from daemon-owned storage."""
+    session_id = getattr(session, "id", None)
+    if not isinstance(session_id, str) or not session_id:
+        return None
+
+    from gobby.app_context import get_app_context
+
+    container = get_app_context()
+    if container is None or container.session_manager is None:
+        return None
+    session_manager = container.session_manager
+
+    try:
+        return await container.run_db(session_manager.get, session_id)
+    except Exception:
+        logger.debug("Failed to reload session %s before tmux rename", session_id, exc_info=True)
+        return None
+
+
+async def _resolve_tmux_pane_ownership(session: Any) -> PaneOwnershipDecision | None:
+    """Reload every record for a pane and resolve its process-backed owner."""
+    identity = terminal_session_identity(session)
+    session_id = getattr(session, "id", None)
+    if not isinstance(session_id, str):
+        return None
+    if identity is None:
+        decision = PaneOwnershipDecision(
+            None,
+            session_id,
+            None,
+            "invalid_identity",
+        )
+        log_pane_ownership_decision(logger, decision)
+        return decision
+
+    from gobby.app_context import get_app_context
+
+    container = get_app_context()
+    session_manager = container.session_manager if container is not None else None
+    candidates = [session]
+    if (
+        container is not None
+        and session_manager is not None
+        and hasattr(session_manager, "find_by_terminal_identity")
+    ):
+        try:
+            candidates = await container.run_db(
+                session_manager.find_by_terminal_identity,
+                identity,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to load pane peers for session %s",
+                session_id,
+                exc_info=True,
+            )
+            return None
+
+    decision = await asyncio.to_thread(
+        resolve_pane_ownership,
+        candidates,
+        requested_session_id=session_id,
+    )
+    log_pane_ownership_decision(logger, decision)
+    return decision
+
+
+async def resolve_tmux_repair_owner(session: Any) -> Any | None:
+    """Return the current canonical owner for periodic pane repair."""
+    ownership = await _resolve_tmux_pane_ownership(session)
+    return ownership.owner if ownership is not None else None
+
+
+async def enforce_window_name_if_unmanaged(session: Any) -> bool:
+    """Rename a tracked session's tmux window when unmanaged or visibly stale.
+
+    Used by the periodic repair sweep. A window Gobby has already named has
+    ``automatic-rename`` off (``rename_window`` disables it); such windows are
+    left untouched only when their current title matches the authoritative
+    persisted session title. Returns True when a rename was issued.
+
+    This is the durable safety net for sessions whose session-start rename never
+    lands — notably interactive Claude sessions in a VSCode tmux pane, which keep
+    an empty title and otherwise stay frozen on the CLI's startup OSC window name
+    (e.g. its version string).
+
+    Returns False when terminal context is missing, the tmux pane is absent, the
+    window cannot be inspected, or the window already matches the persisted
+    session title.
+    """
+    has_persisted_identity = isinstance(getattr(session, "id", None), str)
+    persisted_session = await _reload_persisted_session(session)
+    if has_persisted_identity:
+        if persisted_session is None:
+            return False
+        session = persisted_session
+        ownership = await _resolve_tmux_pane_ownership(session)
+        if ownership is None or not ownership.requested_session_owns_pane:
+            return False
+
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not tc:
+        return False
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return False
+
+    mgr = _tmux_manager_for_session(session, tc)
+    try:
+        auto_rename = await mgr.get_window_automatic_rename(pane)
+    except Exception:
+        logger.debug("Failed to read automatic-rename for pane %s", pane, exc_info=True)
+        return False
+    # None -> window unreadable/gone; False -> already Gobby-managed. Bad names
+    # from older builds are repaired even though they are already managed.
+    if auto_rename is None:
+        return False
+    if auto_rename is False and not await _managed_window_name_needs_repair(mgr, pane, session, tc):
+        return False
+
+    title = getattr(session, "title", None) or ""
+    return await _apply_window_rename(session, tc, pane, title)

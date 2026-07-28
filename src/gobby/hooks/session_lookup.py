@@ -19,9 +19,9 @@ from gobby.hooks.terminal_context import (
     is_gobby_acp_child,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.tasks.state_semantics import serialize_task_state
-from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from collections.abc import Callable

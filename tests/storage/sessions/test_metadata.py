@@ -50,7 +50,7 @@ class TestSessionManagerMetadata:
             terminal_context={"tmux_pane": "%42"},
         )
 
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             updated = session_manager.update_title(session.id, "Terminal Title")
 
         assert updated is not None
@@ -78,7 +78,7 @@ class TestSessionManagerMetadata:
             lambda session_id, title: calls.append((session_id, title))
         )
 
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             updated = session_manager.update_title(
                 session.id,
                 session.title,
@@ -162,7 +162,7 @@ class TestSessionManagerMetadata:
         session_manager.register_title_listener(
             lambda session_id, title: calls.append((session_id, title))
         )
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             session_manager.update_title(
                 session.id,
                 "Fallback title",
@@ -209,7 +209,7 @@ class TestSessionManagerMetadata:
         session_manager.register_title_listener(
             lambda session_id, title: calls.append((session_id, title))
         )
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             session_manager.update(session.id, title_source="provisional")
             session_manager.update(session.id, title=None, title_source=None)
             updated = session_manager.update(
@@ -278,7 +278,7 @@ class TestSessionManagerMetadata:
             lambda session_id, title: title_calls.append((session_id, title))
         )
 
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             updated = session_manager.persist_digest_state(
                 session.id,
                 last_turn_markdown="last turn",
@@ -318,7 +318,7 @@ class TestSessionManagerMetadata:
             lambda session_id, title: title_calls.append((session_id, title))
         )
 
-        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+        with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as mock_rename:
             updated = session_manager.persist_digest_state(
                 session.id,
                 last_turn_markdown="last turn",
