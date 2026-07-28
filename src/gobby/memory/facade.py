@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from gobby.storage.memories import LocalMemoryManager
 
 DEFAULT_GRAPH_LIMIT = 500
+DEFAULT_RELATIONSHIP_LIMIT = 2000
 MAX_REINDEX_LIMIT = 100_000
 
 
@@ -50,6 +51,7 @@ def _memory_scope(project_id: str | None, *, include_global: bool = True) -> Mem
 __all__ = [
     "DEFAULT_GRAPH_LIMIT",
     "DEFAULT_LIST_LIMIT",
+    "DEFAULT_RELATIONSHIP_LIMIT",
     "DEFAULT_SEARCH_LIMIT",
     "MAX_REINDEX_LIMIT",
     "MemoryManagerFacadeMethods",
@@ -674,10 +676,12 @@ class MemoryManagerFacadeMethods:
     async def get_entity_graph(
         self,
         limit: int = DEFAULT_GRAPH_LIMIT,
+        relationship_limit: int = DEFAULT_RELATIONSHIP_LIMIT,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
         return await self._kg_rebuild_service.get_entity_graph(
             limit=limit,
+            relationship_limit=relationship_limit,
             project_id=project_id,
         )
 

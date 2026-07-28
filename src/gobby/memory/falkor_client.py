@@ -387,16 +387,22 @@ class FalkorClient:
     async def get_entity_graph(
         self,
         limit: int = 500,
+        relationship_limit: int = 2000,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        """Get entities and relationships for visualization."""
+        """Get entities and relationships for visualization.
+
+        Both result sets are ordered most-recent-first (``updated_at DESC``)
+        before limiting, so a limit of N always returns the N most recent
+        rows. A limit of 0 means no limit.
+        """
         entity_rows = await self.query(
             "MATCH (n:_Entity) "
             "WHERE (($is_global AND n.is_global = true) "
             "OR (NOT $is_global AND n.project_id = $project_id AND n.is_global = false)) "
             "RETURN n.entity_key AS entity_key, n.name AS name, n.entity_type AS entity_type, "
             "n.project_id AS project_id, properties(n) AS props "
-            "ORDER BY n.updated_at DESC LIMIT $limit",
+            "ORDER BY n.updated_at DESC" + (" LIMIT $limit" if limit > 0 else ""),
             {"limit": limit, "project_id": project_id, "is_global": project_id is None},
         )
 
@@ -426,8 +432,8 @@ class FalkorClient:
                 "WHERE a.entity_key IN $keys AND b.entity_key IN $keys "
                 "RETURN a.entity_key AS source_key, b.entity_key AS target_key, "
                 "type(r) AS rel_type, properties(r) AS props "
-                "LIMIT $limit",
-                {"keys": entity_keys, "limit": limit * 4},
+                "ORDER BY r.updated_at DESC" + (" LIMIT $limit" if relationship_limit > 0 else ""),
+                {"keys": entity_keys, "limit": relationship_limit},
             )
 
             for row in rel_rows:

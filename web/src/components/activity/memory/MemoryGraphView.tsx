@@ -10,20 +10,23 @@ import {
 } from "react";
 
 import type { KnowledgeGraphData } from "../../../hooks/useMemory";
+import { DEFAULT_GRAPH_LIMITS, type GraphLimits } from "./KnowledgeGraphModel";
 import { DetailActionButton } from "../fields";
-
-const DEFAULT_GRAPH_LIMIT = 500;
 
 const KnowledgeGraph = lazy(() =>
   import("./KnowledgeGraph").then((module) => ({ default: module.KnowledgeGraph })),
 );
 
 interface MemoryGraphViewProps {
-  fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>;
+  fetchKnowledgeGraph: (
+    limit?: number,
+    relationshipLimit?: number,
+  ) => Promise<KnowledgeGraphData | null>;
   fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>;
   releasePanelOverride: () => void;
   onClose: () => void;
-  limit?: number;
+  limits?: GraphLimits;
+  onLimitsChange?: (next: GraphLimits) => void;
 }
 
 interface MemoryGraphErrorBoundaryProps {
@@ -56,7 +59,8 @@ export function MemoryGraphView({
   fetchEntityNeighbors,
   releasePanelOverride,
   onClose,
-  limit = DEFAULT_GRAPH_LIMIT,
+  limits = DEFAULT_GRAPH_LIMITS,
+  onLimitsChange,
 }: MemoryGraphViewProps) {
   const releasedRef = useRef(false);
   const [graphFailed, setGraphFailed] = useState(false);
@@ -118,7 +122,8 @@ export function MemoryGraphView({
               <KnowledgeGraph
                 fetchKnowledgeGraph={fetchKnowledgeGraph}
                 fetchEntityNeighbors={fetchEntityNeighbors}
-                limit={limit}
+                limits={limits}
+                onLimitsChange={onLimitsChange}
                 onError={() => setGraphFailed(true)}
                 onClose={handleClose}
               />

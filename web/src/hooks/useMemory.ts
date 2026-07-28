@@ -384,10 +384,13 @@ export function useMemory(projectId?: string | null) {
     fetchStats()
   }, [fetchMemories, fetchStats])
 
-  const fetchKnowledgeGraph = useCallback(async (limit = 500): Promise<KnowledgeGraphData | null> => {
+  const fetchKnowledgeGraph = useCallback(async (limit = 500, relationshipLimit = 2000): Promise<KnowledgeGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const params = new URLSearchParams({ limit: String(limit) })
+      const params = new URLSearchParams({
+        limit: String(limit),
+        relationship_limit: String(relationshipLimit),
+      })
       if (filters.projectId) params.set('project_id', filters.projectId)
       params.set('visibility', filters.visibility)
       const response = await fetch(`${baseUrl}/api/memories/graph/entities?${params}`)

@@ -322,3 +322,59 @@ async def test_ping_returns_false_for_connection_or_query_errors(
     FakeFalkorDB.last_instance.graph.next_error = redis.exceptions.ConnectionError("refused")
 
     assert await client.ping() is False
+
+
+def _graph_result(header: list[str], rows: list[list[Any]]) -> Any:
+    return types.SimpleNamespace(header=header, result_set=rows, statistics={})
+
+
+_ENTITY_HEADER = ["entity_key", "name", "entity_type", "project_id", "props"]
+_REL_HEADER = ["source_key", "target_key", "rel_type", "props"]
+
+
+async def test_get_entity_graph_orders_both_result_sets_most_recent_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entities and relationships must sort by updated_at DESC before LIMIT (#19157)."""
+    client = _client(monkeypatch)
+
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.results = [
+        _graph_result(_ENTITY_HEADER, [["e1", "One", "concept", None, {}]]),
+        _graph_result(_REL_HEADER, []),
+    ]
+
+    await client.get_entity_graph(limit=10, relationship_limit=40)
+
+    entity_query, entity_params = fake_db.graph.queries[0]
+    assert "ORDER BY n.updated_at DESC LIMIT $limit" in entity_query
+    assert entity_params is not None and entity_params["limit"] == 10
+
+    rel_query, rel_params = fake_db.graph.queries[1]
+    assert "ORDER BY r.updated_at DESC LIMIT $limit" in rel_query
+    assert rel_params is not None and rel_params["limit"] == 40
+
+
+async def test_get_entity_graph_zero_limits_omit_limit_clauses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A limit of 0 means unlimited: no LIMIT clause on either query (#19157)."""
+    client = _client(monkeypatch)
+
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.results = [
+        _graph_result(_ENTITY_HEADER, [["e1", "One", "concept", None, {}]]),
+        _graph_result(_REL_HEADER, []),
+    ]
+
+    await client.get_entity_graph(limit=0, relationship_limit=0)
+
+    entity_query, _ = fake_db.graph.queries[0]
+    assert "LIMIT" not in entity_query
+    assert entity_query.rstrip().endswith("ORDER BY n.updated_at DESC")
+
+    rel_query, _ = fake_db.graph.queries[1]
+    assert "LIMIT" not in rel_query
+    assert rel_query.rstrip().endswith("ORDER BY r.updated_at DESC")

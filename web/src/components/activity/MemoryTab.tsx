@@ -19,12 +19,14 @@ import {
 import {
   filterMemories,
   extractDreamPurgeGraceDays,
+  extractGraphLimits,
   filtersFromMemoryHook,
   memoryTypeCount,
   MEMORY_TYPE_OPTIONS,
   MEMORY_VISIBILITY_OPTIONS,
   type DreamPurgeGraceDays,
 } from "./memory/MemoryTabData";
+import { DEFAULT_GRAPH_LIMITS, type GraphLimits } from "./memory/KnowledgeGraphModel";
 import { MemoryDetailPanel } from "./memory/MemoryDetailPanel";
 import { MemoryGraphView } from "./memory/MemoryGraphView";
 import { MemoryTabList } from "./memory/MemoryTabList";
@@ -93,6 +95,7 @@ export const MemoryTab = memo(function MemoryTab({
   const [viewMode, setViewMode] = useState<MemoryViewMode>("detail");
   const [scope, setScope] = useState<MemoryScopeSegment>("project");
   const [purgeGraceDays, setPurgeGraceDays] = useState<DreamPurgeGraceDays | null>(null);
+  const [graphLimits, setGraphLimits] = useState<GraphLimits>(DEFAULT_GRAPH_LIMITS);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
   const tabFilters = useMemo(
@@ -143,6 +146,7 @@ export const MemoryTab = memo(function MemoryTab({
         }
         const payload = await response.json();
         setPurgeGraceDays(extractDreamPurgeGraceDays(payload.values));
+        setGraphLimits(extractGraphLimits(payload.values));
       } catch (configError) {
         if (configError instanceof DOMException && configError.name === "AbortError") return;
         console.warn("Failed to load memory dream purge config", configError);
@@ -177,6 +181,29 @@ export const MemoryTab = memo(function MemoryTab({
 
   const handleCloseGraph = useCallback(() => {
     setViewMode("detail");
+  }, []);
+
+  // Persist graph limits to daemon config — the same `ui.*` paths the
+  // Runtime & Infrastructure settings section edits (#19157). Optimistic:
+  // the graph refetches immediately; a failed save just logs.
+  const handleGraphLimitsChange = useCallback((next: GraphLimits) => {
+    setGraphLimits(next);
+    void fetch("/api/config/values", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        values: {
+          ui: {
+            knowledge_graph_limit: next.entities,
+            knowledge_graph_relationship_limit: next.relationships,
+          },
+        },
+      }),
+    }).then((response) => {
+      if (!response.ok) console.warn("Failed to persist graph limits", response.status);
+    }).catch((saveError: unknown) => {
+      console.warn("Failed to persist graph limits", saveError);
+    });
   }, []);
 
   const handleSave = useCallback(
@@ -274,6 +301,8 @@ export const MemoryTab = memo(function MemoryTab({
         fetchEntityNeighbors={fetchEntityNeighbors}
         releasePanelOverride={releasePanelOverride}
         onClose={handleCloseGraph}
+        limits={graphLimits}
+        onLimitsChange={handleGraphLimitsChange}
       />
     );
   }

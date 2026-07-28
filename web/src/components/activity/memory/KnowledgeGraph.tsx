@@ -7,7 +7,20 @@ import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity } from '../../../hooks/useMemory'
 import { inputFocusCls } from '../../shared/focusStyles'
 import { Button } from '../../ui/Button'
-import { buildForceData, buildNeighborIndex, buildNodeCardHtml, getEntityColorCss, mergeGraphData, numericId } from './KnowledgeGraphModel'
+import {
+  DEFAULT_GRAPH_LIMITS,
+  MOBILE_ENTITY_CAP,
+  MOBILE_RELATIONSHIP_CAP,
+  buildForceData,
+  buildNeighborIndex,
+  buildNodeCardHtml,
+  effectiveGraphLimits,
+  getEntityColorCss,
+  mergeGraphData,
+  numericId,
+  sanitizeGraphLimit,
+  type GraphLimits,
+} from './KnowledgeGraphModel'
 
 // `isolate` scopes the z-10 overlays to this container so panel chrome with a
 // lower z-index (.activity-panel-mobile-menu, z-5) still layers above the graph.
@@ -28,11 +41,19 @@ const PHYSICS_VALUE_CLS = 'min-w-[36px] text-right font-[inherit] text-[length:v
 const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
 const PHYSICS_RESET_CLS = 'mt-0.5 cursor-pointer self-end rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 const SEARCH_INPUT_CLS = `h-7 w-[150px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)] ${inputFocusCls}`
+const LIMIT_ROW_CLS = 'flex items-center justify-between gap-1.5'
+const LIMIT_INPUT_CLS = `h-6 w-[84px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-1.5 text-right font-[inherit] text-[length:var(--text-xs)] tabular-nums text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:min-h-11 pointer-coarse:px-2 ${inputFocusCls}`
+const LIMIT_NOTE_CLS = 'max-w-[210px] text-[length:var(--text-2xs)] leading-snug text-[var(--text-muted)]'
+const LIMIT_WARNING_CLS = 'flex max-w-[210px] items-start gap-1.5 text-[length:var(--text-2xs)] leading-snug text-[var(--color-warning-foreground)]'
 
 interface KnowledgeGraphProps {
-  fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>
+  fetchKnowledgeGraph: (
+    limit?: number,
+    relationshipLimit?: number,
+  ) => Promise<KnowledgeGraphData | null>
   fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>
-  limit?: number
+  limits?: GraphLimits
+  onLimitsChange?: (next: GraphLimits) => void
   onError?: () => void
   onClose?: () => void
 }
@@ -62,7 +83,51 @@ function GraphCloseButton({ onClose }: { onClose: () => void }) {
   )
 }
 
-export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limit, onError, onClose }: KnowledgeGraphProps) {
+// Committed number field for the settings panel: draft state locally, persist
+// on blur/Enter. An emptied field reverts to the last committed value instead
+// of silently meaning "no limit".
+function GraphLimitRow({ label, ariaLabel, value, onCommit }: {
+  label: string
+  ariaLabel: string
+  value: number
+  onCommit: (next: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+  // Re-sync the draft when the committed value changes from outside
+  // (adjust-during-render — https://react.dev/learn/you-might-not-need-an-effect).
+  const [lastValue, setLastValue] = useState(value)
+  if (value !== lastValue) {
+    setLastValue(value)
+    setDraft(String(value))
+  }
+  const commit = () => {
+    const parsed = draft.trim() === '' ? value : sanitizeGraphLimit(Number(draft), value)
+    setDraft(String(parsed))
+    onCommit(parsed)
+  }
+  return (
+    <label className={LIMIT_ROW_CLS}>
+      <span className={PHYSICS_LABEL_CLS}>{label}</span>
+      <input
+        type="number"
+        min={0}
+        value={draft}
+        className={LIMIT_INPUT_CLS}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            e.currentTarget.blur()
+          }
+        }}
+        aria-label={ariaLabel}
+      />
+    </label>
+  )
+}
+
+export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limits = DEFAULT_GRAPH_LIMITS, onLimitsChange, onError, onClose }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fgRef = useRef<any>(null)
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
@@ -176,12 +241,15 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return () => cancelAnimationFrame(raf)
   }, [animateIdle])
 
-  // Initial data fetch (refetches when limit changes)
+  // Mobile GPUs get a hard cap regardless of the persisted setting (#19157)
+  const effectiveLimits = useMemo(() => effectiveGraphLimits(limits, IS_MOBILE), [limits])
+
+  // Initial data fetch (refetches when limits change)
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const data = await fetchKnowledgeGraph(limit)
+        const data = await fetchKnowledgeGraph(effectiveLimits.entities, effectiveLimits.relationships)
         if (!cancelled) {
           if (data) setGraphData(data)
           setLoadError(false)
@@ -195,7 +263,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       }
     })()
     return () => { cancelled = true }
-  }, [fetchKnowledgeGraph, limit, loadAttempt])
+  }, [fetchKnowledgeGraph, effectiveLimits, loadAttempt])
 
   // Build force graph data
   const forceData = useMemo(() => {
@@ -538,8 +606,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           type="button"
           className={cn(CTRL_BTN_CLS, showPhysics && CTRL_BTN_ACTIVE_CLS)}
           onClick={() => setShowPhysics(p => !p)}
-          title="Physics controls"
-          aria-label="Physics controls"
+          title="Graph settings"
+          aria-label="Graph settings"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3" />
@@ -549,9 +617,44 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         {onClose && <GraphCloseButton onClose={onClose} />}
       </div>
 
-      {/* Physics controls panel */}
+      {/* Graph settings panel: data limits + physics */}
       {showPhysics && (
         <div className={PHYSICS_CLS}>
+          <GraphLimitRow
+            label="Entities"
+            ariaLabel="Entity limit"
+            value={limits.entities}
+            onCommit={entities => {
+              if (entities !== limits.entities) onLimitsChange?.({ ...limits, entities })
+            }}
+          />
+          <GraphLimitRow
+            label="Relationships"
+            ariaLabel="Relationship limit"
+            value={limits.relationships}
+            onCommit={relationships => {
+              if (relationships !== limits.relationships) onLimitsChange?.({ ...limits, relationships })
+            }}
+          />
+          {IS_MOBILE ? (
+            <div className={LIMIT_NOTE_CLS}>
+              Hard-capped at {MOBILE_ENTITY_CAP} entities / {MOBILE_RELATIONSHIP_CAP} relationships
+              on this device.
+            </div>
+          ) : (
+            <div className={LIMIT_WARNING_CLS} role="note">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="mt-px shrink-0">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+              <span>
+                0 = no limit. Rendering capability varies by machine — very high or unlimited
+                values can be unstable.
+              </span>
+            </div>
+          )}
+          <div className="my-0.5 border-t border-[var(--border)]" />
           <label className={PHYSICS_ROW_CLS}>
             <span className={PHYSICS_LABEL_CLS}>Repulsion</span>
             <input

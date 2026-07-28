@@ -849,6 +849,31 @@ class TestEntityGraph:
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 200
         assert "entities" in response.json()
+        mock_server.memory_manager.get_entity_graph.assert_awaited_once_with(
+            limit=500, relationship_limit=2000, project_id=None
+        )
+
+    def test_entity_graph_passes_limits_through(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Explicit limit/relationship_limit query params reach the manager (#19157)."""
+        mock_server.memory_manager._falkor_client = MagicMock()
+        mock_server.memory_manager.get_entity_graph = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
+        response = client.get("/api/memories/graph/entities?limit=0&relationship_limit=12")
+        assert response.status_code == 200
+        mock_server.memory_manager.get_entity_graph.assert_awaited_once_with(
+            limit=0, relationship_limit=12, project_id=None
+        )
+
+    def test_entity_graph_rejects_negative_limits(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """Negative limits fail validation (0 is the unlimited sentinel)."""
+        mock_server.memory_manager._falkor_client = MagicMock()
+        response = client.get("/api/memories/graph/entities?limit=-1")
+        assert response.status_code == 422
 
     def test_entity_graph_unreachable(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns 502 when FalkorDB is unreachable."""
@@ -1094,13 +1119,13 @@ class TestErrorPaths:
         response = client.put("/api/memories/mm-abc123", json={"content": "new"})
         assert response.status_code == 500
 
-    def test_delete_server_error(self, client, mock_server) -> None:
+    def test_delete_server_error(self, client: TestClient, mock_server: MagicMock) -> None:
         """DELETE /memories/{id} returns 500 on error."""
         mock_server.memory_manager.delete_memory = AsyncMock(side_effect=RuntimeError("DB error"))
         response = client.delete("/api/memories/mm-abc123")
         assert response.status_code == 500
 
-    def test_search_server_error(self, client, mock_server) -> None:
+    def test_search_server_error(self, client: TestClient, mock_server: MagicMock) -> None:
         """GET /memories/search returns 500 on error."""
         mock_server.memory_manager.search_memories = AsyncMock(
             side_effect=RuntimeError("Search error")

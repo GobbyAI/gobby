@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { KnowledgeGraphData } from "../../../../hooks/useMemory";
@@ -27,13 +27,18 @@ vi.mock("../../../../lib/utils", async (importOriginal) => {
 
 const {
   CANONICAL_ENTITY_TYPES,
+  DEFAULT_GRAPH_LIMITS,
+  MOBILE_ENTITY_CAP,
+  MOBILE_RELATIONSHIP_CAP,
   buildForceData,
   buildNeighborIndex,
   buildNodeCardHtml,
   edgeColor,
+  effectiveGraphLimits,
   entityColorVar,
   humanizeRelation,
   isOpaqueIdentifier,
+  sanitizeGraphLimit,
 } = await import("../KnowledgeGraphModel");
 const { KnowledgeGraph } = await import("../KnowledgeGraph");
 
@@ -188,6 +193,103 @@ describe("KnowledgeGraph node card (#19156)", () => {
     expect(isOpaqueIdentifier("b38dc83b-1234-4abc-9def-0123456789ab")).toBe(true);
     expect(isOpaqueIdentifier("0123456789abcdef0123")).toBe(true);
     expect(isOpaqueIdentifier("Gobby")).toBe(false);
+  });
+});
+
+describe("KnowledgeGraph limits (#19157)", () => {
+  it("effectiveGraphLimits passes desktop values through, including 0 = no limit", () => {
+    expect(effectiveGraphLimits({ entities: 0, relationships: 12000 }, false)).toEqual({
+      entities: 0,
+      relationships: 12000,
+    });
+  });
+
+  it("effectiveGraphLimits hard-caps mobile and collapses 0 to the cap", () => {
+    expect(effectiveGraphLimits({ entities: 0, relationships: 0 }, true)).toEqual({
+      entities: MOBILE_ENTITY_CAP,
+      relationships: MOBILE_RELATIONSHIP_CAP,
+    });
+    expect(effectiveGraphLimits({ entities: 9999, relationships: 99999 }, true)).toEqual({
+      entities: MOBILE_ENTITY_CAP,
+      relationships: MOBILE_RELATIONSHIP_CAP,
+    });
+    expect(effectiveGraphLimits({ entities: 100, relationships: 400 }, true)).toEqual({
+      entities: 100,
+      relationships: 400,
+    });
+  });
+
+  it("sanitizeGraphLimit rejects NaN and negatives, floors fractions", () => {
+    expect(sanitizeGraphLimit(Number.NaN, 500)).toBe(500);
+    expect(sanitizeGraphLimit(-3, 500)).toBe(500);
+    expect(sanitizeGraphLimit(250.7, 500)).toBe(250);
+    expect(sanitizeGraphLimit(0, 500)).toBe(0);
+  });
+
+  it("fetches with the configured entity and relationship limits", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const fetchKnowledgeGraph = vi
+      .fn()
+      .mockResolvedValue({ entities: [], relationships: [] });
+    render(
+      <KnowledgeGraph
+        fetchKnowledgeGraph={fetchKnowledgeGraph}
+        fetchEntityNeighbors={vi.fn()}
+        limits={{ entities: 42, relationships: 84 }}
+      />,
+    );
+    await waitFor(() => expect(fetchKnowledgeGraph).toHaveBeenCalledWith(42, 84));
+    vi.unstubAllGlobals();
+  });
+
+  it("gear panel exposes persisted limit controls with the instability warning", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const onLimitsChange = vi.fn();
+    const fetchKnowledgeGraph = vi.fn().mockResolvedValue({
+      entities: [
+        {
+          entity_key: "e1",
+          name: "Entity One",
+          entity_type: "concept",
+          project_id: null,
+          properties: {},
+        },
+      ],
+      relationships: [],
+    });
+    render(
+      <KnowledgeGraph
+        fetchKnowledgeGraph={fetchKnowledgeGraph}
+        fetchEntityNeighbors={vi.fn()}
+        limits={DEFAULT_GRAPH_LIMITS}
+        onLimitsChange={onLimitsChange}
+      />,
+    );
+
+    fireEvent.click(await screen.findByLabelText("Graph settings"));
+
+    const entityInput = screen.getByLabelText("Entity limit");
+    expect(entityInput).toHaveValue(DEFAULT_GRAPH_LIMITS.entities);
+    expect(screen.getByLabelText("Relationship limit")).toHaveValue(
+      DEFAULT_GRAPH_LIMITS.relationships,
+    );
+    // Desktop allows unlimited, so the instability warning must be visible.
+    expect(screen.getByText(/values can be unstable/)).toBeInTheDocument();
+
+    fireEvent.change(entityInput, { target: { value: "0" } });
+    fireEvent.blur(entityInput);
+    expect(onLimitsChange).toHaveBeenCalledWith({
+      entities: 0,
+      relationships: DEFAULT_GRAPH_LIMITS.relationships,
+    });
+
+    // An emptied field reverts instead of silently persisting "no limit".
+    const relationshipInput = screen.getByLabelText("Relationship limit");
+    fireEvent.change(relationshipInput, { target: { value: "" } });
+    fireEvent.blur(relationshipInput);
+    expect(onLimitsChange).toHaveBeenCalledTimes(1);
+    expect(relationshipInput).toHaveValue(DEFAULT_GRAPH_LIMITS.relationships);
+    vi.unstubAllGlobals();
   });
 });
 

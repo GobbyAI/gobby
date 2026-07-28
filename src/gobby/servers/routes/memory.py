@@ -346,14 +346,18 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/graph/entities")
     async def entity_graph(
-        limit: int = Query(500, description="Maximum entities to fetch"),
+        limit: int = Query(500, ge=0, description="Maximum entities to fetch (0 = no limit)"),
+        relationship_limit: int = Query(
+            2000, ge=0, description="Maximum relationships to fetch (0 = no limit)"
+        ),
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Get FalkorDB knowledge graph entities and relationships."""
+        """Get FalkorDB knowledge graph entities and relationships, most recent first."""
         memory_manager = _require_falkordb_memory_manager(server)
         try:
             result: dict[str, Any] | None = await memory_manager.get_entity_graph(
                 limit=limit,
+                relationship_limit=relationship_limit,
                 project_id=project_id,
             )
             if result is None:

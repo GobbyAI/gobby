@@ -333,8 +333,9 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | ui.port | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | ui.host | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 | ui.web_dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
-| ui.memory_graph_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| ui.knowledge_graph_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
+| ui.memory_graph_limit | (removed) | (removed) | dead | drop | (none) | removed in #19157 — the 2D memory graph had no UI consumer; unified into ui.knowledge_graph_limit |
+| ui.knowledge_graph_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input; graph settings panel | live | keep | runtime-infrastructure | 0 = no limit; also editable from the knowledge-graph gear panel (#19157) |
+| ui.knowledge_graph_relationship_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input; graph settings panel | live | keep | runtime-infrastructure | 0 = no limit; added in #19157 |
 | auth.username | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
 | auth.password | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
 | auth.session_secret | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | auto-generated session cookie signing secret; schema marks it ui_hidden |

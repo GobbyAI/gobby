@@ -690,11 +690,16 @@ class KnowledgeGraphReader:
     async def get_entity_graph(
         self,
         limit: int = 500,
+        relationship_limit: int = 2000,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get the entity graph for visualization, hiding soft-deleted-only artifacts."""
         try:
-            graph = await self._falkor.get_entity_graph(limit=limit, project_id=project_id)
+            graph = await self._falkor.get_entity_graph(
+                limit=limit,
+                relationship_limit=relationship_limit,
+                project_id=project_id,
+            )
         except FalkorConnectionError as e:
             logger.warning("FalkorDB unreachable: %s", e)
             return None

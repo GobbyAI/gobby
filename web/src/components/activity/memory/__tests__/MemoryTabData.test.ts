@@ -4,6 +4,7 @@ import type { GobbyMemory } from "../../../../hooks/useMemory";
 import {
   dreamFlagLabel,
   extractDreamPurgeGraceDays,
+  extractGraphLimits,
   filterMemories,
   filtersFromMemoryHook,
   isHiddenMemory,
@@ -12,6 +13,7 @@ import {
   purgeCountdownLabel,
   type MemoryTabFilters,
 } from "../MemoryTabData";
+import { DEFAULT_GRAPH_LIMITS } from "../KnowledgeGraphModel";
 
 const NOW = new Date("2026-06-15T00:00:00Z").getTime();
 const GRACE_DAYS = { review: 90, delete: 30 };
@@ -210,5 +212,25 @@ describe("extractDreamPurgeGraceDays", () => {
         memory: { dream: { purge_review_after_days: Number.POSITIVE_INFINITY } },
       }),
     ).toBeNull();
+  });
+});
+
+describe("extractGraphLimits (#19157)", () => {
+  it("reads the persisted knowledge-graph limits from ui config", () => {
+    expect(
+      extractGraphLimits({
+        ui: { knowledge_graph_limit: 0, knowledge_graph_relationship_limit: 12000 },
+      }),
+    ).toEqual({ entities: 0, relationships: 12000 });
+  });
+
+  it("falls back to defaults for missing or malformed values", () => {
+    expect(extractGraphLimits(undefined)).toEqual(DEFAULT_GRAPH_LIMITS);
+    expect(extractGraphLimits({ ui: {} })).toEqual(DEFAULT_GRAPH_LIMITS);
+    expect(
+      extractGraphLimits({
+        ui: { knowledge_graph_limit: "lots", knowledge_graph_relationship_limit: -5 },
+      }),
+    ).toEqual(DEFAULT_GRAPH_LIMITS);
   });
 });

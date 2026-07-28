@@ -251,3 +251,32 @@ export function buildForceData(data: KnowledgeGraphData): { nodes: GraphNode[]; 
 
   return { nodes, links }
 }
+
+// Fetch limits (#19157). 0 = no limit — allowed on desktop only, where the
+// settings panel carries an instability warning. Mobile GPUs get a hard cap;
+// thresholds are provisional until hardware testing tightens them.
+export interface GraphLimits {
+  entities: number
+  relationships: number
+}
+
+export const DEFAULT_GRAPH_LIMITS: GraphLimits = { entities: 500, relationships: 2000 }
+export const MOBILE_ENTITY_CAP = 500
+export const MOBILE_RELATIONSHIP_CAP = 2000
+
+/** Normalize a raw input value: NaN/negative → fallback, fractions floored. */
+export function sanitizeGraphLimit(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value < 0) return fallback
+  return Math.floor(value)
+}
+
+/** Apply the mobile hard cap. 0 (no limit) collapses to the cap on mobile. */
+export function effectiveGraphLimits(limits: GraphLimits, isMobile: boolean): GraphLimits {
+  if (!isMobile) return limits
+  return {
+    entities: limits.entities === 0 ? MOBILE_ENTITY_CAP : Math.min(limits.entities, MOBILE_ENTITY_CAP),
+    relationships: limits.relationships === 0
+      ? MOBILE_RELATIONSHIP_CAP
+      : Math.min(limits.relationships, MOBILE_RELATIONSHIP_CAP),
+  }
+}

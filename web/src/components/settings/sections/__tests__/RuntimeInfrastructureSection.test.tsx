@@ -43,7 +43,7 @@ const SCHEMA: Record<string, unknown> = {
     UIConfig: {
       type: 'object',
       properties: {
-        memory_graph_limit: { type: 'integer', minimum: 50, maximum: 5000 },
+        knowledge_graph_limit: { type: 'integer', minimum: 0 },
       },
     },
   },
@@ -76,8 +76,8 @@ function makeConfigValues(): Record<string, unknown> {
       port: 60889,
       host: 'localhost',
       web_dir: '/home/dev/gobby/web',
-      memory_graph_limit: 5000,
-      knowledge_graph_limit: 5000,
+      knowledge_graph_limit: 500,
+      knowledge_graph_relationship_limit: 2000,
     },
     search: {
       mode: 'auto',
@@ -233,7 +233,9 @@ describe('RuntimeInfrastructureSection', () => {
     expect(screen.getByLabelText('Web directory path')).toHaveValue(
       '/home/dev/gobby/web',
     )
-    expect(screen.getByLabelText('Memory graph node limit')).toHaveValue(5000)
+    expect(screen.getByLabelText('Knowledge graph entity limit')).toHaveValue(500)
+    expect(screen.getByLabelText('Knowledge graph relationship limit')).toHaveValue(2000)
+    expect(screen.queryByLabelText('Memory graph node limit')).not.toBeInTheDocument()
   })
 
   it('renders the code-index list rows as string lists and the summary profile as a select', () => {

@@ -38,8 +38,8 @@ const OWNED_PATHS: readonly string[] = [
   'ui.port',
   'ui.host',
   'ui.web_dir',
-  'ui.memory_graph_limit',
   'ui.knowledge_graph_limit',
+  'ui.knowledge_graph_relationship_limit',
   // Unified search
   'search.mode',
   'search.keyword_weight',
@@ -230,15 +230,15 @@ function WebUiGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <NumberConfigField
         fields={fields}
-        path="ui.memory_graph_limit"
-        label="Memory graph node limit"
-        ariaLabel="Memory graph node limit"
-      />
-      <NumberConfigField
-        fields={fields}
         path="ui.knowledge_graph_limit"
         label="Knowledge graph entity limit"
         ariaLabel="Knowledge graph entity limit"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="ui.knowledge_graph_relationship_limit"
+        label="Knowledge graph relationship limit"
+        ariaLabel="Knowledge graph relationship limit"
       />
     </Subsection>
   )

@@ -757,10 +757,15 @@ class KnowledgeGraphService:
     async def get_entity_graph(
         self,
         limit: int = 500,
+        relationship_limit: int = 2000,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get the entity graph for visualization."""
-        return await self._reader.get_entity_graph(limit=limit, project_id=project_id)
+        return await self._reader.get_entity_graph(
+            limit=limit,
+            relationship_limit=relationship_limit,
+            project_id=project_id,
+        )
 
     async def get_entity_neighbors(
         self,

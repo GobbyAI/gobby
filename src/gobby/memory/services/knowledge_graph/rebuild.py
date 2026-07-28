@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MAX_REINDEX_LIMIT = 100_000
 DEFAULT_GRAPH_LIMIT = 500
+DEFAULT_RELATIONSHIP_LIMIT = 2000
 
 
 class KnowledgeGraphRebuildService:
@@ -229,17 +230,23 @@ class KnowledgeGraphRebuildService:
     async def get_entity_graph(
         self,
         limit: int = DEFAULT_GRAPH_LIMIT,
+        relationship_limit: int = DEFAULT_RELATIONSHIP_LIMIT,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get the FalkorDB entity graph for visualization."""
         kg_service = self._kg_service_provider()
         if kg_service:
-            return await kg_service.get_entity_graph(limit=limit, project_id=project_id)
+            return await kg_service.get_entity_graph(
+                limit=limit,
+                relationship_limit=relationship_limit,
+                project_id=project_id,
+            )
         falkor_client = self._falkor_client_provider()
         if falkor_client:
             try:
                 return await falkor_client.get_entity_graph(
                     limit=limit,
+                    relationship_limit=relationship_limit,
                     project_id=project_id,
                 )
             except Exception as e:

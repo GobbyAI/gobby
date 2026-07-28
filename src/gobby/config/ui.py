@@ -90,17 +90,17 @@ class UIConfig(BaseModel):
     web_dir: str | None = Field(
         default=None, description="Path to web/ dir (auto-detected if None)"
     )
-    memory_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 2D memory graph (nodes)",
-    )
     knowledge_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 3D knowledge graph (entities)",
+        default=500,
+        ge=0,
+        description="Entity limit for the 3D knowledge graph, most recent first (0 = no limit)",
+    )
+    knowledge_graph_relationship_limit: int = Field(
+        default=2000,
+        ge=0,
+        description=(
+            "Relationship limit for the 3D knowledge graph, most recent first (0 = no limit)"
+        ),
     )
 
     @field_validator("port")

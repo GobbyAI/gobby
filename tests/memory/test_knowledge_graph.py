@@ -730,7 +730,9 @@ class TestGetEntityGraph:
         result = await service.get_entity_graph(limit=100)
 
         assert result == expected
-        mock_falkor.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
+        mock_falkor.get_entity_graph.assert_called_once_with(
+            limit=100, relationship_limit=2000, project_id=None
+        )
 
 
 class TestGetEntityNeighbors:
@@ -1486,7 +1488,10 @@ class _FakeFalkorGraph:
         self.query_calls: list[tuple[str, dict[str, object] | None]] = []
 
     async def get_entity_graph(
-        self, limit: int = 500, project_id: str | None = None
+        self,
+        limit: int = 500,
+        relationship_limit: int = 2000,
+        project_id: str | None = None,
     ) -> dict[str, object]:
         return self._graph
 
@@ -1609,7 +1614,10 @@ class TestEntityGraphActiveFiltering:
 
         class _ErrFalkor:
             async def get_entity_graph(
-                self, limit: int = 500, project_id: str | None = None
+                self,
+                limit: int = 500,
+                relationship_limit: int = 2000,
+                project_id: str | None = None,
             ) -> dict[str, object]:
                 return graph
 
@@ -1637,7 +1645,10 @@ class TestEntityGraphActiveFiltering:
 
         class _Falkor:
             async def get_entity_graph(
-                self, limit: int = 500, project_id: str | None = None
+                self,
+                limit: int = 500,
+                relationship_limit: int = 2000,
+                project_id: str | None = None,
             ) -> dict[str, object]:
                 return graph
 

@@ -168,7 +168,9 @@ class TestGraphDelegation:
         result = await manager.get_entity_graph(limit=100)
 
         assert result == expected
-        manager._kg_service.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
+        manager._kg_service.get_entity_graph.assert_called_once_with(
+            limit=100, relationship_limit=2000, project_id=None
+        )
 
     async def test_get_entity_neighbors_delegates_to_kg_service(self) -> None:
         """get_entity_neighbors delegates to KnowledgeGraphService."""

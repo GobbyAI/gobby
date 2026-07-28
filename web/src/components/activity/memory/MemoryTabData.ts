@@ -4,6 +4,11 @@ import type {
   MemoryStats,
   MemoryVisibility,
 } from "../../../hooks/useMemory";
+import {
+  DEFAULT_GRAPH_LIMITS,
+  sanitizeGraphLimit,
+  type GraphLimits,
+} from "./KnowledgeGraphModel";
 
 export interface MemoryTypeOption {
   value: string;
@@ -160,5 +165,27 @@ export function extractDreamPurgeGraceDays(values: unknown): DreamPurgeGraceDays
   return {
     ...(review !== null ? { review } : {}),
     ...(deleteGrace !== null ? { delete: deleteGrace } : {}),
+  };
+}
+
+/**
+ * Pull the persisted knowledge-graph fetch limits out of an
+ * `/api/config/values` payload (`ui.knowledge_graph_limit` /
+ * `ui.knowledge_graph_relationship_limit`). Missing or malformed values fall
+ * back to the defaults so the graph always has usable limits (#19157).
+ */
+export function extractGraphLimits(values: unknown): GraphLimits {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return DEFAULT_GRAPH_LIMITS;
+  const ui = (values as { ui?: unknown }).ui;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return DEFAULT_GRAPH_LIMITS;
+  const rawEntities = (ui as { knowledge_graph_limit?: unknown }).knowledge_graph_limit;
+  const rawRelationships = (ui as { knowledge_graph_relationship_limit?: unknown })
+    .knowledge_graph_relationship_limit;
+  return {
+    entities: sanitizeGraphLimit(Number(rawEntities), DEFAULT_GRAPH_LIMITS.entities),
+    relationships: sanitizeGraphLimit(
+      Number(rawRelationships),
+      DEFAULT_GRAPH_LIMITS.relationships,
+    ),
   };
 }
