@@ -321,6 +321,10 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="expansion"
     )
     spec = service.compile_plan_to_spec(plan_doc, parent)
+    assert [(phase["id"], phase["title"], phase["summary"]) for phase in spec["phases"]] == [
+        ("phase-p1", "P1: Phase 1", "Phase 1"),
+        ("phase-p2", "P2: Phase 2", "Phase 2"),
+    ]
     run = service.run_manager.create(
         parent_task_id=parent.id,
         project_id=sample_project["id"],
@@ -333,6 +337,10 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
 
     applied = service.apply_run(run.id, session_id=None)
 
+    assert applied.checkpoints is not None
+    assert applied.task_id_map is not None
+    phase_parent_map = applied.checkpoints["phase_parent_map"]
+    assert list(phase_parent_map) == ["phase-p1", "phase-p2"]
     created_task_ids = applied.created_task_ids or []
     # 2 phase parent tasks + 2 implementation leaves.
     assert len(created_task_ids) == 4
@@ -345,6 +353,19 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         [f"expansion-run:{run.id}"],
         [f"expansion-run:{run.id}"],
     ]
+    assert [task.description for task in phase_tasks] == ["Phase 1", "Phase 2"]
+    assert {
+        dependency.depends_on
+        for dependency in service.dep_manager.get_blockers(phase_parent_map["phase-p1"])
+    } == {applied.task_id_map["1.1::single"]}
+    assert {
+        dependency.depends_on
+        for dependency in service.dep_manager.get_blockers(phase_parent_map["phase-p2"])
+    } == {applied.task_id_map["2.1::single"]}
+    assert {
+        dependency.depends_on
+        for dependency in service.dep_manager.get_blockers(applied.task_id_map["2.1::single"])
+    } == {applied.task_id_map["1.1::single"]}
     assert not any(title.startswith("[TEST] Phase") for title in titles)
     assert not any(title.startswith("[REF] Phase") for title in titles)
     assert any(
