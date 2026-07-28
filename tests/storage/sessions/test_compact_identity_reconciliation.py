@@ -130,6 +130,44 @@ def test_populated_duplicate_blocks_compact_reconciliation_without_mutation(
     assert manager.get(duplicate_id) is not None
 
 
+def test_populated_historical_terminal_row_does_not_block_compact_reactivation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = SessionManager(temp_db)
+    historical_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="historical-provider-id",
+    )
+    canonical_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="canonical-provider-id",
+    )
+    temp_db.execute(
+        """
+        UPDATE sessions
+        SET status = 'expired',
+            message_count = 10,
+            created_at = created_at - INTERVAL '1 minute'
+        WHERE id = %s
+        """,
+        (historical_id,),
+    )
+    _mark_compact(temp_db, canonical_id, message_count=20)
+
+    resolution = reconcile_compact_session_activity(manager, canonical_id)
+
+    assert resolution.success
+    assert resolution.session is not None
+    assert resolution.session.id == canonical_id
+    assert resolution.session.status == "active"
+    historical = manager.get(historical_id)
+    assert historical is not None
+    assert historical.status == "expired"
+
+
 def test_compact_resolution_uses_marker_and_exact_terminal_process(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

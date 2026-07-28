@@ -75,10 +75,11 @@ def reconcile_compact_session_activity(
               AND session_type = 'terminal'
               AND id != %s
               AND status != 'deleted'
+              AND (created_at, id) > (%s, %s)
             ORDER BY created_at, id
             FOR UPDATE
             """,
-            (current.machine_id, current.id),
+            (current.machine_id, current.id, current.created_at, current.id),
         ).fetchall()
         competitors = [
             candidate
