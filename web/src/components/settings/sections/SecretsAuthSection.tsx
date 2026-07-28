@@ -6,6 +6,7 @@ import {
   TextField,
 } from '../../activity/fields'
 import type { FieldOption } from '../../activity/fields'
+import { Button } from '../../ui/Button'
 import { SecretConfigField, Subsection, TextConfigField } from './configFields'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import { useSettingsSectionContext } from './SettingsSectionContext'
@@ -239,18 +240,20 @@ function SecretStoreGroup({
                     <code>{secret.name}</code>
                   </span>
                   <div className="settings-field__actions">
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-ghost btn-sm"
+                      variant="ghost"
+                      size="sm"
                       disabled={busy}
                       aria-label={`Edit secret ${secret.name}`}
                       onClick={() => openEdit(secret)}
                     >
                       Edit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-ghost btn-sm"
+                      variant="ghost"
+                      size="sm"
                       disabled={busy}
                       aria-label={`Delete secret ${secret.name}`}
                       onClick={() => {
@@ -258,7 +261,7 @@ function SecretStoreGroup({
                       }}
                     >
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <p className="settings-field__hint">

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { TextField } from '../../activity/fields'
+import { Button } from '../../ui/Button'
 import { BoundedSelectField } from '../fields'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import {
@@ -287,16 +288,17 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
                   aria-label={`Skill hub key ${index + 1}`}
                   onChange={(event) => updateKey(index, event.target.value)}
                 />
-                <button
+                <Button
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  variant="ghost"
+                  size="sm"
                   aria-label={
                     key ? `Remove ${key}` : `Remove skill hub ${index + 1}`
                   }
                   onClick={() => removeEntry(index)}
                 >
                   Remove
-                </button>
+                </Button>
               </div>
               <HubEntryFields
                 hub={hub}
@@ -310,13 +312,13 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
         <p className="settings-field__empty">No skill hubs.</p>
       )}
       <div className="settings-field__actions">
-        <button
+        <Button
           type="button"
-          className="btn btn-secondary btn-sm"
+          size="sm"
           onClick={addEntry}
         >
           Add skill hub
-        </button>
+        </Button>
       </div>
     </div>
   )

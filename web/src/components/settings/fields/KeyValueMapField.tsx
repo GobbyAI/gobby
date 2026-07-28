@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import type { ReactNode } from 'react'
+import { Button } from '../../ui/Button'
 
 export interface KeyValueMapFieldProps<V = string> {
   label: string
@@ -112,15 +113,17 @@ export function KeyValueMapField<V = string>({
                   key,
                 )}
               </div>
-              <button
+              <Button
                 type="button"
-                className="btn btn-ghost btn-sm settings-map-field__remove"
+                variant="ghost"
+                size="sm"
+                className="settings-map-field__remove"
                 disabled={disabled}
                 aria-label={key ? `Remove ${key}` : `Remove ${ariaLabel} entry ${index + 1}`}
                 onClick={() => removeEntry(index)}
               >
                 Remove
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -128,14 +131,14 @@ export function KeyValueMapField<V = string>({
         <p className="settings-field__empty">No entries.</p>
       )}
       <div className="settings-field__actions">
-        <button
+        <Button
           type="button"
-          className="btn btn-secondary btn-sm"
+          size="sm"
           disabled={disabled}
           onClick={addEntry}
         >
           {addLabel}
-        </button>
+        </Button>
       </div>
     </div>
   )

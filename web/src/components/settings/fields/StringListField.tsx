@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { Button } from '../../ui/Button'
 
 export interface StringListFieldProps {
   label: string
@@ -56,15 +57,17 @@ export function StringListField({
                 aria-label={`${ariaLabel} item ${index + 1}`}
                 onChange={(event) => updateItem(index, event.target.value)}
               />
-              <button
+              <Button
                 type="button"
-                className="btn btn-ghost btn-sm settings-list-field__remove"
+                variant="ghost"
+                size="sm"
+                className="settings-list-field__remove"
                 disabled={disabled}
                 aria-label={`Remove ${ariaLabel} item ${index + 1}`}
                 onClick={() => removeItem(index)}
               >
                 Remove
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -72,14 +75,14 @@ export function StringListField({
         <p className="settings-field__empty">No entries.</p>
       )}
       <div className="settings-field__actions">
-        <button
+        <Button
           type="button"
-          className="btn btn-secondary btn-sm"
+          size="sm"
           disabled={disabled}
           onClick={addItem}
         >
           {addLabel}
-        </button>
+        </Button>
       </div>
     </div>
   )

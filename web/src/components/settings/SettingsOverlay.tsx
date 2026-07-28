@@ -1,6 +1,7 @@
 import { createElement, useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDownIcon, CloseIcon } from '../icons'
+import { Button } from '../ui/Button'
 import { ActivityFilterDropdown } from '../activity/ActivityFilterDropdown'
 import {
   getSettingsSection,
@@ -164,14 +165,16 @@ export function SettingsOverlay({
           <h2 id={headingId} className="settings-overlay-shell__title">
             Settings
           </h2>
-          <button
+          <Button
             type="button"
-            className="btn btn-ghost btn-icon btn-sm settings-overlay-shell__close"
+            variant="ghost"
+            size="icon"
+            className="settings-overlay-shell__close"
             onClick={onClose}
             aria-label="Close settings"
           >
             <CloseIcon />
-          </button>
+          </Button>
         </header>
         <div className="settings-overlay-shell__toolbar">
           <div className="settings-overlay-shell__section-select">

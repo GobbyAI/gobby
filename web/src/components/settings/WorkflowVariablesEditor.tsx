@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useWorkflows, type WorkflowDetail } from '../../hooks/useWorkflows'
+import { Button } from '../ui/Button'
 import { Switch } from '../ui/Switch'
 import { TextField } from '../activity/fields'
 import { parseVariableInput, variableDisplayValue } from './workflowVariables'
@@ -92,14 +93,14 @@ export function WorkflowVariablesEditor() {
     <div className="settings-variables">
       <div className="settings-variables__head">
         <span className="settings-field__label">Variable defaults</span>
-        <button
+        <Button
           type="button"
-          className="btn btn-secondary btn-sm"
+          size="sm"
           aria-expanded={showForm}
           onClick={() => setShowForm((open) => !open)}
         >
           Add variable
-        </button>
+        </Button>
       </div>
       <p className="settings-field__hint">
         Default session variable values. Bundled template variables ship with
@@ -130,20 +131,21 @@ export function WorkflowVariablesEditor() {
             onChange={setDescription}
           />
           <div className="settings-variables__form-actions">
-            <button
+            <Button
               type="button"
-              className="btn btn-ghost btn-sm"
+              variant="ghost"
+              size="sm"
               onClick={resetForm}
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-secondary btn-sm"
+              size="sm"
               onClick={() => void handleCreate()}
             >
               Save variable
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -177,14 +179,15 @@ export function WorkflowVariablesEditor() {
                     onChange={() => void handleToggle(variable)}
                   />
                   {variable.source !== 'template' ? (
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-ghost btn-sm"
+                      variant="ghost"
+                      size="sm"
                       aria-label={`Delete ${variable.name}`}
                       onClick={() => void handleDelete(variable)}
                     >
                       Delete
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>

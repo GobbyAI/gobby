@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import type { ReactNode } from 'react'
+import { Button } from '../../ui/Button'
 
 export interface TypedListFieldProps<T> {
   label: string
@@ -63,15 +64,17 @@ export function TypedListField<T>({
                 <span className="settings-typed-list__item-title">
                   {itemLabel ? itemLabel(item, index) : `${ariaLabel} ${index + 1}`}
                 </span>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-ghost btn-sm settings-typed-list__remove"
+                  variant="ghost"
+                  size="sm"
+                  className="settings-typed-list__remove"
                   disabled={disabled}
                   aria-label={`Remove ${ariaLabel} ${index + 1}`}
                   onClick={() => removeItem(index)}
                 >
                   Remove
-                </button>
+                </Button>
               </div>
               <div className="settings-typed-list__item-body">
                 {renderItem(item, (next) => updateItem(index, next), index)}
@@ -83,14 +86,14 @@ export function TypedListField<T>({
         <p className="settings-field__empty">No items.</p>
       )}
       <div className="settings-field__actions">
-        <button
+        <Button
           type="button"
-          className="btn btn-secondary btn-sm"
+          size="sm"
           disabled={disabled}
           onClick={addItem}
         >
           {addLabel}
-        </button>
+        </Button>
       </div>
     </div>
   )
