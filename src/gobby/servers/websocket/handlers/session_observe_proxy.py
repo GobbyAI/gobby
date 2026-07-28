@@ -18,7 +18,10 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _load_live_session_variables,
     _session_meta_payload,
 )
-from gobby.sessions.context_usage import effective_context_window_for_session
+from gobby.sessions.context_usage import (
+    effective_context_window_for_session,
+    resolve_context_window_overrides,
+)
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -173,15 +176,12 @@ async def handle_attach_to_session(
     )
     live_variables = await _load_live_session_variables(mixin, session_manager, session_id)
     db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
-    configured_overrides = getattr(
-        getattr(mixin, "daemon_config", None),
-        "context_window_overrides",
-        None,
+    context_window_overrides = resolve_context_window_overrides(
+        getattr(mixin, "daemon_config", None)
     )
-    context_window_overrides = (
-        configured_overrides if isinstance(configured_overrides, dict) else None
-    )
-    context_window = effective_context_window_for_session(
+    context_window = await run_db(
+        mixin,
+        effective_context_window_for_session,
         session,
         variables=live_variables,
         db=db,

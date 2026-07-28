@@ -26,6 +26,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
 
 if TYPE_CHECKING:
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
     from gobby.events.wake import WakeDispatcher
@@ -81,7 +82,7 @@ class ServiceContainer:
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
     attention_manager: Any | None = None  # AttentionStateManager
-    attention_metadata_store: Any | None = None  # AttentionMetadataStore
+    attention_metadata_store: AttentionMetadataStore | None = None
     detection_registry: DetectionManifestRegistry | None = None
 
     # Communications

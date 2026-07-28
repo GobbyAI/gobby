@@ -311,6 +311,14 @@ class LocalCommunicationsStore:
                     attachment.message_id = persisted.id
                     self._insert_attachment(conn, attachment)
                     saved_attachments.append(attachment)
+            elif attachments:
+                logger.info(
+                    "Skipped attachment persistence for deduplicated communications message",
+                    extra={
+                        "message_id": persisted.id,
+                        "platform_message_id": message.platform_message_id,
+                    },
+                )
 
         return persisted, saved_attachments
 

@@ -280,7 +280,11 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 key: value for key, value in runtime_updates.items() if value != MASKED_SECRET
             }
             deep_merge(current, unflatten_config(unmasked_updates))
-            DaemonConfig(**current)
+            prospective_config = DaemonConfig(**current)
+            _reject_unprobed_responses_endpoint_updates(
+                runtime_updates,
+                prospective_config,
+            )
             return JSONResponse(content={"valid": True, "errors": []})
         except HTTPException:
             raise

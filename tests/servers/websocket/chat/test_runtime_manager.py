@@ -157,6 +157,33 @@ class TestWebChatRuntimeManager:
             "ollama",
         )
 
+    def test_runtime_manager_skips_invalid_responses_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "openrouter": {
+                            "wire_api": "responses",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "test-openrouter-key",
+                            "model": "moonshotai/kimi-k3",
+                        }
+                    }
+                }
+            }
+        )
+        monkeypatch.setattr(
+            "gobby.servers.websocket.chat.runtime_manager.codex_endpoint_config_overrides",
+            MagicMock(side_effect=ValueError("invalid endpoint")),
+        )
+
+        manager = WebChatRuntimeManager(daemon_config=config)
+
+        assert manager._codex_endpoint_backends == {}
+
     async def test_codex_endpoint_selector_uses_canonical_wire_model(self) -> None:
         config = DaemonConfig(
             ai={

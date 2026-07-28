@@ -68,7 +68,10 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
         user_prefix = "local-web" if server.auth_service.enabled else "local"
         adapter = ASGIWebSocketAdapter(websocket, user_id=f"{user_prefix}-{uuid4().hex[:8]}")
         await adapter.accept()
-        await websocket_server._handle_connection(adapter)
+        try:
+            await websocket_server.handle_connection(adapter)
+        except Exception:
+            logger.exception("ASGI WebSocket handler failed")
         if not adapter.closed and not adapter.disconnected:
             await adapter.close(code=1011, reason="WebSocket handler exited unexpectedly")
 

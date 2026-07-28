@@ -72,13 +72,16 @@ class WebChatRuntimeManager:
         self._codex_endpoint_backends: dict[str, CodexWebChatBackend] = {}
         for endpoint_name, endpoint in self._generation_endpoints.items():
             if endpoint.wire_api == "responses":
-                endpoint_client = CodexAppServerClient(
-                    config_overrides=codex_endpoint_config_overrides(
-                        endpoint_name,
-                        endpoint,
-                    ),
-                    env_overrides=codex_endpoint_app_server_env(endpoint_name, endpoint),
-                )
+                try:
+                    endpoint_client = CodexAppServerClient(
+                        config_overrides=codex_endpoint_config_overrides(
+                            endpoint_name,
+                            endpoint,
+                        ),
+                        env_overrides=codex_endpoint_app_server_env(endpoint_name, endpoint),
+                    )
+                except ValueError:
+                    continue
             else:
                 try:
                     oss_provider = codex_oss_provider_for_local_endpoint(endpoint)

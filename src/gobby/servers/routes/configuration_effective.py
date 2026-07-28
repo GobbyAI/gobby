@@ -25,7 +25,7 @@ from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 logger = logging.getLogger(__name__)
 
 _SERVED_PREFIXES = ("ai.", "databases.", "indexing.", "gwiki.")
-_EXCLUDED_KEYS = {"ai.routing", EMBEDDING_SWITCH_JOURNAL_KEY}
+_EXCLUDED_KEYS = {EMBEDDING_SWITCH_JOURNAL_KEY}
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^{}]*\}")
 
 
@@ -138,7 +138,7 @@ def register_effective_routes(
 
     @router.get("/effective", dependencies=[Depends(require_runtime_token)])
     def get_effective_config() -> JSONResponse:
-        """Serve resolved client config; non-loopback bind hosts require trusted transport."""
+        """Serve resolved client configuration."""
         config = context.server.services.config
         if config is None:
             raise HTTPException(status_code=503, detail="Config not available")

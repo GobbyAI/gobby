@@ -51,7 +51,8 @@ def _parse_incremental_records(
 
 class ProcessorTranscriptMixin:
     def _filter_session_title_messages(
-        self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
+        self: ProcessorHost,
+        messages: list[ParsedMessage],
     ) -> list[ParsedMessage]:
         """Filter provider-native title metadata out of conversation content."""
         return [m for m in messages if m.content_type != "session_title"]
@@ -216,22 +217,24 @@ class ProcessorTranscriptMixin:
         if not parser:
             return
 
-        raw_records = _parse_incremental_records(
-            parser,
-            new_lines,
-            start_index=last_index + 1,
-        )
-        parsed_records = normalize_transcript_records(raw_records, _parser_source(parser))
-        parsed_messages: list[ParsedMessage] = [
-            r for r in parsed_records if isinstance(r, ParsedMessage)
-        ]
+        parser_state = parser.snapshot_state() if _parser_source(parser) == "codex" else None
+        try:
+            raw_records = _parse_incremental_records(
+                parser,
+                new_lines,
+                start_index=last_index + 1,
+            )
+            parsed_records = normalize_transcript_records(raw_records, _parser_source(parser))
+            parsed_messages: list[ParsedMessage] = [
+                r for r in parsed_records if isinstance(r, ParsedMessage)
+            ]
 
-        latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
-        parsed_messages = await self._run_db(
-            self._filter_session_title_messages,
-            session_id,
-            parsed_messages,
-        )
+            latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
+            parsed_messages = self._filter_session_title_messages(parsed_messages)
+        except Exception:
+            if parser_state is not None:
+                parser.hydrate_state(parser_state)
+            raise
 
         appender = self._index_appenders.get(session_id)
         pending_appender = None
@@ -278,7 +281,12 @@ class ProcessorTranscriptMixin:
                 )
             return
 
-        stats = await self._process_parsed_batch(session_id, parsed_messages)
+        try:
+            stats = await self._process_parsed_batch(session_id, parsed_messages)
+        except Exception:
+            if parser_state is not None:
+                parser.hydrate_state(parser_state)
+            raise
 
         if pending_appender is not None:
             pending_appender.index.session_stats = stats

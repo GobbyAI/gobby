@@ -52,11 +52,14 @@ def test_gate_uses_terminal_fence_and_verifies_predecessor_exit() -> None:
     connection = _GateConnection()
     token = "deployment-token"
     fence_key = deployment_advisory_key("agent-terminal-transition", token=token)
+    gate_application_name = f"gobby-gate-{token}-gateid12"
 
     with (
         patch("gobby.runner_gate.psycopg.connect", return_value=connection) as connect,
         patch("gobby.runner_gate.time.sleep"),
+        patch("gobby.runner_gate.uuid.uuid4") as uuid4,
     ):
+        uuid4.return_value.hex = "gateid1234567890"
         result = runner_gate._run_gate_request(
             {
                 "conninfo": "postgresql://gate-secret",
@@ -75,7 +78,7 @@ def test_gate_uses_terminal_fence_and_verifies_predecessor_exit() -> None:
         "postgresql://gate-secret",
         autocommit=True,
         connect_timeout=runner_gate.GATE_CONNECT_TIMEOUT_SECONDS,
-        application_name=connect.call_args.kwargs["application_name"],
+        application_name=gate_application_name,
     )
     statements = [sql for sql, _params in connection.calls]
     assert statements[:3] == [
@@ -224,7 +227,9 @@ class TestRunnerGateLiveFence:
                 ).fetchone()
                 if waiting and waiting[0]:
                     break
-                await asyncio.sleep(0.1)
+                if gate.done():
+                    pytest.fail("gate unexpectedly completed while the shared fence was held")
+                await asyncio.wait({gate}, timeout=0.1)
             else:
                 pytest.fail("gate child never blocked on the shared fence")
             assert not gate.done()

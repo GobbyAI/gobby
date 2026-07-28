@@ -14,8 +14,8 @@ from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
-from gobby.servers.provider_model_defaults import AGY_MODELS
-from gobby.servers.routes.providers import create_providers_router
+from gobby.servers.provider_model_defaults import AGY_MODELS, DROID_MODEL_CATALOG
+from gobby.servers.routes.providers import _configured_endpoints, create_providers_router
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +31,25 @@ def client() -> TestClient:
     router = create_providers_router()
     app.include_router(router)
     return TestClient(app)
+
+
+def test_configured_endpoints_skips_unvalidated_values() -> None:
+    matching = SimpleNamespace(wire_api="chat-completions")
+    server = _server_stub(
+        config=SimpleNamespace(
+            ai=SimpleNamespace(
+                generation=SimpleNamespace(
+                    endpoints={
+                        "raw-dict": {"wire_api": "chat-completions"},
+                        "matching": matching,
+                        "responses": SimpleNamespace(wire_api="responses"),
+                    }
+                )
+            )
+        )
+    )
+
+    assert list(_configured_endpoints(server, "chat-completions")) == [("matching", matching)]
 
 
 class TestProviderRoutes:
@@ -247,7 +266,7 @@ class TestProviderModelsRoute:
         assert {m["context_length_source"] for m in codex} == {"unknown"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert len(droid_values) == 28
+        assert len(droid_values) == len(DROID_MODEL_CATALOG)
         assert "glm-5.2" in droid_values
         assert "claude-fable-5" in droid_values
         assert "claude-opus-4-7" in droid_values

@@ -5,6 +5,7 @@ Tests for telemetry providers.
 from unittest.mock import MagicMock
 
 import pytest
+from opentelemetry import metrics, trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace import TracerProvider
 from prometheus_client import generate_latest
@@ -22,15 +23,8 @@ from gobby.telemetry.providers import (
 def cleanup_providers() -> None:
     """Ensure providers are cleared after each test."""
     shutdown_providers()
-    providers._TRACER_PROVIDER = None
-    providers._METER_PROVIDER = None
     yield
     shutdown_providers()
-    for provider in (providers._TRACER_PROVIDER, providers._METER_PROVIDER):
-        if provider is not None:
-            provider.shutdown()
-    providers._TRACER_PROVIDER = None
-    providers._METER_PROVIDER = None
 
 
 def test_get_tracer_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,10 +64,12 @@ def test_add_span_storage_exporter_is_idempotent(monkeypatch: pytest.MonkeyPatch
 
     providers.shutdown_providers()
 
+    batch_processors[0].force_flush.assert_called_once()
     batch_processors[0].shutdown.assert_called_once()
     provider.shutdown.assert_not_called()
     assert providers._SPAN_STORAGE_PROCESSOR is None
 
+    monkeypatch.setattr(providers, "_TRACER_PROVIDER", provider)
     providers.add_span_storage_exporter(MagicMock())
     assert provider.add_span_processor.call_count == 2
     assert len(batch_processors) == 2
@@ -107,8 +103,8 @@ def test_provider_acquisition_reuses_api_global_providers(
 ) -> None:
     tracer_provider = TracerProvider()
     meter_provider = MeterProvider()
-    monkeypatch.setattr(providers.trace, "get_tracer_provider", lambda: tracer_provider)
-    monkeypatch.setattr(providers.metrics, "get_meter_provider", lambda: meter_provider)
+    monkeypatch.setattr(trace, "get_tracer_provider", lambda: tracer_provider)
+    monkeypatch.setattr(metrics, "get_meter_provider", lambda: meter_provider)
 
     config = TelemetrySettings()
 
@@ -116,16 +112,46 @@ def test_provider_acquisition_reuses_api_global_providers(
     assert get_meter_provider(config) is meter_provider
 
 
-def test_shutdown_providers_preserves_interpreter_providers() -> None:
-    """Lifecycle shutdown preserves interpreter-latched providers."""
-    config = TelemetrySettings()
-    p_trace = get_tracer_provider(config)
-    p_meter = get_meter_provider(config)
+def test_shutdown_providers_clears_without_stopping_interpreter_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracer_provider = TracerProvider()
+    meter_provider = MeterProvider()
+    tracer_shutdown = MagicMock()
+    meter_shutdown = MagicMock()
+    monkeypatch.setattr(tracer_provider, "shutdown", tracer_shutdown)
+    monkeypatch.setattr(meter_provider, "shutdown", meter_shutdown)
+    monkeypatch.setattr(trace, "get_tracer_provider", lambda: tracer_provider)
+    monkeypatch.setattr(metrics, "get_meter_provider", lambda: meter_provider)
+    get_tracer_provider(TelemetrySettings())
+    get_meter_provider(TelemetrySettings())
 
     shutdown_providers()
 
-    assert get_tracer_provider(config) is p_trace
-    assert get_meter_provider(config) is p_meter
+    tracer_shutdown.assert_not_called()
+    meter_shutdown.assert_not_called()
+    assert providers._TRACER_PROVIDER is None
+    assert providers._METER_PROVIDER is None
+
+
+def test_shutdown_providers_flushes_and_stops_owned_providers() -> None:
+    tracer_provider = MagicMock()
+    meter_provider = MagicMock()
+    providers._TRACER_PROVIDER = tracer_provider
+    providers._METER_PROVIDER = meter_provider
+    providers._OWNED_TRACER_PROVIDER = tracer_provider
+    providers._OWNED_METER_PROVIDER = meter_provider
+
+    shutdown_providers()
+
+    tracer_provider.force_flush.assert_called_once_with()
+    tracer_provider.shutdown.assert_called_once_with()
+    meter_provider.force_flush.assert_called_once_with()
+    meter_provider.shutdown.assert_called_once_with()
+    assert providers._TRACER_PROVIDER is None
+    assert providers._METER_PROVIDER is None
+    assert providers._OWNED_TRACER_PROVIDER is None
+    assert providers._OWNED_METER_PROVIDER is None
 
 
 def test_shutdown_providers_logs_processor_exception(

@@ -9,10 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.servers.routes.mcp.endpoints.execution import call_mcp_tool, mcp_proxy
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
 pytestmark = pytest.mark.unit
-
-MAX_ENVELOPE_CHARS = 2_000
 
 
 def _server(result: dict[str, Any]) -> MagicMock:
@@ -70,7 +69,7 @@ async def test_http_wrapper_final_result_stays_within_shared_cap(
 
     assert response["success"] is True
     assert response["result"] == tool_result
-    assert len(json.dumps(response, ensure_ascii=False, default=str)) <= MAX_ENVELOPE_CHARS
+    assert len(json.dumps(response, ensure_ascii=False, default=str)) <= TEST_MAX_ENVELOPE_CHARS
     call = server.tool_proxy.call_tool.await_args
     assert call.args[2] == {"intent": "target-value"}
     assert call.kwargs["wrapper_originated"] is True

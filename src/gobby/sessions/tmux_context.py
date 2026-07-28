@@ -43,13 +43,15 @@ def get_tmux_socket_name(terminal_context: Mapping[str, Any] | None) -> str | No
 
 
 def get_tmux_session_name(terminal_context: Mapping[str, Any] | None) -> str | None:
+    """Return the tmux session name stored in a terminal-context mapping."""
     if not terminal_context:
         return None
     value = terminal_context.get("tmux_session")
     return value if isinstance(value, str) and value else None
 
 
-def get_tmux_pane_pid(terminal_context: Mapping[str, Any] | None) -> int | None:
+def get_terminal_parent_pid(terminal_context: Mapping[str, Any] | None) -> int | None:
+    """Return the positive parent-process PID stored in a terminal-context mapping."""
     if not terminal_context:
         return None
     value = terminal_context.get("parent_pid")

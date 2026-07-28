@@ -2,7 +2,12 @@
 
 HTTP/WebSocket routes, session processing, attention state, and runtime ownership boundaries.
 
-Unresolved original findings: **53**
+- Forward-port source: `e95f9be14bcd1d821de8aff8efdea73fdf3536ec`
+- Original task: `#19007`
+- Integration task: `#19173`
+- Packet base: `9c34494c6ce5d1c6f8688fea7c042804907b3136`
+
+Source findings: **53**
 
 Original finding IDs: 205-207, 209, 215-216, 248-253, 267, 281-283, 295-296, 344-347, 419, 458, 481-483, 489, 495, 501-502, 545-546, 569-570, 602-607, 661, 676-677, 706-709, 722-723, 748, 781-782
 
@@ -217,3 +222,70 @@ In @tests/servers/routes/test_tasks_routes.py around lines 444 - 448, Add the ap
 ## Finding #782
 
 In @tests/sessions/test_codex_nested_exec_outcomes.py around lines 383 - 393, Update the parametrization for this test to include an expected outcomes value for each tool_input case, then replace the tool_input branch in the test body with a direct assertion against that parameter. Preserve the existing expected outcome for the two recognized exec_command inputs and use the empty-outcomes expectation for other inputs, so every parameter explicitly defines its result.
+
+## Disposition Ledger
+
+| Finding | Disposition | Accounting |
+| --- | --- | --- |
+| #205 | Carried | added and used the public `TmuxSessionManager.base_args()` accessor. |
+| #206 | Carried | roster task payloads are loaded concurrently by distinct task ID and cached. |
+| #207 | Carried | attention entry locks are created only for valid entries and removed after the last user or waiter. |
+| #209 | Carried | renamed the helper and payload field to describe the terminal parent PID and documented both tmux helpers. |
+| #215 | Carried | brief sandbox serialization caps violation counting and marks truncated counts. |
+| #216 | Carried | violation logs use replacement decoding and skip malformed records; corrupt UTF-8 is covered. |
+| #248 | Carried | purge route tests cover unavailable, protected, and failed outcomes with status and payload assertions. |
+| #249 | Carried | project route tests wire the runner through `set_runner_getter`. |
+| #250 | Carried | attention response tests narrow optional state values before member access. |
+| #251 | Carried | roster concurrency tests assert a deterministic maximum critical-section occupancy. |
+| #252 | Carried | roster tests assert the HTTP status before decoding the response. |
+| #253 | Carried | roster worker exceptions are captured and asserted absent after joins. |
+| #267 | Carried | app context uses the precise type-only `AttentionMetadataStore` annotation. |
+| #281 | Carried | ASGI uses a public WebSocket handler entry point and logs handler failures before fallback close. |
+| #282 | Carried | ASGI close tolerates a peer disconnect and records the disconnected state. |
+| #283 | Carried | the broadcast metadata store import is type-checking-only. |
+| #295 | Carried | ASGI endpoint tests cover handler failure, clean return, unavailable server, and disabled authentication. |
+| #296 | Carried | ACP deletion now has regression coverage for a false manager result. |
+| #344 | Carried | context-window override resolution is shared by lifecycle and observation paths. |
+| #345 | Carried | Codex lifecycle dedup applies only to non-empty tool-call IDs. |
+| #346 | Carried | observed-session context-window lookup runs through the database executor. |
+| #347 | Carried | temporary Codex reconciliation registrations are removed while existing registrations are preserved. |
+| #419 | Carried | sidecars persist and verify the indexed prefix digest before append-mode reuse. |
+| #458 | Carried | default deployment tokens are memoized while explicit roots remain independently resolved. |
+| #481 | Carried | terminal delivery must admit and run the kill callback before release reports success. |
+| #482 | Already satisfied | the current lifecycle implementation contains only one reachable return. |
+| #483 | Already satisfied | the final lifecycle read already reuses the ambient transaction. |
+| #489 | Carried | locally owned telemetry providers and processors are flushed and shut down without touching reused globals. |
+| #495 | Carried | resume-blocked UUID literals are centralized as module constants. |
+| #501 | Carried | telemetry tests distinguish locally owned providers from reused interpreter globals. |
+| #502 | Carried | runner-gate tests assert the explicit gate application name using distinct values. |
+| #545 | Carried | the effective-config docstring no longer claims an unenforced transport constraint. |
+| #546 | Carried | routing exclusions use the suffix predicate without a redundant exact key. |
+| #569 | Carried | spawn-route tests establish the non-null completion-registry precondition. |
+| #570 | Carried | all real-database effective-config route tests carry the integration marker. |
+| #602 | Carried | endpoint API keys are persisted only after validation and probing succeed. |
+| #603 | Carried | config validation applies the same unprobed Responses-endpoint rejection as saving. |
+| #604 | Carried | provider endpoint filtering safely handles unvalidated values. |
+| #605 | Carried | provider routes share `_configured_endpoints` for guarded endpoint traversal. |
+| #606 | Carried | runtime startup skips invalid Responses endpoint configurations without aborting. |
+| #607 | Carried | deduplicated attachment persistence emits structured message and platform identifiers. |
+| #661 | Carried | parser snapshots and rollback hydration are limited to Codex, including downstream batch failures. |
+| #676 | Carried | the unresolved-errors fixture heading now has the required blank line. |
+| #677 | Carried | execution-offload tests use the shared envelope-size constant. |
+| #706 | Carried | vision extraction wiring is unconditional for the communications manager. |
+| #707 | Carried | endpoint-backed Codex context clearing reattaches with the endpoint selector. |
+| #708 | Carried | continuation events use the persisted created-session title outside in-place resume. |
+| #709 | Carried | title-message filtering is called directly as an in-memory operation. |
+| #722 | Carried | the built-in tool approval policy test has the unit marker. |
+| #723 | Carried | the title-filter test class now reflects the behavior under test. |
+| #748 | Carried | skipped session-prune counts are structured logging context. |
+| #781 | Carried | validation-criteria route coverage has the integration marker. |
+| #782 | Carried | nested-exec outcome parametrization carries explicit expected outcomes. |
+
+## Reconciliation audit
+
+- All four paths shared with current `0.5.0` work were reviewed, including the three clean
+  production auto-merges and the provider-route test conflict.
+- Provider catalog coverage uses the source branch's catalog-derived count while retaining
+  the current `glm-5.2` regression assertion.
+- This packet changes no migration files. Migrations `339`, `342`, `345`, and `346` remain
+  byte-for-byte at the packet base, preserving the current migration chain.

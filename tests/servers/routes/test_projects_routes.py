@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -750,7 +751,8 @@ class TestProjectRoutes:
             session_manager=session_manager,
             database=session_manager.db,
         )
-        server._runner = SimpleNamespace(project_purge_service=PurgeService())
+        runner = SimpleNamespace(project_purge_service=PurgeService())
+        server.set_runner_getter(lambda: cast(Any, runner))
 
         response = TestClient(server.app).post(f"/api/projects/{real_project['id']}/purge")
 
@@ -758,17 +760,79 @@ class TestProjectRoutes:
         assert response.json()["status"] == "purged"
         assert calls == [real_project["id"]]
 
+    def test_purge_project_returns_503_without_runner_service(
+        self,
+        session_manager: SessionManager,
+        real_project: dict,
+    ) -> None:
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+        )
+        runner = SimpleNamespace(project_purge_service=None)
+        server.set_runner_getter(lambda: cast(Any, runner))
+
+        response = TestClient(server.app).post(f"/api/projects/{real_project['id']}/purge")
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Project purge service is unavailable"}
+
+    @pytest.mark.parametrize(
+        ("outcome_factory", "status_code", "status", "message"),
+        [
+            (PurgeOutcome.protected, 403, "protected", "project is protected"),
+            (PurgeOutcome.failed, 500, "failed", "purge failed"),
+        ],
+    )
+    def test_purge_project_maps_unsuccessful_outcomes(
+        self,
+        session_manager: SessionManager,
+        real_project: dict[str, Any],
+        outcome_factory: Callable[[str, str], PurgeOutcome],
+        status_code: int,
+        status: str,
+        message: str,
+    ) -> None:
+        project_id = real_project["id"]
+
+        class PurgeService:
+            async def purge_project(self, requested_id: str) -> PurgeOutcome:
+                assert requested_id == project_id
+                return outcome_factory(requested_id, message)
+
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+        )
+        runner = SimpleNamespace(project_purge_service=PurgeService())
+        server.set_runner_getter(lambda: cast(Any, runner))
+
+        response = TestClient(server.app).post(f"/api/projects/{project_id}/purge")
+
+        assert response.status_code == status_code
+        assert response.json() == {
+            "detail": {
+                "project_id": project_id,
+                "status": status,
+                "message": message,
+            }
+        }
+
     def test_delete_protected_personal(self, client: TestClient, personal_project: dict) -> None:
         """Cannot delete _personal (system project)."""
         response = client.delete(f"/api/projects/{personal_project['id']}")
         assert response.status_code == 403
 
-    def test_delete_protected_orphaned(self, client: TestClient, orphaned_project: dict) -> None:
+    def test_delete_protected_orphaned(
+        self, client: TestClient, orphaned_project: dict[str, Any]
+    ) -> None:
         """Cannot delete _orphaned (system project)."""
         response = client.delete(f"/api/projects/{orphaned_project['id']}")
         assert response.status_code == 403
 
-    def test_delete_protected_migrated(self, client: TestClient, migrated_project: dict) -> None:
+    def test_delete_protected_migrated(
+        self, client: TestClient, migrated_project: dict[str, Any]
+    ) -> None:
         """Cannot delete _migrated (system project)."""
         response = client.delete(f"/api/projects/{migrated_project['id']}")
         assert response.status_code == 403

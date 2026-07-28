@@ -10,6 +10,7 @@ from typing import Any
 from gobby.paths import get_gobby_home
 
 _MAX_EXPOSED_VIOLATIONS = 100
+_MAX_COUNTED_VIOLATIONS = 10_000
 
 
 def sandbox_record(
@@ -29,8 +30,13 @@ def sandbox_record(
         "policy_hash": raw.get("policy_hash"),
     }
     violation_path = _trusted_violation_path(raw.get("violation_path"))
-    count, violations = _read_violations(violation_path, include_events=include_events)
+    count, violations, count_truncated = _read_violations(
+        violation_path,
+        include_events=include_events,
+    )
     record["violation_count"] = count
+    if count_truncated:
+        record["violation_count_truncated"] = True
     if include_events:
         record["violations"] = violations
     return record
@@ -50,13 +56,18 @@ def _trusted_violation_path(raw_path: object) -> Path | None:
     return resolved
 
 
-def _read_violations(path: Path | None, *, include_events: bool) -> tuple[int, list[Any]]:
+def _read_violations(
+    path: Path | None,
+    *,
+    include_events: bool,
+) -> tuple[int, list[Any], bool]:
     if path is None:
-        return 0, []
+        return 0, [], False
     recent: deque[Any] = deque(maxlen=_MAX_EXPOSED_VIOLATIONS)
     count = 0
+    truncated = False
     try:
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 try:
                     value = json.loads(line)
@@ -65,6 +76,9 @@ def _read_violations(path: Path | None, *, include_events: bool) -> tuple[int, l
                 count += 1
                 if include_events:
                     recent.append(value)
+                elif count >= _MAX_COUNTED_VIOLATIONS:
+                    truncated = next(handle, None) is not None
+                    break
     except OSError:
-        return 0, []
-    return count, list(recent)
+        return 0, [], False
+    return count, list(recent), truncated

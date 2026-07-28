@@ -40,18 +40,10 @@ def register_generation_endpoint_routes(
     ) -> dict[str, object]:
         secret_store = context.get_secret_store()
         config_store = context.get_config_store()
-        if request.api_key:
-            config_store.set_named_secret(
-                secret_store,
-                request.secret_name,
-                request.api_key,
-                category="llm",
-                description=f"API key for generation endpoint {endpoint_name}",
-            )
 
         # Probe-time resolution is deliberately direct; the daemon's startup-time
         # config snapshot may predate the submitted secret.
-        api_key = secret_store.get(request.secret_name)
+        api_key = request.api_key or secret_store.get(request.secret_name)
         if not api_key:
             raise HTTPException(
                 status_code=400,
@@ -87,6 +79,14 @@ def register_generation_endpoint_routes(
 
         activated = result.endpoint
         prefix = f"ai.generation.endpoints.{endpoint_name}"
+        if request.api_key:
+            config_store.set_named_secret(
+                secret_store,
+                request.secret_name,
+                request.api_key,
+                category="llm",
+                description=f"API key for generation endpoint {endpoint_name}",
+            )
         config_store.set_secret(
             f"{prefix}.api_key",
             api_key,

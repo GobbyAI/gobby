@@ -46,7 +46,12 @@ class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
         self.closed = True
         self.close_code = code
         self.close_reason = reason
-        await self._websocket.close(code=code, reason=reason)
+        try:
+            await self._websocket.close(code=code, reason=reason)
+        except WebSocketDisconnect as exc:
+            self.disconnected = True
+            self.close_code = exc.code
+            self.close_reason = exc.reason
 
     def __aiter__(self) -> ASGIWebSocketAdapter:
         return self

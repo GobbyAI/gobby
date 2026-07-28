@@ -168,6 +168,10 @@ class TmuxSessionManager:
             args.extend(["-f", "/dev/null"])
         return args
 
+    def base_args(self) -> list[str]:
+        """Return the public tmux command prefix for this manager."""
+        return self._base_args()
+
     @staticmethod
     def _parse_session_info_line(line: str) -> TmuxSessionInfo | None:
         """Parse one tab-delimited tmux metadata row."""

@@ -441,6 +441,7 @@ class TestCreateTask:
         assert "state" in data
         assert "id" in data
 
+    @pytest.mark.integration
     def test_create_requires_validation_criteria(self, client: TestClient) -> None:
         response = client.post("/api/tasks", json={"title": "Missing contract"})
 

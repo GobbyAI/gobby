@@ -80,6 +80,7 @@ def client(server: Any) -> TestClient:
     )
 
 
+@pytest.mark.integration
 def test_effective_config_filters_resolves_stringifies_and_overlays(
     client: TestClient,
     hub_db: HubDatabase,
@@ -172,6 +173,7 @@ def test_effective_config_filters_resolves_stringifies_and_overlays(
     assert all("$secret:" not in value and "${" not in value for value in values.values())
 
 
+@pytest.mark.integration
 def test_post_overlay_markers_are_omitted(
     client: TestClient,
     server: Any,
@@ -205,6 +207,7 @@ def test_post_overlay_markers_are_omitted(
     assert all("$secret:" not in value and "${" not in value for value in values.values())
 
 
+@pytest.mark.integration
 def test_effective_config_requires_runtime_token_even_when_auth_is_disabled(
     server: Any,
     hub_db: HubDatabase,
@@ -237,6 +240,7 @@ def test_effective_config_requires_runtime_token_even_when_auth_is_disabled(
     assert local_header.status_code == 200
 
 
+@pytest.mark.integration
 def test_effective_config_returns_503_when_runtime_config_is_unavailable(
     client: TestClient,
     server: Any,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -97,6 +98,9 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "source_path": os.path.abspath(path),
         "source_device": source_stat.st_dev,
         "source_inode": source_stat.st_ino,
+        "source_prefix_sha256": (
+            _source_prefix_sha256(path, index.size) if index.seek_mode == "byte" else None
+        ),
         "source": index.source,
         "session_id": index.session_id,
         "seek_mode": index.seek_mode,
@@ -146,6 +150,20 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
             if encoded_value is not _SKIP_ADJUSTMENT_VALUE
         ],
     }
+
+
+def _source_prefix_sha256(path: str, size: int) -> str:
+    """Hash exactly the indexed byte prefix of a transcript."""
+    remaining = size
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while remaining:
+            chunk = handle.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                raise ValueError(f"Transcript is shorter than indexed size {size}")
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
 
 
 def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
@@ -274,11 +292,20 @@ def _sidecar_matches(
         source_stat = os.stat(path)
     except OSError:
         return False
+    if not 0 <= stored_size <= size:
+        return False
+    stored_prefix_digest = payload.get("source_prefix_sha256")
+    if not isinstance(stored_prefix_digest, str):
+        return False
+    try:
+        current_prefix_digest = _source_prefix_sha256(path, stored_size)
+    except (OSError, ValueError):
+        return False
     return (
         stored_mtime_ns <= mtime_ns
-        and 0 <= stored_size <= size
         and payload.get("source_device") == source_stat.st_dev
         and payload.get("source_inode") == source_stat.st_ino
+        and stored_prefix_digest == current_prefix_digest
     )
 
 

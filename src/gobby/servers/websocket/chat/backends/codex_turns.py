@@ -258,14 +258,15 @@ async def stream_codex_turn(
                 )
                 if tool_event_data is not None:
                     tool_call_id = str(tool_event_data["tool_call_id"])
-                    if tool_call_id not in lifecycle_completed_tool_call_ids:
+                    if not tool_call_id or tool_call_id not in lifecycle_completed_tool_call_ids:
                         await session._apply_post_tool_lifecycle(
                             str(tool_event_data["tool_name"]),
                             tool_event_data["arguments"],
                             tool_event_data["lifecycle_response"],
                             is_error=tool_event_data["is_error"],
                         )
-                        lifecycle_completed_tool_call_ids.add(tool_call_id)
+                        if tool_call_id:
+                            lifecycle_completed_tool_call_ids.add(tool_call_id)
 
                     if tool_call_id in completed_tool_call_ids:
                         continue

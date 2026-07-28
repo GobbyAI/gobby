@@ -13,6 +13,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -294,6 +295,7 @@ class TestSpawnAgent:
         run_id return can wake a pre-registered waiter."""
         task = _create_task(task_manager, test_project.id, "Registry wiring task")
         server.services.agent_runner = MagicMock()
+        server.services.completion_registry = CompletionEventRegistry()
 
         with (
             patch(
@@ -320,6 +322,7 @@ class TestSpawnAgent:
 
         assert response.status_code == 200
         kwargs = mock_spawn.await_args.kwargs
+        assert server.services.completion_registry is not None
         assert kwargs["completion_registry"] is server.services.completion_registry
 
 

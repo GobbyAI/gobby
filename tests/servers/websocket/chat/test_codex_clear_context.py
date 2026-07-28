@@ -33,6 +33,8 @@ def _backend_with_fake_client() -> tuple[CodexWebChatBackend, SimpleNamespace]:
 async def test_clear_context_archives_old_thread_and_reattaches() -> None:
     backend, fake_client = _backend_with_fake_client()
     session = CodexManagedChatSession(conversation_id="c", _backend=backend)
+    session._model = "gpt-5.6-sol"
+    session._model_selector = "endpoint:openrouter"
     session._thread_id = "old-thread"
     backend._sessions_by_thread["old-thread"] = session
 
@@ -52,7 +54,7 @@ async def test_clear_context_archives_old_thread_and_reattaches() -> None:
     # The stale thread is detached before a fresh one is attached.
     assert "old-thread" not in backend._sessions_by_thread
     assert session._thread_id == "new-thread"
-    assert reattach_calls == [session._model]
+    assert reattach_calls == ["endpoint:openrouter"]
 
 
 @pytest.mark.asyncio

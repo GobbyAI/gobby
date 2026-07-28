@@ -262,6 +262,10 @@ class WebSocketServer(
                 "Client %s cleaned up. Remaining clients: %s", client_id, len(self.clients)
             )
 
+    async def handle_connection(self, websocket: Any) -> None:
+        """Run the public WebSocket connection lifecycle entry point."""
+        await self._handle_connection(websocket)
+
     async def _handle_message(self, websocket: Any, message: str) -> None:
         """
         Route incoming message to appropriate handler.
@@ -340,7 +344,7 @@ class WebSocketServer(
             return
 
         self._server = await serve(
-            self._handle_connection,
+            self.handle_connection,
             host=self.config.host,
             port=self.config.port,
             process_request=self._authenticate,

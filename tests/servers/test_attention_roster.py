@@ -85,32 +85,62 @@ def _client(server: SimpleNamespace, **kwargs: Any) -> TestClient:
 
 def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
     events: list[dict[str, object]] = []
+    errors: list[BaseException] = []
     enqueue_entered = threading.Event()
     release_enqueue = threading.Event()
+    tracker_lock = threading.Lock()
+    active_critical_sections = 0
+    max_active_critical_sections = 0
+
+    def enter_critical_section() -> None:
+        nonlocal active_critical_sections, max_active_critical_sections
+        with tracker_lock:
+            active_critical_sections += 1
+            max_active_critical_sections = max(
+                max_active_critical_sections,
+                active_critical_sections,
+            )
+
+    def exit_critical_section() -> None:
+        nonlocal active_critical_sections
+        with tracker_lock:
+            active_critical_sections -= 1
+
+    def run_worker(worker: Callable[[], object]) -> None:
+        try:
+            worker()
+        except BaseException as exc:
+            errors.append(exc)
 
     def publish(event: dict[str, object]) -> None:
-        if event["entry_id"] == "run:first":
-            enqueue_entered.set()
-            assert release_enqueue.wait(timeout=2)
-        events.append(event)
+        enter_critical_section()
+        try:
+            if event["entry_id"] == "run:first":
+                enqueue_entered.set()
+                assert release_enqueue.wait(timeout=2)
+            events.append(event)
+        finally:
+            exit_critical_section()
 
     manager = AttentionStateManager(temp_db, event_publisher=publish, epoch="epoch-a")
     assert isinstance(manager.ordering.lock, asyncio.Lock)
-    first = threading.Thread(target=lambda: _open(manager, "run:first", "first"))
-    second_done = threading.Event()
+    first = threading.Thread(
+        target=lambda: run_worker(lambda: _open(manager, "run:first", "first"))
+    )
 
     def second_transition() -> None:
         _open(manager, "run:second", "second")
-        second_done.set()
 
     first.start()
     assert enqueue_entered.wait(timeout=2)
-    second = threading.Thread(target=second_transition)
+    second = threading.Thread(target=lambda: run_worker(second_transition))
     second.start()
-    assert not second_done.wait(timeout=0.05)
     release_enqueue.set()
     first.join(timeout=2)
     second.join(timeout=2)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
     assert [event["entry_id"] for event in events] == ["run:first", "run:second"]
     assert [event["seq"] for event in events] == [1, 2]
 
@@ -119,36 +149,40 @@ def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
     release_snapshot = threading.Event()
 
     def snapshot_metadata() -> dict[str, dict[str, str]]:
-        snapshot_entered.set()
-        assert release_snapshot.wait(timeout=2)
-        return {key: dict(value) for key, value in metadata.items()}
+        enter_critical_section()
+        try:
+            snapshot_entered.set()
+            assert release_snapshot.wait(timeout=2)
+            return {key: dict(value) for key, value in metadata.items()}
+        finally:
+            exit_critical_section()
 
     snapshots: list[Any] = []
     roster_thread = threading.Thread(
-        target=lambda: snapshots.append(manager.snapshot(metadata_snapshot=snapshot_metadata))
+        target=lambda: run_worker(
+            lambda: snapshots.append(manager.snapshot(metadata_snapshot=snapshot_metadata))
+        )
     )
-    transition_done = threading.Event()
-    metadata_done = threading.Event()
 
     def transition_during_snapshot() -> None:
         _open(manager, "run:during-snapshot", "during-snapshot")
-        transition_done.set()
 
     def update_metadata() -> None:
         for text in ("newer", "newest"):
             with manager.ordering.synchronized():
-                metadata["run:first"] = {"text": text}
-                manager.ordering.next_seq()
-        metadata_done.set()
+                enter_critical_section()
+                try:
+                    metadata["run:first"] = {"text": text}
+                    manager.ordering.next_seq()
+                finally:
+                    exit_critical_section()
 
     roster_thread.start()
     assert snapshot_entered.wait(timeout=2)
-    transition_thread = threading.Thread(target=transition_during_snapshot)
-    metadata_thread = threading.Thread(target=update_metadata)
+    transition_thread = threading.Thread(target=lambda: run_worker(transition_during_snapshot))
+    metadata_thread = threading.Thread(target=lambda: run_worker(update_metadata))
     transition_thread.start()
     metadata_thread.start()
-    assert not transition_done.wait(timeout=0.05)
-    assert not metadata_done.wait(timeout=0.05)
     release_snapshot.set()
     roster_thread.join(timeout=2)
     transition_thread.join(timeout=2)
@@ -156,6 +190,8 @@ def test_ordering_coordinator_no_regression(temp_db: HubDatabase) -> None:
     assert not roster_thread.is_alive()
     assert not transition_thread.is_alive()
     assert not metadata_thread.is_alive()
+    assert errors == []
+    assert max_active_critical_sections == 1
     assert snapshots[0].seq == 2
     assert "run:during-snapshot" not in {state.entry_id for state in snapshots[0].states}
     assert snapshots[0].metadata["run:first"] == {"text": "older"}
@@ -259,15 +295,17 @@ def test_interactive_entry_end_to_end(
                 "answer": {"option": 1},
             },
         )
-    entries = {entry["entry_id"]: entry for entry in roster.json()["entries"]}
+    assert roster.status_code == 200
+    roster_payload = roster.json()
+    entries = {entry["entry_id"]: entry for entry in roster_payload["entries"]}
     entry = entries[state.entry_id]
     run_entry = entries["run:run-2"]
-    assert roster.status_code == 200 and roster.json()["seq"] == 1
+    assert roster_payload["seq"] == 1
     assert entry["attention"]["attention_id"] == state.attention_id
     assert entry["tmux"] == {
         "socket_path": "/tmp/interactive.sock",
         "session_name": "interactive-shell",
-        "pane_pid": 4242,
+        "parent_pid": 4242,
     }
     assert run_entry == {
         "entry_id": "run:run-2",

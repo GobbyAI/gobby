@@ -710,7 +710,8 @@ class CodexWebChatBackend:
                     old_thread_id,
                     exc_info=True,
                 )
-        await self.attach_session(session, model=session._model)
+        requested_model = session._model_selector or session._model
+        await self.attach_session(session, model=requested_model)
         return True
 
 

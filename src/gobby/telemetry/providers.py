@@ -29,13 +29,15 @@ logger = logging.getLogger(__name__)
 # Globals for lazy caching
 _TRACER_PROVIDER: TracerProvider | None = None
 _METER_PROVIDER: MeterProvider | None = None
+_OWNED_TRACER_PROVIDER: TracerProvider | None = None
+_OWNED_METER_PROVIDER: MeterProvider | None = None
 _SPAN_STORAGE_PROCESSOR: BatchSpanProcessor | None = None
 _PROVIDER_LOCK = threading.Lock()
 
 
 def get_tracer_provider(config: TelemetrySettings) -> TracerProvider:
     """Get TracerProvider, creating it if needed."""
-    global _TRACER_PROVIDER
+    global _OWNED_TRACER_PROVIDER, _TRACER_PROVIDER
     if _TRACER_PROVIDER is not None:
         return _TRACER_PROVIDER
     with _PROVIDER_LOCK:
@@ -48,6 +50,7 @@ def get_tracer_provider(config: TelemetrySettings) -> TracerProvider:
                 sampler = ParentBased(root=TraceIdRatioBased(config.trace_sample_rate))
                 span_exporters = create_span_exporters(config)
                 _TRACER_PROVIDER = TracerProvider(resource=resource, sampler=sampler)
+                _OWNED_TRACER_PROVIDER = _TRACER_PROVIDER
 
                 for exporter in span_exporters:
                     _TRACER_PROVIDER.add_span_processor(BatchSpanProcessor(exporter))
@@ -76,7 +79,7 @@ def add_span_storage_exporter(
 
 def get_meter_provider(config: TelemetrySettings) -> MeterProvider:
     """Get MeterProvider, creating it if needed."""
-    global _METER_PROVIDER
+    global _METER_PROVIDER, _OWNED_METER_PROVIDER
     if _METER_PROVIDER is not None:
         return _METER_PROVIDER
     with _PROVIDER_LOCK:
@@ -88,20 +91,41 @@ def get_meter_provider(config: TelemetrySettings) -> MeterProvider:
                 resource = Resource.create({SERVICE_NAME: config.service_name})
                 metric_readers = create_metric_readers(config)
                 _METER_PROVIDER = MeterProvider(resource=resource, metric_readers=metric_readers)
+                _OWNED_METER_PROVIDER = _METER_PROVIDER
 
     return _METER_PROVIDER
 
 
 def shutdown_providers() -> None:
-    """Shutdown lifecycle-owned processors without tearing down API providers."""
-    global _SPAN_STORAGE_PROCESSOR
+    """Flush owned telemetry resources and clear cached provider references."""
+    global _METER_PROVIDER, _OWNED_METER_PROVIDER
+    global _OWNED_TRACER_PROVIDER, _SPAN_STORAGE_PROCESSOR, _TRACER_PROVIDER
 
     with _PROVIDER_LOCK:
+        owned_tracer_provider = _OWNED_TRACER_PROVIDER
+        owned_meter_provider = _OWNED_METER_PROVIDER
         span_storage_processor = _SPAN_STORAGE_PROCESSOR
+        _TRACER_PROVIDER = None
+        _METER_PROVIDER = None
+        _OWNED_TRACER_PROVIDER = None
+        _OWNED_METER_PROVIDER = None
         _SPAN_STORAGE_PROCESSOR = None
 
-    if span_storage_processor is not None:
-        _shutdown_provider("span storage processor", span_storage_processor.shutdown)
+    if owned_tracer_provider is not None:
+        _flush_and_shutdown_provider("tracer", owned_tracer_provider)
+    elif span_storage_processor is not None:
+        _flush_and_shutdown_provider("span storage processor", span_storage_processor)
+    if owned_meter_provider is not None:
+        _flush_and_shutdown_provider("meter", owned_meter_provider)
+
+
+def _flush_and_shutdown_provider(provider_name: str, provider: Any) -> None:
+    force_flush = getattr(provider, "force_flush", None)
+    if callable(force_flush):
+        _shutdown_provider(f"{provider_name} flush", force_flush)
+    shutdown = getattr(provider, "shutdown", None)
+    if callable(shutdown):
+        _shutdown_provider(provider_name, shutdown)
 
 
 def _shutdown_provider(provider_name: str, shutdown: Callable[[], None]) -> None:

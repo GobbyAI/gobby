@@ -135,6 +135,7 @@ class ProcessorLifecycleMixin:
         self: ProcessorHost, session_id: str
     ) -> SessionFlushResult:
         """Catch up a registered terminal Codex rollout before completion checks."""
+        registered_here = False
         if self._session_sources.get(session_id) != "codex":
             if self.session_manager is None:
                 return SessionFlushResult(flushed=False, error="session is not registered as Codex")
@@ -151,7 +152,12 @@ class ProcessorLifecycleMixin:
                     flushed=False, error="Codex session transcript is unavailable"
                 )
             self.register_session(session_id, transcript_path, source="codex")
-        return await self.flush_session(session_id)
+            registered_here = True
+        try:
+            return await self.flush_session(session_id)
+        finally:
+            if registered_here:
+                self.unregister_session(session_id)
 
     def unregister_session(self: ProcessorHost, session_id: str) -> None:
         """Stop monitoring a session."""

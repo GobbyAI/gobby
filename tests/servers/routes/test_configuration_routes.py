@@ -353,6 +353,7 @@ class TestSaveConfigValues:
 
         assert response.status_code == 400
         assert ConfigStore(temp_db).get("ai.generation.endpoints.openrouter.wire_api") is None
+        assert SecretStore(temp_db).get("OPENROUTER_API_KEY") is None
 
     def test_save_voice_audio_plaintext_api_key_is_rejected_before_storage(
         self, client: TestClient, temp_db: Any
@@ -586,6 +587,30 @@ class TestValidateConfig:
         data = response.json()
         assert data["valid"] is True
         assert data["errors"] == []
+
+    def test_validate_rejects_unprobed_responses_endpoint(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/values/validate",
+            json={
+                "values": {
+                    "ai": {
+                        "generation": {
+                            "endpoints": {
+                                "openrouter": {
+                                    "wire_api": "responses",
+                                    "api_base": "https://openrouter.ai/api/v1",
+                                    "api_key": "$secret:OPENROUTER_API_KEY",
+                                    "model": "moonshotai/kimi-k3",
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "/generation-endpoints/openrouter/activate" in response.json()["detail"]
 
     def test_voice_audio_plaintext_api_key_is_invalid(self, client: TestClient) -> None:
         response = client.post(

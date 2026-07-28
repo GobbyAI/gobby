@@ -157,7 +157,9 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         assert accepted.status_code == 200
         assert accepted.json() == {"status": "accepted", "entry_id": state.entry_id}
         assert injected[-1].option == 1
-        assert manager.get(state.entry_id).state is None
+        accepted_state = manager.get(state.entry_id)
+        assert accepted_state is not None
+        assert accepted_state.state is None
 
         recurring = _open_prompt(manager)
         assert recurring.attention_id != state.attention_id
@@ -226,7 +228,9 @@ def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:
         )
         assert failed.status_code == 502
         assert failed.json()["detail"] == {"code": "injection_failed", "stage": "none"}
-        assert manager.get(actionable.entry_id).attention_id == actionable.attention_id
+        retained = manager.get(actionable.entry_id)
+        assert retained is not None
+        assert retained.attention_id == actionable.attention_id
 
         failure_stage = "partial"
         partial = client.post(
@@ -276,7 +280,9 @@ def test_event_driven_option_response(temp_db: HubDatabase) -> None:
 
     assert response.status_code == 200
     assert injected[-1].option == selected["option"]
-    assert manager.get(state.entry_id).state is None
+    selected_state = manager.get(state.entry_id)
+    assert selected_state is not None
+    assert selected_state.state is None
 
 
 @pytest.mark.parametrize(

@@ -192,6 +192,12 @@ def _normalize_agy_model_lookup_id(model: str | None) -> str | None:
     return _AGY_MODEL_ALIASES.get(normalized, normalized)
 
 
+def resolve_context_window_overrides(config: object | None) -> dict[str, int] | None:
+    """Return configured context-window overrides when stored as a mapping."""
+    configured = getattr(config, "context_window_overrides", None)
+    return cast(dict[str, int], configured) if isinstance(configured, dict) else None
+
+
 def effective_context_window_for_session(
     session: Any,
     *,

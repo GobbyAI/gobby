@@ -318,5 +318,8 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
             "Pruned %s empty ghost sessions (expired, 0 messages, >%sh)", count, min_age_hours
         )
     if skipped > 0:
-        logger.debug("Skipped pruning %s empty ghost sessions with retained references", skipped)
+        logger.debug(
+            "Skipped pruning empty ghost sessions with retained references",
+            extra={"skipped": skipped},
+        )
     return count

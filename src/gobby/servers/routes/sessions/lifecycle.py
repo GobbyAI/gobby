@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from fastapi import APIRouter, HTTPException, Request
 
-from gobby.sessions.context_usage import effective_context_window_for_session
+from gobby.sessions.context_usage import (
+    effective_context_window_for_session,
+    resolve_context_window_overrides,
+)
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.storage.projects import LocalProjectManager
 
@@ -189,10 +192,7 @@ def register_lifecycle_routes(
                 )
                 raise
             session_config = server.config or getattr(server.services, "config", None)
-            configured_overrides = getattr(session_config, "context_window_overrides", None)
-            context_window_overrides = (
-                configured_overrides if isinstance(configured_overrides, dict) else None
-            )
+            context_window_overrides = resolve_context_window_overrides(session_config)
             session_data["context_window"] = await server.run_db(
                 effective_context_window_for_session,
                 session,

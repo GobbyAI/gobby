@@ -10,6 +10,7 @@ import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -272,7 +273,9 @@ class TestSessionRegistration:
         assert appender._state.current_message is not None
         assert appender._state.current_message.role == "assistant"
         assert "call_1" in appender._state.pending_tool_calls
-        assert processor._parsers["sid"].snapshot_state() == index.parser_state
+        assert processor._parsers["sid"].snapshot_state()["pending_tool_search_use_ids"] == [
+            "call_resume"
+        ]
         session_manager.touch.assert_not_called()
         assert index.session_stats is not None
         session_manager.update_stats.assert_called_once_with(
@@ -415,6 +418,37 @@ class TestSessionRegistration:
             encoding="utf-8",
         )
         replacement.replace(transcript)
+
+        processor = SessionMessageProcessor(mock_db)
+        processor.register_session("sid", str(transcript), source="codex")
+
+        assert "sid" not in processor._byte_offsets
+
+    def test_register_session_rejects_in_place_rewrite_with_larger_size(
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "rewritten-before-restart.jsonl"
+        transcript.write_text(_codex_response_message("user", "old"), encoding="utf-8")
+        initial_stat = transcript.stat()
+        index = build_index_from_file(
+            str(transcript),
+            "codex",
+            "sid",
+            mtime_ns=initial_stat.st_mtime_ns,
+            size=initial_stat.st_size,
+        )
+        persist_index_sidecar(str(transcript), index)
+        original_inode = transcript.stat().st_ino
+        transcript.write_text(
+            _codex_response_message(
+                "user",
+                "replacement content that is longer than the original transcript",
+            ),
+            encoding="utf-8",
+        )
+        assert transcript.stat().st_ino == original_inode
 
         processor = SessionMessageProcessor(mock_db)
         processor.register_session("sid", str(transcript), source="codex")
@@ -632,6 +666,42 @@ class TestProcessSession:
         assert result.flushed is False
         assert result.error == "session is not registered"
         process_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_codex_transcript_unregisters_temporary_registration(
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "reconcile.jsonl"
+        transcript.touch()
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(
+            source="codex",
+            transcript_path=str(transcript),
+        )
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+
+        result = await processor.reconcile_codex_transcript("sid")
+
+        assert result.flushed is True
+        assert "sid" not in processor._active_sessions
+
+    @pytest.mark.asyncio
+    async def test_reconcile_codex_transcript_preserves_existing_registration(
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "registered-reconcile.jsonl"
+        transcript.touch()
+        processor = SessionMessageProcessor(mock_db)
+        processor.register_session("sid", str(transcript), source="codex")
+
+        result = await processor.reconcile_codex_transcript("sid")
+
+        assert result.flushed is True
+        assert processor._active_sessions["sid"] == str(transcript)
 
     @pytest.mark.asyncio
     async def test_flush_session_contains_processing_errors(
@@ -887,7 +957,6 @@ class TestProcessSession:
 
         assert db_calls == [
             "_revive_expired_terminal_session",
-            "_filter_session_title_messages",
             "append_positioned_lines",
         ]
 
@@ -1225,6 +1294,48 @@ class TestProcessSession:
         ]
         assert processor._message_indices["session-1"] == 2
         assert processor._stats["session-1"]["message_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_process_session_restores_codex_parser_state_after_batch_failure(
+        self,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "codex-transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2024-06-15T10:30:00Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "tool_search_call",
+                        "arguments": {"query": "session state"},
+                        "status": "completed",
+                        "call_id": "call-search",
+                        "id": "tsc-1",
+                    },
+                }
+            )
+            + "\n"
+        )
+        processor.register_session("session-1", str(transcript), source="codex")
+        parser = processor._parsers["session-1"]
+        assert isinstance(parser, CodexTranscriptParser)
+        initial_state = parser.snapshot_state()
+        process_batch = AsyncMock(
+            side_effect=[RuntimeError("mid-batch failure"), {"message_count": 1}]
+        )
+
+        with patch.object(processor, "_process_parsed_batch", process_batch):
+            with pytest.raises(RuntimeError, match="mid-batch failure"):
+                await processor._process_session("session-1", str(transcript))
+
+            assert parser.snapshot_state() == initial_state
+
+            await processor._process_session("session-1", str(transcript))
+
+        assert parser.snapshot_state()["pending_tool_search_use_ids"] == ["call-search"]
+        assert process_batch.await_count == 2
 
     @pytest.mark.asyncio
     async def test_render_failure_does_not_commit_render_state(
@@ -2239,7 +2350,7 @@ class TestCodexMcpTranscriptProcessing:
         assert processor._byte_offsets["sid"] == transcript.stat().st_size
 
 
-class TestExtractNativeTitles:
+class TestFilterSessionTitleMessages:
     """Provider-native title records are metadata-only transcript entries."""
 
     @staticmethod
@@ -2277,7 +2388,6 @@ class TestExtractNativeTitles:
         text_message = self._text_message("Hello world")
 
         result = processor._filter_session_title_messages(
-            "sid",
             [
                 self._title_message("17903 └── Mechanical prompt title"),
                 text_message,
@@ -2293,8 +2403,8 @@ class TestExtractNativeTitles:
         processor = SessionMessageProcessor(mock_db)
         messages = [self._text_message("Hello", index=0), self._text_message("World", index=1)]
 
-        assert processor._filter_session_title_messages("sid", messages) == messages
-        assert processor._filter_session_title_messages("sid", []) == []
+        assert processor._filter_session_title_messages(messages) == messages
+        assert processor._filter_session_title_messages([]) == []
 
     @pytest.mark.asyncio
     async def test_byte_offset_prevents_reprocessing_mcp_lifecycle_lines(

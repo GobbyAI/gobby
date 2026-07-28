@@ -130,6 +130,12 @@ class AttentionPane:
     capture: Callable[[], Awaitable[str | None]]
 
 
+@dataclass(slots=True)
+class _TrackedEntryLock:
+    lock: asyncio.Lock
+    users: int = 0
+
+
 PaneResolver = Callable[[AttentionState], Awaitable[AttentionPane | None]]
 AttentionInjector = Callable[[AttentionPane, AttentionAnswer], Awaitable[None]]
 
@@ -150,7 +156,7 @@ def create_attention_router(
         detector_root = PromptDetector(server.services.detection_registry)
     else:
         detector_root = None
-    locks: dict[str, asyncio.Lock] = {}
+    locks: dict[str, _TrackedEntryLock] = {}
 
     async def resolve_pane(state: AttentionState) -> AttentionPane | None:
         if pane_resolver is not None:
@@ -230,63 +236,73 @@ def create_attention_router(
     async def respond(entry_id: str, request: AttentionRespondRequest) -> dict[str, str]:
         if manager is None:
             raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
-        lock = locks.setdefault(entry_id, asyncio.Lock())
-        async with lock:
-            current = await server.services.run_db(manager.get, entry_id)
-            if current is None:
-                raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
-            _require_current_identity(current, request)
-            if current.kind != "actionable":
-                raise HTTPException(status_code=409, detail={"code": "not_actionable"})
-            _validate_option_membership(current, request.answer)
+        current = await server.services.run_db(manager.get, entry_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
 
-            pane = await resolve_pane(current)
-            if pane is None:
-                raise _injection_http_error(stage="none")
-            pane_output = await pane.capture()
-            if pane_output is None:
-                raise _injection_http_error(stage="none")
+        tracked_lock = locks.setdefault(entry_id, _TrackedEntryLock(lock=asyncio.Lock()))
+        tracked_lock.users += 1
+        try:
+            async with tracked_lock.lock:
+                current = await server.services.run_db(manager.get, entry_id)
+                if current is None:
+                    raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+                _require_current_identity(current, request)
+                if current.kind != "actionable":
+                    raise HTTPException(status_code=409, detail={"code": "not_actionable"})
+                _validate_option_membership(current, request.answer)
 
-            latest = await server.services.run_db(manager.get, entry_id)
-            if latest is None:
-                raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
-            _require_current_identity(latest, request)
-            detector = await _resolve_prompt_detector(server, latest, detector_root)
-            if detector is None:
-                raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
-            observed_fingerprint = detector.pane_fingerprint(pane_output)
-            if observed_fingerprint != request.fingerprint:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "prompt_changed",
-                        **_identity(latest),
-                    },
+                pane = await resolve_pane(current)
+                if pane is None:
+                    raise _injection_http_error(stage="none")
+                pane_output = await pane.capture()
+                if pane_output is None:
+                    raise _injection_http_error(stage="none")
+
+                latest = await server.services.run_db(manager.get, entry_id)
+                if latest is None:
+                    raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+                _require_current_identity(latest, request)
+                detector = await _resolve_prompt_detector(server, latest, detector_root)
+                if detector is None:
+                    raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+                observed_fingerprint = detector.pane_fingerprint(pane_output)
+                if observed_fingerprint != request.fingerprint:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "prompt_changed",
+                            **_identity(latest),
+                        },
+                    )
+
+                try:
+                    await inject_answer(pane, request.answer)
+                except AttentionInjectionError as exc:
+                    if exc.stage == "none":
+                        raise _injection_http_error(stage="none") from exc
+                    await _retire_and_redetect(
+                        server,
+                        current=latest,
+                        pane=pane,
+                        detector=detector,
+                    )
+                    raise _injection_http_error(stage="partial") from exc
+
+                cleared = await manager.transition_async(
+                    server.services.run_db,
+                    entry_id,
+                    state=None,
+                    expected_attention_id=latest.attention_id,
+                    expected_fingerprint=latest.fingerprint,
                 )
-
-            try:
-                await inject_answer(pane, request.answer)
-            except AttentionInjectionError as exc:
-                if exc.stage == "none":
-                    raise _injection_http_error(stage="none") from exc
-                await _retire_and_redetect(
-                    server,
-                    current=latest,
-                    pane=pane,
-                    detector=detector,
-                )
-                raise _injection_http_error(stage="partial") from exc
-
-            cleared = await manager.transition_async(
-                server.services.run_db,
-                entry_id,
-                state=None,
-                expected_attention_id=latest.attention_id,
-                expected_fingerprint=latest.fingerprint,
-            )
-            if not cleared.applied:
-                raise _injection_http_error(stage="partial")
-            return {"status": "accepted", "entry_id": entry_id}
+                if not cleared.applied:
+                    raise _injection_http_error(stage="partial")
+                return {"status": "accepted", "entry_id": entry_id}
+        finally:
+            tracked_lock.users -= 1
+            if tracked_lock.users == 0 and locks.get(entry_id) is tracked_lock:
+                locks.pop(entry_id, None)
 
     return router
 
@@ -419,6 +435,10 @@ async def _load_roster_entries(
     sessions = list(sessions_result)
     attention = {state.entry_id: state for state in snapshot.states}
     task_cache: dict[str, dict[str, str | None] | None] = {}
+    task_ids = {run.task_id for run in runs if run.task_id is not None}
+    await asyncio.gather(
+        *(_load_task_payload(services, task_id, task_cache) for task_id in task_ids)
+    )
     entries: list[dict[str, object]] = []
     active_agent_sessions = {
         run.child_session_id for run in runs if run.child_session_id is not None
@@ -433,7 +453,7 @@ async def _load_roster_entries(
                 "session_id": run.child_session_id,
                 "lifecycle_status": run.status,
                 "attention": _serialize_attention(attention.get(entry_id)),
-                "task": await _load_task_payload(services, run.task_id, task_cache),
+                "task": task_cache.get(run.task_id) if run.task_id is not None else None,
                 "provider": run.provider,
                 "model": run.model,
                 "tmux": _run_tmux_payload(services, run),
@@ -557,7 +577,7 @@ def _run_tmux_payload(services: Any, run: Any) -> dict[str, object] | None:
 
 def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, object]:
     from gobby.sessions.tmux_context import (
-        get_tmux_pane_pid,
+        get_terminal_parent_pid,
         get_tmux_session_name,
         get_tmux_socket_path,
     )
@@ -565,7 +585,7 @@ def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, o
     return {
         "socket_path": get_tmux_socket_path(terminal_context),
         "session_name": get_tmux_session_name(terminal_context),
-        "pane_pid": get_tmux_pane_pid(terminal_context),
+        "parent_pid": get_terminal_parent_pid(terminal_context),
     }
 
 
@@ -606,7 +626,7 @@ async def _resolve_attention_pane(
 
                 return AttentionPane(
                     target=pane_id,
-                    tmux_cmd=tuple(tmux._base_args()),
+                    tmux_cmd=tuple(tmux.base_args()),
                     capture=capture_session_pane,
                 )
 
@@ -628,6 +648,6 @@ async def _resolve_attention_pane(
 
     return AttentionPane(
         target=f"={session_name}:",
-        tmux_cmd=tuple(tmux._base_args()),
+        tmux_cmd=tuple(tmux.base_args()),
         capture=capture_run_pane,
     )

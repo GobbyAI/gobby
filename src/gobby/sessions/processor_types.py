@@ -137,7 +137,8 @@ class ProcessorHost(Protocol):
     def _stats_from_session_manager(self, session_id: str) -> MessageStats: ...
 
     def _filter_session_title_messages(
-        self, session_id: str, messages: list[ParsedMessage]
+        self,
+        messages: list[ParsedMessage],
     ) -> list[ParsedMessage]: ...
 
     async def _process_parsed_batch(

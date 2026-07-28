@@ -51,6 +51,7 @@ class _FakeSessionManager:
         self.rows = {session.id: session} if session else {}
         self.events: list[tuple[str, str]] = []
         self.delete_error: Exception | None = None
+        self.delete_result: bool | None = None
 
     def get(self, session_id: str) -> _FakeSession | None:
         return self.rows.get(session_id)
@@ -66,6 +67,8 @@ class _FakeSessionManager:
     def delete(self, session_id: str) -> bool:
         if self.delete_error is not None:
             raise self.delete_error
+        if self.delete_result is not None:
+            return self.delete_result
         if session_id not in self.rows:
             return False
         del self.rows[session_id]
@@ -171,6 +174,18 @@ async def test_delete_removes_genuine_session() -> None:
     assert backend.deleted == ["acp-session-xyz"]
     assert session_manager.events == [("session_deleted", "sess-1")]
     assert result["disposition"] == "removed"
+
+
+@pytest.mark.asyncio
+async def test_delete_raises_when_storage_delete_reports_missing() -> None:
+    session_manager = _FakeSessionManager(_FakeSession())
+    session_manager.delete_result = False
+    backend = _FakeBackend(capabilities={"delete": True})
+
+    with pytest.raises(ACPSessionNotFoundError):
+        await _service(session_manager, backend).delete("sess-1")
+
+    assert backend.deleted == ["acp-session-xyz"]
 
 
 @pytest.mark.asyncio

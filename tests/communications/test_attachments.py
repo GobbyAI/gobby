@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -248,6 +249,65 @@ def test_create_message_with_attachments_links_rows_atomically(
     assert len(saved_attachments) == 1
     assert saved_attachments[0].message_id == persisted.id
     assert comms_store.list_attachments(persisted.id) == saved_attachments
+
+
+def test_deduplicated_message_logs_skipped_attachment_persistence(
+    comms_store: LocalCommunicationsStore,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel_id = _create_test_channel(comms_store)
+    first_message = CommsMessage(
+        id="",
+        channel_id=channel_id,
+        direction="inbound",
+        content="original",
+        content_type="attachment",
+        platform_message_id="platform-message-1",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    first_attachment = CommsAttachment(
+        id="",
+        message_id="",
+        filename="original.pdf",
+        content_type="application/pdf",
+        size_bytes=17,
+        local_path="/tmp/original.pdf",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    persisted, _ = comms_store.create_message_with_attachments(
+        first_message,
+        [first_attachment],
+    )
+    duplicate_message = CommsMessage(
+        id="",
+        channel_id=channel_id,
+        direction="inbound",
+        content="duplicate",
+        content_type="attachment",
+        platform_message_id="platform-message-1",
+        created_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
+    )
+    duplicate_attachment = CommsAttachment(
+        id="",
+        message_id="",
+        filename="duplicate.pdf",
+        content_type="application/pdf",
+        size_bytes=19,
+        local_path="/tmp/duplicate.pdf",
+        created_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.storage.communications"):
+        duplicate, saved_attachments = comms_store.create_message_with_attachments(
+            duplicate_message,
+            [duplicate_attachment],
+        )
+
+    assert duplicate.id == persisted.id
+    assert saved_attachments == []
+    record = caplog.records[-1]
+    assert record.__dict__["message_id"] == persisted.id
+    assert record.__dict__["platform_message_id"] == "platform-message-1"
 
 
 def test_create_message_with_attachments_rolls_back_on_attachment_failure(

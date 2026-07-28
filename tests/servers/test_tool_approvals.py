@@ -33,6 +33,7 @@ def test_normalize_stored_approval_key_cases(raw_key: str, expected: str) -> Non
     assert normalize_stored_approval_key(raw_key) == expected
 
 
+@pytest.mark.unit
 def test_is_builtin_auto_exempt_allows_known_gobby_servers() -> None:
     assert is_builtin_auto_exempt("mcp__gobby__get_tool_schema", {})
     assert is_builtin_auto_exempt(

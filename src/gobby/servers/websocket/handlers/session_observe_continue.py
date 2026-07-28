@@ -58,7 +58,7 @@ async def _release_source_session(
                 async def run_storage(func: Any, *args: Any, **kwargs: Any) -> Any:
                     return await run_db(mixin, func, *args, **kwargs)
 
-                async def kill_and_deliver() -> None:
+                async def kill_and_deliver() -> bool:
                     try:
                         await agent_kill.kill_agent(run, session_manager.db, close_terminal=True)
                         await run_storage(
@@ -74,8 +74,11 @@ async def _release_source_session(
                             run_id=run.id,
                             run_db=run_storage,
                         )
+                    return True
 
-                await shielded_terminal_delivery(run.id, kill_and_deliver)
+                delivery_result = await shielded_terminal_delivery(run.id, kill_and_deliver)
+                if delivery_result is None:
+                    raise RuntimeError("terminal delivery admission is closed")
                 killed = True
                 await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
         except Exception as exc:
@@ -100,6 +103,17 @@ async def _release_source_session(
         await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
     else:
         raise RuntimeError("terminal session was not killed")
+
+
+async def _resolved_session_title(
+    mixin: SessionControlMixin,
+    session_manager: Any,
+    session_id: str | None,
+) -> str | None:
+    if session_manager is None or session_id is None:
+        return None
+    persisted_session = await run_db(mixin, session_manager.get, session_id)
+    return _as_str(getattr(persisted_session, "title", None))
 
 
 async def handle_continue_in_chat(
@@ -396,6 +410,12 @@ async def handle_continue_in_chat(
         except Exception as e:
             logger.warning("Failed to set parent_session_id: %s", e)
 
+    continued_title = (
+        source_title
+        if resume_in_place
+        else await _resolved_session_title(mixin, session_manager, session.db_session_id)
+    )
+
     # Send confirmation
     await websocket.send(
         json_dumps(
@@ -406,7 +426,7 @@ async def handle_continue_in_chat(
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
                 "ref": f"#{session.seq_num}" if session.seq_num is not None else None,
-                "title": source_title if resume_in_place else manual_source_title,
+                "title": continued_title,
                 "source": effective_provider,
                 "model": effective_model,
                 "chat_mode": effective_chat_mode,

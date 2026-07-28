@@ -9,13 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed
 
-from gobby.agents.attention_metadata import AttentionMetadataStore
 from gobby.storage.attention import AttentionOrderingCoordinator
 from gobby.utils.json_helpers import json_dumps
+
+if TYPE_CHECKING:
+    from gobby.agents.attention_metadata import AttentionMetadataStore
 
 logger = logging.getLogger(__name__)
 BROADCAST_SEND_TIMEOUT_SECONDS = 2.0

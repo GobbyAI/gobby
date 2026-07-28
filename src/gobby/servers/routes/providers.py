@@ -6,6 +6,7 @@ import asyncio
 import copy
 import shutil
 from collections import Counter
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
@@ -191,22 +192,11 @@ def _build_model_catalog(
 async def _local_generation_model_groups(
     server: HTTPServer | None,
 ) -> list[LocalEndpointModelGroup]:
-    config = getattr(getattr(server, "services", None), "config", None)
-    ai_cfg = getattr(config, "ai", None) if config is not None else None
-    generation_cfg = getattr(ai_cfg, "generation", None)
-    endpoints = getattr(generation_cfg, "endpoints", {})
-    if not isinstance(endpoints, dict):
-        return []
-    chat_completion_endpoints = {
-        name: endpoint
-        for name, endpoint in endpoints.items()
-        if endpoint.wire_api == "chat-completions"
-    }
     return list(
         await asyncio.gather(
             *(
                 discover_local_endpoint_model_group(name, endpoint)
-                for name, endpoint in chat_completion_endpoints.items()
+                for name, endpoint in _configured_endpoints(server, "chat-completions")
             )
         )
     )
@@ -317,18 +307,24 @@ def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
     }
 
 
-def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
-    """Return provider rows for Chat Completions generation endpoints."""
+def _configured_endpoints(
+    server: HTTPServer | None,
+    wire_api: str,
+) -> Iterator[tuple[str, Any]]:
     config = getattr(getattr(server, "services", None), "config", None)
     generation = getattr(getattr(config, "ai", None), "generation", None)
     endpoints = getattr(generation, "endpoints", {})
     if not isinstance(endpoints, dict):
-        return []
-
-    entries: list[dict[str, Any]] = []
+        return
     for endpoint_name, endpoint in endpoints.items():
-        if endpoint.wire_api != "chat-completions":
-            continue
+        if getattr(endpoint, "wire_api", None) == wire_api:
+            yield endpoint_name, endpoint
+
+
+def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
+    """Return provider rows for Chat Completions generation endpoints."""
+    entries: list[dict[str, Any]] = []
+    for endpoint_name, endpoint in _configured_endpoints(server, "chat-completions"):
         provider_type = str(getattr(endpoint, "protocol", "openai-compatible"))
         entries.append(
             {
@@ -349,15 +345,8 @@ def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dic
 
 
 def _responses_endpoint_models(server: HTTPServer | None) -> list[dict[str, Any]]:
-    config = getattr(getattr(server, "services", None), "config", None)
-    generation = getattr(getattr(config, "ai", None), "generation", None)
-    endpoints = getattr(generation, "endpoints", {})
-    if not isinstance(endpoints, dict):
-        return []
     models: list[dict[str, Any]] = []
-    for endpoint_name, endpoint in endpoints.items():
-        if endpoint.wire_api != "responses":
-            continue
+    for endpoint_name, endpoint in _configured_endpoints(server, "responses"):
         modalities = ["text", "image"] if endpoint.vision_extract else ["text"]
         models.append(
             {

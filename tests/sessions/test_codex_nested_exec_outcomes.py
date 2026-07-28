@@ -437,11 +437,19 @@ def test_direct_exec_terminal_envelope_rejects_non_authoritative_shapes(
 
 
 @pytest.mark.parametrize(
-    ("tool_input", "result_texts"),
+    ("tool_input", "result_texts", "expected_outcomes"),
     [
         (
             'const r = await tools.exec_command({cmd:"pytest"}); text(r.output);',
             ("tests failed",),
+            [
+                (
+                    "exec-unknown:0",
+                    "pytest",
+                    None,
+                    "terminal_result_missing_structured_outcome",
+                )
+            ],
         ),
         (
             "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
@@ -449,10 +457,19 @@ def test_direct_exec_terminal_envelope_rejects_non_authoritative_shapes(
                 json.dumps({"exit_code": 0, "output": "first"}),
                 json.dumps({"exit_code": 0, "output": "second"}),
             ),
+            [],
         ),
         (
             'const r = await tools.exec_command({cmd:"pytest"}); text(r);',
             (json.dumps({"exit_code": 0, "exitCode": 1, "output": "conflict"}),),
+            [
+                (
+                    "exec-unknown:0",
+                    "pytest",
+                    None,
+                    "terminal_result_missing_structured_outcome",
+                )
+            ],
         ),
         (
             "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
@@ -465,11 +482,14 @@ def test_direct_exec_terminal_envelope_rejects_non_authoritative_shapes(
                     }
                 ),
             ),
+            [],
         ),
     ],
 )
 def test_ambiguous_or_unstructured_outputs_remain_unknown(
-    tool_input: str, result_texts: tuple[str, ...]
+    tool_input: str,
+    result_texts: tuple[str, ...],
+    expected_outcomes: list[tuple[str, str, bool | None, str | None]],
 ) -> None:
     parser = CodexTranscriptParser()
 
@@ -478,14 +498,12 @@ def test_ambiguous_or_unstructured_outputs_remain_unknown(
         [_call("exec-unknown", "exec", tool_input), _output("exec-unknown", *result_texts)],
     )
 
-    if tool_input in {
-        'const r = await tools.exec_command({cmd:"pytest"}); text(r.output);',
-        'const r = await tools.exec_command({cmd:"pytest"}); text(r);',
-    }:
-        assert len(outcomes) == 1
-        assert outcomes[0].identity == "exec-unknown:0"
-        assert outcomes[0].command == "pytest"
-        assert outcomes[0].result["success"] is None
-        assert outcomes[0].result["unknown_reason"] == "terminal_result_missing_structured_outcome"
-    else:
-        assert outcomes == []
+    assert [
+        (
+            outcome.identity,
+            outcome.command,
+            outcome.result["success"],
+            outcome.result.get("unknown_reason"),
+        )
+        for outcome in outcomes
+    ] == expected_outcomes
