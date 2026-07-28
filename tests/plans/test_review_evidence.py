@@ -540,7 +540,7 @@ def test_manifest_compare_and_apply(
         raise OSError("simulated crash")
 
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         crash_atomic_write,
     )
     with pytest.raises(OSError, match="simulated crash"):
@@ -556,7 +556,7 @@ def test_manifest_compare_and_apply(
     assert plan_path.read_bytes() == original_bytes
 
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
     )
     applied = service.apply_plan_review_manifest(
@@ -657,7 +657,7 @@ def test_manifest_compare_and_apply(
     service.bind_evidence_run(drift_prepared.evidence_id, drift_run.id)
     drift_approval = canonical_approval(drift_prepared.evidence_id)
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         crash_atomic_write,
     )
     with pytest.raises(OSError, match="simulated crash"):
@@ -668,7 +668,7 @@ def test_manifest_compare_and_apply(
             run_id=drift_run.id,
         )
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
     )
     drift_path.write_bytes(
@@ -848,6 +848,50 @@ def test_interactive_mint_status_lifecycle(
         round_number=2,
         session_id=session_id,
     )
+
+
+def test_facade_delegates_manifest_and_checkpoint_workflows(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _, _, _ = review_setup
+    manifest_result: dict[str, object] = {"status": "valid"}
+    checkpoint = b"checkpoint"
+    calls: list[tuple[str, object]] = []
+
+    def derive_manifest(
+        evidence_id: str,
+        routing_decisions: Mapping[str, object],
+    ) -> dict[str, object]:
+        calls.append(("manifest", (evidence_id, dict(routing_decisions))))
+        return manifest_result
+
+    def render_round_checkpoint(
+        evidence_id: str,
+        round_result: Mapping[str, object] | None = None,
+    ) -> bytes:
+        calls.append(("checkpoint", (evidence_id, round_result)))
+        return checkpoint
+
+    monkeypatch.setattr(
+        service.manifests,
+        "derive_plan_review_manifest",
+        derive_manifest,
+    )
+    monkeypatch.setattr(
+        service.checkpoints,
+        "render_v1_round_checkpoint",
+        render_round_checkpoint,
+    )
+
+    assert service.derive_plan_review_manifest("evidence-1", {"lane": "task"}) is manifest_result
+    assert (
+        service.render_v1_round_checkpoint("evidence-1", {"verdict": "needs_review"}) == checkpoint
+    )
+    assert calls == [
+        ("manifest", ("evidence-1", {"lane": "task"})),
+        ("checkpoint", ("evidence-1", {"verdict": "needs_review"})),
+    ]
 
 
 def test_finalize_persists_server_derived_quality_ledger(

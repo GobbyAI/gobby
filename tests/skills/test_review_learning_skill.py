@@ -553,7 +553,7 @@ def test_interactive_approval_sequence(
     def crash_write(_path: Path, _content: bytes) -> None:
         raise OSError("simulated apply crash")
 
-    monkeypatch.setattr("gobby.plans.review_evidence.atomic_write_bytes", crash_write)
+    monkeypatch.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
     with pytest.raises(OSError, match="simulated apply crash"):
         pending_service.apply_plan_review_manifest(
             pending.evidence_id,
@@ -562,7 +562,7 @@ def test_interactive_approval_sequence(
             run_id=pending_run,
         )
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
     )
     pending_path.write_bytes(
@@ -604,7 +604,7 @@ def test_interactive_approval_sequence(
         recovery.evidence_id,
         "pending recovery",
     )
-    monkeypatch.setattr("gobby.plans.review_evidence.atomic_write_bytes", crash_write)
+    monkeypatch.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
     with pytest.raises(OSError, match="simulated apply crash"):
         recovery_service.apply_plan_review_manifest(
             recovery.evidence_id,
@@ -613,7 +613,7 @@ def test_interactive_approval_sequence(
             run_id=recovery_run,
         )
     monkeypatch.setattr(
-        "gobby.plans.review_evidence.atomic_write_bytes",
+        "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
     )
     restarted = PlanReviewEvidenceService(temp_db)
