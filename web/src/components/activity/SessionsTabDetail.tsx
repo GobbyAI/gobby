@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 
 import type { SessionMessage } from "../../hooks/useSessionDetail";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import {
   ClipboardListIcon,
@@ -87,9 +88,11 @@ export function SessionsTabDetailPane({
         </div>
         <div className="activity-panel-status-bar__actions">
           {showSummaryButton && (
-            <button
+            <Button
               type="button"
-              className="btn btn-accent btn-sm activity-panel-action-btn"
+              variant="accent"
+              size="sm"
+              className="activity-panel-action-btn"
               onClick={() =>
                 setContentMode((current) =>
                   current === "summary" ? "transcript" : "summary",
@@ -113,12 +116,14 @@ export function SessionsTabDetailPane({
                   </span>
                 </>
               )}
-            </button>
+            </Button>
           )}
           {showResumeButton && (
-            <button
+            <Button
               type="button"
-              className="btn btn-accent btn-sm activity-panel-action-btn"
+              variant="accent"
+              size="sm"
+              className="activity-panel-action-btn"
               onClick={() => {
                 void onResumeSession?.(selectedSessionId);
               }}
@@ -127,19 +132,21 @@ export function SessionsTabDetailPane({
             >
               <PlayIcon />
               <span className="activity-panel-action-btn__label">Resume</span>
-            </button>
+            </Button>
           )}
           {showSwapButton && selectedEntry && (
-            <button
+            <Button
               type="button"
-              className="btn btn-accent btn-sm activity-panel-action-btn"
+              variant="accent"
+              size="sm"
+              className="activity-panel-action-btn"
               onClick={onSwapSelectedSession}
               aria-label="Swap"
               title="Swap"
             >
               <SwapIcon />
               <span className="activity-panel-action-btn__label">Swap</span>
-            </button>
+            </Button>
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
@@ -289,9 +290,11 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           controlHeight="sm"
           className="activity-panel-toolbar-segmented"
         />
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn activity-filter-button"
           onClick={() => setShowFilters((value) => !value)}
           aria-label="Filter rules"
           title="Filter rules"
@@ -314,7 +317,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           {data.activeFilterCount > 0 && (
             <span className="activity-filter-badge">{data.activeFilterCount}</span>
           )}
-        </button>
+        </Button>
         {showFilters && (
           <RulesFilterDropdown
             filters={data.filters}
@@ -351,16 +354,16 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
             body={emptyMessage}
             footer={
               hasActiveFilters ? (
-                <button
+                <Button
                   type="button"
-                  className="btn btn-secondary btn-sm"
+                  size="sm"
                   onClick={() => {
                     data.setSearch("");
                     data.setFilters(DEFAULT_RULE_FILTERS);
                   }}
                 >
                   Clear filters
-                </button>
+                </Button>
               ) : undefined
             }
           />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Channel, CommsMessage } from "../../../hooks/useIntegrations";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import { DetailActionButton, DetailPaneHeader } from "../fields";
 import { loadChannelMessages } from "./IntegrationsTabData";
@@ -134,14 +135,14 @@ export function MessagesView({ channel, onClose }: MessagesViewProps) {
         ) : (
           <div className="flex min-h-full flex-col justify-end gap-3">
             <div className="flex justify-center">
-              <button
+              <Button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                size="sm"
                 disabled={isLoading}
                 onClick={loadOlder}
               >
                 {isLoading ? "Loading..." : "Load older messages"}
-              </button>
+              </Button>
             </div>
 
             <ol className="grid gap-2" aria-label={`Messages for ${channel.name}`}>

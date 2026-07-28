@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
@@ -272,16 +273,18 @@ export const MemoryTab = memo(function MemoryTab({
           ariaLabel="Search memories"
         />
         <div className="relative">
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
+            variant="accent"
+            size="sm"
+            className="activity-panel-action-btn activity-filter-button"
             aria-label="Filter memories"
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((open) => !open)}
           >
             <FilterIcon />
             <span className="activity-panel-action-btn__label">Filters</span>
-          </button>
+          </Button>
           {filtersOpen && (
             <div className="absolute right-0 top-10 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
               <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Type</div>
@@ -351,16 +354,18 @@ export const MemoryTab = memo(function MemoryTab({
             </div>
           )}
         </div>
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn"
           aria-label="Refresh memories"
           disabled={isLoading}
           onClick={refreshMemories}
         >
           <RefreshIcon />
           <span className="activity-panel-action-btn__label">Refresh</span>
-        </button>
+        </Button>
       </div>
 
       {error && (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { GobbyTaskDetail } from "../../../types/tasks";
+import { Button } from "../../ui/Button";
 import { relativeTime } from "../../../utils/formatTime";
 import type { TaskDetailComputed } from "./taskDetailFormat";
 
@@ -95,14 +96,16 @@ export function TaskDetailStatusLine({
       )}
       <span className="activity-task-detail-statusline__time">{timeLabel}</span>
       {(showClaim || showRelease) && (
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-task-detail-statusline__action"
+          variant="accent"
+          size="sm"
+          className="activity-task-detail-statusline__action"
           disabled={claimBusy}
           onClick={showRelease ? onRelease : onClaim}
         >
           {showRelease ? "Release" : "Claim"}
-        </button>
+        </Button>
       )}
     </div>
   );

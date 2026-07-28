@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
+import { Button } from '../ui/Button'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
 import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
@@ -408,9 +409,11 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           className="activity-panel-toolbar-segmented"
         />
         {segment === 'live' && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button ml-auto"
+            variant="accent"
+            size="sm"
+            className="activity-panel-action-btn activity-filter-button ml-auto"
             onClick={() => setShowFilterDropdown((v) => !v)}
             title="Filter pipelines"
             aria-label="Filter pipelines"
@@ -433,7 +436,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
             {statusFilter !== 'all' && (
               <span className="activity-filter-badge">1</span>
             )}
-          </button>
+          </Button>
         )}
         {segment === 'live' && showFilterDropdown && (
           <ActivityFilterDropdown<StatusFilter>

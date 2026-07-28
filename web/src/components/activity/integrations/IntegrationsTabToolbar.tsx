@@ -1,3 +1,4 @@
+import { Button } from "../../ui/Button";
 import { ActivityPanelSearch } from "../ActivityPanelSearch";
 import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
 import {
@@ -61,9 +62,9 @@ export function IntegrationsTabToolbar({
         <option value="enabled">Enabled</option>
         <option value="disabled">Disabled</option>
       </select>
-      <button type="button" className="btn btn-accent btn-sm" onClick={onAdd}>
+      <Button type="button" variant="accent" size="sm" onClick={onAdd}>
         + Channel
-      </button>
+      </Button>
     </div>
   );
 }

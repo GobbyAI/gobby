@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel } from "../../hooks/useIntegrations";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
@@ -220,9 +221,9 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
               }
               footer={
                 channels.length === 0 ? (
-                  <button type="button" className="btn btn-accent btn-sm" onClick={handleAdd}>
+                  <Button type="button" variant="accent" size="sm" onClick={handleAdd}>
                     Create channel
-                  </button>
+                  </Button>
                 ) : undefined
               }
             />

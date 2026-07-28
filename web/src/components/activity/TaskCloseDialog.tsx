@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { GobbyTask } from "../../types/tasks";
+import { Button } from "../ui/Button";
 
 interface TaskCloseDialogProps {
   task: GobbyTask | null;
@@ -136,21 +137,22 @@ export function TaskCloseDialog({
           </div>
         )}
         <div className="activity-task-close-actions">
-          <button
+          <Button
             type="button"
-            className="btn btn-secondary btn-sm"
+            size="sm"
             onClick={onCancel}
             disabled={isSubmitting}
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
-            className="btn btn-secondary btn-sm activity-task-close-submit"
+            size="sm"
+            className="activity-task-close-submit"
             disabled={isSubmitting}
           >
             Close
-          </button>
+          </Button>
         </div>
       </form>
     </div>

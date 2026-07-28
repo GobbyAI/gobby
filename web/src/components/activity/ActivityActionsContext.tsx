@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
+import { Button } from "../ui/Button";
 import {
   ActivityActionsContext,
   useActivityActions,
@@ -76,9 +77,11 @@ export function ActivityActionButtons() {
   return (
     <span className="activity-panel-actions-slot">
       {actions.onRefresh && (
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn"
           onClick={actions.onRefresh}
           disabled={actions.refreshing}
           aria-label={actions.refreshAriaLabel ?? refreshLabel}
@@ -86,12 +89,14 @@ export function ActivityActionButtons() {
         >
           <RefreshGlyph />
           <span className="activity-panel-action-btn__label">{refreshLabel}</span>
-        </button>
+        </Button>
       )}
       {actions.onAdd && (
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn"
           onClick={actions.onAdd}
           disabled={actions.addDisabled}
           aria-label={actions.addAriaLabel ?? addLabel}
@@ -99,7 +104,7 @@ export function ActivityActionButtons() {
         >
           <PlusGlyph />
           <span className="activity-panel-action-btn__label">{addLabel}</span>
-        </button>
+        </Button>
       )}
     </span>
   );

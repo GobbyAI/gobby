@@ -1,3 +1,5 @@
+import { Button } from '../ui/Button'
+
 export interface ActivityFilterFooterProps {
   onReset: () => void
   onApply: () => void
@@ -16,17 +18,18 @@ export function ActivityFilterFooter({
       className="flex items-center justify-between border-t border-border px-2 py-1.5"
       style={{ background: 'var(--bg-secondary)' }}
     >
-      <button
+      <Button
         type="button"
-        className="btn btn-accent btn-sm"
+        variant="accent"
+        size="sm"
         onClick={onReset}
         disabled={resetDisabled}
       >
         Reset
-      </button>
-      <button type="button" className="btn btn-accent btn-sm" onClick={onApply}>
+      </Button>
+      <Button type="button" variant="accent" size="sm" onClick={onApply}>
         {applyLabel}
-      </button>
+      </Button>
     </div>
   )
 }

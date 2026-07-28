@@ -3,6 +3,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../shared/ResizeHandle'
+import { Button } from '../ui/Button'
 import { CodeBlock } from '../shared/CodeBlock'
 import { MarkdownBody } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
@@ -618,8 +619,10 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             <div className="file-viewer-actions">
               {isEditing ? (
                 <>
-                  <button
-                    className="btn btn-accent btn-sm file-viewer-btn"
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    className="file-viewer-btn"
                     onClick={handleSaveEdit}
                     disabled={Boolean(fileError)}
                     aria-label="Save"
@@ -627,20 +630,24 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                   >
                     <CheckIcon />
                     <span className="file-viewer-btn__label">Save</span>
-                  </button>
-                  <button
-                    className="btn btn-accent btn-sm file-viewer-btn"
+                  </Button>
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    className="file-viewer-btn"
                     onClick={() => { setIsEditing(false); setEditContent(fileContent ?? '') }}
                     aria-label="Cancel"
                     title="Cancel"
                   >
                     <XIcon />
                     <span className="file-viewer-btn__label">Cancel</span>
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  className="btn btn-accent btn-sm file-viewer-btn"
+                <Button
+                  variant="accent"
+                  size="sm"
+                  className="file-viewer-btn"
                   onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}
                   disabled={fileLoading || Boolean(fileError)}
                   aria-label="Edit"
@@ -648,7 +655,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 >
                   <EditIcon />
                   <span className="file-viewer-btn__label">Edit</span>
-                </button>
+                </Button>
               )}
             </div>
           </div>

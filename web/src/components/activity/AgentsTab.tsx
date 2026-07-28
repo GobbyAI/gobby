@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -183,14 +184,16 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
           ariaLabel="Agent source"
           controlHeight="sm"
         />
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn ml-auto"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn ml-auto"
           onClick={handleCreate}
         >
           <PlusIcon />
           <span className="activity-panel-action-btn__label">Agent</span>
-        </button>
+        </Button>
       </div>
       {error && (
         <div className="border-b border-border bg-[var(--color-error-soft)] px-3 py-2 text-sm text-error">

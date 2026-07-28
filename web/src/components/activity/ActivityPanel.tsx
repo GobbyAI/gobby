@@ -7,6 +7,7 @@ import {
   type CSSProperties,
 } from "react";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { DropdownCaret } from "../ui/DropdownCaret";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
@@ -410,9 +411,11 @@ export function ActivityPanel({
                 />
                 <ActivityActionButtons />
                 <span className="activity-panel-close-slot">
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-accent btn-sm activity-panel-action-btn pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                    variant="accent"
+                    size="sm"
+                    className="activity-panel-action-btn"
                     onClick={handleToggleChat}
                     aria-label="Close panel"
                     title="Close panel"
@@ -432,7 +435,7 @@ export function ActivityPanel({
                       <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
                     <span className="activity-panel-action-btn__label">Close</span>
-                  </button>
+                  </Button>
                 </span>
               </div>
 
@@ -486,9 +489,11 @@ export function ActivityPanel({
             />
             <ActivityActionButtons />
             <span className="activity-panel-close-slot">
-              <button
+              <Button
                 type="button"
-                className="btn btn-accent btn-sm activity-panel-action-btn"
+                variant="accent"
+                size="sm"
+                className="activity-panel-action-btn"
                 onClick={handleToggleChat}
                 aria-label={chatHidden ? "Show chat" : "Hide chat"}
                 title={chatHidden ? "Show chat" : "Hide chat"}
@@ -497,7 +502,7 @@ export function ActivityPanel({
                 <span className="activity-panel-action-btn__label">
                   {chatHidden ? "Show Chat" : "Hide Chat"}
                 </span>
-              </button>
+              </Button>
             </span>
           </div>
 

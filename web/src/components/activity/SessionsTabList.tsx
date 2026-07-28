@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 
 import { SourceIcon } from "../shared/SourceIcon";
+import { Button } from "../ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -60,9 +61,11 @@ export function SessionsTabToolbar({
         controlHeight="sm"
         className="activity-panel-toolbar-segmented"
       />
-      <button
+      <Button
         type="button"
-        className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
+        variant="accent"
+        size="sm"
+        className="activity-panel-action-btn activity-filter-button"
         onClick={toggleFilterDropdown}
         title="Filter sessions"
         aria-label="Filter sessions"
@@ -85,7 +88,7 @@ export function SessionsTabToolbar({
         {activeFilterCount > 0 && (
           <span className="activity-filter-badge">{activeFilterCount}</span>
         )}
-      </button>
+      </Button>
       {showFilterDropdown && (
         <SessionsFilterDropdown
           filters={filters}

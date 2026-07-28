@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
 import {
   DetailPaneHeader,
   SelectField,
@@ -108,9 +109,10 @@ export function MemoryDetailPanel({
             {purgeLabel ? ` · ${purgeLabel}` : ""}
           </span>
           {onRestore && (
-            <button
+            <Button
               type="button"
-              className="btn btn-ghost btn-sm"
+              variant="ghost"
+              size="sm"
               aria-label="Restore memory"
               disabled={restoring}
               onClick={() => {
@@ -127,7 +129,7 @@ export function MemoryDetailPanel({
               }}
             >
               {restoring ? "Restoring…" : "Restore"}
-            </button>
+            </Button>
           )}
         </div>
       )}

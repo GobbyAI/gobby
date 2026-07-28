@@ -1,4 +1,5 @@
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
+import { Button } from "../ui/Button";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { TasksTabFilters } from "./TasksTabFilters";
 import type { TaskFilterKey } from "./TasksTabModel";
@@ -35,9 +36,11 @@ export function TasksTabToolbar({
         onChange={onSearchChange}
         placeholder="Search"
       />
-      <button
+      <Button
         type="button"
-        className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
+        variant="accent"
+        size="sm"
+        className="activity-panel-action-btn activity-filter-button"
         onClick={onToggleFilterDropdown}
         title="Filter by task state"
         aria-label="Filter tasks"
@@ -60,7 +63,7 @@ export function TasksTabToolbar({
         {activeFilterCount > 0 && (
           <span className="activity-filter-badge">{activeFilterCount}</span>
         )}
-      </button>
+      </Button>
       {showFilterDropdown && (
         <TasksTabFilters
           filters={statusFilters}

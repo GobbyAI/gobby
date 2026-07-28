@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
+import { Button } from "../../ui/Button";
 import { DetailPaneHeader } from "../fields";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import { installHubSkill, scanHubSkill } from "./SkillsTabActions";
@@ -200,25 +201,26 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
                 {scanStatusLabel}
               </span>
             )}
-            <button
+            <Button
               type="button"
               aria-label="Scan hub skill"
-              className="btn btn-secondary btn-sm"
+              size="sm"
               disabled={!canScan}
               onClick={() => void handleScan()}
             >
               {activeScanning ? "Scanning..." : "Scan"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-primary btn-sm"
+              variant="primary"
+              size="sm"
               disabled={!canAttemptInstall}
               aria-label="Install hub skill"
               title={installReason}
               onClick={() => void handleInstall()}
             >
               {activeInstalling ? "Installing..." : "Install"}
-            </button>
+            </Button>
           </>
         }
       />

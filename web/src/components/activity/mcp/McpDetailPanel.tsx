@@ -9,6 +9,7 @@ import type {
 import { JsonBlock } from "../../chat/JsonBlock";
 import { JsonResultBlock } from "../../chat/ToolResultBlocks";
 import { Heading } from "../../shared/Heading";
+import { Button } from "../../ui/Button";
 import { ToolArgumentForm } from "../../command-browser/ToolArgumentForm";
 import { CallToolIcon } from "./mcpIcons";
 import { getServerType, type McpSelection } from "./mcpShared";
@@ -120,9 +121,11 @@ export function McpDetailPanel({
         <span className="activity-panel-status-bar__title">{title}</span>
         {schema && (
           <div className="activity-panel-status-bar__actions">
-            <button
+            <Button
               type="button"
-              className="btn btn-accent btn-sm activity-panel-action-btn"
+              variant="accent"
+              size="sm"
+              className="activity-panel-action-btn"
               onClick={onCallTool}
               disabled={executing || !formValid}
               aria-label="Call tool"
@@ -132,7 +135,7 @@ export function McpDetailPanel({
               <span className="activity-panel-action-btn__label">
                 {executing ? "Calling" : "Call Tool"}
               </span>
-            </button>
+            </Button>
           </div>
         )}
       </div>

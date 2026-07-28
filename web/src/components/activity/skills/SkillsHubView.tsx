@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import { ResizeHandle } from "../../shared/ResizeHandle";
+import { Button } from "../../ui/Button";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { loadSkillHubs, searchSkillHubs } from "./SkillsTabActions";
@@ -134,15 +135,16 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
-            <button
+            <Button
               type="button"
-              className="btn btn-primary mt-auto"
+              variant="primary"
+              className="mt-auto"
               aria-label="Search hub skills"
               disabled={searching}
               onClick={() => void handleSearch()}
             >
               {searching ? "Searching..." : "Search"}
-            </button>
+            </Button>
           </div>
 
           {loadingHubs ? (

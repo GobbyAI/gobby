@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -191,14 +192,16 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
           className="activity-panel-toolbar-segmented"
         />
         {segment === "profiles" && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm activity-panel-action-btn ml-auto"
+            variant="accent"
+            size="sm"
+            className="activity-panel-action-btn ml-auto"
             onClick={handleCreateProfile}
           >
             <PlusIcon />
             <span className="activity-panel-action-btn__label">Profile</span>
-          </button>
+          </Button>
         )}
       </div>
       {error && (
