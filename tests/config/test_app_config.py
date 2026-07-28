@@ -1914,6 +1914,7 @@ class TestTaskValidationConfig:
         assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
         assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
         assert config.prompt_path is None  # Uses default prompt from prompts/
+        assert config.close_review_prompt_max_chars == 32_000
 
 
 class TestWorkflowConfig:

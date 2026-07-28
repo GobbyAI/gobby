@@ -16,7 +16,6 @@ from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_cl
 
 logger = logging.getLogger(__name__)
 
-VALIDATION_PROMPT_MAX_CHARS = 10_000
 CHANGES_SUMMARY_MAX_CHARS = 2_000
 CHECKLIST_FACTS_MAX_CHARS = 500
 
@@ -83,10 +82,14 @@ class TaskValidator:
                 "checklist_facts": facts_text,
             },
         )
-        if len(prompt) > VALIDATION_PROMPT_MAX_CHARS:
+        prompt_chars = len(prompt)
+        prompt_limit = self.config.close_review_prompt_max_chars
+        if prompt_chars > prompt_limit:
             raise ValidationPromptTooLarge(
-                "The full validation criteria and complete changed-file manifest exceed the "
-                "10,000-character criteria-review prompt. Split the task or shorten its criteria."
+                f"Task-close criteria-review prompt is {prompt_chars} characters, exceeding the "
+                f"configured limit of {prompt_limit} characters at "
+                "gobby-tasks.validation.close_review_prompt_max_chars. Split the task into "
+                "smaller tasks and preserve every validation criterion."
             )
 
         logger.info(
@@ -116,6 +119,5 @@ __all__ = [
     "CHANGES_SUMMARY_MAX_CHARS",
     "CHECKLIST_FACTS_MAX_CHARS",
     "TaskValidator",
-    "VALIDATION_PROMPT_MAX_CHARS",
     "ValidationPromptTooLarge",
 ]

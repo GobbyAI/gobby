@@ -292,6 +292,7 @@ class TestTaskValidationConfigDefaults:
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.close_validation_escalation_threshold == 5
+        assert config.close_review_prompt_max_chars == 32_000
         assert config.escalation_enabled is True
         assert config.escalation_notify == "none"
         assert config.auto_generate_on_create is True
@@ -307,6 +308,12 @@ class TestTaskValidationConfigCustom:
 
         config = TaskValidationConfig(max_iterations=5)
         assert config.max_iterations == 5
+
+    def test_custom_close_review_prompt_limit(self) -> None:
+        from gobby.config.tasks import TaskValidationConfig
+
+        config = TaskValidationConfig(close_review_prompt_max_chars=24_000)
+        assert config.close_review_prompt_max_chars == 24_000
 
     def test_escalation_webhook(self) -> None:
         """Test escalation with webhook."""
@@ -341,6 +348,14 @@ class TestTaskValidationConfigValidation:
 
         with pytest.raises(ValidationError) as exc_info:
             TaskValidationConfig(close_validation_escalation_threshold=value)
+        assert "positive" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_close_review_prompt_limit_must_be_positive(self, value: int) -> None:
+        from gobby.config.tasks import TaskValidationConfig
+
+        with pytest.raises(ValidationError) as exc_info:
+            TaskValidationConfig(close_review_prompt_max_chars=value)
         assert "positive" in str(exc_info.value).lower()
 
     def test_invalid_escalation_notify(self) -> None:

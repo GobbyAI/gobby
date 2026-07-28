@@ -37,6 +37,7 @@ const SCHEMA: Record<string, unknown> = {
       properties: {
         escalation_notify: { enum: ['webhook', 'slack', 'none'], type: 'string' },
         max_iterations: { type: 'integer', minimum: 1 },
+        close_review_prompt_max_chars: { type: 'integer', minimum: 1 },
       },
     },
     GobbyTasksConfig: {
@@ -91,6 +92,7 @@ function makeConfigValues(): Record<string, unknown> {
         criteria_prompt_path: null,
         criteria_system_prompt: 'Generate criteria.',
         max_iterations: 5,
+        close_review_prompt_max_chars: 32000,
         escalation_enabled: true,
         escalation_notify: 'none',
         escalation_webhook_url: null,
@@ -215,6 +217,9 @@ describe('AutomationWorkflowsSection', () => {
     expect(notify).toHaveValue('none')
     expect(within(notify).getAllByRole('option')).toHaveLength(3)
     expect(screen.getByLabelText('Max validation iterations')).toHaveValue(5)
+    expect(
+      screen.getByLabelText('Close-review prompt limit (characters)'),
+    ).toHaveValue(32000)
   })
 
   it('reads workflow-engine, tmux, cron int-list, system-loop, and pipeline rows', () => {
@@ -259,6 +264,26 @@ describe('AutomationWorkflowsSection', () => {
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     expect(ctx.saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({ 'workflow.enabled': false }),
+    )
+  })
+
+  it('persists the close-review prompt limit through the section Save', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    fireEvent.change(
+      screen.getByLabelText('Close-review prompt limit (characters)'),
+      { target: { value: '24000' } },
+    )
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        'gobby-tasks.validation.close_review_prompt_max_chars': 24000,
+      }),
     )
   })
 

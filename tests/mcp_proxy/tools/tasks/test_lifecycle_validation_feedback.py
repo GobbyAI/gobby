@@ -129,12 +129,17 @@ async def test_prompt_too_large_is_actionable_without_failure_accounting(
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = _task(manager, sample_project["id"])
-    validator = _Validator(ValidationPromptTooLarge("Split the task."))
+    message = (
+        "Task-close criteria-review prompt is 32001 characters, exceeding the configured limit "
+        "of 32000 characters at gobby-tasks.validation.close_review_prompt_max_chars. Split the "
+        "task into smaller tasks and preserve every validation criterion."
+    )
+    validator = _Validator(ValidationPromptTooLarge(message))
 
     result = await _evaluate(task, manager, validator)
 
     assert result.error_type == "validation_prompt_too_large"
-    assert result.message == "Split the task."
+    assert result.message == message
     refreshed = manager.get_task(task.id)
     assert refreshed is not None and refreshed.validation_fail_count == 0
     assert ValidationHistoryManager(temp_db).get_iteration_history(task.id) == []

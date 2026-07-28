@@ -201,6 +201,10 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=5,
         description="Invalid or pending close verdicts before atomic task escalation.",
     )
+    close_review_prompt_max_chars: int = Field(
+        default=32_000,
+        description="Maximum rendered character count for the task-close criteria-review prompt.",
+    )
     # Escalation settings
     escalation_enabled: bool = Field(
         default=True,
@@ -227,6 +231,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
     @field_validator(
         "max_iterations",
         "close_validation_escalation_threshold",
+        "close_review_prompt_max_chars",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

@@ -335,6 +335,14 @@ planning, research, manual, and no-edit tasks skip that checklist item. Parent
 tasks can close when all children are closed. Epics are organizational
 containers and do not require their own commit or criteria review.
 
+The rendered criteria-review prompt limit is the positive integer setting
+`gobby-tasks.validation.close_review_prompt_max_chars`, which defaults to
+32,000 characters. Gobby preserves every validation criterion and changed-file
+manifest entry; an oversized prompt must be split into smaller tasks. Supporting
+evidence remains bounded to 2,000 characters for the changes summary, 500 for
+checklist facts, and 5,500 for the diff packet, including up to 4,000 characters
+of excerpts.
+
 ## CLI Reference
 
 The CLI is optimized for humans and operators. Agents should prefer MCP for

@@ -61,6 +61,7 @@ const VALIDATION_PATHS = [
   'gobby-tasks.validation.criteria_prompt_path',
   'gobby-tasks.validation.criteria_system_prompt',
   'gobby-tasks.validation.max_iterations',
+  'gobby-tasks.validation.close_review_prompt_max_chars',
   'gobby-tasks.validation.escalation_enabled',
   'gobby-tasks.validation.escalation_notify',
   'gobby-tasks.validation.escalation_webhook_url',
@@ -349,6 +350,12 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         path="gobby-tasks.validation.max_iterations"
         label="Max validation iterations"
         ariaLabel="Max validation iterations"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="gobby-tasks.validation.close_review_prompt_max_chars"
+        label="Close-review prompt limit (characters)"
+        ariaLabel="Close-review prompt limit (characters)"
       />
       <SwitchConfigField
         fields={fields}
