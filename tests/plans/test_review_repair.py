@@ -8,18 +8,26 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.code_index import IndexToken
 from gobby.mcp_proxy.tools.plans import create_plan_registry
+from gobby.mcp_proxy.tools.plans import review_evidence as review_evidence_tools
+from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_coverage import _validate_candidate
 from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import (
     DEVIATION_PROOF_FIELDS,
     REPAIR_SUBMISSION_ARTIFACT_KEY,
+    RepairUniverse,
     build_repair_submission,
     canonicalize_repair_submission,
     decode_repair_submission,
+    derive_repair_universe,
     encode_repair_submission,
+    validate_repair_preparation,
+    validate_repair_universe_attestations,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -205,6 +213,63 @@ def _attestation(
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
     }
+
+
+def _candidate_inventory(
+    *site_ids: str,
+    changed_targets: tuple[str, ...] = ("src/example.py",),
+    changed_contracts: tuple[str, ...] = (),
+) -> CandidateSiteInventory:
+    return CandidateSiteInventory(
+        changed_acceptance_item_ids=("1.1.1",),
+        changed_targets=changed_targets,
+        changed_symbols=("gobby.example.repaired_behavior",),
+        changed_contracts=changed_contracts,
+        resolved_languages=("python",),
+        unsupported_targets=(),
+        sites=tuple(
+            CandidateSite(
+                site_id=site_id,
+                path=f"src/{site_id}.py",
+                source_kind="symbol_call",
+                source_ref="gobby.example.repaired_behavior",
+                status="resolved",
+                language="python",
+            )
+            for site_id in site_ids
+        ),
+    )
+
+
+def _universe_attestation(
+    finding: dict[str, object],
+    universe: RepairUniverse,
+) -> dict[str, object]:
+    requirement = next(
+        requirement
+        for requirement in universe.requirements
+        if requirement.prior_finding_id == finding["finding_id"]
+    )
+    interaction_records = [
+        {
+            "edge_id": edge_id,
+            "disposition": "compatible",
+            "validation_evidence": ["pytest tests/test_example.py"],
+        }
+        for edge_id in requirement.interaction_edge_ids
+    ]
+    attestation = _attestation(finding)
+    attestation.update(
+        {
+            "repair_universe_digest": universe.digest,
+            "consumer_sites_swept": list(requirement.required_consumer_site_ids),
+            "adjacent_variants_swept": list(requirement.adjacent_variant_ids),
+            "deferred_sites": [],
+            "sweep_query_evidence": ["gcode usages gobby.example.repaired_behavior"],
+            "repair_bundle_interactions": interaction_records,
+        }
+    )
+    return attestation
 
 
 def _deviation_proof() -> dict[str, str]:
@@ -810,3 +875,140 @@ def test_staged_submission_payload_round_trip(
         encoding="utf-8"
     )
     assert "repair_submission" in planner
+
+
+def test_sweep_universe_subset_refused(
+    repair_setup: tuple[PlanReviewEvidenceService, str, Path],
+) -> None:
+    service, project_id, plan_path = repair_setup
+    finding = _finding("finding-1")
+    prior_evidence = _finalize_prior_round(
+        service,
+        project_id,
+        plan_path,
+        [finding],
+    )
+    _mark_plan_repaired(plan_path)
+    current_snapshot = plan_path.read_bytes()
+    universe = derive_repair_universe(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("consumer-a", "consumer-b"),
+    )
+    attestation = _universe_attestation(finding, universe)
+    attestation["consumer_sites_swept"] = ["consumer-a"]
+
+    with pytest.raises(ReviewEvidenceError, match="consumer-b"):
+        validate_repair_preparation(
+            prior_evidence=prior_evidence,
+            current_sections=build_section_manifest(current_snapshot),
+            current_snapshot=current_snapshot,
+            prior_finding_resolutions=[_resolution("finding-1", "repair")],
+            repair_attestations=[attestation],
+            repair_universe=universe,
+        )
+
+
+@pytest.mark.asyncio
+async def test_universe_visible_before_attestation(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = LocalProjectManager(temp_db).create(
+        name="repair-universe",
+        repo_path=str(tmp_path),
+    )
+    finding = _finding("finding-1")
+    universe = derive_repair_universe(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("consumer-a"),
+    )
+    token = IndexToken(
+        repository_digest="a" * 64,
+        last_indexed_at="2026-07-27T00:00:00+00:00",
+        source_files=("src/example.py",),
+    )
+    monkeypatch.setattr(
+        review_evidence_tools,
+        "_derive_settled_repair_universe",
+        lambda **_kwargs: (token, universe),
+    )
+    registry = create_plan_registry(temp_db, default_project_id=project.id)
+
+    result = await registry.call(
+        "derive_plan_review_repair_universe",
+        {
+            "prior_evidence_id": "prior-evidence",
+            "plan_path": str(tmp_path / ".gobby" / "plans" / "plan.md"),
+            "repair_finding_ids": ["finding-1"],
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["repair_universe"] == universe.to_dict()
+    assert result["repair_universe_digest"] == universe.digest
+    assert result["index_token"] == token.to_dict()
+    skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
+    planner = Path("src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
+        encoding="utf-8"
+    )
+    for producer_contract in (skill, planner):
+        normalized_contract = " ".join(producer_contract.split())
+        assert "derive_plan_review_repair_universe" in normalized_contract
+        assert "repair_universe_digest" in normalized_contract
+        assert "Do not edit" in normalized_contract
+
+    stale = _universe_attestation(finding, universe)
+    stale["repair_universe_digest"] = "b" * 64
+    with pytest.raises(ReviewEvidenceError, match="digest"):
+        validate_repair_universe_attestations(
+            universe=universe,
+            attestations=[stale],
+        )
+
+
+def test_zero_result_requires_query_evidence() -> None:
+    finding = _finding("finding-1")
+    universe = derive_repair_universe(
+        prior_findings=[finding],
+        inventory=_candidate_inventory(),
+    )
+    attestation = _universe_attestation(finding, universe)
+    attestation["sweep_query_evidence"] = []
+
+    with pytest.raises(ReviewEvidenceError, match="query evidence"):
+        validate_repair_universe_attestations(
+            universe=universe,
+            attestations=[attestation],
+        )
+
+
+def test_repair_bundle_interaction_edges() -> None:
+    first = _finding("finding-1", check_key="repair.first")
+    second = _finding("finding-2", check_key="repair.second")
+    second["section_id"] = "2.1"
+    universe = derive_repair_universe(
+        prior_findings=[first, second],
+        inventory=_candidate_inventory(
+            "consumer-a",
+            changed_targets=("src/shared.py",),
+            changed_contracts=("contracts/shared.json",),
+        ),
+    )
+    assert universe.interaction_edges
+    assert universe.interaction_edges[0].shared_sections == ()
+    assert universe.interaction_edges[0].shared_check_keys == ()
+    first_attestation = _universe_attestation(first, universe)
+    first_attestation["repair_bundle_interactions"] = []
+
+    with pytest.raises(
+        ReviewEvidenceError,
+        match=universe.interaction_edges[0].edge_id,
+    ):
+        validate_repair_universe_attestations(
+            universe=universe,
+            attestations=[
+                first_attestation,
+                _universe_attestation(second, universe),
+            ],
+        )

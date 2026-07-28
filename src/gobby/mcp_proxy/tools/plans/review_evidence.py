@@ -2,22 +2,120 @@
 
 from __future__ import annotations
 
+import subprocess  # nosec B404 - fixed local gcode argv.
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from gobby.agents.code_index import IndexInventoryError, verify_index_token
+from gobby.agents.code_index import (
+    IndexInventoryError,
+    IndexToken,
+    settle_indexed_value,
+    verify_index_token,
+)
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.plans.consumer_sweep import derive_candidate_site_inventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.plans.review_evidence_io import build_inter_round_diff, normalize_plan_path
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_findings import validate_plan_review_findings
+from gobby.plans.review_repair import RepairUniverse, derive_repair_universe
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.native_bin import resolve_native_bin_or_default
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "session_id": {"type": "string"},
     "task_id": {"type": "string"},
     "stage": {"type": "string"},
 }
+
+
+@dataclass(frozen=True)
+class _RepairUniverseCodeIndex:
+    storage: CodeIndexStorage
+
+
+def _derive_settled_repair_universe(
+    *,
+    db: HubDatabase,
+    project_id: str,
+    project_root: Path,
+    prior_evidence_id: str,
+    plan_path: str,
+    repair_finding_ids: list[str],
+) -> tuple[IndexToken, RepairUniverse]:
+    service = PlanReviewEvidenceService(db)
+    prior_evidence = service.get_evidence(prior_evidence_id)
+    if prior_evidence.project_id != project_id:
+        raise ReviewEvidenceError(
+            "repair_universe_project_mismatch",
+            "prior evidence belongs to a different project",
+        )
+    if prior_evidence.finalized_at is None or prior_evidence.round_result is None:
+        raise ReviewEvidenceError(
+            "repair_universe_prior_unfinalized",
+            "repair universe requires finalized prior evidence",
+        )
+    raw_findings = prior_evidence.round_result.get("findings")
+    if not isinstance(raw_findings, list) or any(
+        not isinstance(finding, Mapping) for finding in raw_findings
+    ):
+        raise ReviewEvidenceError(
+            "invalid_repair_attestation",
+            "prior round_result.findings must be an array of objects",
+        )
+    findings = validate_plan_review_findings(
+        cast(list[Mapping[str, object]], raw_findings),
+        evidence=prior_evidence,
+    )
+    resolved_plan_path = normalize_plan_path(project_root, plan_path)
+    storage = CodeIndexStorage(db)
+    code_index = _RepairUniverseCodeIndex(storage)
+
+    def read_last_indexed_at() -> str:
+        stats = storage.get_project_stats(project_id)
+        return stats.last_indexed_at.isoformat() if stats is not None else ""
+
+    def derive() -> RepairUniverse:
+        current_snapshot = resolved_plan_path.read_bytes()
+        inventory = derive_candidate_site_inventory(
+            diff=build_inter_round_diff(prior_evidence.snapshot, current_snapshot),
+            project_id=project_id,
+            code_index=code_index,
+        )
+        return derive_repair_universe(
+            prior_findings=findings,
+            inventory=inventory,
+            repair_finding_ids=repair_finding_ids,
+        )
+
+    return settle_indexed_value(
+        project_root,
+        index_operation=lambda: _index_repository(project_root),
+        read_last_indexed_at=read_last_indexed_at,
+        derive=derive,
+    )
+
+
+def _index_repository(project_root: Path) -> None:
+    binary = resolve_native_bin_or_default("gcode")
+    try:
+        completed = subprocess.run(  # nosec B603 - fixed argv plus trusted local path.
+            [binary, "index", "--quiet", "--project", str(project_root)],
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"gcode index failed: {exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"gcode index failed: {detail[:500]}")
 
 
 def register_review_evidence_tools(
@@ -64,6 +162,62 @@ def register_review_evidence_tools(
             "required": ["index_token"],
         },
         func=verify_plan_review_index_token,
+    )
+
+    def derive_plan_review_repair_universe(
+        prior_evidence_id: str,
+        plan_path: str,
+        repair_finding_ids: list[str],
+        project: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            project_id = resolve_project_id(project)
+            record = projects.get(project_id)
+            if record is None or record.repo_path is None:
+                raise IndexInventoryError(
+                    "inventory_unavailable",
+                    f"project has no local repository: {project_id}",
+                )
+            token, universe = _derive_settled_repair_universe(
+                db=db,
+                project_id=project_id,
+                project_root=Path(record.repo_path),
+                prior_evidence_id=prior_evidence_id,
+                plan_path=plan_path,
+                repair_finding_ids=repair_finding_ids,
+            )
+        except IndexInventoryError as exc:
+            return exc.to_dict()
+        except (ReviewEvidenceError, OSError, RuntimeError, ValueError) as exc:
+            return _error_payload(exc, "repair_universe_unavailable")
+        return {
+            "ok": True,
+            "repair_universe": universe.to_dict(),
+            "repair_universe_digest": universe.digest,
+            "index_token": token.to_dict(),
+        }
+
+    registry.register(
+        name="derive_plan_review_repair_universe",
+        description=(
+            "Derive the settled read-only repair site graph and canonical digest "
+            "before attestation."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prior_evidence_id": {"type": "string"},
+                "plan_path": {"type": "string"},
+                "repair_finding_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "uniqueItems": True,
+                },
+                "project": {"type": "string"},
+            },
+            "required": ["prior_evidence_id", "plan_path", "repair_finding_ids"],
+        },
+        func=derive_plan_review_repair_universe,
     )
 
     def prepare_plan_review_round(

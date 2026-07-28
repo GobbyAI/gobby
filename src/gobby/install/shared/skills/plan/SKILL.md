@@ -89,15 +89,27 @@ For every round after the first, also pass `prior_finding_resolutions` and
 `repair_attestations` to `prepare_plan_review_round`. Build exactly one
 resolution record per finding in the prior finalized result:
 `prior_finding_id` plus `decision: repair | carry`. Every `repair` record needs
-one attestation carrying `prior_finding_id`, `check_key`,
+one attestation. After applying the accepted edits, call
+`derive_plan_review_repair_universe` with the finalized prior evidence and the
+edited plan path, plus `repair_finding_ids` containing exactly the findings
+whose recorded decision is `repair`. Do not edit the plan again between
+derivation and submission.
+Build the attestation against the returned typed graph and copy its canonical
+digest into `repair_universe_digest`. Preparation rederives the same graph from
+the submitted revision and refuses digest drift.
+Each attestation carries `prior_finding_id`, `check_key`,
 `changed_section_ids`, `accepted_resolution`,
 `deviation_from_minimal_repair`, `changed_symbols`,
 `consumer_sites_swept`, `adjacent_variants_swept`, `validation_evidence`, and
-`deferred_sites`. Derive these fields from the recorded vote and the actual
-plan edit and validation sweep. Preparation loads the prior finding universe
-server-side and refuses omissions, duplicate identities, stale check keys, and
-section claims outside the real hash diff. `carry` applies only to non-blocking
-findings.
+`deferred_sites`, plus `repair_universe_digest`, `sweep_query_evidence`, and
+`repair_bundle_interactions`. Sweep every required site and adjacent-variant
+ID. A deferral is an object with `site_id` and a non-empty `reason`; an empty
+derived site set requires the exact query that returned no sites in
+`sweep_query_evidence`. Emit one interaction record for every graph edge,
+carrying `edge_id`, `disposition`, and non-empty `validation_evidence`.
+Preparation loads the prior finding universe server-side and refuses omissions,
+extras, duplicate identities, stale check keys, graph drift, and section claims
+outside the real hash diff. `carry` applies only to non-blocking findings.
 Set `deviation_from_minimal_repair` to `null` when following the minimal repair.
 For a deviation, use one closed object with exactly `violated_invariant`,
 `original_counterexample`, `how_alternative_closes_it`, `validation_evidence`,
