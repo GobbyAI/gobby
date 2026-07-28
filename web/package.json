@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "lint": "npm run lint:js && npm run lint:css",
-    "lint:js": "eslint --report-unused-disable-directives --max-warnings 0",
+    "lint:js": "node scripts/patch-jsx-a11y-minimatch.mjs && eslint --report-unused-disable-directives --max-warnings 0",
     "lint:css": "stylelint \"src/**/*.css\"",
     "lint:tokens": "node scripts/lint-tokens.mjs",
     "patch:tailwind-node-dep0205": "node scripts/patch-tailwind-node-dep0205.mjs",
