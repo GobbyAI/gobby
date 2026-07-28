@@ -23,6 +23,7 @@ from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
 from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.services.knowledge_graph import (
+    ActiveMemoryPreview,
     KnowledgeGraphRebuildService,
     KnowledgeGraphService,
 )
@@ -260,18 +261,19 @@ class MemoryManager(MemoryManagerFacadeMethods):
 
             prompt_loader = PromptLoader(db=self.db)
 
-            async def _active_memory_filter(
+            async def _active_memory_lookup(
                 memory_ids: Sequence[str], project_id: str | None
-            ) -> set[str]:
-                """Return the active (not soft-hidden) subset of ``memory_ids``.
+            ) -> dict[str, ActiveMemoryPreview]:
+                """Return previews for the active (not soft-hidden) subset of ``memory_ids``.
 
                 The memory store is the visibility source of truth; the graph keeps
                 soft-hidden Memory nodes until purge, so entity-graph reads consult this
-                to drop entities/relationships backed only by hidden rows.
+                to drop entities/relationships backed only by hidden rows. The preview
+                content feeds the graph UI's entity cards.
                 """
                 ids = list(memory_ids)
                 if not ids:
-                    return set()
+                    return {}
                 active = await asyncio.to_thread(
                     self.storage.get_memories,
                     ids,
@@ -282,7 +284,12 @@ class MemoryManager(MemoryManagerFacadeMethods):
                     ),
                     visibility="active",
                 )
-                return {memory.id for memory in active}
+                return {
+                    memory.id: ActiveMemoryPreview(
+                        content=memory.content, updated_at=memory.updated_at
+                    )
+                    for memory in active
+                }
 
             kg_service = KnowledgeGraphService(
                 falkor_client=self._falkor_client,
@@ -312,7 +319,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                     if self._recall_constants.source == "fitted"
                     else None
                 ),
-                active_memory_filter=_active_memory_filter,
+                active_memory_lookup=_active_memory_lookup,
                 write_fence=self._project_write_fence,
             )
             logger.debug("KnowledgeGraphService initialized")

@@ -12,10 +12,12 @@ from .models import (
     KnowledgeGraphStatus,
     Relationship,
 )
+from .reader import ActiveMemoryPreview
 from .rebuild import KnowledgeGraphRebuildService
 from .service import KnowledgeGraphService
 
 __all__ = [
+    "ActiveMemoryPreview",
     "Entity",
     "KnowledgeGraphRebuildService",
     "KnowledgeGraphResult",

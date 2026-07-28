@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +17,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
+    ActiveMemoryPreview,
     Entity,
     KnowledgeGraphResult,
     KnowledgeGraphService,
@@ -1523,17 +1525,33 @@ class TestEntityGraphActiveFiltering:
             {"entity_key": "e-mixed", "memory_ids": ["m2", "m3"]},
             {"entity_key": "e-hidden", "memory_ids": ["m4"]},
         ]
-        active_ids = {"m1", "m3"}
+        long_content = "Gobby is a local-first daemon. " * 20
+        active_previews: dict[str, ActiveMemoryPreview] = {
+            "m1": ActiveMemoryPreview(
+                content=long_content,
+                updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+            ),
+            "m3": ActiveMemoryPreview(
+                content="Newest fact about the\n mixed entity.",
+                updated_at=datetime(2026, 7, 20, tzinfo=UTC),
+            ),
+        }
 
-        async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
-            return {mid for mid in cast(Iterable[str], memory_ids) if mid in active_ids}
+        async def _lookup(
+            memory_ids: object, project_id: str | None
+        ) -> dict[str, ActiveMemoryPreview]:
+            return {
+                mid: active_previews[mid]
+                for mid in cast(Iterable[str], memory_ids)
+                if mid in active_previews
+            }
 
         falkor = _FakeFalkorGraph(graph, backing_rows)
         reader = KnowledgeGraphReader(
             falkor,  # type: ignore[arg-type]
             embed_fn=None,
             embedding_dim=768,
-            active_memory_filter=_filter,
+            active_memory_lookup=_lookup,
         )
 
         result = await reader.get_entity_graph(limit=100)
@@ -1546,6 +1564,36 @@ class TestEntityGraphActiveFiltering:
         assert result["relationships"] == [
             {"source_key": "e-active", "target_key": "e-mixed", "type": "RELATED"}
         ]
+        # Surviving entities are enriched with active-memory counts and a
+        # whitespace-collapsed, truncated preview of the newest backing memory.
+        by_key = {e["entity_key"]: e for e in result["entities"]}
+        assert by_key["e-active"]["memory_count"] == 1
+        preview = by_key["e-active"]["memory_preview"]
+        assert isinstance(preview, str)
+        assert preview.startswith("Gobby is a local-first daemon.")
+        assert preview.endswith("…")
+        assert len(preview) <= 200
+        # Only m3 is active for e-mixed; its content is collapsed to one line.
+        assert by_key["e-mixed"]["memory_count"] == 1
+        assert by_key["e-mixed"]["memory_preview"] == "Newest fact about the mixed entity."
+
+    def test_latest_preview_snippet_prefers_newest_and_handles_blanks(self) -> None:
+        from gobby.memory.services.knowledge_graph.reader import _latest_preview_snippet
+
+        newest = ActiveMemoryPreview(
+            content="Newest content", updated_at=datetime(2026, 7, 20, tzinfo=UTC)
+        )
+        older = ActiveMemoryPreview(
+            content="Older content", updated_at=datetime(2026, 7, 1, tzinfo=UTC)
+        )
+        undated = ActiveMemoryPreview(content="Undated content", updated_at=None)
+
+        assert _latest_preview_snippet([older, newest, undated]) == "Newest content"
+        assert _latest_preview_snippet([undated]) == "Undated content"
+        assert _latest_preview_snippet([]) is None
+        assert (
+            _latest_preview_snippet([ActiveMemoryPreview(content="   ", updated_at=None)]) is None
+        )
 
     @pytest.mark.asyncio
     async def test_get_entity_graph_fails_open_when_backing_lookup_errors(self) -> None:
@@ -1554,8 +1602,10 @@ class TestEntityGraphActiveFiltering:
             "relationships": [],
         }
 
-        async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
-            return set()
+        async def _lookup(
+            memory_ids: object, project_id: str | None
+        ) -> dict[str, ActiveMemoryPreview]:
+            return {}
 
         class _ErrFalkor:
             async def get_entity_graph(
@@ -1572,7 +1622,7 @@ class TestEntityGraphActiveFiltering:
             _ErrFalkor(),  # type: ignore[arg-type]
             embed_fn=None,
             embedding_dim=768,
-            active_memory_filter=_filter,
+            active_memory_lookup=_lookup,
         )
 
         # A transient backing-lookup fault returns the raw graph rather than blanking it.

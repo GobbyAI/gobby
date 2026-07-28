@@ -115,30 +115,6 @@ body {
   }
 }
 
-/* Coming Soon page */
-.coming-soon-page {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.coming-soon-content {
-  text-align: center;
-}
-
-.coming-soon-content h2 {
-  font-size: var(--text-2xl);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 0.5rem;
-}
-
-.coming-soon-content p {
-  font-size: var(--text-base);
-  color: var(--text-muted);
-}
-
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 0.5rem;
@@ -161,4 +137,10 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border) var(--bg-primary);
+}
+
+/* float-tooltip (3d-force-graph) paints a black plate; the KG node card owns its surface. */
+.knowledge-graph .float-tooltip-kap {
+  background: none;
+  padding: 0;
 }

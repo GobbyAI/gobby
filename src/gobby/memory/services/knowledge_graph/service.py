@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from gobby.projects.fenced_vector_store import VectorWriteFence
     from gobby.prompts.loader import PromptLoader
 
-    from .reader import ActiveMemoryFilter
+    from .reader import ActiveMemoryLookup
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class KnowledgeGraphService:
         cluster_min_samples: int | None = 2,
         cooccur_alpha: float | None = None,
         cooccur_support_cap: int | None = None,
-        active_memory_filter: ActiveMemoryFilter | None = None,
+        active_memory_lookup: ActiveMemoryLookup | None = None,
         write_fence: VectorWriteFence | None = None,
     ) -> None:
         self._falkor = falkor_client
@@ -111,7 +111,7 @@ class KnowledgeGraphService:
             cluster_expansion_per_entity=cluster_expansion_per_entity,
             cooccur_alpha=cooccur_alpha,
             cooccur_support_cap=cooccur_support_cap,
-            active_memory_filter=active_memory_filter,
+            active_memory_lookup=active_memory_lookup,
         )
         self._code_linker = KnowledgeGraphCodeLinker(
             falkor_client,

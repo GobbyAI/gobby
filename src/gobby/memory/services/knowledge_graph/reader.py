@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.scoring import temporal_decay
@@ -19,11 +19,23 @@ if TYPE_CHECKING:
 
     from gobby.memory.falkor_client import FalkorClient
 
-    # Given candidate memory IDs (and an optional project scope), return the subset that
-    # are currently active (not soft-hidden) in the memory store -- the source of truth
-    # for visibility. The graph retains soft-hidden Memory nodes until purge, so entity
-    # reads must consult this to drop entities/relationships backed only by hidden rows.
-    ActiveMemoryFilter = Callable[[Sequence[str], str | None], Awaitable[set[str]]]
+    # Given candidate memory IDs (and an optional project scope), return previews
+    # ({id: ActiveMemoryPreview}) for the subset that are currently active (not
+    # soft-hidden) in the memory store -- the source of truth for visibility. The
+    # graph retains soft-hidden Memory nodes until purge, so entity reads must
+    # consult this to drop entities/relationships backed only by hidden rows; the
+    # preview content feeds the entity-card enrichment on graph reads.
+    ActiveMemoryLookup = Callable[
+        [Sequence[str], str | None], Awaitable[dict[str, "ActiveMemoryPreview"]]
+    ]
+
+
+class ActiveMemoryPreview(TypedDict):
+    """Content preview for one active memory backing a graph entity."""
+
+    content: str
+    updated_at: datetime | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +51,29 @@ _TRAVERSAL_TIMEOUT_THRESHOLD = 3
 _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS = 60.0
 _TRAVERSAL_WARNING_INTERVAL_SECONDS = 60.0
 _CLUSTER_ENTITY_QUERY_LIMIT = 256
+
+
+_PREVIEW_SNIPPET_CHARS = 200
+
+
+def _latest_preview_snippet(previews: list[ActiveMemoryPreview]) -> str | None:
+    """Whitespace-collapsed snippet of the most recently updated preview."""
+    if not previews:
+        return None
+
+    def _recency(preview: ActiveMemoryPreview) -> datetime:
+        ts = preview["updated_at"]
+        if ts is None:
+            return datetime.min.replace(tzinfo=UTC)
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+    latest = max(previews, key=_recency)
+    collapsed = " ".join(latest["content"].split())
+    if not collapsed:
+        return None
+    if len(collapsed) <= _PREVIEW_SNIPPET_CHARS:
+        return collapsed
+    return collapsed[: _PREVIEW_SNIPPET_CHARS - 1].rstrip() + "…"
 
 
 def _edge_timestamp_to_iso(value: Any) -> str | None:
@@ -100,7 +135,7 @@ class KnowledgeGraphReader:
         cluster_expansion_per_entity: int = 3,
         cooccur_alpha: float | None = None,
         cooccur_support_cap: int | None = None,
-        active_memory_filter: ActiveMemoryFilter | None = None,
+        active_memory_lookup: ActiveMemoryLookup | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -114,7 +149,7 @@ class KnowledgeGraphReader:
         # override and must match what the writer blends with.
         self._cooccur_alpha = cooccur_alpha
         self._cooccur_support_cap = cooccur_support_cap
-        self._active_memory_filter = active_memory_filter
+        self._active_memory_lookup = active_memory_lookup
         self._vector_index_ensured = False
         self._traversal_timeout_count = 0
         self._traversal_disabled_until = 0.0
@@ -695,10 +730,14 @@ class KnowledgeGraphReader:
         read must consult the memory store (the visibility source of truth). An entity
         mentioned by both hidden and active memories stays visible; an entity backed
         only by hidden (or no longer existing) memories is dropped, and any relationship
-        touching a dropped entity drops with it. Without an injected store filter (e.g.
+        touching a dropped entity drops with it. Without an injected store lookup (e.g.
         in tests) the raw graph is returned unchanged.
+
+        Each surviving entity is enriched with ``memory_count`` (active backing
+        memories) and ``memory_preview`` (a snippet of the most recently updated
+        one) so graph UIs can show human-readable cards instead of raw properties.
         """
-        if graph is None or self._active_memory_filter is None:
+        if graph is None or self._active_memory_lookup is None:
             return graph
         entities = graph.get("entities") or []
         relationships = graph.get("relationships") or []
@@ -713,17 +752,31 @@ class KnowledgeGraphReader:
             return graph
         all_memory_ids = sorted({mid for ids in backing.values() for mid in ids})
         try:
-            active_ids = await self._active_memory_filter(all_memory_ids, project_id)
+            previews = await self._active_memory_lookup(all_memory_ids, project_id)
         except Exception:
-            logger.warning("Active memory filter failed for entity graph", exc_info=True)
+            logger.warning("Active memory lookup failed for entity graph", exc_info=True)
             return graph
 
         visible_keys = {
             key
             for key, memory_ids in backing.items()
-            if any(memory_id in active_ids for memory_id in memory_ids)
+            if any(memory_id in previews for memory_id in memory_ids)
         }
-        filtered_entities = [e for e in entities if str(e.get("entity_key") or "") in visible_keys]
+        filtered_entities = []
+        for entity in entities:
+            key = str(entity.get("entity_key") or "")
+            if key not in visible_keys:
+                continue
+            active_backing = [mid for mid in backing.get(key, []) if mid in previews]
+            filtered_entities.append(
+                {
+                    **entity,
+                    "memory_count": len(active_backing),
+                    "memory_preview": _latest_preview_snippet(
+                        [previews[mid] for mid in active_backing]
+                    ),
+                }
+            )
         filtered_relationships = [
             r
             for r in relationships

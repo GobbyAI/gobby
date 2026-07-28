@@ -92,6 +92,10 @@ export interface KnowledgeEntity {
   entity_type: string
   project_id: string | null
   properties: Record<string, unknown>
+  /** Active memories mentioning this entity (absent when the daemon fails open). */
+  memory_count?: number
+  /** Snippet of the most recent active memory mentioning this entity. */
+  memory_preview?: string | null
 }
 
 export interface KnowledgeRelationship {

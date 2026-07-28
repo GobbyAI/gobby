@@ -7,11 +7,13 @@ import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity } from '../../../hooks/useMemory'
 import { inputFocusCls } from '../../shared/focusStyles'
 import { Button } from '../../ui/Button'
-import { buildForceData, getEntityColorCss, mergeGraphData, numericId } from './KnowledgeGraphModel'
+import { buildForceData, buildNeighborIndex, buildNodeCardHtml, getEntityColorCss, mergeGraphData, numericId } from './KnowledgeGraphModel'
 
 // `isolate` scopes the z-10 overlays to this container so panel chrome with a
 // lower z-index (.activity-panel-mobile-menu, z-5) still layers above the graph.
-const CONTAINER_CLS = 'relative isolate flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+// `knowledge-graph` is the hook base.css uses to unstyle the injected
+// float-tooltip wrapper so the node card owns its surface.
+const CONTAINER_CLS = 'knowledge-graph relative isolate flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const EMPTY_CLS = 'flex h-full min-h-[300px] flex-1 flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
 const OVERLAY_STACK_CLS = 'absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5'
 const INFO_CLS = 'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
@@ -200,6 +202,12 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     if (!graphData) return { nodes: [], links: [] }
     return buildForceData(graphData)
   }, [graphData])
+
+  // Named connections per node for the hover card
+  const neighborIndex = useMemo(
+    () => buildNeighborIndex(forceData.nodes, forceData.links),
+    [forceData]
+  )
 
   // Apply force parameters whenever data or physics values change
   useEffect(() => {
@@ -417,14 +425,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         nodeId="id"
         nodeLabel={(node: any) => {
           const e = node.entity as KnowledgeEntity
-          const props = Object.entries(e.properties || {}).slice(0, 4)
-            .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v).slice(0, 30))}`)
-            .join('\n')
-          return `<div style="text-align:center;font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.4">
-            <b>${escapeHtml(e.name)}</b><br/>
-            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:var(--text-2xs)">${escapeHtml(e.entity_type)}</span>
-            ${props ? '<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
-          </div>`
+          return buildNodeCardHtml(e, neighborIndex.get(node.id as string) ?? [])
         }}
         nodeThreeObject={nodeThreeObject}
         nodeThreeObjectExtend={false}

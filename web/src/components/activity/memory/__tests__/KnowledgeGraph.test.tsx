@@ -25,9 +25,16 @@ vi.mock("../../../../lib/utils", async (importOriginal) => {
   };
 });
 
-const { CANONICAL_ENTITY_TYPES, buildForceData, edgeColor, entityColorVar } = await import(
-  "../KnowledgeGraphModel"
-);
+const {
+  CANONICAL_ENTITY_TYPES,
+  buildForceData,
+  buildNeighborIndex,
+  buildNodeCardHtml,
+  edgeColor,
+  entityColorVar,
+  humanizeRelation,
+  isOpaqueIdentifier,
+} = await import("../KnowledgeGraphModel");
 const { KnowledgeGraph } = await import("../KnowledgeGraph");
 
 class MockResizeObserver {
@@ -100,6 +107,87 @@ describe("KnowledgeGraph entity taxonomy colors (#19153)", () => {
   it("keeps muted gray as the fallback for off-vocabulary legacy types", () => {
     expect(entityColorVar("function")).toBe("--text-muted");
     expect(entityColorVar("unknown-thing")).toBe("--text-muted");
+  });
+});
+
+describe("KnowledgeGraph node card (#19156)", () => {
+  const entity = (overrides: Record<string, unknown> = {}) => ({
+    entity_key: "gobby",
+    name: "Gobby",
+    entity_type: "project",
+    project_id: "project-1",
+    properties: { ignored: "never shown" },
+    memory_count: 3,
+    memory_preview: "Gobby is a local-first daemon unifying AI coding tools.",
+    ...overrides,
+  });
+
+  it("renders name, type, memory snippet, and named connections — no raw properties", () => {
+    const html = buildNodeCardHtml(entity(), [
+      { name: "gcode", relation: "depends on", outgoing: true },
+      { name: "Josh", relation: "maintained by", outgoing: false },
+    ]);
+    expect(html).toContain("Gobby");
+    expect(html).toContain("project");
+    expect(html).toContain("“Gobby is a local-first daemon unifying AI coding tools.”");
+    expect(html).toContain("→ depends on ");
+    expect(html).toContain("gcode");
+    expect(html).toContain("← maintained by ");
+    expect(html).toContain("Josh");
+    expect(html).toContain("3 memories · 2 connections");
+    expect(html).not.toContain("never shown");
+  });
+
+  it("never shows a bare UUID as primary text", () => {
+    const uuid = "b38dc83b-1234-4abc-9def-0123456789ab";
+    const html = buildNodeCardHtml(entity({ name: uuid, entity_type: "concept" }), []);
+    expect(html).toContain("Unlabeled concept");
+    expect(html).not.toContain(uuid);
+    expect(html).toContain("b38dc83b…");
+  });
+
+  it("caps connections at four with an overflow line", () => {
+    const connections = Array.from({ length: 6 }, (_, i) => ({
+      name: `peer-${i}`,
+      relation: "uses",
+      outgoing: true,
+    }));
+    const html = buildNodeCardHtml(entity(), connections);
+    expect(html).toContain("peer-3");
+    expect(html).not.toContain("peer-4");
+    expect(html).toContain("+2 more connections");
+    expect(html).toContain("6 connections");
+  });
+
+  it("omits snippet and footer when the daemon fails open (no enrichment)", () => {
+    const html = buildNodeCardHtml(
+      entity({ memory_count: undefined, memory_preview: undefined }),
+      [],
+    );
+    expect(html).toContain("Gobby");
+    expect(html).not.toContain("“");
+    expect(html).not.toContain("memories");
+  });
+
+  it("buildNeighborIndex resolves both string and post-simulation object endpoints", () => {
+    const nodes = [
+      { id: "a", name: "Alpha" },
+      { id: "b", name: "Beta" },
+    ];
+    const links = [
+      { source: "a", target: { id: "b" }, type: "DEPENDS_ON" },
+      { source: "a", target: "missing", type: "USES" },
+    ];
+    const index = buildNeighborIndex(nodes, links);
+    expect(index.get("a")).toEqual([{ name: "Beta", relation: "depends on", outgoing: true }]);
+    expect(index.get("b")).toEqual([{ name: "Alpha", relation: "depends on", outgoing: false }]);
+  });
+
+  it("humanizes relation types and detects opaque identifiers", () => {
+    expect(humanizeRelation("DEPENDS_ON")).toBe("depends on");
+    expect(isOpaqueIdentifier("b38dc83b-1234-4abc-9def-0123456789ab")).toBe(true);
+    expect(isOpaqueIdentifier("0123456789abcdef0123")).toBe(true);
+    expect(isOpaqueIdentifier("Gobby")).toBe(false);
   });
 });
 

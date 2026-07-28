@@ -110,10 +110,12 @@ describe('KnowledgeGraph', () => {
               properties: {
                 '<b>role</b>': '"admin" & <script>alert(1)</script>',
               },
+              memory_count: 1,
+              memory_preview: '"admin" & <script>alert(1)</script>',
             },
             {
               entity_key: 'entity-2',
-              name: 'target',
+              name: '<i>target</i>',
               entity_type: 'file',
               project_id: null,
               properties: {},
@@ -140,10 +142,14 @@ describe('KnowledgeGraph', () => {
     const linkColor = forceGraph.getAttribute('data-link-color') ?? ''
 
     expect(nodeTooltip).toContain('&lt;img src=x onerror=alert(1)&gt;')
-    expect(nodeTooltip).toContain('&lt;b&gt;role&lt;/b&gt;')
+    // Memory preview and connection names are escaped.
     expect(nodeTooltip).toContain('&quot;admin&quot; &amp; &lt;script')
+    expect(nodeTooltip).toContain('&lt;i&gt;target&lt;/i&gt;')
     expect(nodeTooltip).not.toContain('<img src=x')
-    expect(nodeTooltip).not.toContain('<b>role</b>')
+    expect(nodeTooltip).not.toContain('<i>target</i>')
+    expect(nodeTooltip).not.toContain('<script')
+    // Raw properties are no longer dumped into the card (#19156).
+    expect(nodeTooltip).not.toContain('role')
     expect(linkTooltip).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
     // Link colors reach three.js resolved (#19153): a concrete color — or empty
     // in jsdom, where custom properties don't resolve — never a `var()` literal,
