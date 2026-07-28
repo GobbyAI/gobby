@@ -410,7 +410,7 @@ def test_free_text_rejection_fallback(stage_review_setup: StageReviewSetup) -> N
 
 
 @pytest.mark.asyncio
-async def test_pre_spawn_snapshot_transport(
+async def test_staged_prompt_uses_evidence_handle(
     stage_review_setup: StageReviewSetup,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,10 +476,12 @@ async def test_pre_spawn_snapshot_transport(
 
     assert result == run_id
     prompt = str(captured["prompt"])
-    transported = prompt.partition("<plan-review-snapshot>\n")[2].partition(
-        "\n</plan-review-snapshot>"
-    )[0]
-    assert transported.encode("utf-8") == stage_review_setup.plan_path.read_bytes()
+    assert "<plan-review-snapshot>" not in prompt
+    assert stage_review_setup.plan_path.read_text() not in prompt
+    assert "get_plan_review_snapshot" in prompt
+    assert "next_offset" in prompt
+    assert "snapshot_hash" in prompt
+    assert "prior_round_context" in prompt
     rows = stage_review_setup.evidence.store.list_for_path(
         project_id=stage_review_setup.project_id,
         plan_path=stage_review_setup.plan_relative_path,

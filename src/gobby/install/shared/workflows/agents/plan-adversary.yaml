@@ -92,11 +92,20 @@ instructions: |
   class. Return section ids only; the evidence service owns hashes.
 
   THREE-LANE COVERAGE PROTOCOL:
+  Reconstruct the complete immutable evidence envelope before review. Call
+  `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
+  follow `next_offset` to exhaustion; concatenate every `content` page in offset
+  order, verify the reconstructed bytes against `snapshot_hash`, verify every
+  record hash and `bundle_digest`, then parse all records before lane review
+  begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
+  evidence. The parsed records carry plan sections, `prior_round_context`, quality
+  ledger, requirement sources, consumer inventory, and `review_complexity`.
+
   Always complete requirements_traceability, repository_blast_radius, and
-  runtime_invariants against `get_plan_review_snapshot(evidence_id)`. The lane
-  scopes, candidate schema, parent verification/disposition rules, cross-lane
-  interaction pass, adjacent-variant closure, complexity thresholds, fallback
-  rules, and shadow-manifest gate are authoritative in `plan-review`.
+  runtime_invariants against that verified envelope. The lane scopes, candidate
+  schema, parent verification/disposition rules, cross-lane interaction pass,
+  adjacent-variant closure, complexity thresholds, fallback rules, and
+  shadow-manifest gate are authoritative in `plan-review`.
   Run lanes in parallel when the snapshot has at least 8 deliverables,
   24 acceptance items, 12 distinct target files, or 4 sections changed since
   the prior finalized round. Otherwise execute all three lanes sequentially in
@@ -143,12 +152,13 @@ instructions: |
   supports one; it is best-effort, not a guarantee. The 2700-second agent timeout
   is the only enforced wall-clock bound for this reviewer.
 
-  Call `derive_plan_review_manifest` during every round. Call
-  `validate_plan_review_coverage` before approve/reject and pass its
-  complete `coverage_attestation`, including its canonical `record_bundle`, to
-  the lifecycle tool. Approval also passes the exact server-derived
-  routing_decisions and manifest_entries. On first source drift, rerun affected
-  lanes once.
+  Call `derive_plan_review_manifest` during every round. Pass only
+  `routing_decisions` to `validate_plan_review_coverage` before approve/reject;
+  the server reuses or derives the canonical shadow manifest from the evidence id
+  and routing digest. Pass the complete returned `coverage_attestation`, including
+  its canonical `record_bundle`, to the lifecycle tool. Approval also passes the
+  exact server-derived routing_decisions and manifest_entries. On first
+  source drift, rerun affected lanes once.
 
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:

@@ -171,18 +171,12 @@ def attach_plan_review_evidence(
     *,
     evidence_id: str,
     round_number: int,
-    plan_hash: str,
-    section_manifest: list[dict[str, str]],
-    snapshot: bytes,
 ) -> str:
-    """Append the immutable stage-native evidence transport to an adversary prompt."""
-    snapshot_text = snapshot.decode("utf-8")
+    """Append the immutable stage-native evidence handle to an adversary prompt."""
     metadata = json.dumps(
         {
             "evidence_id": evidence_id,
-            "plan_hash": plan_hash,
             "round_number": round_number,
-            "section_manifest": section_manifest,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -193,16 +187,18 @@ def attach_plan_review_evidence(
             "",
             "## Immutable Plan Review Evidence",
             "",
-            "Use this stored snapshot as the complete review target. Pass its evidence_id "
-            "and round_number with the structured verdict.",
+            "Use this evidence handle as the complete review target. Call "
+            "`get_plan_review_snapshot` with its evidence_id, start with `offset: 0`, "
+            "and use `limit: 8000`. Follow `next_offset` to exhaustion, concatenate "
+            "every `content` page in offset order, and verify the reconstructed bytes "
+            "against `snapshot_hash`. Parse all records before lane review begins; the "
+            "envelope carries the plan sections, `prior_round_context`, quality ledger, "
+            "requirements sources, and consumer inventory. Pass evidence_id and "
+            "round_number with the structured verdict.",
             "",
             "```json",
             metadata,
             "```",
-            "",
-            "<plan-review-snapshot>",
-            snapshot_text,
-            "</plan-review-snapshot>",
         ]
     )
 

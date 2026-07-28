@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
@@ -20,6 +21,7 @@ from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     ReviewEvidenceError,
     canonical_json_bytes,
+    canonical_json_object,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation
@@ -78,6 +80,7 @@ class ReviewManifestService:
         self.db = db
         self.store = store
         self.projects = projects
+        self._manifest_cache: dict[tuple[str, str], dict[str, object]] = {}
 
     def derive_plan_review_manifest(
         self,
@@ -86,7 +89,21 @@ class ReviewManifestService:
     ) -> dict[str, object]:
         """Derive a canonical shadow manifest without writing the plan."""
         evidence = self.store.require(evidence_id)
-        routing = dict(routing_decisions)
+        try:
+            routing = canonical_json_object(routing_decisions)
+        except ReviewEvidenceError as exc:
+            return {
+                "status": "invalid",
+                "routing_decisions": dict(routing_decisions),
+                "diagnostics": [{"code": exc.code, "message": str(exc)}],
+            }
+        routing_digest = hashlib.sha256(
+            canonical_json_bytes({"routing_decisions": routing})
+        ).hexdigest()
+        cache_key = (evidence_id, routing_digest)
+        cached = self._manifest_cache.get(cache_key)
+        if cached is not None:
+            return deepcopy(cached)
         try:
             document = self.snapshot_document(evidence)
             entries = derive_manifest_entries(document, routing)
@@ -95,7 +112,7 @@ class ReviewManifestService:
                 snapshot_path.write_bytes(evidence.snapshot)
                 render_manifest_plan(snapshot_path, evidence.snapshot, entries)
         except ManifestSynthesisError as exc:
-            return {
+            result: dict[str, object] = {
                 "status": "invalid",
                 "routing_decisions": routing,
                 "diagnostics": [
@@ -106,7 +123,7 @@ class ReviewManifestService:
                 ],
             }
         except PlanParseError as exc:
-            return {
+            result = {
                 "status": "invalid",
                 "routing_decisions": routing,
                 "diagnostics": [
@@ -119,7 +136,7 @@ class ReviewManifestService:
                 ],
             }
         except ReviewEvidenceError as exc:
-            return {
+            result = {
                 "status": "invalid",
                 "routing_decisions": routing,
                 "diagnostics": [
@@ -129,16 +146,19 @@ class ReviewManifestService:
                     }
                 ],
             }
-        manifest_digest = hashlib.sha256(
-            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        return {
-            "status": "valid",
-            "routing_decisions": routing,
-            "manifest_entries": entries,
-            "manifest_digest": manifest_digest,
-            "entry_count": len(entries),
-        }
+        else:
+            manifest_digest = hashlib.sha256(
+                json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            result = {
+                "status": "valid",
+                "routing_decisions": routing,
+                "manifest_entries": entries,
+                "manifest_digest": manifest_digest,
+                "entry_count": len(entries),
+            }
+        self._manifest_cache[cache_key] = deepcopy(result)
+        return result
 
     def apply_plan_review_manifest(
         self,

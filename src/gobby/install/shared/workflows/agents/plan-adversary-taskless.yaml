@@ -71,11 +71,17 @@ instructions: |
   The parent expires the evidence and spawns a newly bound reviewer that reruns
   all three lanes with a fresh snapshot, inventory, and token.
 
-  Read `get_plan_review_snapshot(evidence_id)` and use its `review_complexity`.
-  Run lanes in parallel when the snapshot has at least 8 deliverables,
-  24 acceptance items, 12 distinct target files, or 4 sections changed since
-  the prior finalized round. Otherwise run the same lanes sequentially in this
-  parent.
+  Reconstruct the complete immutable evidence envelope before review. Call
+  `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
+  follow `next_offset` to exhaustion; concatenate every `content` page in offset
+  order, verify the reconstructed bytes against `snapshot_hash`, verify every
+  record hash and `bundle_digest`, then parse all records before lane review
+  begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
+  evidence. The parsed records carry plan sections, `prior_round_context`, quality
+  ledger, requirement sources, consumer inventory, and `review_complexity`. Run
+  lanes in parallel when the snapshot has at least 8 deliverables,
+  24 acceptance items, 12 distinct target files, or 4 sections changed since the
+  prior finalized round. Otherwise run the same lanes sequentially in this parent.
 
   In parallel mode, launch one read-only provider-native internal subagent per
   lane through the current CLI/runtime's internal collaboration facility. Run
@@ -108,10 +114,12 @@ instructions: |
   During every round, including rejection, call
   `derive_plan_review_manifest(evidence_id, routing_decisions)`. Then call
   `validate_plan_review_coverage` with the three lane results, all candidate
-  and sweep records, and the exact shadow result. Put its complete
+  and sweep records. Pass only `routing_decisions` to
+  `validate_plan_review_coverage`; the server reuses or derives the canonical
+  shadow manifest from the evidence id and routing digest. Put its complete
   `coverage_attestation`, including the canonical `record_bundle`, in
-  `round_result`. Approval also returns the exact server-derived
-  `routing_decisions` and `manifest_entries`.
+  `round_result`. Approval also returns the exact server-derived routing_decisions
+  and `manifest_entries`.
 
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:

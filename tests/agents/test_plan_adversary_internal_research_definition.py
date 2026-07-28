@@ -56,6 +56,18 @@ def test_adversary_run_timeout_contract() -> None:
         assert '"reason_code":"timeout","timeout_seconds":2700' in instructions
 
 
+def test_adversaries_page_and_verify_the_complete_evidence_envelope() -> None:
+    for name in ADVERSARIES:
+        instructions = " ".join(_agent(name)["instructions"].split())
+
+        assert "start with `offset: 0`" in instructions
+        assert "follow `next_offset` to exhaustion" in instructions
+        assert "concatenate every `content` page" in instructions
+        assert "verify the reconstructed bytes against `snapshot_hash`" in instructions
+        assert "parse all records before lane review begins" in instructions
+        assert "Pass only `routing_decisions` to `validate_plan_review_coverage`" in instructions
+
+
 def test_removed_researcher_is_absent_from_inventory_and_manifest() -> None:
     assert not (AGENTS_DIR / f"{REMOVED_RESEARCHER}.yaml").exists()
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))

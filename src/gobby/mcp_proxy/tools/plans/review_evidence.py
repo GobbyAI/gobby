@@ -18,7 +18,12 @@ from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.plans.consumer_sweep import derive_candidate_site_inventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_io import build_inter_round_diff, normalize_plan_path
+from gobby.plans.review_evidence_io import (
+    DEFAULT_SNAPSHOT_PAGE_BYTES,
+    MAX_SNAPSHOT_PAGE_BYTES,
+    build_inter_round_diff,
+    normalize_plan_path,
+)
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import RepairUniverse, derive_repair_universe
@@ -271,30 +276,40 @@ def register_review_evidence_tools(
         func=prepare_plan_review_round,
     )
 
-    def get_plan_review_snapshot(evidence_id: str) -> dict[str, object]:
+    def get_plan_review_snapshot(
+        evidence_id: str,
+        offset: int = 0,
+        limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
+    ) -> dict[str, object]:
         try:
-            payload = service.snapshot_payload(evidence_id)
-            snapshot = payload.pop("snapshot")
-            if not isinstance(snapshot, bytes):
-                raise ReviewEvidenceError(
-                    "invalid_evidence_row",
-                    "stored plan snapshot is not bytes",
-                )
             return {
                 "ok": True,
-                **payload,
-                "snapshot": snapshot.decode("utf-8"),
+                **service.snapshot_page(
+                    evidence_id,
+                    offset=offset,
+                    limit=limit,
+                ),
             }
-        except (ReviewEvidenceError, UnicodeDecodeError) as exc:
+        except ReviewEvidenceError as exc:
             return _error_payload(exc, "get_plan_review_snapshot_failed")
 
     registry.register(
         name="get_plan_review_snapshot",
-        description="Return the immutable UTF-8 snapshot reviewed by the adversary.",
+        description="Page the canonical immutable plan-review evidence envelope.",
         input_schema={
             "type": "object",
-            "properties": {"evidence_id": {"type": "string"}},
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_SNAPSHOT_PAGE_BYTES,
+                    "default": DEFAULT_SNAPSHOT_PAGE_BYTES,
+                },
+            },
             "required": ["evidence_id"],
+            "additionalProperties": False,
         },
         func=get_plan_review_snapshot,
     )
@@ -405,14 +420,14 @@ def register_review_evidence_tools(
         evidence_id: str,
         lane_results: list[object],
         candidate_dispositions: Mapping[str, object],
-        shadow_manifest_status: Mapping[str, object],
+        routing_decisions: Mapping[str, object],
     ) -> dict[str, object]:
         try:
             attestation = service.validate_plan_review_coverage(
                 evidence_id,
                 lane_results,
                 candidate_dispositions,
-                shadow_manifest_status,
+                routing_decisions,
             )
         except ReviewEvidenceError as exc:
             return exc.to_dict()
@@ -460,14 +475,15 @@ def register_review_evidence_tools(
                     ],
                     "additionalProperties": False,
                 },
-                "shadow_manifest_status": {"type": "object"},
+                "routing_decisions": {"type": "object"},
             },
             "required": [
                 "evidence_id",
                 "lane_results",
                 "candidate_dispositions",
-                "shadow_manifest_status",
+                "routing_decisions",
             ],
+            "additionalProperties": False,
         },
         func=validate_plan_review_coverage,
     )

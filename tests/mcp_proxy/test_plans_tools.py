@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import textwrap
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from gobby.mcp_proxy.tools.plans import create_plan_registry
+from gobby.plans import review_evidence_io as snapshot_io
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
@@ -151,6 +155,15 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         "checkpoint_plan_review_lesson_mint",
     } <= names
     assert registry.get_schema("create_plan") is not None
+    snapshot_schema = registry.get_schema("get_plan_review_snapshot")
+    assert snapshot_schema is not None
+    snapshot_properties = snapshot_schema["inputSchema"]["properties"]
+    assert {"evidence_id", "offset", "limit"} <= snapshot_properties.keys()
+    coverage_schema = registry.get_schema("validate_plan_review_coverage")
+    assert coverage_schema is not None
+    coverage_properties = coverage_schema["inputSchema"]["properties"]
+    assert "routing_decisions" in coverage_properties
+    assert "shadow_manifest_status" not in coverage_properties
 
     created = await registry.call(
         "create_plan",
@@ -171,7 +184,7 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
     assert archived["plan"]["state"] == "archived"
 
 
-async def test_review_evidence_tools_prepare_and_return_pinned_snapshot(
+async def test_snapshot_pages_to_exhaustion(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -204,12 +217,43 @@ async def test_review_evidence_tools_prepare_and_return_pinned_snapshot(
     assert prepared["ok"] is True
     assert prepared["sections"][0]["section_id"] == "__preamble__"
 
-    snapshot = await registry.call(
-        "get_plan_review_snapshot",
-        {"evidence_id": prepared["evidence_id"]},
+    chunks: list[str] = []
+    offset = 0
+    snapshot_hash: str | None = None
+    while True:
+        page = await registry.call(
+            "get_plan_review_snapshot",
+            {
+                "evidence_id": prepared["evidence_id"],
+                "offset": offset,
+                "limit": 8_000,
+            },
+        )
+        assert page["ok"] is True
+        assert len(json.dumps(page, ensure_ascii=True)) < 15_000
+        assert page["offset"] == offset
+        content = page["content"]
+        assert isinstance(content, str)
+        chunks.append(content)
+        current_hash = page["snapshot_hash"]
+        assert isinstance(current_hash, str)
+        snapshot_hash = snapshot_hash or current_hash
+        assert current_hash == snapshot_hash
+        next_offset = page["next_offset"]
+        if next_offset is None:
+            break
+        assert isinstance(next_offset, int)
+        assert next_offset > offset
+        offset = next_offset
+
+    assert snapshot_hash is not None
+    serialized = "".join(chunks).encode()
+    assert hashlib.sha256(serialized).hexdigest() == snapshot_hash
+    parsed = snapshot_io.parse_snapshot_envelope(
+        serialized,
+        snapshot_hash=snapshot_hash,
     )
-    assert snapshot["ok"] is True
-    assert snapshot["snapshot"] == expected
+    assert cast(bytes, parsed["snapshot"]).decode() == expected
 
 
 @pytest.mark.asyncio

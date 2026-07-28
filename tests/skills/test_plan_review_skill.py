@@ -208,6 +208,16 @@ class TestPlanReviewContent:
         assert "`gobby-agents:spawn_agent` for lane research" in body
         assert "15 minutes" in body
 
+    def test_snapshot_transport_pages_to_verified_exhaustion(self, body: str) -> None:
+        normalized = " ".join(body.split())
+
+        assert "start with `offset: 0`" in normalized
+        assert "follow `next_offset` to exhaustion" in normalized
+        assert "concatenate every `content` page" in normalized
+        assert "verify the reconstructed bytes against `snapshot_hash`" in normalized
+        assert "parse all records before lane review begins" in normalized
+        assert "Pass only `routing_decisions` to `validate_plan_review_coverage`" in normalized
+
     def test_parent_dispositions_and_adjacent_variant_closure(self, body: str) -> None:
         for field in (
             "cross_lane_interactions",

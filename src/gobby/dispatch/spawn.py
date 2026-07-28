@@ -138,9 +138,6 @@ def _prepare_plan_adversary_evidence(
             prompt,
             evidence_id=prepared.evidence_id,
             round_number=round_number,
-            plan_hash=prepared.plan_hash,
-            section_manifest=[section.to_dict() for section in prepared.sections],
-            snapshot=service.snapshot_bytes(prepared.evidence_id),
         )
     except BaseException:
         _expire_failed_adversary_spawn(service, prepared.evidence_id)

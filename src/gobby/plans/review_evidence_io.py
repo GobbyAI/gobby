@@ -25,11 +25,15 @@ from gobby.plans.review_evidence_models import (
     ReviewEvidenceError,
     SectionHash,
     canonical_json_bytes,
+    canonical_json_object,
     validate_round_result,
 )
 from gobby.plans.semantic_lint import collect_target_inventory
 
 PREAMBLE_SECTION_ID = "__preamble__"
+DEFAULT_SNAPSHOT_PAGE_BYTES = 8_000
+MAX_SNAPSHOT_PAGE_BYTES = 12_000
+MAX_SNAPSHOT_PAGE_RESPONSE_CHARS = 12_000
 COORDINATOR_OWNED_SECTIONS = ("Task Mapping", "M1", "V1")
 CHECKPOINT_FENCE = "```json plan-review-round"
 _HEADING_RE = re.compile(r"^(?P<marks>#{2,6})[ \t]+(?P<title>.*?)(?:[ \t]+#+[ \t]*)?$")
@@ -43,6 +47,17 @@ class InterRoundDiff:
     section_targets: tuple[str, ...]
     symbols: tuple[str, ...]
     contracts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotEnvelope:
+    """Canonical immutable byte stream and its paging metadata."""
+
+    content: bytes
+    snapshot_hash: str
+    total_sections: int
+    total_records: int
+    bundle_digest: str
 
 
 def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> InterRoundDiff:
@@ -156,6 +171,13 @@ def normalize_plan_path(project_root: Path, plan_path: str | Path) -> Path:
 
 def build_section_manifest(snapshot: bytes) -> tuple[SectionHash, ...]:
     """Hash a total, fence-aware partition of level-2..6 markdown sections."""
+    return tuple(
+        SectionHash(section_id=section_id, section_hash=_sha256(content))
+        for section_id, content in _split_snapshot_sections(snapshot)
+    )
+
+
+def _split_snapshot_sections(snapshot: bytes) -> tuple[tuple[str, bytes], ...]:
     try:
         text = snapshot.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -194,22 +216,394 @@ def build_section_manifest(snapshot: bytes) -> tuple[SectionHash, ...]:
         seen.add(key)
         headings.append((index, key))
     first_offset = offsets[headings[0][0]] if headings else len(text)
-    sections = [
-        SectionHash(
-            section_id=PREAMBLE_SECTION_ID,
-            section_hash=_sha256(text[:first_offset].encode("utf-8")),
-        )
-    ]
+    sections = [(PREAMBLE_SECTION_ID, text[:first_offset].encode("utf-8"))]
     for position, (line_index, key) in enumerate(headings):
         start = offsets[line_index]
         end = offsets[headings[position + 1][0]] if position + 1 < len(headings) else len(text)
-        sections.append(
-            SectionHash(
-                section_id=key,
-                section_hash=_sha256(text[start:end].encode("utf-8")),
+        sections.append((key, text[start:end].encode("utf-8")))
+    return tuple(sections)
+
+
+def serialize_snapshot_envelope(
+    *,
+    evidence_id: str,
+    plan_hash: str,
+    round_number: int,
+    snapshot: bytes,
+    section_manifest: Sequence[SectionHash],
+    changed_section_ids: Sequence[str],
+    prior_round_context: Mapping[str, object] | None,
+    quality_ledger: Sequence[Mapping[str, object]],
+    review_complexity: Mapping[str, object],
+) -> SnapshotEnvelope:
+    """Serialize every immutable review input into one canonical record stream."""
+    section_fragments = _split_snapshot_sections(snapshot)
+    derived_manifest = tuple(
+        SectionHash(section_id=section_id, section_hash=_sha256(content))
+        for section_id, content in section_fragments
+    )
+    if derived_manifest != tuple(section_manifest):
+        raise ReviewEvidenceError(
+            "section_manifest_mismatch",
+            "section manifest differs from the immutable snapshot",
+        )
+
+    records: list[dict[str, object]] = [
+        {
+            "record_type": "plan_section",
+            "record_id": section_id,
+            "sha256": _sha256(content),
+            "content": content.decode("utf-8"),
+        }
+        for section_id, content in section_fragments
+    ]
+    context = canonical_json_object(prior_round_context) if prior_round_context is not None else {}
+    raw_requirements = context.get("requirements_bundle")
+    if isinstance(raw_requirements, Mapping):
+        context.pop("requirements_bundle")
+        requirements = canonical_json_object(raw_requirements)
+        raw_sources = requirements.get("sources")
+        if isinstance(raw_sources, list) and all(
+            isinstance(source, Mapping) for source in raw_sources
+        ):
+            requirements.pop("sources")
+            records.append(
+                _json_snapshot_record(
+                    "requirements_bundle",
+                    "requirements_bundle",
+                    requirements,
+                )
+            )
+            for index, raw_source in enumerate(raw_sources):
+                source = canonical_json_object(cast(Mapping[str, object], raw_source))
+                source_name = source.get("source_id") or source.get("path") or str(index)
+                records.append(
+                    _json_snapshot_record(
+                        "requirement_source",
+                        f"requirement_source:{index}:{source_name}",
+                        source,
+                    )
+                )
+        else:
+            records.append(
+                _json_snapshot_record(
+                    "requirements_bundle",
+                    "requirements_bundle",
+                    requirements,
+                )
+            )
+
+    raw_inventory = context.get("consumer_site_inventory")
+    if isinstance(raw_inventory, Mapping):
+        context.pop("consumer_site_inventory")
+        records.append(
+            _json_snapshot_record(
+                "consumer_inventory",
+                "consumer_site_inventory",
+                raw_inventory,
             )
         )
-    return tuple(sections)
+    if context:
+        records.append(
+            _json_snapshot_record(
+                "prior_round_context",
+                "prior_round_context",
+                context,
+            )
+        )
+    for index, raw_entry in enumerate(quality_ledger):
+        entry = canonical_json_object(raw_entry)
+        entry_name = entry.get("ledger_id") or entry.get("finding_id") or str(index)
+        records.append(
+            _json_snapshot_record(
+                "quality_ledger_entry",
+                f"quality_ledger_entry:{index}:{entry_name}",
+                entry,
+            )
+        )
+
+    descriptors = [
+        {
+            "record_type": record["record_type"],
+            "record_id": record["record_id"],
+            "sha256": record["sha256"],
+        }
+        for record in records
+    ]
+    bundle_digest = _sha256(canonical_json_bytes({"records": descriptors}))
+    payload: dict[str, object] = {
+        "version": 1,
+        "evidence_id": evidence_id,
+        "plan_hash": plan_hash,
+        "round_number": round_number,
+        "changed_section_ids": sorted(set(changed_section_ids)),
+        "review_complexity": canonical_json_object(review_complexity),
+        "total_sections": len(section_fragments),
+        "total_records": len(records),
+        "bundle_digest": bundle_digest,
+        "records": records,
+    }
+    content = canonical_json_bytes(payload)
+    return SnapshotEnvelope(
+        content=content,
+        snapshot_hash=_sha256(content),
+        total_sections=len(section_fragments),
+        total_records=len(records),
+        bundle_digest=bundle_digest,
+    )
+
+
+def paginate_snapshot_envelope(
+    envelope: SnapshotEnvelope,
+    *,
+    offset: int = 0,
+    limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
+) -> dict[str, object]:
+    """Return one UTF-8-aligned page whose complete JSON result stays bounded."""
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ReviewEvidenceError(
+            "invalid_snapshot_offset",
+            "offset must be a non-negative integer",
+        )
+    if offset > len(envelope.content):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_offset",
+            "offset exceeds the serialized snapshot length",
+        )
+    if offset < len(envelope.content) and envelope.content[offset] & 0xC0 == 0x80:
+        raise ReviewEvidenceError(
+            "invalid_snapshot_offset",
+            "offset must align to a UTF-8 code-point boundary",
+        )
+    if (
+        not isinstance(limit, int)
+        or isinstance(limit, bool)
+        or limit <= 0
+        or limit > MAX_SNAPSHOT_PAGE_BYTES
+    ):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_limit",
+            f"limit must be between 1 and {MAX_SNAPSHOT_PAGE_BYTES}",
+        )
+
+    end = _utf8_boundary_at_or_before(
+        envelope.content,
+        min(offset + limit, len(envelope.content)),
+        floor=offset,
+    )
+    if end == offset and offset < len(envelope.content):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_limit",
+            "limit is too small for the next UTF-8 code point",
+        )
+    while True:
+        payload = _snapshot_page_payload(envelope, offset=offset, end=end)
+        serialized_chars = len(
+            json.dumps(
+                {"ok": True, **payload},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        )
+        if serialized_chars < MAX_SNAPSHOT_PAGE_RESPONSE_CHARS:
+            return payload
+        span = end - offset
+        next_span = max(1, (span * MAX_SNAPSHOT_PAGE_RESPONSE_CHARS) // serialized_chars - 1)
+        next_end = _utf8_boundary_at_or_before(
+            envelope.content,
+            offset + next_span,
+            floor=offset,
+        )
+        if next_end <= offset:
+            raise ReviewEvidenceError(
+                "snapshot_page_overflow",
+                "one UTF-8 code point exceeds the serialized page budget",
+            )
+        end = next_end
+
+
+def parse_snapshot_envelope(
+    serialized: bytes,
+    *,
+    snapshot_hash: str,
+) -> dict[str, object]:
+    """Verify and reconstruct a complete canonical snapshot envelope locally."""
+    if _sha256(serialized) != snapshot_hash:
+        raise ReviewEvidenceError(
+            "snapshot_hash_mismatch",
+            "reconstructed snapshot hash does not match snapshot_hash",
+        )
+    try:
+        raw_payload = json.loads(serialized.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewEvidenceError(
+            "invalid_snapshot_envelope",
+            f"snapshot envelope is not canonical UTF-8 JSON: {exc}",
+        ) from exc
+    if not isinstance(raw_payload, dict):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_envelope",
+            "snapshot envelope must be a JSON object",
+        )
+    payload = cast(dict[str, object], raw_payload)
+    raw_records = payload.get("records")
+    if payload.get("version") != 1 or not isinstance(raw_records, list):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_envelope",
+            "snapshot envelope version or records are invalid",
+        )
+    records = [
+        cast(dict[str, object], record) for record in raw_records if isinstance(record, dict)
+    ]
+    if len(records) != len(raw_records) or payload.get("total_records") != len(records):
+        raise ReviewEvidenceError(
+            "invalid_snapshot_envelope",
+            "snapshot envelope total_records does not match its records",
+        )
+
+    descriptors: list[dict[str, object]] = []
+    seen_records: set[tuple[str, str]] = set()
+    plan_chunks: list[bytes] = []
+    plan_manifest: list[dict[str, str]] = []
+    context: dict[str, object] = {}
+    requirement_sources: list[dict[str, object]] = []
+    requirements_bundle: dict[str, object] | None = None
+    quality_ledger: list[dict[str, object]] = []
+    for record in records:
+        record_type = record.get("record_type")
+        record_id = record.get("record_id")
+        digest = record.get("sha256")
+        if (
+            not isinstance(record_type, str)
+            or not record_type
+            or not isinstance(record_id, str)
+            or not record_id
+            or not isinstance(digest, str)
+            or not digest
+        ):
+            raise ReviewEvidenceError(
+                "invalid_snapshot_record",
+                "snapshot record identity and digest must be non-empty strings",
+            )
+        identity = (record_type, record_id)
+        if identity in seen_records:
+            raise ReviewEvidenceError(
+                "invalid_snapshot_record",
+                f"duplicate snapshot record: {record_type}/{record_id}",
+            )
+        seen_records.add(identity)
+        content = record.get("content")
+        if record_type == "plan_section":
+            if not isinstance(content, str):
+                raise ReviewEvidenceError(
+                    "invalid_snapshot_record",
+                    "plan section content must be a string",
+                )
+            content_bytes = content.encode("utf-8")
+            plan_chunks.append(content_bytes)
+            plan_manifest.append({"section_id": record_id, "section_hash": digest})
+        else:
+            if not isinstance(content, Mapping):
+                raise ReviewEvidenceError(
+                    "invalid_snapshot_record",
+                    f"{record_type} content must be an object",
+                )
+            canonical_content = canonical_json_object(content)
+            content_bytes = canonical_json_bytes(canonical_content)
+            if record_type == "prior_round_context":
+                context.update(canonical_content)
+            elif record_type == "requirements_bundle":
+                requirements_bundle = canonical_content
+            elif record_type == "requirement_source":
+                requirement_sources.append(canonical_content)
+            elif record_type == "quality_ledger_entry":
+                quality_ledger.append(canonical_content)
+            elif record_type == "consumer_inventory":
+                context["consumer_site_inventory"] = canonical_content
+        if _sha256(content_bytes) != digest:
+            raise ReviewEvidenceError(
+                "snapshot_record_hash_mismatch",
+                f"snapshot record hash mismatch: {record_type}/{record_id}",
+            )
+        descriptors.append(
+            {
+                "record_type": record_type,
+                "record_id": record_id,
+                "sha256": digest,
+            }
+        )
+
+    bundle_digest = _sha256(canonical_json_bytes({"records": descriptors}))
+    if payload.get("bundle_digest") != bundle_digest:
+        raise ReviewEvidenceError(
+            "snapshot_bundle_mismatch",
+            "snapshot record bundle digest does not match bundle_digest",
+        )
+    if requirements_bundle is not None:
+        if requirement_sources:
+            requirements_bundle["sources"] = requirement_sources
+        context["requirements_bundle"] = requirements_bundle
+
+    snapshot = b"".join(plan_chunks)
+    plan_hash = payload.get("plan_hash")
+    if not isinstance(plan_hash, str) or _sha256(snapshot) != plan_hash:
+        raise ReviewEvidenceError(
+            "snapshot_plan_hash_mismatch",
+            "reconstructed plan bytes do not match plan_hash",
+        )
+    derived_manifest = [section.to_dict() for section in build_section_manifest(snapshot)]
+    if plan_manifest != derived_manifest or payload.get("total_sections") != len(plan_manifest):
+        raise ReviewEvidenceError(
+            "snapshot_section_union_mismatch",
+            "plan section records do not equal the canonical section manifest",
+        )
+    return {
+        **payload,
+        "records": records,
+        "snapshot": snapshot,
+        "section_manifest": plan_manifest,
+        "prior_round_context": context or None,
+        "quality_ledger": quality_ledger,
+    }
+
+
+def _json_snapshot_record(
+    record_type: str,
+    record_id: str,
+    content: Mapping[str, object],
+) -> dict[str, object]:
+    canonical_content = canonical_json_object(content)
+    return {
+        "record_type": record_type,
+        "record_id": record_id,
+        "sha256": _sha256(canonical_json_bytes(canonical_content)),
+        "content": canonical_content,
+    }
+
+
+def _utf8_boundary_at_or_before(content: bytes, end: int, *, floor: int) -> int:
+    while end > floor and end < len(content) and content[end] & 0xC0 == 0x80:
+        end -= 1
+    return end
+
+
+def _snapshot_page_payload(
+    envelope: SnapshotEnvelope,
+    *,
+    offset: int,
+    end: int,
+) -> dict[str, object]:
+    return {
+        "offset": offset,
+        "content": envelope.content[offset:end].decode("utf-8"),
+        "snapshot_hash": envelope.snapshot_hash,
+        "total_bytes": len(envelope.content),
+        "total_sections": envelope.total_sections,
+        "total_records": envelope.total_records,
+        "bundle_digest": envelope.bundle_digest,
+        "next_offset": end if end < len(envelope.content) else None,
+    }
 
 
 def manifest_key(heading: str) -> str:

@@ -326,10 +326,18 @@ or rerun any lane in place. The parent expires the old evidence, prepares a
 fresh snapshot/inventory/token, and spawns a newly bound reviewer that reruns
 all three lanes.
 
-`get_plan_review_snapshot` supplies deterministic complexity counts. Run lanes
-in parallel when the snapshot has at least 8 deliverables, 24 acceptance items,
-12 distinct target files, or 4 sections changed since the prior finalized round.
-Otherwise run the same lanes sequentially in the parent. Parallel fanout is
+Reconstruct the complete immutable evidence envelope before review. Call
+`get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
+follow `next_offset` to exhaustion; concatenate every `content` page in offset
+order, verify the reconstructed bytes against `snapshot_hash`, verify every
+record hash and `bundle_digest`, then parse all records before lane review
+begins. Reject a missing, duplicated, reordered, or mismatched page locally.
+The parsed envelope supplies deterministic complexity counts, plan sections,
+`prior_round_context`, quality ledger, requirement sources, and consumer
+inventory. Run lanes in parallel when the snapshot has at least 8 deliverables,
+24 acceptance items, 12 distinct target files, or 4 sections changed since the
+prior finalized round. Otherwise run the same lanes sequentially in the parent.
+Parallel fanout is
 limited to one read-only provider-native internal subagent per lane, launched
 through the current CLI/runtime's internal collaboration facility. Run all
 three concurrently. Give each subagent only its lane scope, the immutable
@@ -360,8 +368,9 @@ adjacent sites checked, confidence, and citations. The parent must:
    site ids, query evidence for zero-result sweeps, and disposition.
 
 Call `derive_plan_review_manifest` during every round, including rejection.
-Then call `validate_plan_review_coverage` with the three lanes, all
-four structured record arrays, and the exact shadow-manifest result. The
+Pass only `routing_decisions` to `validate_plan_review_coverage` with the three
+lanes and all four structured record arrays; the server reuses or derives the
+canonical shadow manifest from the evidence id and routing digest. The
 returned `coverage_attestation` is mandatory in `round_result`; it contains
 the canonical `record_bundle`, exactly three completed lanes, source digest,
 server-derived disposition counts, server-derived cross-lane and

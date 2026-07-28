@@ -15,10 +15,13 @@ from gobby.plans.review_coverage import (
     validate_review_coverage,
 )
 from gobby.plans.review_evidence_io import (
+    DEFAULT_SNAPSHOT_PAGE_BYTES,
     build_section_manifest,
     normalize_plan_path,
+    paginate_snapshot_envelope,
     parse_checkpoints,
     reviewed_section_hashes,
+    serialize_snapshot_envelope,
 )
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -249,6 +252,32 @@ class PlanReviewEvidenceService:
             ),
         }
 
+    def snapshot_page(
+        self,
+        evidence_id: str,
+        *,
+        offset: int = 0,
+        limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
+    ) -> dict[str, object]:
+        evidence = self.get_evidence(evidence_id)
+        document = self._snapshot_document(evidence)
+        changed_sections = self._changed_sections_since_prior_round(evidence)
+        envelope = serialize_snapshot_envelope(
+            evidence_id=evidence.evidence_id,
+            plan_hash=evidence.plan_hash,
+            round_number=evidence.round_number,
+            snapshot=evidence.snapshot,
+            section_manifest=evidence.section_manifest,
+            changed_section_ids=changed_sections,
+            prior_round_context=evidence.prior_round_context,
+            quality_ledger=evidence.quality_ledger or (),
+            review_complexity=review_complexity(
+                document,
+                changed_section_count=len(changed_sections),
+            ),
+        )
+        return paginate_snapshot_envelope(envelope, offset=offset, limit=limit)
+
     def derive_plan_review_manifest(
         self,
         evidence_id: str,
@@ -264,17 +293,11 @@ class PlanReviewEvidenceService:
         evidence_id: str,
         lane_results: list[object],
         candidate_dispositions: Mapping[str, object],
-        shadow_manifest_status: Mapping[str, object],
+        routing_decisions: Mapping[str, object],
     ) -> dict[str, object]:
         """Validate all research lanes and return a canonical coverage attestation."""
         evidence = self.get_evidence(evidence_id)
-        shadow = dict(shadow_manifest_status)
-        routing = shadow.get("routing_decisions")
-        if not isinstance(routing, Mapping):
-            raise ReviewEvidenceError(
-                "invalid_shadow_manifest",
-                "shadow_manifest_status.routing_decisions must be an object",
-            )
+        routing = dict(routing_decisions)
         expected_shadow = self.derive_plan_review_manifest(evidence_id, routing)
         project = self.projects.get(evidence.project_id)
         if project is None or project.repo_path is None:
@@ -289,7 +312,7 @@ class PlanReviewEvidenceService:
             plan_hash=evidence.plan_hash,
             lane_results=lane_results,
             candidate_dispositions=candidate_dispositions,
-            shadow_manifest_status=shadow,
+            shadow_manifest_status=expected_shadow,
             expected_shadow_manifest_status=expected_shadow,
             prior_round_context=evidence.prior_round_context,
         )
