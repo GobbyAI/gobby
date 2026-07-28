@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
 
+from gobby.agents.code_index import IndexToken
+from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
+from gobby.plans.review_repair import RepairSweepRequirement, RepairUniverse
 from gobby.review_learning.recorders import mint_plan_review_lessons
 from gobby.review_learning.round_diff import (
     PlanReviewLessonCandidate,
@@ -33,6 +36,7 @@ from tests.storage.test_stage_review_findings import (
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
 STAGE = "planning"
+_REPAIR_UNIVERSE_DIGEST = "a" * 64
 
 
 def _finding(
@@ -156,6 +160,7 @@ def _classes(rows: list[PlanReviewEvidence], finding_id: str) -> set[str]:
     }
 
 
+@pytest.mark.unit
 def test_classification_matrix() -> None:
     base = _row(1, {"A": "a1", "B": "b1", "C": "c1"}, [_finding("BASE")])
     reviewer = _row(
@@ -267,6 +272,7 @@ def _candidate(
     )
 
 
+@pytest.mark.unit
 def test_class_aware_cap_selection() -> None:
     candidates = [
         _candidate("reviewer-miss", "R3", 3),
@@ -294,6 +300,29 @@ def test_class_aware_cap_selection() -> None:
     assert select_plan_review_candidates(candidates, limit=5) == selected
 
 
+@pytest.mark.unit
+def test_class_aware_cap_tracks_duplicate_candidates_by_position() -> None:
+    duplicate = _candidate("reviewer-miss", "duplicate", 3)
+    fixer = _candidate("fixer-induced-defect", "fixer", 3)
+
+    selected = select_plan_review_candidates([duplicate, duplicate, fixer], limit=3)
+
+    assert selected == [duplicate, fixer, duplicate]
+
+
+@pytest.mark.unit
+def test_invalid_round_payload_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    row = _row(1, {"A": "hash"}, [])
+    invalid = replace(row, round_result={"verdict": "needs_review", "findings": "invalid"})
+
+    with caplog.at_level("DEBUG", logger="gobby.review_learning.round_diff"):
+        assert classify_plan_review_rounds([invalid], task_id=TASK_ID, stage=STAGE) == []
+
+    assert invalid.evidence_id in caplog.text
+    assert "Skipping invalid findings" in caplog.text
+
+
+@pytest.mark.unit
 def test_historical_evidence_lineage() -> None:
     base = _row(1, {"A": "a1"}, [_finding("BASE")])
     current = _row(2, {"A": "a1"}, [_finding("CURRENT", participating=["A"])])
@@ -453,10 +482,78 @@ def _repair_attestation(finding_id: str) -> dict[str, object]:
         "adjacent_variants_swept": ["src/gobby/review_learning/lessons.py"],
         "validation_evidence": ["pytest tests/review_learning/test_round_diff.py"],
         "deferred_sites": [],
+        "repair_universe_digest": _REPAIR_UNIVERSE_DIGEST,
+        "sweep_query_evidence": [],
+        "repair_bundle_interactions": [],
     }
 
 
-def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLineage:
+def _settled_repair_inputs(
+    *,
+    prior_evidence: PlanReviewEvidence,
+    repair_finding_ids: list[str] | tuple[str, ...],
+    **_kwargs: object,
+) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+    assert prior_evidence.round_result is not None
+    findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
+    finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
+    consumer_site = "src/gobby/review_learning/service.py"
+    adjacent_site = "src/gobby/review_learning/lessons.py"
+    sites = tuple(
+        CandidateSite(
+            site_id=site_id,
+            path=site_id,
+            source_kind="symbol_call",
+            source_ref="gobby.review_learning.repaired",
+            status="resolved",
+            language="python",
+        )
+        for site_id in (consumer_site, adjacent_site)
+    )
+    inventory = CandidateSiteInventory(
+        changed_acceptance_item_ids=("1.1.1",),
+        changed_targets=(),
+        changed_symbols=("gobby.review_learning.repaired",),
+        changed_contracts=(),
+        resolved_languages=("python",),
+        unsupported_targets=(),
+        sites=sites,
+    )
+    universe = RepairUniverse(
+        digest=_REPAIR_UNIVERSE_DIGEST,
+        candidate_sites=sites,
+        requirements=tuple(
+            RepairSweepRequirement(
+                prior_finding_id=finding_id,
+                check_key=cast(str, finding_map[finding_id]["check_key"]),
+                changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
+                changed_contracts=(),
+                changed_targets=(),
+                required_consumer_site_ids=(consumer_site,),
+                adjacent_variant_ids=(adjacent_site,),
+                interaction_edge_ids=(),
+            )
+            for finding_id in repair_finding_ids
+        ),
+        interaction_edges=(),
+    )
+    token = IndexToken(
+        repository_digest=_REPAIR_UNIVERSE_DIGEST,
+        last_indexed_at="2026-07-28T00:00:00+00:00",
+        source_files=(consumer_site, adjacent_site),
+    )
+    return token, inventory, universe
+
+
+def _create_durable_lineage(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> DurableLineage:
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        _settled_repair_inputs,
+    )
     project = LocalProjectManager(temp_db).create(
         name="round-diff",
         repo_path=str(tmp_path),
@@ -527,10 +624,15 @@ def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLine
 
 
 @pytest.fixture
-def durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLineage:
-    return _create_durable_lineage(temp_db, tmp_path)
+def durable_lineage(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> DurableLineage:
+    return _create_durable_lineage(temp_db, tmp_path, monkeypatch)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_backfill_idempotence(durable_lineage: DurableLineage) -> None:
     recorder = StubReviewLearningService(fail=True)
@@ -565,6 +667,7 @@ async def test_backfill_idempotence(durable_lineage: DurableLineage) -> None:
     assert len(recorder.calls) == 2
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_escalation_mints_nothing(durable_lineage: DurableLineage) -> None:
     durable_lineage.manager.escalate_task(durable_lineage.task_id, "abandoned")
@@ -583,6 +686,7 @@ async def test_escalation_mints_nothing(durable_lineage: DurableLineage) -> None
     assert recorder.calls == []
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_description_mutation_immunity(durable_lineage: DurableLineage) -> None:
     durable_lineage.manager.update_task(
@@ -603,6 +707,7 @@ async def test_description_mutation_immunity(durable_lineage: DurableLineage) ->
     assert recorder.calls[0]["finding"]["finding_id"] == "MISS"
 
 
+@pytest.mark.integration
 def test_approval_evidence_finalization(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -678,7 +783,8 @@ def test_approval_evidence_finalization(
     assert interrupted_state is not None
     assert interrupted_state.state == "needs_review"
     interrupted = setup.evidence.get_evidence(evidence_id)
-    assert interrupted.manifest_state == "applied"
+    assert interrupted.manifest_state is None
+    assert interrupted.round_result is None
     assert interrupted.finalized_at is None
 
     monkeypatch.setattr(PlanReviewEvidenceStore, "finalize", original_finalize)

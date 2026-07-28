@@ -7,6 +7,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.review_learning.recorders import mint_plan_review_lessons
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.session_context import get_current_session_id
 
 
@@ -26,7 +27,10 @@ def register_plan_review_backfill_tool(
                 "review_learning_unavailable",
                 "Review-learning service is unavailable",
             ).to_dict()
-        resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+        try:
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+        except (TaskNotFoundError, ValueError) as error:
+            return ReviewEvidenceError("invalid_task_id", str(error)).to_dict()
         session_id = _resolved_session_id(ctx)
         try:
             return await mint_plan_review_lessons(

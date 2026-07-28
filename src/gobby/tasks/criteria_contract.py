@@ -50,6 +50,9 @@ def split_validation_criteria(value: str | None) -> tuple[str, ...]:
             continue
         match = _LIST_ITEM_RE.match(raw_line)
         if match is not None:
+            if not saw_list_marker:
+                items = []
+                current = []
             saw_list_marker = True
             if current:
                 items.append(" ".join(current))

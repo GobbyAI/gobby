@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -116,15 +116,14 @@ async def test_per_class_promotion() -> None:
             check_key=f"{lesson_type}-contract",
             guardrail_target=target,
         )
+        finding_snapshot = deepcopy(finding)
         promotion_results[lesson_type] = await _record_pair(
             service,
             source_kind=source_kind,
             source=source,
             finding=finding,
         )
-        if namespace == "plan-review":
-            assert finding["rule_id"] == "plan-review:correctness"
-            assert "path" not in finding
+        assert finding == finding_snapshot
 
     validation_finding = {
         "title": "Validation receipt loses its command provenance",
@@ -138,13 +137,8 @@ async def test_per_class_promotion() -> None:
         "symbol": "TaskValidator.validate",
         "guardrail_target": "validation",
     }
-    candidate_bytes = json.dumps(
-        validation_finding,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    first_candidate = json.loads(candidate_bytes)
-    second_candidate = json.loads(candidate_bytes)
+    first_candidate = deepcopy(validation_finding)
+    second_candidate = deepcopy(validation_finding)
     first_validation = await service.record(
         source_kind="task_validation",
         source="task-validation",
@@ -166,16 +160,9 @@ async def test_per_class_promotion() -> None:
         second_validation,
     )
 
-    assert json.dumps(first_candidate, sort_keys=True, separators=(",", ":")).encode() == (
-        json.dumps(second_candidate, sort_keys=True, separators=(",", ":")).encode()
-    )
     assert first_validation["pattern_id"] == second_validation["pattern_id"]
     assert first_validation["finding_fingerprint"] == second_validation["finding_fingerprint"]
     assert first_validation["occurrence_key"] != second_validation["occurrence_key"]
-    assert validation_finding["prevention"]
-    assert validation_finding["root_cause"]
-    assert validation_finding["path"] == "src/gobby/tasks/validation.py"
-    assert validation_finding["symbol"] == "TaskValidator.validate"
 
     expected_targets = {
         "reviewer-miss": "checklist",
@@ -261,9 +248,7 @@ async def test_cross_domain_coexistence() -> None:
         limit=10,
     )
 
-    assert json.dumps(legacy_before, sort_keys=True, separators=(",", ":")).encode() == (
-        json.dumps(legacy_after, sort_keys=True, separators=(",", ":")).encode()
-    )
+    assert legacy_before == legacy_after
     assert plan_result["lesson_id"] not in {match["memory_id"] for match in legacy_after["matches"]}
     assert {lesson["memory_id"] for lesson in file_recall["lessons"]} == {code_result["lesson_id"]}
 

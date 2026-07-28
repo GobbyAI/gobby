@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
+from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
+    ReviewLearningMemoryManager,
     ReviewLearningService,
     build_recall_queries,
 )
@@ -15,6 +17,16 @@ from tests.review_learning.conftest import FakeDB, FakeMemory, FakeMemoryManager
 
 pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def _service(
+    memory_manager: FakeMemoryManager,
+    task_manager: FakeTaskManager,
+) -> ReviewLearningService:
+    return ReviewLearningService(
+        cast(ReviewLearningMemoryManager, memory_manager),
+        cast(PromotionTaskManager, task_manager),
+    )
 
 
 def _scoped_memory_manager(project_id: str = "project") -> FakeMemoryManager:
@@ -35,7 +47,7 @@ async def test_resolve_scope_offloads_database_io(
         return fetchone(sql, params)
 
     monkeypatch.setattr(db, "fetchone", tracking_fetchone)
-    service = ReviewLearningService(FakeMemoryManager(db=db), fake_task_manager)
+    service = _service(FakeMemoryManager(db=db), fake_task_manager)
 
     project_id, resolved_session_id = await service._resolve_scope(SESSION_ID)
 
@@ -50,7 +62,7 @@ async def test_record_rejects_unresolvable_explicit_session(
     fake_task_manager: FakeTaskManager,
 ) -> None:
     memory_manager = FakeMemoryManager(db=FakeDB())
-    service = ReviewLearningService(memory_manager, fake_task_manager)
+    service = _service(memory_manager, fake_task_manager)
 
     with pytest.raises(RuntimeError, match="could not resolve explicit session"):
         await service.record(
@@ -78,7 +90,7 @@ async def test_record_rejects_unresolvable_explicit_session(
 async def test_recall_falls_back_to_project_for_unresolvable_explicit_session(
     fake_task_manager: FakeTaskManager,
 ) -> None:
-    service = ReviewLearningService(FakeMemoryManager(db=FakeDB()), fake_task_manager)
+    service = _service(FakeMemoryManager(db=FakeDB()), fake_task_manager)
 
     result = await service.recall_context(
         findings=[{"title": "Durable writes missing"}],
@@ -126,7 +138,7 @@ async def test_recall_context_deep_copies_nested_finding_data(
         "query_hints": ["copy"],
         "metadata": {"paths": ["src/gobby/review_learning/service.py"]},
     }
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
 
     def mutating_build_recall_queries(**kwargs: Any) -> list[str]:
         normalized = kwargs["finding"]
@@ -149,7 +161,7 @@ async def test_recall_context_deep_copies_nested_finding_data(
 
 @pytest.mark.asyncio
 async def test_recall_returns_ordinary_and_review_lesson_memories(
-    fake_task_manager,
+    fake_task_manager: FakeTaskManager,
 ) -> None:
     fake_memory_manager = _scoped_memory_manager()
     fake_memory_manager.search_results = [
@@ -164,7 +176,7 @@ async def test_recall_returns_ordinary_and_review_lesson_memories(
             tags=["review-lesson", "pattern:sql-placeholders"],
         ),
     ]
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
 
     result = await service.recall_context(
         findings=[{"title": "Use $1 placeholders", "query_hints": ["psycopg", "%s"]}],
@@ -180,7 +192,9 @@ async def test_recall_returns_ordinary_and_review_lesson_memories(
 
 
 @pytest.mark.asyncio
-async def test_code_domain_excludes_plan_lessons(fake_task_manager) -> None:
+async def test_code_domain_excludes_plan_lessons(
+    fake_task_manager: FakeTaskManager,
+) -> None:
     fake_memory_manager = _scoped_memory_manager()
     fake_memory_manager.search_results = [
         FakeMemory(
@@ -194,7 +208,7 @@ async def test_code_domain_excludes_plan_lessons(fake_task_manager) -> None:
             tags=["review-lesson", "lesson-domain:plan"],
         ),
     ]
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
 
     result = await service.recall_context(
         findings=[{"title": "Review this implementation"}],
@@ -219,7 +233,7 @@ async def test_code_domain_excludes_plan_lessons(fake_task_manager) -> None:
 
 @pytest.mark.asyncio
 async def test_recall_keeps_global_ordinary_memory_but_excludes_global_review_lessons(
-    fake_task_manager,
+    fake_task_manager: FakeTaskManager,
 ) -> None:
     fake_memory_manager = _scoped_memory_manager()
     fake_memory_manager.search_results = [
@@ -241,7 +255,7 @@ async def test_recall_keeps_global_ordinary_memory_but_excludes_global_review_le
             tags=["review-lesson", "pattern:sql-placeholders"],
         ),
     ]
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
 
     result = await service.recall_context(
         findings=[{"title": "Use $1 placeholders", "query_hints": ["psycopg", "%s"]}],
@@ -270,11 +284,12 @@ async def test_recall_keeps_global_ordinary_memory_but_excludes_global_review_le
 
 @pytest.mark.asyncio
 async def test_recall_fails_open_on_memory_search_errors(
-    fake_task_manager, caplog: pytest.LogCaptureFixture
+    fake_task_manager: FakeTaskManager,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     fake_memory_manager = _scoped_memory_manager()
     fake_memory_manager.raise_on_search = True
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
 
     with caplog.at_level(logging.WARNING, logger="gobby.review_learning.service"):
         result = await service.recall_context(
@@ -295,8 +310,8 @@ async def test_recall_fails_open_on_memory_search_errors(
     assert record is not None, "Expected fail-open recall warning log record"
     assert "finding_index=0" in record.message
     assert "exception_class=RuntimeError" in record.message
-    assert record.finding_index == 0
-    assert record.exception_class == "RuntimeError"
+    assert getattr(record, "finding_index", None) == 0
+    assert getattr(record, "exception_class", None) == "RuntimeError"
 
 
 @pytest.mark.asyncio
@@ -313,7 +328,7 @@ async def test_recall_requires_project_scope(
         "gobby.review_learning.service.get_current_session_id",
         lambda: None,
     )
-    service = ReviewLearningService(FakeMemoryManager(db=FakeDB()), fake_task_manager)
+    service = _service(FakeMemoryManager(db=FakeDB()), fake_task_manager)
 
     with pytest.raises(RuntimeError, match="requires a project context"):
         await service.recall_context(findings=[{"title": "anything"}])

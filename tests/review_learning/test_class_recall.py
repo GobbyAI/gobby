@@ -111,6 +111,19 @@ async def test_domain_required_and_consistent(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_limit", [None, "three", object()])
+async def test_limit_rejects_non_numeric_values(invalid_limit: object) -> None:
+    service = _service(FakeMemoryManager())
+
+    with pytest.raises(ValueError, match="limit must be a numeric value"):
+        await service.recall_review_lessons_by_class(
+            lesson_domain="code",
+            lesson_types=["missing-check"],
+            limit=cast(int, invalid_limit),
+        )
+
+
+@pytest.mark.asyncio
 async def test_cross_domain_same_lesson_type() -> None:
     now = datetime(2026, 7, 23, tzinfo=UTC)
     memory_manager = FakeMemoryManager()

@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
-def test_create_task_is_metadata_only(temp_db, sample_project) -> None:
+def test_create_task_is_metadata_only(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     manager = LocalTaskManager(temp_db)
 
     task = manager.create_task(
@@ -24,7 +30,8 @@ def test_create_task_is_metadata_only(temp_db, sample_project) -> None:
 
 
 def test_initialize_task_manifest_supports_stage_override_with_caps(
-    temp_db, sample_project
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
@@ -45,7 +52,10 @@ def test_initialize_task_manifest_supports_stage_override_with_caps(
     assert rows[0].max_review_rounds == 2
 
 
-def test_initialize_task_manifest_rejects_unknown_stage_override(temp_db, sample_project) -> None:
+def test_initialize_task_manifest_rejects_unknown_stage_override(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -56,3 +66,23 @@ def test_initialize_task_manifest_rejects_unknown_stage_override(temp_db, sample
 
     with pytest.raises(ValueError, match="Unknown stage 'missing'"):
         manager.initialize_task_manifest(task.id, stage_names=["development", "missing"])
+
+
+def test_update_task_persists_normalized_validation_criteria(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Normalize criteria",
+        task_type="task",
+        validation_criteria="Initial criterion.",
+    )
+
+    updated = manager.update_task(
+        task.id,
+        validation_criteria="  Updated observable criterion.  ",
+    )
+
+    assert updated.validation_criteria == "Updated observable criterion."

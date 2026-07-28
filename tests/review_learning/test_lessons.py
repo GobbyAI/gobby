@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 import pytest
 
@@ -18,9 +18,21 @@ from gobby.review_learning.lessons import (
     validate_guardrail_target,
     validate_source_kind,
 )
-from gobby.review_learning.service import ReviewLearningService
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
+from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
+
+
+def _service(
+    memory_manager: FakeMemoryManager,
+    task_manager: FakeTaskManager,
+) -> ReviewLearningService:
+    return ReviewLearningService(
+        cast(ReviewLearningMemoryManager, memory_manager),
+        cast(PromotionTaskManager, task_manager),
+    )
 
 
 def test_tool_config_is_a_valid_guardrail_target() -> None:
@@ -80,10 +92,10 @@ def test_non_promotable_fallback_is_independent_of_finding_key_order() -> None:
 
 @pytest.mark.asyncio
 async def test_domain_and_check_key_tags(
-    fake_memory_manager: Any,
-    fake_task_manager: Any,
+    fake_memory_manager: FakeMemoryManager,
+    fake_task_manager: FakeTaskManager,
 ) -> None:
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
     result = await service.record(
         source_kind="plan_review",
         source="plan-adversary",
@@ -137,10 +149,10 @@ async def test_dual_class_identity_separation(
     namespace: str,
     source_kind: str,
     lesson_types: tuple[str, str],
-    fake_memory_manager: Any,
-    fake_task_manager: Any,
+    fake_memory_manager: FakeMemoryManager,
+    fake_task_manager: FakeTaskManager,
 ) -> None:
-    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+    service = _service(fake_memory_manager, fake_task_manager)
     check_key = "stale-section"
 
     def finding(lesson_type: str) -> dict[str, str]:

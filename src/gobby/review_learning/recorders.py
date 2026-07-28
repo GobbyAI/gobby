@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Protocol
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+from gobby.review_learning.lessons import slugify
 from gobby.review_learning.round_diff import (
     PlanReviewLessonCandidate,
     classify_plan_review_rounds,
@@ -46,7 +48,7 @@ async def mint_plan_review_lessons(
 ) -> dict[str, object]:
     """Mint finalized plan-review lessons and checkpoint the approval row."""
     store = PlanReviewEvidenceStore(db)
-    rows = store.list_for_task_stage(task_id=task_id, stage=stage)
+    rows = await asyncio.to_thread(store.list_for_task_stage, task_id=task_id, stage=stage)
     approval = _approval_checkpoint(rows)
     if approval is None:
         raise ReviewEvidenceError(
@@ -57,9 +59,9 @@ async def mint_plan_review_lessons(
         return plan_review_mint_result(approval)
 
     evidence_service = PlanReviewEvidenceService(db)
-    task = get_task(db, task_id)
+    task = await asyncio.to_thread(get_task, db, task_id)
     if task.is_escalated:
-        return _checkpoint(
+        return await _checkpoint(
             evidence_service,
             approval,
             status="none",
@@ -72,7 +74,7 @@ async def mint_plan_review_lessons(
         limit=5,
     )
     if not candidates:
-        return _checkpoint(
+        return await _checkpoint(
             evidence_service,
             approval,
             status="none",
@@ -106,14 +108,14 @@ async def mint_plan_review_lessons(
             },
             exc_info=True,
         )
-        return _checkpoint(
+        return await _checkpoint(
             evidence_service,
             approval,
             status="failed",
             lesson_ids=lesson_ids,
             detail=f"{type(error).__name__}: {error}",
         )
-    return _checkpoint(
+    return await _checkpoint(
         evidence_service,
         approval,
         status="minted",
@@ -154,7 +156,7 @@ def plan_review_mint_result(evidence: PlanReviewEvidence) -> dict[str, object]:
     }
 
 
-def _checkpoint(
+async def _checkpoint(
     service: PlanReviewEvidenceService,
     approval: PlanReviewEvidence,
     *,
@@ -166,7 +168,8 @@ def _checkpoint(
         "minted_lesson_ids": lesson_ids,
         "detail": detail,
     }
-    updated = service.checkpoint_plan_review_lesson_mint(
+    updated = await asyncio.to_thread(
+        service.checkpoint_plan_review_lesson_mint,
         approval.evidence_id,
         status=status,
         detail=checkpoint_detail,
@@ -196,7 +199,7 @@ def _lesson_finding(candidate: PlanReviewLessonCandidate) -> dict[str, Any]:
             "title": str(finding["description"]),
             "message": str(finding["description"]),
             "lesson_type": candidate.lesson_type,
-            "pattern_id": (f"plan-review:{candidate.lesson_type}:{category}:{check_key}"),
+            "pattern_id": (f"plan-review:{candidate.lesson_type}:{slugify(category)}:{check_key}"),
             "finding_fingerprint": (
                 f"plan-review:{candidate.lesson_type}:{candidate.evidence_id}:{finding_id}"
             ),

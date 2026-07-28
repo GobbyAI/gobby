@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 
+from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.review_coverage import REVIEW_LANES
 
 
 def manifest_digest(entries: Sequence[Mapping[str, object]]) -> str:
     """Return the canonical digest used by the review manifest service."""
-    return hashlib.sha256(
-        json.dumps(list(entries), sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return canonical_json_sha256(list(entries))
 
 
 def coverage_attestation(
@@ -59,7 +56,5 @@ def coverage_attestation(
         },
         "shadow_manifest_status": shadow,
     }
-    payload["attestation_digest"] = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    payload["attestation_digest"] = canonical_json_sha256(payload)
     return payload

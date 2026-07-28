@@ -579,6 +579,9 @@ def test_interactive_approval_sequence(
             plan_path=pending_path,
             run_id=pending_run,
         )
+    rolled_back = pending_service.get_evidence(pending.evidence_id)
+    assert rolled_back.manifest_state is None
+    assert rolled_back.round_result is None
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
@@ -594,7 +597,7 @@ def test_interactive_approval_sequence(
             run_id=pending_run,
         )
     revoked = pending_service.get_evidence(pending.evidence_id)
-    assert revoked.manifest_state == "revoked"
+    assert revoked.manifest_state is None
     assert revoked.round_result is None
     LocalAgentRunManager(temp_db).cancel(pending_run)
     replacement = pending_service.prepare_plan_review_round(
@@ -635,6 +638,27 @@ def test_interactive_approval_sequence(
         atomic_write_bytes,
     )
     restarted = PlanReviewEvidenceService(temp_db)
+    rolled_back_recovery = restarted.get_evidence(recovery.evidence_id)
+    assert rolled_back_recovery.manifest_state is None
+    assert rolled_back_recovery.round_result is None
+    recovery_approval = _approval(restarted, recovery.evidence_id)
+    recovered = restarted.apply_plan_review_manifest(
+        recovery.evidence_id,
+        recovery_approval,
+        plan_path=recovery_path,
+        run_id=recovery_run,
+    )
+    assert recovered["applied"] is True
+    recovered_row = restarted.get_evidence(recovery.evidence_id)
+    assert recovered_row.manifest_state == "applied"
+    assert recovered_row.round_result == recovery_approval
+    recovered_checkpoint = restarted.render_v1_round_checkpoint(recovery.evidence_id)
+    assert ensure_checkpoint(recovery_path, recovered_checkpoint)
+    finalized_recovery = restarted.finalize_plan_review_evidence(
+        recovery.evidence_id,
+        recovery_approval,
+    )
+    assert finalized_recovery.lesson_mint_status == "pending"
     with pytest.raises(ReviewEvidenceError) as pending_mint:
         restarted.prepare_plan_review_round(
             project_id=recovery_project,
@@ -643,10 +667,6 @@ def test_interactive_approval_sequence(
             session_id=recovery_session,
         )
     assert pending_mint.value.code == "pending_lesson_mint"
-    recovered_row = restarted.get_evidence(recovery.evidence_id)
-    assert recovered_row.manifest_state == "applied"
-    assert recovered_row.lesson_mint_status == "pending"
-    recovered_checkpoint = restarted.render_v1_round_checkpoint(recovery.evidence_id)
     assert recovery_path.read_bytes().count(recovered_checkpoint) == 1
     restarted.checkpoint_plan_review_lesson_mint(
         recovery.evidence_id,

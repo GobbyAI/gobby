@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
+from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
@@ -29,6 +29,10 @@ REVIEW_LANES = (
     "runtime_invariants",
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_COMPLEX_DELIVERABLES = 8
+_COMPLEX_ACCEPTANCE_ITEMS = 24
+_COMPLEX_TARGET_FILES = 12
+_COMPLEX_CHANGED_SECTIONS = 4
 
 
 def review_complexity(
@@ -49,19 +53,19 @@ def review_complexity(
         "changed_sections": changed_section_count,
     }
     complex_review = (
-        counts["deliverables"] >= 8
-        or counts["acceptance_items"] >= 24
-        or counts["target_files"] >= 12
-        or counts["changed_sections"] >= 4
+        counts["deliverables"] >= _COMPLEX_DELIVERABLES
+        or counts["acceptance_items"] >= _COMPLEX_ACCEPTANCE_ITEMS
+        or counts["target_files"] >= _COMPLEX_TARGET_FILES
+        or counts["changed_sections"] >= _COMPLEX_CHANGED_SECTIONS
     )
     return {
         "mode": "parallel" if complex_review else "sequential",
         "counts": counts,
         "thresholds": {
-            "deliverables": 8,
-            "acceptance_items": 24,
-            "target_files": 12,
-            "changed_sections": 4,
+            "deliverables": _COMPLEX_DELIVERABLES,
+            "acceptance_items": _COMPLEX_ACCEPTANCE_ITEMS,
+            "target_files": _COMPLEX_TARGET_FILES,
+            "changed_sections": _COMPLEX_CHANGED_SECTIONS,
         },
         "lanes": list(REVIEW_LANES),
         "max_workers": 3 if complex_review else 0,
@@ -160,9 +164,7 @@ def validate_review_coverage(
         "record_bundle": sweep_validation.record_bundle,
         "shadow_manifest_status": shadow_summary,
     }
-    attestation["attestation_digest"] = hashlib.sha256(
-        json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    attestation["attestation_digest"] = canonical_json_sha256(attestation)
     return attestation
 
 
@@ -200,7 +202,12 @@ def validate_coverage_attestation(
             "invalid_coverage_attestation",
             "coverage attestation does not match the canonical version-1 schema",
         )
-    _required_string(attestation, "evidence_id", "coverage attestation")
+    _required_string(
+        attestation,
+        "evidence_id",
+        "coverage attestation",
+        error_code="invalid_coverage_attestation",
+    )
     lanes = attestation.get("lanes")
     if not isinstance(lanes, list) or len(lanes) != len(REVIEW_LANES):
         raise ReviewEvidenceError(
@@ -331,9 +338,7 @@ def validate_coverage_attestation(
         )
     attestation["record_bundle"] = record_bundle
     digest = attestation.pop("attestation_digest", None)
-    expected_digest = hashlib.sha256(
-        json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    expected_digest = canonical_json_sha256(attestation)
     if digest != expected_digest:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
@@ -363,7 +368,12 @@ def _validate_lanes(
         if not isinstance(raw_lane, Mapping):
             raise ReviewEvidenceError("invalid_lane_results", "lane result must be an object")
         lane = canonical_json_object(raw_lane)
-        lane_id = _required_string(lane, "lane_id", "lane result")
+        lane_id = _required_string(
+            lane,
+            "lane_id",
+            "lane result",
+            error_code="invalid_lane_results",
+        )
         if lane_id not in REVIEW_LANES or lane_id in by_id:
             raise ReviewEvidenceError(
                 "invalid_lane_results",
@@ -435,9 +445,24 @@ def _validate_candidate(
             "invalid_candidate",
             f"candidate issue has unknown fields: {', '.join(unknown)}",
         )
-    _required_string(candidate, "candidate_id", "candidate issue")
-    _required_string(candidate, "violated_invariant", "candidate issue")
-    _required_string(candidate, "suggested_fix", "candidate issue")
+    _required_string(
+        candidate,
+        "candidate_id",
+        "candidate issue",
+        error_code="invalid_candidate",
+    )
+    _required_string(
+        candidate,
+        "violated_invariant",
+        "candidate issue",
+        error_code="invalid_candidate",
+    )
+    _required_string(
+        candidate,
+        "suggested_fix",
+        "candidate issue",
+        error_code="invalid_candidate",
+    )
     section_ids = _string_list(candidate.get("section_ids"), "section_ids")
     if (
         not section_ids
@@ -527,7 +552,21 @@ def _rehash_sources(
     project_root: Path,
     citations: Sequence[Mapping[str, object]],
 ) -> dict[str, str]:
-    root = project_root.resolve(strict=True)
+    try:
+        root = project_root.resolve(strict=True)
+    except FileNotFoundError:
+        raise ReviewEvidenceError(
+            "source_drift",
+            f"project root is missing: {project_root}",
+            retryable=True,
+            details={"paths": [str(project_root)]},
+        ) from None
+    except OSError as error:
+        raise ReviewEvidenceError(
+            "source_io_error",
+            f"project root could not be resolved: {project_root}",
+            details={"paths": [str(project_root)], "io_error": str(error)},
+        ) from error
     claimed_hashes: dict[str, str] = {}
     resolved_paths: dict[str, Path] = {}
     for citation in citations:
@@ -553,13 +592,19 @@ def _rehash_sources(
         try:
             resolved = (root / path).resolve(strict=True)
             resolved.relative_to(root)
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             raise ReviewEvidenceError(
                 "source_drift",
                 f"cited source is missing: {relative}",
                 retryable=True,
                 details={"paths": [relative]},
             ) from None
+        except OSError as error:
+            raise ReviewEvidenceError(
+                "source_io_error",
+                f"cited source could not be resolved: {relative}",
+                details={"paths": [relative], "io_error": str(error)},
+            ) from error
         except ValueError:
             raise ReviewEvidenceError(
                 "invalid_source_path",
@@ -598,16 +643,20 @@ def _rehash_sources(
 
 def _source_digest(plan_hash: str, source_hashes: Mapping[str, str]) -> str:
     payload = {"plan_hash": plan_hash, "sources": source_hashes}
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return canonical_json_sha256(payload)
 
 
-def _required_string(payload: Mapping[str, object], key: str, owner: str) -> str:
+def _required_string(
+    payload: Mapping[str, object],
+    key: str,
+    owner: str,
+    *,
+    error_code: str,
+) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ReviewEvidenceError(
-            f"invalid_{owner.replace(' ', '_')}",
+            error_code,
             f"{owner}.{key} must be a non-empty string",
         )
     return value

@@ -27,8 +27,9 @@ from tests.storage.tasks._stage_test_helpers import set_stage_state
 async def test_backfill_wire_contract(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    durable_lineage_fixture = _create_durable_lineage(temp_db, tmp_path)
+    durable_lineage_fixture = _create_durable_lineage(temp_db, tmp_path, monkeypatch)
     recorder = StubReviewLearningService(fail=True)
     ctx = RegistryContext(
         task_manager=durable_lineage_fixture.manager,
@@ -105,6 +106,12 @@ async def test_backfill_wire_contract(
         {"task_id": missing.id, "stage": "planning"},
     )
     assert refused["error"] == "approval_checkpoint_missing"
+    for invalid_task_id in ("#999999", ""):
+        invalid = await registry.call(
+            "backfill_plan_review_lessons",
+            {"task_id": invalid_task_id, "stage": "planning"},
+        )
+        assert invalid["error"] == "invalid_task_id"
 
 
 @pytest.mark.asyncio
@@ -229,7 +236,14 @@ async def test_non_plan_approval_unaffected(
     with session_context_for_test(session.id):
         refused = await registry.call(
             "approve_review",
-            {"task_id": planning.id, "stage_name": "planning"},
+            {
+                "task_id": planning.id,
+                "stage_name": "planning",
+                "round_number": 1,
+            },
         )
-    assert refused["error"] == "missing_round_number"
+    assert refused["error"] == "missing_evidence_id"
+    planning_stage = manager.stage_states.current_stage(planning.id)
+    assert planning_stage is not None
+    assert planning_stage.state == "needs_review"
     assert recorder.calls == []

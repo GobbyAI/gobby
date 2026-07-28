@@ -53,6 +53,20 @@ def _carried_ledger(rounds_carried: int = 3) -> list[dict[str, object]]:
 async def test_carry_three_rounds_mints_lesson(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def checkpoint(
+        _service: object,
+        _approval: object,
+        *,
+        status: str,
+        lesson_ids: list[str],
+        detail: str | None,
+    ) -> dict[str, object]:
+        return {
+            "lesson_mint_status": status,
+            "minted_lesson_ids": lesson_ids,
+            "detail": detail,
+        }
+
     approval = replace(
         _row(3, {"A": "a" * 64}, [], verdict="approved"),
         quality_ledger=_carried_ledger(),
@@ -75,11 +89,7 @@ async def test_carry_three_rounds_mints_lesson(
     monkeypatch.setattr(
         recorders,
         "_checkpoint",
-        lambda _service, _approval, *, status, lesson_ids, detail: {
-            "lesson_mint_status": status,
-            "minted_lesson_ids": lesson_ids,
-            "detail": detail,
-        },
+        checkpoint,
     )
     recorder = StubReviewLearningService()
 

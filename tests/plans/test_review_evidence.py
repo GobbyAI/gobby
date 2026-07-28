@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Never
 
@@ -11,6 +12,7 @@ import pytest
 
 from gobby.agents.code_index import IndexToken, verify_index_token
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
+from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
     atomic_write_bytes,
@@ -29,13 +31,20 @@ from gobby.plans.review_requirements import (
 from gobby.plans.review_telemetry import persist_delivered_round_result
 from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    PlanReviewEvidenceMutation,
+    Transaction,
+)
+from gobby.storage.migrations import _execute_sql_script
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import delivered_telemetry, enriched_telemetry
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -116,6 +125,70 @@ def review_setup(
         },
     )
     return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
+
+
+@dataclass(frozen=True)
+class ManifestReviewSetup:
+    service: PlanReviewEvidenceService
+    project_id: str
+    session_id: str
+    plan_path: Path
+    evidence_id: str
+    run_id: str
+    approval: dict[str, object]
+    original_bytes: bytes
+
+
+def _canonical_approval(
+    service: PlanReviewEvidenceService,
+    evidence_id: str,
+) -> dict[str, object]:
+    derived = service.derive_plan_review_manifest(
+        evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
+    return {
+        "verdict": "approved",
+        "findings": [],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            manifest_entries=manifest_entries,
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+
+
+@pytest.fixture
+def manifest_review(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> ManifestReviewSetup:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    return ManifestReviewSetup(
+        service=service,
+        project_id=project_id,
+        session_id=session_id,
+        plan_path=plan_path,
+        evidence_id=prepared.evidence_id,
+        run_id=run.id,
+        approval=_canonical_approval(service, prepared.evidence_id),
+        original_bytes=plan_path.read_bytes(),
+    )
 
 
 def test_prepare_round_snapshot(
@@ -396,9 +469,7 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
     baseline_catalog = catalog()
     temp_db.execute("DROP TABLE plan_review_evidence")
     for migration_sql in (migration, quality_ledger_migration):
-        for statement in migration_sql.split(";"):
-            if statement.strip():
-                temp_db.execute(statement)
+        _execute_sql_script(temp_db, migration_sql)
     assert catalog() == baseline_catalog
 
 
@@ -501,69 +572,38 @@ def test_path_boundary_and_binding_validation(
     )
 
 
-def test_manifest_compare_and_apply(
-    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
-    monkeypatch: pytest.MonkeyPatch,
+def test_manifest_rejects_invalid_or_noncanonical_payloads(
+    manifest_review: ManifestReviewSetup,
 ) -> None:
-    service, project_id, session_id, plan_path = review_setup
-    prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=1,
-        session_id=session_id,
-    )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
-
-    def canonical_approval(evidence_id: str) -> dict[str, object]:
-        derived = service.derive_plan_review_manifest(
-            evidence_id,
-            routing_decisions={},
-        )
-        manifest_entries = derived["manifest_entries"]
-        assert isinstance(manifest_entries, list)
-        return {
-            "verdict": "approved",
-            "findings": [],
-            "routing_decisions": {},
-            "manifest_entries": manifest_entries,
-            "coverage_attestation": coverage_attestation(
-                evidence_id=evidence_id,
-                manifest_entries=manifest_entries,
-            ),
-            "convergence_telemetry": enriched_telemetry(),
-        }
-
-    approval = canonical_approval(prepared.evidence_id)
-    original_bytes = plan_path.read_bytes()
-    invalid_shadow = service.derive_plan_review_manifest(
-        prepared.evidence_id,
+    invalid_shadow = manifest_review.service.derive_plan_review_manifest(
+        manifest_review.evidence_id,
         routing_decisions={"missing": {}},
     )
     assert invalid_shadow["status"] == "invalid"
-    assert plan_path.read_bytes() == original_bytes
-    assert service.get_evidence(prepared.evidence_id).manifest_state is None
+    assert manifest_review.plan_path.read_bytes() == manifest_review.original_bytes
+    assert manifest_review.service.get_evidence(manifest_review.evidence_id).manifest_state is None
 
-    approval_entries = approval["manifest_entries"]
+    approval_entries = manifest_review.approval["manifest_entries"]
     assert isinstance(approval_entries, list)
     tampered_entries = [dict(entry) for entry in approval_entries if isinstance(entry, dict)]
     tampered_entries[0]["title"] = "Caller-controlled drift"
-    tampered = {**approval, "manifest_entries": tampered_entries}
+    tampered = {**manifest_review.approval, "manifest_entries": tampered_entries}
     with pytest.raises(ReviewEvidenceError) as noncanonical:
-        service.apply_plan_review_manifest(
-            prepared.evidence_id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
             tampered,
-            plan_path=plan_path,
-            run_id=run.id,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
     assert noncanonical.value.code == "noncanonical_manifest"
-    assert plan_path.read_bytes() == original_bytes
-    assert service.get_evidence(prepared.evidence_id).manifest_state is None
+    assert manifest_review.plan_path.read_bytes() == manifest_review.original_bytes
+    assert manifest_review.service.get_evidence(manifest_review.evidence_id).manifest_state is None
 
+
+def test_manifest_prewrite_failure_rolls_back_intent(
+    manifest_review: ManifestReviewSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def crash_atomic_write(_path: Path, _content: bytes) -> None:
         raise OSError("simulated crash")
 
@@ -572,69 +612,74 @@ def test_manifest_compare_and_apply(
         crash_atomic_write,
     )
     with pytest.raises(OSError, match="simulated crash"):
-        service.apply_plan_review_manifest(
-            prepared.evidence_id,
-            approval,
-            plan_path=plan_path,
-            run_id=run.id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
+            manifest_review.approval,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
-    pending = service.get_evidence(prepared.evidence_id)
-    assert pending.manifest_state == "pending"
-    assert pending.round_result == approval
-    assert plan_path.read_bytes() == original_bytes
+    rolled_back = manifest_review.service.get_evidence(manifest_review.evidence_id)
+    assert rolled_back.manifest_state is None
+    assert rolled_back.round_result is None
+    assert manifest_review.plan_path.read_bytes() == manifest_review.original_bytes
 
     monkeypatch.setattr(
         "gobby.plans.review_manifest_service.atomic_write_bytes",
         atomic_write_bytes,
     )
-    applied = service.apply_plan_review_manifest(
-        prepared.evidence_id,
-        approval,
-        plan_path=plan_path,
-        run_id=run.id,
+    applied = manifest_review.service.apply_plan_review_manifest(
+        manifest_review.evidence_id,
+        manifest_review.approval,
+        plan_path=manifest_review.plan_path,
+        run_id=manifest_review.run_id,
     )
-    row = service.get_evidence(prepared.evidence_id)
+    assert applied["applied"] is True
+    row = manifest_review.service.get_evidence(manifest_review.evidence_id)
     assert row.manifest_state == "applied"
-    assert row.round_result == approval
+    assert row.round_result == manifest_review.approval
     assert row.finalized_at is None
-    first_bytes = plan_path.read_bytes()
+
+
+def test_manifest_reapplication_is_idempotent_and_payload_bound(
+    manifest_review: ManifestReviewSetup,
+) -> None:
+    applied = manifest_review.service.apply_plan_review_manifest(
+        manifest_review.evidence_id,
+        manifest_review.approval,
+        plan_path=manifest_review.plan_path,
+        run_id=manifest_review.run_id,
+    )
+    first_bytes = manifest_review.plan_path.read_bytes()
     assert (
-        service.apply_plan_review_manifest(
-            prepared.evidence_id,
-            approval,
-            plan_path=plan_path,
-            run_id=run.id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
+            manifest_review.approval,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
         == applied
     )
-    assert plan_path.read_bytes() == first_bytes
+    assert manifest_review.plan_path.read_bytes() == first_bytes
 
-    changed = {**approval, "findings": [{"message": "different"}]}
+    changed = {
+        **manifest_review.approval,
+        "findings": [{"message": "different"}],
+    }
     with pytest.raises(ReviewEvidenceError) as invalid_finding:
-        service.apply_plan_review_manifest(
-            prepared.evidence_id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
             changed,
-            plan_path=plan_path,
-            run_id=run.id,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
     assert invalid_finding.value.code == "invalid_review_findings"
 
-    landed_path = plan_path.with_name("review-evidence-landed.md")
-    landed_path.write_bytes(original_bytes)
-    landed_prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=landed_path,
-        round_number=1,
-        session_id=session_id,
-    )
-    landed_run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review landed",
-    )
-    service.bind_evidence_run(landed_prepared.evidence_id, landed_run.id)
-    landed_approval = canonical_approval(landed_prepared.evidence_id)
-    complete_manifest_apply = service.store.complete_manifest_apply
+
+def test_manifest_postwrite_checkpoint_failure_recovers(
+    manifest_review: ManifestReviewSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    complete_manifest_apply = manifest_review.service.store.complete_manifest_apply
 
     def crash_before_checkpoint(
         *,
@@ -645,93 +690,92 @@ def test_manifest_compare_and_apply(
         _ = transaction, evidence_id, result
         raise RuntimeError("simulated checkpoint crash")
 
-    monkeypatch.setattr(service.store, "complete_manifest_apply", crash_before_checkpoint)
-    with pytest.raises(RuntimeError, match="simulated checkpoint crash"):
-        service.apply_plan_review_manifest(
-            landed_prepared.evidence_id,
-            landed_approval,
-            plan_path=landed_path,
-            run_id=landed_run.id,
-        )
-    landed_bytes = landed_path.read_bytes()
-    assert landed_bytes != original_bytes
-    assert service.get_evidence(landed_prepared.evidence_id).manifest_state == "pending"
     monkeypatch.setattr(
-        service.store,
+        manifest_review.service.store,
+        "complete_manifest_apply",
+        crash_before_checkpoint,
+    )
+    with pytest.raises(RuntimeError, match="simulated checkpoint crash"):
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
+            manifest_review.approval,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
+        )
+    landed_bytes = manifest_review.plan_path.read_bytes()
+    assert landed_bytes != manifest_review.original_bytes
+    rolled_back = manifest_review.service.get_evidence(manifest_review.evidence_id)
+    assert rolled_back.manifest_state is None
+    assert rolled_back.round_result is None
+    monkeypatch.setattr(
+        manifest_review.service.store,
         "complete_manifest_apply",
         complete_manifest_apply,
     )
-    service.apply_plan_review_manifest(
-        landed_prepared.evidence_id,
-        landed_approval,
-        plan_path=landed_path,
-        run_id=landed_run.id,
+    manifest_review.service.apply_plan_review_manifest(
+        manifest_review.evidence_id,
+        manifest_review.approval,
+        plan_path=manifest_review.plan_path,
+        run_id=manifest_review.run_id,
     )
-    assert landed_path.read_bytes() == landed_bytes
-    assert service.get_evidence(landed_prepared.evidence_id).manifest_state == "applied"
+    assert manifest_review.plan_path.read_bytes() == landed_bytes
+    assert (
+        manifest_review.service.get_evidence(manifest_review.evidence_id).manifest_state
+        == "applied"
+    )
 
-    drift_path = plan_path.with_name("review-evidence-drift.md")
-    drift_path.write_bytes(original_bytes)
-    drift_prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=drift_path,
-        round_number=1,
-        session_id=session_id,
+
+def test_pending_manifest_drift_revokes_intent(
+    manifest_review: ManifestReviewSetup,
+) -> None:
+    evidence = manifest_review.service.get_evidence(manifest_review.evidence_id)
+    mutation = PlanReviewEvidenceMutation(
+        project_id=manifest_review.project_id,
+        plan_path=evidence.plan_path,
     )
-    drift_run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review drift",
-    )
-    service.bind_evidence_run(drift_prepared.evidence_id, drift_run.id)
-    drift_approval = canonical_approval(drift_prepared.evidence_id)
-    monkeypatch.setattr(
-        "gobby.plans.review_manifest_service.atomic_write_bytes",
-        crash_atomic_write,
-    )
-    with pytest.raises(OSError, match="simulated crash"):
-        service.apply_plan_review_manifest(
-            drift_prepared.evidence_id,
-            drift_approval,
-            plan_path=drift_path,
-            run_id=drift_run.id,
+    with manifest_review.service.db.transaction_immediate(mutation) as transaction:
+        manifest_review.service.store.begin_manifest_apply(
+            transaction=transaction,
+            evidence_id=manifest_review.evidence_id,
+            digest=canonical_json_sha256(manifest_review.approval),
+            payload=manifest_review.approval,
         )
-    monkeypatch.setattr(
-        "gobby.plans.review_manifest_service.atomic_write_bytes",
-        atomic_write_bytes,
+
+    manifest_review.plan_path.write_bytes(
+        manifest_review.plan_path.read_bytes().replace(
+            b"Behavior exists.",
+            b"Behavior drifted.",
+        )
     )
-    drift_path.write_bytes(
-        drift_path.read_bytes().replace(b"Behavior exists.", b"Behavior drifted.")
-    )
-    drifted_bytes = drift_path.read_bytes()
+    drifted_bytes = manifest_review.plan_path.read_bytes()
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
-        service.apply_plan_review_manifest(
-            drift_prepared.evidence_id,
-            drift_approval,
-            plan_path=drift_path,
-            run_id=drift_run.id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
+            manifest_review.approval,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
-    revoked = service.get_evidence(drift_prepared.evidence_id)
+    revoked = manifest_review.service.get_evidence(manifest_review.evidence_id)
     assert revoked.manifest_state == "revoked"
     assert revoked.round_result is None
-    assert revoked.manifest_payload == drift_approval
-    assert drift_path.read_bytes() == drifted_bytes
+    assert revoked.manifest_payload == manifest_review.approval
+    assert manifest_review.plan_path.read_bytes() == drifted_bytes
     with pytest.raises(ReviewEvidenceError, match="manifest intent was revoked"):
-        service.apply_plan_review_manifest(
-            drift_prepared.evidence_id,
-            drift_approval,
-            plan_path=drift_path,
-            run_id=drift_run.id,
+        manifest_review.service.apply_plan_review_manifest(
+            manifest_review.evidence_id,
+            manifest_review.approval,
+            plan_path=manifest_review.plan_path,
+            run_id=manifest_review.run_id,
         )
-    LocalAgentRunManager(service.db).cancel(drift_run.id)
-    rereview = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=drift_path,
+    LocalAgentRunManager(manifest_review.service.db).cancel(manifest_review.run_id)
+    rereview = manifest_review.service.prepare_plan_review_round(
+        project_id=manifest_review.project_id,
+        plan_path=manifest_review.plan_path,
         round_number=2,
-        session_id=session_id,
+        session_id=manifest_review.session_id,
     )
-    assert rereview.evidence_id != drift_prepared.evidence_id
-    assert service.get_evidence(drift_prepared.evidence_id).expired_at is not None
+    assert rereview.evidence_id != manifest_review.evidence_id
+    assert manifest_review.service.get_evidence(manifest_review.evidence_id).expired_at is not None
 
 
 def test_two_phase_run_binding(

@@ -21,6 +21,8 @@ from tests.review_learning.conftest import (
     FakeTaskManager,
 )
 
+pytestmark = pytest.mark.unit
+
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
 PATTERN_ID = "retire-obsolete-check"
 PATTERN_KEY = pattern_key_for(PATTERN_ID)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -13,6 +14,8 @@ from gobby.plans.review_evidence_models import (
 )
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_ledger import validate_quality_ledger
+
+logger = logging.getLogger(__name__)
 
 PlanLessonType = Literal["reviewer-miss", "fixer-induced-defect", "no-fix-policy"]
 PlanLessonDecision = Literal["confirmed", "no-fix-policy"]
@@ -139,15 +142,22 @@ def select_plan_review_candidates(
         for lesson_type in _CLASS_ORDER
         if any(candidate.lesson_type == lesson_type for candidate in ranked)
     ]
-    selected: list[PlanReviewLessonCandidate] = []
+    selected_indices: list[int] = []
     for lesson_type in present[:capped_limit]:
-        selected.append(
-            next(candidate for candidate in ranked if candidate.lesson_type == lesson_type)
+        selected_indices.append(
+            next(
+                index
+                for index, candidate in enumerate(ranked)
+                if candidate.lesson_type == lesson_type
+            )
         )
+    selected = [ranked[index] for index in selected_indices]
     if len(selected) == capped_limit:
         return selected
-    selected_ids = {id(candidate) for candidate in selected}
-    selected.extend(candidate for candidate in ranked if id(candidate) not in selected_ids)
+    selected_index_set = set(selected_indices)
+    selected.extend(
+        candidate for index, candidate in enumerate(ranked) if index not in selected_index_set
+    )
     return selected[:capped_limit]
 
 
@@ -185,12 +195,29 @@ def _validated_findings(
         payload = validate_round_result(row.round_result)
         raw_findings = payload["findings"]
         if not isinstance(raw_findings, list):
+            error = TypeError("round_result.findings must be an array")
+            logger.debug(
+                "Skipping invalid findings for evidence %s: %s",
+                row.evidence_id,
+                error,
+            )
             return None
         mappings = [finding for finding in raw_findings if isinstance(finding, dict)]
         if len(mappings) != len(raw_findings):
+            error = TypeError("round_result.findings entries must be objects")
+            logger.debug(
+                "Skipping invalid findings for evidence %s: %s",
+                row.evidence_id,
+                error,
+            )
             return None
         return validate_plan_review_findings(mappings, evidence=row)
-    except (ReviewEvidenceError, TypeError, ValueError):
+    except (ReviewEvidenceError, TypeError, ValueError) as error:
+        logger.debug(
+            "Skipping invalid findings for evidence %s: %s",
+            row.evidence_id,
+            error,
+        )
         return None
 
 

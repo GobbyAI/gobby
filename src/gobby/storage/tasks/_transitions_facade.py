@@ -300,6 +300,7 @@ class TaskTransitionsMixin:
         task_id: str,
         stage_name: str | None = None,
         approval_notes: str | None = None,
+        *,
         round_number: int | None = None,
         findings: list[dict[str, object]] | None = None,
         manifest_entries: list[dict[str, object]] | None = None,
@@ -307,7 +308,6 @@ class TaskTransitionsMixin:
         coverage_attestation: dict[str, object] | None = None,
         convergence_telemetry: dict[str, object] | None = None,
         evidence_id: str | None = None,
-        *,
         by_session_id: str | None = None,
         dispatch_run_id: str | None = None,
     ) -> Task:

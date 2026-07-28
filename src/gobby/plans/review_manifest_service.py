@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
 
+from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.manifest_emitter import ManifestSynthesisError, derive_manifest_entries
 from gobby.plans.parser import PlanDocument, PlanParseError, parse_plan
 from gobby.plans.review_evidence_io import (
@@ -20,7 +19,6 @@ from gobby.plans.review_evidence_io import (
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     ReviewEvidenceError,
-    canonical_json_bytes,
     canonical_json_object,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
@@ -97,9 +95,7 @@ class ReviewManifestService:
                 "routing_decisions": dict(routing_decisions),
                 "diagnostics": [{"code": exc.code, "message": str(exc)}],
             }
-        routing_digest = hashlib.sha256(
-            canonical_json_bytes({"routing_decisions": routing})
-        ).hexdigest()
+        routing_digest = canonical_json_sha256({"routing_decisions": routing})
         cache_key = (evidence_id, routing_digest)
         cached = self._manifest_cache.get(cache_key)
         if cached is not None:
@@ -147,9 +143,7 @@ class ReviewManifestService:
                 ],
             }
         else:
-            manifest_digest = hashlib.sha256(
-                json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
+            manifest_digest = canonical_json_sha256(entries)
             result = {
                 "status": "valid",
                 "routing_decisions": routing,
@@ -166,7 +160,7 @@ class ReviewManifestService:
         round_result: Mapping[str, object],
         *,
         plan_path: str | Path,
-        run_id: str,
+        run_id: str | None,
         resolve_round_result: RoundResultResolver,
         authorize_attempt: AttemptAuthorizer,
         verify_reviewed_bytes: ReviewedBytesVerifier,
@@ -230,84 +224,90 @@ class ReviewManifestService:
                 "shadow_manifest_mismatch",
                 "coverage attestation does not bind the canonical manifest",
             )
-        digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+        digest = canonical_json_sha256(payload)
         if not isinstance(entries, list):
             raise ReviewEvidenceError("invalid_manifest", "manifest_entries must be an array")
         resolved = self.evidence_path(evidence)
-        if evidence.manifest_digest is not None and evidence.manifest_digest != digest:
-            raise ReviewEvidenceError(
-                "manifest_payload_conflict",
-                "different manifest payload was already recorded for this evidence",
-            )
-        if evidence.manifest_state == "revoked":
-            raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
-        if evidence.manifest_state == "applied":
-            if evidence.manifest_result is None:
-                raise ReviewEvidenceError(
-                    "invalid_evidence_row",
-                    "applied manifest evidence has no result",
-                )
-            return evidence.manifest_result
-        current_bytes = resolved.read_bytes()
-        try:
-            verify_reviewed_bytes(evidence, current_bytes)
-        except ReviewEvidenceError:
-            if evidence.manifest_state == "pending":
-                mutation = PlanReviewEvidenceMutation(
-                    project_id=evidence.project_id,
-                    plan_path=evidence.plan_path,
-                )
-                with self.db.transaction_immediate(mutation) as transaction:
-                    self.store.revoke_manifest_intent(
-                        transaction=transaction,
-                        evidence_id=evidence_id,
-                    )
-            raise
-        rendered = render_manifest_plan(resolved, current_bytes, entries)
         mutation = PlanReviewEvidenceMutation(
             project_id=evidence.project_id,
             plan_path=evidence.plan_path,
         )
-        if evidence.manifest_state is None:
-            with self.db.transaction_immediate(mutation) as transaction:
-                evidence = self.store.begin_manifest_apply(
+        verification_error: ReviewEvidenceError | None = None
+        return_result: dict[str, object] | None = None
+        with self.db.transaction_immediate(mutation) as transaction:
+            evidence = self.store.require(evidence_id, transaction=transaction, for_update=True)
+            if evidence.manifest_digest is not None and evidence.manifest_digest != digest:
+                raise ReviewEvidenceError(
+                    "manifest_payload_conflict",
+                    "different manifest payload was already recorded for this evidence",
+                )
+            if evidence.manifest_state == "revoked":
+                raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
+            if evidence.manifest_state == "applied":
+                if evidence.manifest_result is None:
+                    raise ReviewEvidenceError(
+                        "invalid_evidence_row",
+                        "applied manifest evidence has no result",
+                    )
+                return evidence.manifest_result
+
+            current_bytes = resolved.read_bytes()
+            try:
+                verify_reviewed_bytes(evidence, current_bytes)
+            except ReviewEvidenceError as error:
+                if evidence.manifest_state != "pending":
+                    raise
+                self.store.revoke_manifest_intent(
                     transaction=transaction,
                     evidence_id=evidence_id,
-                    digest=digest,
-                    payload=payload,
                 )
-        if evidence.manifest_digest != digest or evidence.manifest_payload != payload:
-            raise ReviewEvidenceError(
-                "manifest_payload_conflict",
-                "different manifest payload was already recorded for this evidence",
-            )
-        if evidence.manifest_state == "revoked":
-            raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
-        if evidence.manifest_state == "applied":
-            if evidence.manifest_result is None:
-                raise ReviewEvidenceError(
-                    "invalid_evidence_row",
-                    "applied manifest evidence has no result",
+                verification_error = error
+            if verification_error is None:
+                rendered = render_manifest_plan(resolved, current_bytes, entries)
+                if evidence.manifest_state is None:
+                    evidence = self.store.begin_manifest_apply(
+                        transaction=transaction,
+                        evidence_id=evidence_id,
+                        digest=digest,
+                        payload=payload,
+                    )
+                if evidence.manifest_digest != digest or evidence.manifest_payload != payload:
+                    raise ReviewEvidenceError(
+                        "manifest_payload_conflict",
+                        "different manifest payload was already recorded for this evidence",
+                    )
+                if evidence.manifest_state == "revoked":
+                    raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
+                if evidence.manifest_state == "applied":
+                    if evidence.manifest_result is None:
+                        raise ReviewEvidenceError(
+                            "invalid_evidence_row",
+                            "applied manifest evidence has no result",
+                        )
+                    return evidence.manifest_result
+                if evidence.manifest_state != "pending":
+                    raise ReviewEvidenceError(
+                        "invalid_evidence_row",
+                        "manifest evidence did not enter the pending state",
+                    )
+                atomic_write_bytes(resolved, rendered)
+                result: dict[str, object] = {
+                    "evidence_id": evidence_id,
+                    "manifest_digest": digest,
+                    "applied": True,
+                }
+                completed = self.store.complete_manifest_apply(
+                    transaction=transaction,
+                    evidence_id=evidence_id,
+                    result=result,
                 )
-            return evidence.manifest_result
-        if evidence.manifest_state != "pending":
-            raise ReviewEvidenceError(
-                "invalid_evidence_row",
-                "manifest evidence did not enter the pending state",
-            )
-        atomic_write_bytes(resolved, rendered)
-        result: dict[str, object] = {
-            "evidence_id": evidence_id,
-            "manifest_digest": digest,
-            "applied": True,
-        }
-        with self.db.transaction_immediate(mutation) as transaction:
-            completed = self.store.complete_manifest_apply(
-                transaction=transaction,
-                evidence_id=evidence_id,
-                result=result,
-            )
-        return completed.manifest_result or result
+                return_result = completed.manifest_result or result
+
+        if verification_error is not None:
+            raise verification_error
+        if return_result is None:
+            raise RuntimeError("manifest apply completed without a result")
+        return return_result
 
     @staticmethod
     def snapshot_document(evidence: PlanReviewEvidence) -> PlanDocument:

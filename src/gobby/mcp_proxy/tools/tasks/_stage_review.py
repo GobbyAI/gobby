@@ -331,6 +331,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
+        if stage_name == "planning" and not evidence_id:
+            return ReviewEvidenceError(
+                "missing_evidence_id",
+                "planning-stage approval requires evidence_id",
+            ).to_dict()
         prior_owner_session_id = get_claimed_session_id(task)
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         replay = False
@@ -384,7 +389,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         mint_result: dict[str, object] | None = None
         if stage_name == "planning":
             if evidence_id is None:
-                raise RuntimeError("planning approval succeeded without evidence_id")
+                raise RuntimeError("planning approval passed validation without evidence_id")
             mint_result = complete_plan_review_mint(
                 ctx,
                 task_id=resolved_id,

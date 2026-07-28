@@ -241,3 +241,72 @@ In @src/gobby/tasks/task_state_evidence.py at line 17, The excerpt, digest, and 
 ## Finding #784
 
 In @tests/tasks/contract_validator.py around lines 51 - 56, Update validate_task to detect and handle validation_criteria supplied positionally before injecting kwargs["validation_criteria"], preserving the caller-provided value and preventing duplicate argument errors when delegating to super().validate_task. Keep the existing default criterion behavior for calls that provide neither positional nor keyword criteria, and continue synchronizing self._contract_llm.criteria.
+
+## Forward-Port Disposition Ledger
+
+- Source commit: `7daf01cf5552fc65d2e07ffaca06016ac7db6fa5`
+- Original task: `#19004`
+- Forward-port base: `bf1b1bd2184adf62e5674fd7eaf6737cef6e87bd`
+- Integration task: `#19170`
+
+| Finding | Disposition | Evidence |
+| --- | --- | --- |
+| #331 | Obsolete | The verification-receipt service was removed by the checklist-close cutover, so the cited empty-capture branch no longer exists. |
+| #332 | Obsolete | Receipt-output sanitization was removed with the verification-receipt subsystem. |
+| #361 | Obsolete | The cited verification-receipt test module was deleted with that subsystem. |
+| #362 | Obsolete | The cited verification-receipt evidence builder test no longer exists. |
+| #363 | Obsolete | Validator lesson-injection coverage was removed with the superseded validation path. |
+| #382 | Obsolete | Close-time verification-receipt tests were removed by the checklist gate refactor. |
+| #383 | Obsolete | Receipt cleanup is no longer part of task close behavior. |
+| #417 | Obsolete | `_lifecycle_close_preview.py` was deleted by the checklist-close refactor. |
+| #418 | Obsolete | The cited lifecycle close-preview output-digest helper no longer exists. |
+| #420 | Carried | One tagged-history parser now owns Git log construction and task-reference extraction for both auto-link flows. |
+| #421 | Carried | Task-specific auto-linking resolves the task once and reuses the resolved object. |
+| #422 | Carried | Task-specific auto-linking records unresolved tagged references before filtering commits for the requested task. |
+| #499 | Carried | Stale-claim sweep fixtures and helpers use concrete `HubDatabase`, `Task`, and mapping annotations. |
+| #524 | Obsolete | Lifecycle close-time recall was removed by the checklist-close cutover. |
+| #525 | Carried | Non-replay approval recording no longer instantiates or queries the evidence service. |
+| #526 | Adapted | The current asynchronous checkpoint path preserves the structured mint-result contract for review-evidence and PostgreSQL persistence failures. |
+| #527 | Carried | Backfill task-reference failures return a structured `invalid_task_id` error. |
+| #528 | Carried | Planning approval rejects a missing evidence ID before mutating stage state. |
+| #529 | Carried | Reviewed routing overrides validate supported task type, dependency, TDD, agent, and implementation-domain values. |
+| #530 | Carried | Manifest TDD selection is assigned once after validated override precedence is resolved. |
+| #531 | Carried | Coverage source reads distinguish retryable disappearance from non-retryable I/O failures. |
+| #532 | Adapted | Explicit stable error codes were merged into the current coverage schema and its newer ledger and requirement validation. |
+| #533 | Carried | Review-complexity thresholds are named constants. |
+| #534 | Adapted | The current manifest service now performs re-fetch, verification, render, intent, write, and completion within one mutation transaction. |
+| #535 | Already satisfied | The current finalization service already reads plan bytes once for checkpoint parsing and comparison. |
+| #536 | Carried | Manifest section lookup rejects duplicate M1 keys explicitly. |
+| #537 | Carried | Manifest rendering handles a missing M1 section explicitly and preserves unrelated parse errors. |
+| #538 | Carried | Render validation parses from an isolated temporary directory instead of a sibling temporary file. |
+| #539 | Carried | Finding text rejects fenced blocks and heading-like lines that could alter durable plan structure. |
+| #540 | Carried | Class-recall limits reject invalid values with a stable `ValueError`. |
+| #541 | Carried | Plan-review lesson pattern IDs slugify category components. |
+| #542 | Carried | Blocking evidence, task, and checkpoint operations are offloaded with `asyncio.to_thread`. |
+| #543 | Adapted | Positional candidate selection was merged while retaining the current no-fix-policy lesson class. |
+| #544 | Adapted | Evidence-scoped invalid-payload diagnostics were added without replacing the current round-diff classifications. |
+| #548 | Adapted | The current stage-review transition now holds the approval mutation across manifest application and reuses the pre-held dispatch mutex. |
+| #549 | Adapted | The current transition service passes `dispatch_run_id` directly to manifest application without an empty-string fallback. |
+| #550 | Already satisfied | The current review rejection path already uses `_replace_round_section`. |
+| #551 | Carried | Review approval payload fields are keyword-only in the transition facade. |
+| #559 | Adapted | Source regression cases were retained and updated for current telemetry, request-anchor, and atomic rollback contracts. |
+| #560 | Adapted | Migration parity coverage uses the repository SQL-script executor for both current migration baselines. |
+| #561 | Carried | Plan review-evidence tests are categorized as PostgreSQL integration tests. |
+| #562 | Adapted | The shared canonical JSON SHA-256 helper now covers source digests plus the current manifest-service routing and payload digests. |
+| #563 | Carried | Feedback-loop coverage proves recording does not mutate caller-owned findings. |
+| #564 | Carried | Feedback-loop assertions compare structures directly instead of round-tripping local JSON. |
+| #565 | Carried | Lesson test doubles use concrete argument and return annotations. |
+| #566 | Carried | Recall-context task-manager doubles use concrete argument annotations. |
+| #567 | Carried | Retirement tests are categorized as unit tests. |
+| #568 | Carried | Database-backed round-diff cases are integration tests while pure classifiers and caps retain unit markers. |
+| #579 | Obsolete | The cited verification-receipt unit tests were deleted with receipt storage. |
+| #580 | Obsolete | The cited receipt validation test was removed with the receipt contract. |
+| #705 | Obsolete | The verification-receipt buffer path no longer exists. |
+| #724 | Obsolete | Lifecycle close no longer fetches or attaches verification receipts. |
+| #765 | Obsolete | `verification_receipts.py` was removed by the checklist-close cutover. |
+| #766 | Obsolete | Verification-receipt sanitization was removed with that module. |
+| #768 | Carried | Task updates persist the normalized validation criterion while preserving `UNSET` when no update was supplied. |
+| #771 | Carried | Criteria extraction discards prose before the first list marker. |
+| #772 | Obsolete | Actor-attestation admission was removed with the superseded evidence-admission path. |
+| #773 | Obsolete | Task-state evidence output bounding was removed with verification receipts. |
+| #784 | Obsolete | `TaskValidator.validate_task` is fully keyword-only, so positional validation criteria cannot be supplied. |

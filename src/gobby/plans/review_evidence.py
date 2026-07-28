@@ -646,7 +646,7 @@ class PlanReviewEvidenceService:
         round_result: Mapping[str, object],
         *,
         plan_path: str | Path,
-        run_id: str,
+        run_id: str | None,
     ) -> dict[str, object]:
         return self.manifests.apply_plan_review_manifest(
             evidence_id,

@@ -22,7 +22,7 @@ from gobby.tasks.diff_paging import (
 from gobby.utils.git import run_git_command
 
 if TYPE_CHECKING:
-    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +371,12 @@ class AutoLinkResult:
     skipped_refs: dict[str, list[str]] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _TaggedCommit:
+    sha: str
+    task_refs: tuple[str, ...]
+
+
 def _resolve_branch_for_task(
     task_manager: "LocalTaskManager",
     task_id: str,
@@ -415,8 +421,8 @@ def _resolve_task_filter(
     task_manager: "LocalTaskManager",
     task_id: str,
     project_id: str | None,
-) -> tuple[set[str], str] | None:
-    """Return commit-message refs accepted for a task filter and its DB ID."""
+) -> tuple[set[str], "Task"] | None:
+    """Return commit-message refs accepted for a task filter and its task."""
     resolved_task_id = task_id
     if project_id and (task_id.startswith("#") or task_id.isdigit()):
         resolved_task_id = task_manager.resolve_task_reference(task_id, project_id)
@@ -431,7 +437,41 @@ def _resolve_task_filter(
     if isinstance(seq_num, int):
         refs.add(f"#{seq_num}")
         refs.add(str(seq_num))
-    return refs, task.id
+    return refs, task
+
+
+def _task_tagged_git_history(
+    task_manager: "LocalTaskManager",
+    *,
+    task_id: str | None,
+    since: str | None,
+    cwd: str | Path | None,
+    project_name: str | None,
+) -> list[_TaggedCommit]:
+    """Return parsed task refs from the requested git history."""
+    working_dir = Path(cwd) if cwd else Path.cwd()
+    resolved_project_name = project_name or get_current_project_name()
+    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
+    if task_id:
+        branch = _resolve_branch_for_task(task_manager, task_id)
+        if branch:
+            git_cmd.append(branch)
+    if since:
+        git_cmd.append(f"--since={since}")
+
+    log_output = run_git_command(git_cmd, cwd=working_dir)
+    if not log_output:
+        return []
+
+    commits: list[_TaggedCommit] = []
+    for line in log_output.strip().split("\n"):
+        if not line or "|" not in line:
+            continue
+        commit_sha, message = line.split("|", 1)
+        task_refs = tuple(extract_task_ids_from_message(message, resolved_project_name))
+        if task_refs:
+            commits.append(_TaggedCommit(sha=commit_sha, task_refs=task_refs))
+    return commits
 
 
 def resolve_task_tagged_commits(
@@ -444,33 +484,22 @@ def resolve_task_tagged_commits(
     project_id: str | None = None,
 ) -> list[str]:
     """Resolve task-tagged commits without mutating task state."""
-    working_dir = Path(cwd) if cwd else Path.cwd()
-    resolved_project_name = project_name or get_current_project_name()
     task_filter = _resolve_task_filter(task_manager, task_id, project_id)
     if task_filter is None:
         return []
-    accepted_refs, _resolved_task_id = task_filter
-
-    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
-    branch = _resolve_branch_for_task(task_manager, task_id)
-    if branch:
-        git_cmd.append(branch)
-    if since:
-        git_cmd.append(f"--since={since}")
-
-    log_output = run_git_command(git_cmd, cwd=working_dir)
-    if not log_output:
-        return []
-
-    commits: list[str] = []
-    for line in log_output.strip().split("\n"):
-        if not line or "|" not in line:
-            continue
-        commit_sha, message = line.split("|", 1)
-        found_task_ids = extract_task_ids_from_message(message, resolved_project_name)
-        if any(task_ref in accepted_refs for task_ref in found_task_ids):
-            commits.append(commit_sha)
-    return commits
+    accepted_refs, _task = task_filter
+    history = _task_tagged_git_history(
+        task_manager,
+        task_id=task_id,
+        since=since,
+        cwd=cwd,
+        project_name=project_name,
+    )
+    return [
+        commit.sha
+        for commit in history
+        if any(task_ref in accepted_refs for task_ref in commit.task_refs)
+    ]
 
 
 def auto_link_commits(
@@ -502,22 +531,33 @@ def auto_link_commits(
         task_filter = _resolve_task_filter(task_manager, task_id, project_id)
         if task_filter is None:
             return AutoLinkResult()
-        _accepted_refs, resolved_task_id = task_filter
-        task = task_manager.get_task(resolved_task_id)
-        if task is None:
-            return AutoLinkResult()
+        accepted_refs, task = task_filter
         result = AutoLinkResult()
         seq_num = getattr(task, "seq_num", None)
         task_ref = f"#{seq_num}" if isinstance(seq_num, int) and seq_num > 0 else task_id
         existing_commits = list(task.commits or [])
-        for commit_sha in resolve_task_tagged_commits(
+        history = _task_tagged_git_history(
             task_manager,
             task_id=task_id,
             since=since,
             cwd=cwd,
             project_name=project_name,
-            project_id=project_id,
-        ):
+        )
+        for commit in history:
+            for found_ref in commit.task_refs:
+                if found_ref in accepted_refs:
+                    continue
+                try:
+                    resolved_ref = found_ref
+                    if project_id and (found_ref.startswith("#") or found_ref.isdigit()):
+                        resolved_ref = task_manager.resolve_task_reference(found_ref, project_id)
+                    task_manager.get_task(resolved_ref)
+                except (TaskNotFoundError, ValueError):
+                    result.skipped += 1
+                    result.skipped_refs.setdefault(found_ref, []).append(commit.sha)
+            if not any(found_ref in accepted_refs for found_ref in commit.task_refs):
+                continue
+            commit_sha = commit.sha
             if commit_sha in existing_commits:
                 result.skipped += 1
                 continue
@@ -532,71 +572,22 @@ def auto_link_commits(
             existing_commits.append(commit_sha)
         return result
 
-    working_dir = Path(cwd) if cwd else Path.cwd()
-
-    # Get project name for filtering (auto-detect if not provided)
-    if project_name is None:
-        project_name = get_current_project_name()
-
-    # Build git log command
-    # Format: "sha|message" for easy parsing
-    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
-
-    # When a task_id is provided, resolve the isolation branch so we
-    # search the correct branch even when cwd is the main repo.
-    if task_id:
-        branch = _resolve_branch_for_task(task_manager, task_id)
-        if branch:
-            git_cmd.append(branch)
-
-    if since:
-        git_cmd.append(f"--since={since}")
-
-    # Get git log output
-    log_output = run_git_command(git_cmd, cwd=working_dir)
-
-    if not log_output:
-        return AutoLinkResult()
-
     result = AutoLinkResult()
-    task_filter_refs: set[str] | None = None
-    task_filter_resolved_id: str | None = None
-    if task_id:
-        task_filter = _resolve_task_filter(task_manager, task_id, project_id)
-        if task_filter is not None:
-            task_filter_refs, task_filter_resolved_id = task_filter
-
-    # Parse each commit line
-    for line in log_output.strip().split("\n"):
-        if not line or "|" not in line:
-            continue
-
-        parts = line.split("|", 1)
-        if len(parts) != 2:
-            continue
-
-        commit_sha, message = parts
-
-        # Extract task IDs from message (filtered by project name)
-        found_task_ids = extract_task_ids_from_message(message, project_name)
-
-        if not found_task_ids:
-            continue
-
-        # Filter to specific task if requested
-        if task_id:
-            accepted_refs = task_filter_refs or {task_id}
-            matched_ref = next((tid for tid in found_task_ids if tid in accepted_refs), None)
-            if matched_ref is None:
-                continue
-            found_task_ids = [matched_ref]
-
+    history = _task_tagged_git_history(
+        task_manager,
+        task_id=None,
+        since=since,
+        cwd=cwd,
+        project_name=project_name,
+    )
+    for commit in history:
+        commit_sha = commit.sha
         # Try to link each found task
-        for tid in found_task_ids:
+        for tid in commit.task_refs:
             try:
                 # Resolve #N format to UUID for database operations
-                resolved_tid = (task_filter_resolved_id or tid) if task_id else tid
-                if not task_id and project_id and (tid.startswith("#") or tid.isdigit()):
+                resolved_tid = tid
+                if project_id and (tid.startswith("#") or tid.isdigit()):
                     resolved_tid = task_manager.resolve_task_reference(tid, project_id)
 
                 task = task_manager.get_task(resolved_tid)

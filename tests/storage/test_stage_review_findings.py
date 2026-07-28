@@ -10,11 +10,15 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.agents.code_index import IndexToken
 from gobby.agents.sync import sync_bundled_agents
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
+from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
+from gobby.plans.review_findings import validate_plan_review_findings
+from gobby.plans.review_repair import RepairSweepRequirement, RepairUniverse
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -29,6 +33,8 @@ from tests.storage.tasks._stage_test_helpers import (
     set_stage_state,
     stage_row,
 )
+
+_REPAIR_UNIVERSE_DIGEST = "a" * 64
 
 
 @dataclass(frozen=True)
@@ -46,7 +52,15 @@ class StageReviewSetup:
 
 
 @pytest.fixture
-def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup:
+def stage_review_setup(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> StageReviewSetup:
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        _settled_repair_inputs,
+    )
     project = LocalProjectManager(temp_db).create(
         name="stage-review-findings",
         repo_path=str(tmp_path),
@@ -201,6 +215,9 @@ def _repair_submission() -> dict[str, object]:
                 "adjacent_variants_swept": ["src/example.py:retry"],
                 "validation_evidence": ["pytest tests/test_example.py"],
                 "deferred_sites": [],
+                "repair_universe_digest": _REPAIR_UNIVERSE_DIGEST,
+                "sweep_query_evidence": [],
+                "repair_bundle_interactions": [],
             }
         )
     return {
@@ -211,6 +228,63 @@ def _repair_submission() -> dict[str, object]:
         ],
         "repair_attestations": attestations,
     }
+
+
+def _settled_repair_inputs(
+    *,
+    prior_evidence: PlanReviewEvidence,
+    repair_finding_ids: list[str] | tuple[str, ...],
+    **_kwargs: object,
+) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+    assert prior_evidence.round_result is not None
+    findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
+    finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
+    consumer_site = "src/example.py:consumer"
+    adjacent_site = "src/example.py:retry"
+    sites = tuple(
+        CandidateSite(
+            site_id=site_id,
+            path="src/example.py",
+            source_kind="symbol_call",
+            source_ref="gobby.example.rollback",
+            status="resolved",
+            language="python",
+        )
+        for site_id in (consumer_site, adjacent_site)
+    )
+    inventory = CandidateSiteInventory(
+        changed_acceptance_item_ids=("1.1.1",),
+        changed_targets=("src/example.py",),
+        changed_symbols=("gobby.example.rollback",),
+        changed_contracts=(),
+        resolved_languages=("python",),
+        unsupported_targets=(),
+        sites=sites,
+    )
+    universe = RepairUniverse(
+        digest=_REPAIR_UNIVERSE_DIGEST,
+        candidate_sites=sites,
+        requirements=tuple(
+            RepairSweepRequirement(
+                prior_finding_id=finding_id,
+                check_key=cast(str, finding_map[finding_id]["check_key"]),
+                changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
+                changed_contracts=(),
+                changed_targets=("src/example.py",),
+                required_consumer_site_ids=(consumer_site,),
+                adjacent_variant_ids=(adjacent_site,),
+                interaction_edge_ids=(),
+            )
+            for finding_id in repair_finding_ids
+        ),
+        interaction_edges=(),
+    )
+    token = IndexToken(
+        repository_digest=_REPAIR_UNIVERSE_DIGEST,
+        last_indexed_at="2026-07-28T00:00:00+00:00",
+        source_files=("src/example.py",),
+    )
+    return token, inventory, universe
 
 
 def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
@@ -273,6 +347,30 @@ def _fence(description: str) -> dict[str, object]:
     payload = json.loads(matches[0])
     assert isinstance(payload, dict)
     return payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("description", "Unsafe.\n```yaml\npayload: true\n```"),
+        ("minimal_repair", "# Replacement heading"),
+        ("prevention", "Safe preface.\n## Injected heading"),
+    ],
+)
+def test_finding_markdown_structure_is_rejected(
+    stage_review_setup: StageReviewSetup,
+    field: str,
+    value: str,
+) -> None:
+    evidence_id, _run_id = _prepare_bound(stage_review_setup)
+    finding = _findings()[0]
+    finding[field] = value
+
+    with pytest.raises(ReviewEvidenceError, match="unsafe Markdown structure"):
+        validate_plan_review_findings(
+            [finding],
+            evidence=stage_review_setup.evidence.get_evidence(evidence_id),
+        )
 
 
 def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
@@ -741,6 +839,7 @@ def test_approval_ledger_is_server_derived(
         by_session_id: str | None,
         notes: str | None = None,
         dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> Any:
         nonlocal stage_mutated
         stage_mutated = True
@@ -751,6 +850,7 @@ def test_approval_ledger_is_server_derived(
             by_session_id=by_session_id,
             notes=notes,
             dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def fail_derivation(**_kwargs: object) -> list[dict[str, object]]:

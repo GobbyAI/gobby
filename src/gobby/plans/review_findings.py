@@ -164,6 +164,14 @@ def _validate_finding(
     for field in _OPTIONAL_STRING_FIELDS:
         if field in raw:
             _require_nonempty_string(raw, field, prefix=prefix)
+    for field in ("description", "minimal_repair", "prevention"):
+        value = str(raw[field])
+        if (
+            "```" in value
+            or "~~~" in value
+            or any(line.lstrip().startswith("#") for line in value.splitlines())
+        ):
+            raise _invalid(f"{prefix}.{field} contains unsafe Markdown structure")
     if raw["severity"] not in FINDING_SEVERITIES:
         vocabulary = ", ".join(sorted(FINDING_SEVERITIES))
         raise _invalid(f"{prefix}.severity must be one of: {vocabulary}")

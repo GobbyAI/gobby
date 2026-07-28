@@ -165,7 +165,11 @@ class ReviewLessonClassRecall:
         validated_domain = _validate_lesson_domain(lesson_domain)
         validated_types = _validate_lesson_types(lesson_types)
         validated_sources = _validate_source_kinds(validated_domain, source_kinds)
-        bounded_limit = max(1, min(int(limit), 5))
+        try:
+            normalized_limit = int(limit)
+        except (TypeError, ValueError) as error:
+            raise ValueError("limit must be a numeric value between 1 and 5") from error
+        bounded_limit = max(1, min(normalized_limit, 5))
 
         memories: dict[str, Any] = {}
         for lesson_type in validated_types:

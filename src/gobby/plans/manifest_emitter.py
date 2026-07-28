@@ -99,6 +99,9 @@ def derive_manifest_entries(
             "routing decisions reference unknown deliverables: " + ", ".join(unknown_sections)
         )
     dependencies_by_section = _synthesized_dependencies(document, deliverables)
+    section_by_id = {section.section_id: section for section in document.sections}
+    deliverable_ids = {section.section_id for section in deliverables}
+    deliverables_by_phase = _deliverables_by_phase(document, deliverables)
     entries: list[dict[str, object]] = []
     for section in deliverables:
         raw_decision = routing_decisions.get(section.section_id, {})
@@ -124,9 +127,28 @@ def derive_manifest_entries(
                 f"routing decision for {section.section_id!r} has invalid category"
             )
         entry["category"] = category
-        for field in ("task_type", "depends_on", "tdd"):
-            if field in decision:
-                entry[field] = decision[field]
+        if "task_type" in decision:
+            task_type = decision["task_type"]
+            if not isinstance(task_type, str) or not task_type:
+                raise ManifestSynthesisError(
+                    f"routing decision for {section.section_id!r} has invalid task_type"
+                )
+            entry["task_type"] = task_type
+        if "depends_on" in decision:
+            entry["depends_on"] = list(
+                _resolve_dependency_refs(
+                    decision["depends_on"],
+                    section_id=section.section_id,
+                    section_by_id=section_by_id,
+                    deliverable_ids=deliverable_ids,
+                    deliverables_by_phase=deliverables_by_phase,
+                    require_list=True,
+                )
+            )
+        if "tdd" in decision and not isinstance(decision["tdd"], bool):
+            raise ManifestSynthesisError(
+                f"routing decision for {section.section_id!r} has invalid tdd"
+            )
         entry["validation_criteria"] = "\n".join(
             f"{item.item_id}: {item.prose}" for item in section.acceptance_items
         )
@@ -149,6 +171,10 @@ def derive_manifest_entries(
                     str(entry["title"]),
                     str(entry["validation_criteria"]),
                 )
+            elif not isinstance(domain, str) or not domain:
+                raise ManifestSynthesisError(
+                    f"routing decision for {section.section_id!r} has invalid implementation_domain"
+                )
             entry["implementation_domain"] = domain
         else:
             if "implementation_domain" in decision:
@@ -163,6 +189,10 @@ def derive_manifest_entries(
                     section,
                     str(entry["title"]),
                     str(entry["validation_criteria"]),
+                )
+            elif not isinstance(agent, str) or not agent:
+                raise ManifestSynthesisError(
+                    f"routing decision for {section.section_id!r} has invalid assigned_agent"
                 )
             entry["assigned_agent"] = agent
         entry["tdd"] = decision.get("tdd", category in TDD_ELIGIBLE_CATEGORIES)
@@ -394,40 +424,59 @@ def _synthesized_dependencies(
     dependencies_by_section: dict[str, tuple[str, ...]] = {}
 
     for section in deliverables:
-        resolved: list[str] = []
-        for raw_ref in extract_section_dependencies(section.title):
-            if not raw_ref:
-                raise ManifestSynthesisError(
-                    f"empty dependency reference in section {section.section_id!r}"
-                )
-            candidates: tuple[str, ...]
-            if raw_ref in deliverable_ids:
-                candidates = (raw_ref,)
-            elif _PHASE_REF_RE.match(raw_ref):
-                candidates = tuple(deliverables_by_phase.get(raw_ref, ()))
-                if not candidates:
-                    if raw_ref in section_by_id:
-                        raise ManifestSynthesisError(
-                            f"phase dependency {raw_ref!r} in section {section.section_id!r} "
-                            "has no deliverable sections"
-                        )
-                    raise ManifestSynthesisError(
-                        f"unknown dependency reference {raw_ref!r} in section "
-                        f"{section.section_id!r}"
-                    )
-            else:
-                raise ManifestSynthesisError(
-                    f"unknown dependency reference {raw_ref!r} in section {section.section_id!r}"
-                )
-            for candidate in candidates:
-                if candidate == section.section_id:
-                    raise ManifestSynthesisError(
-                        f"section {section.section_id!r} cannot depend on itself"
-                    )
-                if candidate not in resolved:
-                    resolved.append(candidate)
-        dependencies_by_section[section.section_id] = tuple(resolved)
+        dependencies_by_section[section.section_id] = _resolve_dependency_refs(
+            list(extract_section_dependencies(section.title)),
+            section_id=section.section_id,
+            section_by_id=section_by_id,
+            deliverable_ids=deliverable_ids,
+            deliverables_by_phase=deliverables_by_phase,
+            require_list=False,
+        )
     return dependencies_by_section
+
+
+def _resolve_dependency_refs(
+    raw_refs: object,
+    *,
+    section_id: str,
+    section_by_id: Mapping[str, PlanSection],
+    deliverable_ids: set[str],
+    deliverables_by_phase: Mapping[str, list[str]],
+    require_list: bool,
+) -> tuple[str, ...]:
+    if require_list and not isinstance(raw_refs, list):
+        raise ManifestSynthesisError(f"routing decision for {section_id!r} has invalid depends_on")
+    if not isinstance(raw_refs, list):
+        raise ManifestSynthesisError(f"dependencies for {section_id!r} must be an array")
+
+    resolved: list[str] = []
+    for raw_ref in raw_refs:
+        if not isinstance(raw_ref, str) or not raw_ref:
+            raise ManifestSynthesisError(f"empty dependency reference in section {section_id!r}")
+        candidates: tuple[str, ...]
+        if raw_ref in deliverable_ids:
+            candidates = (raw_ref,)
+        elif _PHASE_REF_RE.match(raw_ref):
+            candidates = tuple(deliverables_by_phase.get(raw_ref, ()))
+            if not candidates:
+                if raw_ref in section_by_id:
+                    raise ManifestSynthesisError(
+                        f"phase dependency {raw_ref!r} in section {section_id!r} "
+                        "has no deliverable sections"
+                    )
+                raise ManifestSynthesisError(
+                    f"unknown dependency reference {raw_ref!r} in section {section_id!r}"
+                )
+        else:
+            raise ManifestSynthesisError(
+                f"unknown dependency reference {raw_ref!r} in section {section_id!r}"
+            )
+        for candidate in candidates:
+            if candidate == section_id:
+                raise ManifestSynthesisError(f"section {section_id!r} cannot depend on itself")
+            if candidate not in resolved:
+                resolved.append(candidate)
+    return tuple(resolved)
 
 
 def _deliverables_by_phase(

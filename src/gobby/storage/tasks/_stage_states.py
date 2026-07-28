@@ -256,6 +256,7 @@ class StageStatesManager:
         by_session_id: str | None,
         notes: str | None = None,
         dispatch_run_id: str | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -264,6 +265,7 @@ class StageStatesManager:
             by_session_id=by_session_id,
             notes=notes,
             dispatch_run_id=dispatch_run_id,
+            preheld_mutex_run_id=preheld_mutex_run_id,
         )
 
     def reject_review(

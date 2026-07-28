@@ -11,6 +11,8 @@ from gobby.plans.manifest_emitter import derive_manifest_entries
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.plans.review_coverage import (
     REVIEW_LANES,
+    _rehash_sources,
+    _required_string,
     review_complexity,
     validate_approval_condition,
     validate_coverage_attestation,
@@ -56,6 +58,41 @@ def test_lane_verifier_invocation_and_allowlist() -> None:
         assert "inconclusive" in instructions
         assert "index_mismatch" in instructions
         assert "terminate" in instructions
+
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "invalid_lane_results",
+        "invalid_candidate",
+        "invalid_dispositions",
+    ],
+)
+def test_required_string_uses_explicit_error_code(error_code: str) -> None:
+    with pytest.raises(ReviewEvidenceError) as error:
+        _required_string({}, "value", "owner", error_code=error_code)
+
+    assert error.value.code == error_code
+
+
+def test_source_resolution_io_error_is_not_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def deny_resolution(_path: Path, *, strict: bool = False) -> Path:
+        del strict
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "resolve", deny_resolution)
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _rehash_sources(tmp_path, [])
+
+    assert error.value.code == "source_io_error"
+    assert error.value.retryable is False
 
 
 def _document(

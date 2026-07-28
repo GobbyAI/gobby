@@ -9,7 +9,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import cast
 
 import yaml
@@ -717,6 +717,11 @@ def render_manifest_plan(
     text = plan_bytes.decode("utf-8")
     try:
         start, end = _section_span(text, "M1")
+    except ReviewEvidenceError as exc:
+        if exc.code != "missing_plan_section":
+            raise
+        body = text.rstrip()
+    else:
         body = text[:start].rstrip()
         suffix = text[end:].strip()
         if suffix:
@@ -724,10 +729,6 @@ def render_manifest_plan(
                 "invalid_manifest",
                 "M1 Task Manifest must be the final plan section",
             )
-    except ReviewEvidenceError as exc:
-        if exc.code != "missing_plan_section":
-            raise
-        body = text.rstrip()
     yaml_block = yaml.safe_dump(entries, sort_keys=False, default_flow_style=False).rstrip()
     updated = (
         f"{body}\n\n## M1 Task Manifest\n`kind: manifest`\n\n```yaml\n{yaml_block}\n```\n".encode()
@@ -758,30 +759,20 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
 
 def _parse_rendered_plan(plan_path: Path, content: bytes) -> None:
     original = parse_plan(plan_path, parse_mode="draft")
-    temp_path: Path | None = None
     try:
-        with NamedTemporaryFile(
-            mode="wb",
-            dir=plan_path.parent,
-            prefix=f".{plan_path.name}.review.",
-            suffix=".md",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            temp_file.write(content)
-        parse_plan(
-            temp_path,
-            plan_kind=PlanKind.implementation,
-            parse_mode="strict",
-            plan_id_override=original.plan_id,
-        )
+        with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
+            temp_path = Path(temp_dir) / plan_path.name
+            temp_path.write_bytes(content)
+            parse_plan(
+                temp_path,
+                plan_kind=PlanKind.implementation,
+                parse_mode="strict",
+                plan_id_override=original.plan_id,
+            )
     except ReviewEvidenceError:
         raise
     except (OSError, ValueError) as exc:
         raise ReviewEvidenceError("invalid_manifest", f"manifest does not parse: {exc}") from exc
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
 
 
 def _parse_snapshot(snapshot: bytes) -> PlanDocument:
@@ -824,9 +815,17 @@ def _section_span(text: str, wanted_key: str) -> tuple[int, int]:
     for index, line in enumerate(logical_lines):
         if not mask[index] and _HEADING_RE.match(line):
             headings.append((index, manifest_key(line)))
-    for position, (line_index, key) in enumerate(headings):
-        if key != wanted_key:
-            continue
+    matches = [
+        position for position, (_line_index, key) in enumerate(headings) if key == wanted_key
+    ]
+    if len(matches) > 1:
+        raise ReviewEvidenceError(
+            "duplicate_manifest_key",
+            f"duplicate manifest key: {wanted_key}",
+        )
+    if matches:
+        position = matches[0]
+        line_index = headings[position][0]
         end_line = headings[position + 1][0] if position + 1 < len(headings) else len(chunks)
         return offsets[line_index], offsets[end_line]
     raise ReviewEvidenceError("missing_plan_section", f"plan has no {wanted_key} section")

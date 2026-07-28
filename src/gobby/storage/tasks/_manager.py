@@ -360,7 +360,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             effective_criteria = (
                 validation_criteria if isinstance(validation_criteria, str) else None
             )
-        require_validation_criteria(effective_task_type, effective_criteria)
+        effective_criteria = require_validation_criteria(
+            effective_task_type,
+            effective_criteria,
+        )
+        if validation_criteria is not UNSET:
+            validation_criteria = effective_criteria
 
         with self.db.transaction():
             parent_changed = _update_task_metadata(

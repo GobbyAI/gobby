@@ -1,5 +1,6 @@
 """Tests for commit linking and diff functionality."""
 
+from typing import cast
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -188,7 +189,11 @@ class TestAutoLinkCommits:
         return manager
 
     @pytest.mark.parametrize("project_name", ["gobby", "gobby-pro"])
-    def test_links_commits_matching_task_id(self, mock_task_manager, project_name: str) -> None:
+    def test_links_commits_matching_task_id(
+        self,
+        mock_task_manager: MagicMock,
+        project_name: str,
+    ) -> None:
         """Test that commits mentioning task IDs are linked."""
         # Mock task exists
         mock_task = MagicMock()
@@ -208,7 +213,7 @@ class TestAutoLinkCommits:
             assert "#1" in result.linked_tasks
             assert "abc123" in result.linked_tasks["#1"]
 
-    def test_respects_since_parameter(self, mock_task_manager) -> None:
+    def test_respects_since_parameter(self, mock_task_manager: MagicMock) -> None:
         """Test that --since parameter filters commits."""
         mock_task = MagicMock()
         mock_task.id = "#1"
@@ -229,7 +234,10 @@ class TestAutoLinkCommits:
             call_args = mock_git.call_args[0][0]
             assert any("--since" in str(arg) for arg in call_args)
 
-    def test_does_not_duplicate_already_linked_commits(self, mock_task_manager) -> None:
+    def test_does_not_duplicate_already_linked_commits(
+        self,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """Test that already-linked commits are not re-linked."""
         mock_task = MagicMock()
         mock_task.id = "#1"
@@ -245,7 +253,7 @@ class TestAutoLinkCommits:
             if "#1" in result.linked_tasks:
                 assert "abc123" not in result.linked_tasks["#1"]
 
-    def test_links_to_multiple_tasks(self, mock_task_manager) -> None:
+    def test_links_to_multiple_tasks(self, mock_task_manager: MagicMock) -> None:
         """Test linking commits that mention multiple tasks."""
         task1 = MagicMock()
         task1.id = "#1"
@@ -255,7 +263,7 @@ class TestAutoLinkCommits:
         task2.id = "#2"
         task2.commits = []
 
-        def get_task_side_effect(task_id):
+        def get_task_side_effect(task_id: str) -> MagicMock:
             if task_id == "#1":
                 return task1
             elif task_id == "#2":
@@ -272,7 +280,7 @@ class TestAutoLinkCommits:
             assert "#1" in result.linked_tasks
             assert "#2" in result.linked_tasks
 
-    def test_skips_non_existent_tasks(self, mock_task_manager) -> None:
+    def test_skips_non_existent_tasks(self, mock_task_manager: MagicMock) -> None:
         """Test that commits mentioning non-existent tasks are skipped."""
         mock_task_manager.get_task.side_effect = ValueError("Task not found")
 
@@ -287,7 +295,7 @@ class TestAutoLinkCommits:
 
     def test_mixed_history_links_valid_refs_and_reports_unknown_refs(
         self,
-        mock_task_manager,
+        mock_task_manager: MagicMock,
     ) -> None:
         """Unknown project-scoped refs do not abort linking later valid refs."""
         task1 = MagicMock(id="task-1", commits=[])
@@ -296,9 +304,9 @@ class TestAutoLinkCommits:
         def resolve_task_reference(task_ref: str, project_id: str) -> str:
             assert project_id == "project-1"
             if task_ref == "#1":
-                return task1.id
+                return cast(str, task1.id)
             if task_ref == "#2":
-                return task2.id
+                return cast(str, task2.id)
             raise TaskNotFoundError(f"Task {task_ref} not found in project")
 
         mock_task_manager.resolve_task_reference.side_effect = resolve_task_reference
@@ -330,7 +338,7 @@ class TestAutoLinkCommits:
             call(task2.id, "fed987", cwd="/tmp/repo"),
         ]
 
-    def test_returns_count_of_linked_commits(self, mock_task_manager) -> None:
+    def test_returns_count_of_linked_commits(self, mock_task_manager: MagicMock) -> None:
         """Test that result includes count of newly linked commits."""
         mock_task = MagicMock()
         mock_task.id = "#1"
@@ -344,7 +352,7 @@ class TestAutoLinkCommits:
 
             assert result.total_linked >= 2
 
-    def test_filters_by_task_id(self, mock_task_manager) -> None:
+    def test_filters_by_task_id(self, mock_task_manager: MagicMock) -> None:
         """Test filtering auto-link to specific task ID."""
         mock_task = MagicMock()
         mock_task.id = "#1"
@@ -369,6 +377,64 @@ class TestAutoLinkCommits:
             # Should only link to #1
             assert "#1" in result.linked_tasks
             assert "#2" not in result.linked_tasks
+
+    def test_task_filter_reports_unknown_refs_before_linking_target(
+        self,
+        mock_task_manager: MagicMock,
+    ) -> None:
+        task = MagicMock(id="task-1", seq_num=1, commits=[])
+        mock_task_manager.get_task.side_effect = lambda task_id: (
+            task
+            if task_id == "task-1"
+            else (_ for _ in ()).throw(TaskNotFoundError(f"Task {task_id} not found"))
+        )
+        mock_task_manager.resolve_task_reference.side_effect = lambda task_ref, _project_id: (
+            "task-1"
+            if task_ref == "#1"
+            else (_ for _ in ()).throw(TaskNotFoundError(f"Task {task_ref} not found"))
+        )
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
+            patch("gobby.tasks.commits.run_git_command") as mock_git,
+        ):
+            mock_git.return_value = (
+                "bad111|[gobby-#999] removed task\ngood22|[gobby-#1] target task\n"
+            )
+            result = auto_link_commits(
+                mock_task_manager,
+                task_id="#1",
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id="project-1",
+            )
+
+        assert result.skipped_refs == {"#999": ["bad111"]}
+        assert result.linked_tasks == {"#1": ["good22"]}
+        assert result.total_linked == 1
+        mock_task_manager.link_commit.assert_called_once_with(
+            "task-1",
+            "good22",
+            cwd="/tmp/repo",
+        )
+
+    def test_task_filter_reuses_resolved_task(self, mock_task_manager: MagicMock) -> None:
+        task = MagicMock(id="task-1", seq_num=1, commits=[])
+        mock_task_manager.get_task.return_value = task
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
+            patch("gobby.tasks.commits.run_git_command", return_value="abc123|[gobby-#1] fix"),
+        ):
+            result = auto_link_commits(
+                mock_task_manager,
+                task_id="task-1",
+                cwd="/tmp/repo",
+                project_name="gobby",
+            )
+
+        assert result.total_linked == 1
+        mock_task_manager.get_task.assert_called_once_with("task-1")
 
     def test_read_only_resolver_returns_ordered_task_commits_without_linking(
         self, mock_task_manager: MagicMock
@@ -404,7 +470,10 @@ class TestAutoLinkCommits:
         mock_task_manager.link_commit.assert_not_called()
         mock_task_manager.update_task.assert_not_called()
 
-    def test_uuid_task_filter_accepts_matching_seq_ref(self, mock_task_manager) -> None:
+    def test_uuid_task_filter_accepts_matching_seq_ref(
+        self,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """Stage handoff may filter by UUID while commits mention the #seq ref."""
         mock_task = MagicMock()
         mock_task.id = "task-uuid"
@@ -435,7 +504,7 @@ class TestAutoLinkCommits:
                 cwd="/tmp/repo",
             )
 
-    def test_handles_empty_git_log(self, mock_task_manager) -> None:
+    def test_handles_empty_git_log(self, mock_task_manager: MagicMock) -> None:
         """Test handling of empty git log output."""
         with patch("gobby.tasks.commits.run_git_command") as mock_git:
             mock_git.return_value = ""
@@ -445,7 +514,7 @@ class TestAutoLinkCommits:
             assert result.linked_tasks == {}
             assert result.total_linked == 0
 
-    def test_result_includes_skipped_count(self, mock_task_manager) -> None:
+    def test_result_includes_skipped_count(self, mock_task_manager: MagicMock) -> None:
         """Test that result includes count of skipped commits."""
         mock_task = MagicMock()
         mock_task.id = "#1"

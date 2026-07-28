@@ -14,6 +14,7 @@ from gobby.plans.review_ledger import (
     validate_quality_ledger,
 )
 from tests.review_coverage_helpers import coverage_attestation
+from tests.review_telemetry_helpers import enriched_telemetry
 
 
 def _finding(
@@ -108,6 +109,7 @@ def _round_result(
     return validate_round_result(
         {
             "verdict": "needs_review",
+            "convergence_telemetry": enriched_telemetry(),
             "findings": [dict(finding) for finding in findings],
             "candidate_dispositions": records,
             "coverage_attestation": attestation,

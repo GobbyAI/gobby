@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
-from gobby.storage.tasks._models import Isolation
+from gobby.storage.tasks._models import Isolation, Task
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -22,7 +22,12 @@ pytestmark = pytest.mark.unit
 SESS_DEAD = str(uuid.uuid4())
 
 
-def _make_session(temp_db, sample_project, session_id: str, status: str) -> None:
+def _make_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_id: str,
+    status: str,
+) -> None:
     now = datetime.now(UTC).isoformat()
     temp_db.execute(
         """
@@ -42,19 +47,22 @@ def _make_session(temp_db, sample_project, session_id: str, status: str) -> None
 
 
 def _claimed_task(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     *,
     claimed_by: str,
     stage_state: str = "ready",
     allow_automation: bool = True,
-):
-    task = create_task(
-        temp_db,
-        sample_project,
-        title=f"Claimed by {claimed_by}",
-        category="test",
-        task_type="task",
+) -> Task:
+    task = cast(
+        Task,
+        create_task(
+            temp_db,
+            sample_project,
+            title=f"Claimed by {claimed_by}",
+            category="test",
+            task_type="task",
+        ),
     )
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
@@ -65,15 +73,15 @@ def _claimed_task(
     return task
 
 
-def _claim(temp_db, task_id: str) -> str | None:
+def _claim(temp_db: HubDatabase, task_id: str) -> str | None:
     row = temp_db.fetchone("SELECT claimed_by_session_id FROM tasks WHERE id = %s", (task_id,))
     return row["claimed_by_session_id"] if row else None
 
 
 @pytest.mark.parametrize("status", ["expired", "deleted"])
 def test_sweep_reclaims_task_claimed_by_terminal_session(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     status: str,
 ) -> None:
     _make_session(temp_db, sample_project, SESS_DEAD, status)
@@ -89,7 +97,10 @@ def test_sweep_reclaims_task_claimed_by_terminal_session(
     assert task.id in candidate_ids
 
 
-def test_missing_session_cannot_retain_task_claim(temp_db, sample_project) -> None:
+def test_missing_session_cannot_retain_task_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "active")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
@@ -103,7 +114,8 @@ def test_missing_session_cannot_retain_task_claim(temp_db, sample_project) -> No
 
 
 def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
-    temp_db, sample_project
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _make_session(temp_db, sample_project, SESS_DEAD, "expired")
     task = _claimed_task(
@@ -125,8 +137,8 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
 
 @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
 def test_sweep_keeps_task_claimed_by_live_session(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     status: str,
 ) -> None:
     session_id = str(uuid.uuid4())
@@ -142,7 +154,10 @@ def test_sweep_keeps_task_claimed_by_live_session(
     assert task.id not in candidate_ids
 
 
-def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None:
+def test_sweep_skips_closed_and_escalated_tasks(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     _make_session(temp_db, sample_project, SESS_DEAD, "expired")
     closed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     escalated = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)

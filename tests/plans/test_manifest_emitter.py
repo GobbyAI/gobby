@@ -89,7 +89,7 @@ def test_canonical_derivation_preserves_acceptance_order_and_reviewed_routing(
         "1.1": {
             "category": "docs",
             "assigned_agent": "documentation-writer",
-            "depends_on": ["bootstrap"],
+            "depends_on": [],
             "task_type": "chore",
             "tdd": False,
         }
@@ -102,7 +102,7 @@ def test_canonical_derivation_preserves_acceptance_order_and_reviewed_routing(
     assert entry["source_section"] == "1.1"
     assert entry["category"] == "docs"
     assert entry["assigned_agent"] == "documentation-writer"
-    assert entry["depends_on"] == ["bootstrap"]
+    assert entry["depends_on"] == []
     assert entry["task_type"] == "chore"
     assert entry["tdd"] is False
     assert entry["validation_criteria"] == "\n".join(
@@ -131,6 +131,38 @@ def test_canonical_derivation_rejects_non_routing_input(
 
     with pytest.raises(ManifestSynthesisError):
         derive_manifest_entries(document, routing)
+
+
+@pytest.mark.parametrize(
+    ("decision", "message"),
+    [
+        ({"task_type": 3}, "task_type"),
+        ({"depends_on": "1.2"}, "depends_on"),
+        ({"depends_on": [""]}, "empty dependency"),
+        ({"depends_on": ["missing"]}, "unknown dependency"),
+        ({"depends_on": ["1.1"]}, "cannot depend on itself"),
+        ({"tdd": "yes"}, "invalid tdd"),
+        ({"implementation_domain": 3}, "implementation_domain"),
+        ({"category": "docs", "assigned_agent": 3}, "assigned_agent"),
+    ],
+)
+def test_canonical_derivation_rejects_invalid_routing_overrides(
+    tmp_path: Path,
+    decision: dict[str, object],
+    message: str,
+) -> None:
+    document = parse_plan(_plan_two_deliverables(tmp_path), parse_mode="draft")
+
+    with pytest.raises(ManifestSynthesisError, match=message):
+        derive_manifest_entries(document, {"1.1": decision})
+
+
+def test_canonical_derivation_validates_dependency_overrides(tmp_path: Path) -> None:
+    document = parse_plan(_plan_two_deliverables(tmp_path), parse_mode="draft")
+
+    entries = derive_manifest_entries(document, {"1.1": {"depends_on": ["1.2", "1.2"]}})
+
+    assert entries[0]["depends_on"] == ["1.2"]
 
 
 def _valid_manifest_yaml(plan_id: str = "demo-plan") -> str:

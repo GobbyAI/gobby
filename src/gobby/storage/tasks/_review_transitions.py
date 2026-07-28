@@ -238,14 +238,14 @@ def _approve_plan_review(
         evidence=evidence,
         round_result=round_result,
     )
-    if replay is None:
-        service.apply_plan_review_manifest(
-            evidence_id,
-            plan_path=artifacts.plan_file_path,
-            round_result=round_result,
-            run_id=dispatch_run_id or "",
-        )
-        with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)) as transaction:
+    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)) as transaction:
+        if replay is None:
+            service.apply_plan_review_manifest(
+                evidence_id,
+                plan_path=artifacts.plan_file_path,
+                round_result=round_result,
+                run_id=dispatch_run_id,
+            )
             evidence = service.authorize_current_attempt(
                 evidence_id,
                 project_id=task.project_id,
@@ -282,25 +282,26 @@ def _approve_plan_review(
                     _derived_quality_ledger=quality_ledger,
                 )
 
-    stages = _stage_states(db)
-    current_stage = stages.get(task.id, stage_name)
-    if current_stage is None or current_stage.state != "review_approved":
-        stages.approve_review(
+        stages = _stage_states(db)
+        current_stage = stages.get(task.id, stage_name)
+        if current_stage is None or current_stage.state != "review_approved":
+            stages.approve_review(
+                task.id,
+                stage_name,
+                by_session_id=by_session_id,
+                notes=approval_notes,
+                dispatch_run_id=dispatch_run_id,
+                preheld_mutex_run_id=dispatch_run_id,
+            )
+        description: MaybeUnset[str | None] = UNSET
+        if approval_notes:
+            description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
+        update_task(
+            db,
             task.id,
-            stage_name,
-            by_session_id=by_session_id,
-            notes=approval_notes,
-            dispatch_run_id=dispatch_run_id,
+            description=description,
+            claimed_by_session_id=None,
         )
-    description: MaybeUnset[str | None] = UNSET
-    if approval_notes:
-        description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
-    update_task(
-        db,
-        task.id,
-        description=description,
-        claimed_by_session_id=None,
-    )
     return get_task(db, task.id)
 
 
