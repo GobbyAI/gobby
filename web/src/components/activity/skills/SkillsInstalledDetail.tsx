@@ -12,7 +12,7 @@ import {
   TextField,
   useDetailDraft,
 } from "../fields";
-import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
+import { SkillContentView } from "./SkillContentView";
 import {
   skillCategory,
   skillSourceKey,
@@ -108,23 +108,12 @@ export function SkillsInstalledDetail({
         }
       />
       {viewMode === "content" ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium text-foreground">Skill content</span>
-            <span className="truncate text-xs text-muted-foreground">{draft.name}.md</span>
-          </div>
-          <div className="min-h-80 w-full min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-[var(--bg-secondary)] [&_.codemirror-container]:h-full">
-            <CodeMirrorEditor
-              content={draft.content ?? ""}
-              language="markdown"
-              readOnly={disabled}
-              ariaLabel="Skill content markdown"
-              editorId="skill-content-editor"
-              onChange={(value) => setField("content", value)}
-              onSave={() => void draftState.save()}
-            />
-          </div>
-        </div>
+        <SkillContentView
+          skill={draft}
+          disabled={disabled}
+          onError={onError}
+          onSaveContent={(next) => draftState.save({ ...draft, content: next })}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           <div className="grid gap-3 md:grid-cols-2">

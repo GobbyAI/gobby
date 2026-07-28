@@ -846,3 +846,99 @@ class TestExportSkill:
         skill_manager.get_skill.side_effect = Exception("E")
         response = client.get("/api/skills/1/export")
         assert response.status_code == 500
+
+
+class TestSkillFiles:
+    def test_list_skill_files(self, client: TestClient, skill_manager: MagicMock) -> None:
+        file_mock = MagicMock()
+        file_mock.to_dict.return_value = {
+            "path": "references/usage.md",
+            "file_type": "reference",
+            "size_bytes": 20,
+            "content_hash": "abc",
+        }
+        skill_manager.get_skill_files.return_value = [file_mock]
+
+        response = client.get("/api/skills/1/files")
+        assert response.status_code == 200
+        assert response.json() == {
+            "files": [
+                {
+                    "path": "references/usage.md",
+                    "file_type": "reference",
+                    "size_bytes": 20,
+                    "content_hash": "abc",
+                }
+            ]
+        }
+        skill_manager.get_skill_files.assert_called_once_with("1")
+
+    def test_list_skill_files_missing_skill(
+        self, client: TestClient, skill_manager: MagicMock
+    ) -> None:
+        skill_manager.get_skill.side_effect = ValueError("NF")
+        response = client.get("/api/skills/1/files")
+        assert response.status_code == 404
+
+    def test_read_skill_file(self, client: TestClient, skill_manager: MagicMock) -> None:
+        file_mock = MagicMock()
+        file_mock.to_dict.return_value = {
+            "path": "references/usage.md",
+            "file_type": "reference",
+            "size_bytes": 20,
+            "content_hash": "abc",
+            "content": "# Usage",
+        }
+        skill_manager.get_skill_file.return_value = file_mock
+
+        response = client.get("/api/skills/1/files/references/usage.md")
+        assert response.status_code == 200
+        assert response.json()["content"] == "# Usage"
+        skill_manager.get_skill_file.assert_called_once_with("1", "references/usage.md")
+        file_mock.to_dict.assert_called_once_with(include_content=True)
+
+    def test_read_skill_file_not_found(self, client: TestClient, skill_manager: MagicMock) -> None:
+        skill_manager.get_skill_file.return_value = None
+        response = client.get("/api/skills/1/files/references/missing.md")
+        assert response.status_code == 404
+
+    def test_write_skill_file(
+        self,
+        client: TestClient,
+        skill_manager: MagicMock,
+        websocket_server: MagicMock,
+    ) -> None:
+        file_mock = MagicMock()
+        file_mock.to_dict.return_value = {
+            "path": "references/usage.md",
+            "file_type": "reference",
+            "size_bytes": 10,
+            "content_hash": "def",
+            "content": "# Updated",
+        }
+        skill_manager.update_skill_file.return_value = file_mock
+
+        response = client.put(
+            "/api/skills/1/files/references/usage.md", json={"content": "# Updated"}
+        )
+        assert response.status_code == 200
+        assert response.json()["content"] == "# Updated"
+        skill_manager.update_skill_file.assert_called_once_with(
+            "1", "references/usage.md", "# Updated"
+        )
+        websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_updated", "1")
+
+    def test_write_skill_file_not_found(
+        self, client: TestClient, skill_manager: MagicMock, websocket_server: MagicMock
+    ) -> None:
+        skill_manager.update_skill_file.return_value = None
+        response = client.put("/api/skills/1/files/references/missing.md", json={"content": "x"})
+        assert response.status_code == 404
+        websocket_server.broadcast_skill_event.assert_not_awaited()
+
+    def test_write_skill_file_requires_content(
+        self, client: TestClient, skill_manager: MagicMock
+    ) -> None:
+        response = client.put("/api/skills/1/files/references/usage.md", json={})
+        assert response.status_code == 422
+        skill_manager.update_skill_file.assert_not_called()

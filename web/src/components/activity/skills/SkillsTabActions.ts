@@ -1,4 +1,5 @@
 import {
+  encodeSkillFilePath,
   getBaseUrl,
   type ActivitySkill,
   type SkillHub,
@@ -115,6 +116,23 @@ export async function updateSkill(
   });
   if (!response.ok) throw await responseError(response, "Failed to update skill");
   return parseSkillResponse(response);
+}
+
+export async function saveSkillFile(
+  skillId: string,
+  path: string,
+  content: string,
+): Promise<boolean> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files/${encodeSkillFilePath(path)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  if (!response.ok) throw await responseError(response, "Failed to save skill file");
+  return true;
 }
 
 export async function deleteSkill(skillId: string): Promise<boolean> {

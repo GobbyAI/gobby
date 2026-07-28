@@ -93,6 +93,12 @@ class SkillUpdateRequest(BaseModel):
     injection_format: str | None = Field(default=None, description="New injection format")
 
 
+class SkillFileWriteRequest(BaseModel):
+    """Request body for updating a skill file's content."""
+
+    content: str = Field(..., description="New file text content")
+
+
 class SkillImportRequest(BaseModel):
     """Request body for importing a skill from a source."""
 
@@ -682,5 +688,47 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error("Failed to export skill %s: %s", skill_id, e)
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/{skill_id}/files")
+    def list_skill_files(skill_id: str) -> dict[str, Any]:
+        """List a skill's attached files (metadata only, no content)."""
+        try:
+            server.skill_manager.get_skill(skill_id)
+            files = server.skill_manager.get_skill_files(skill_id)
+            return {"files": [f.to_dict() for f in files]}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Failed to list files for skill %s: %s", skill_id, e)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/{skill_id}/files/{file_path:path}")
+    def read_skill_file(skill_id: str, file_path: str) -> Any:
+        """Read one skill file with content."""
+        try:
+            skill_file = server.skill_manager.get_skill_file(skill_id, file_path)
+        except Exception as e:
+            logger.error("Failed to read file %s for skill %s: %s", file_path, skill_id, e)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        if skill_file is None:
+            raise HTTPException(status_code=404, detail=f"Skill file not found: {file_path}")
+        return skill_file.to_dict(include_content=True)
+
+    @router.put("/{skill_id}/files/{file_path:path}")
+    async def write_skill_file(
+        skill_id: str, file_path: str, request_data: SkillFileWriteRequest
+    ) -> Any:
+        """Update one skill file's content."""
+        try:
+            updated = server.skill_manager.update_skill_file(
+                skill_id, file_path, request_data.content
+            )
+        except Exception as e:
+            logger.error("Failed to write file %s for skill %s: %s", file_path, skill_id, e)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Skill file not found: {file_path}")
+        await _broadcast_skill("skill_updated", skill_id)
+        return updated.to_dict(include_content=True)
 
     return router

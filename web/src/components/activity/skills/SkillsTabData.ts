@@ -159,3 +159,39 @@ export async function loadInstalledSkills(): Promise<ActivitySkill[]> {
   const data = (await response.json()) as { skills?: ActivitySkill[] };
   return data.skills ?? [];
 }
+
+export interface SkillFileMeta {
+  path: string;
+  file_type: string;
+  size_bytes: number;
+  content_hash: string;
+}
+
+export async function loadSkillFiles(skillId: string): Promise<SkillFileMeta[]> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to load skill files (${response.status})`);
+  }
+  const data = (await response.json()) as { files?: SkillFileMeta[] };
+  return data.files ?? [];
+}
+
+export function encodeSkillFilePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+export async function loadSkillFileContent(skillId: string, path: string): Promise<string> {
+  const response = await fetch(
+    `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files/${encodeSkillFilePath(path)}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to load skill file (${response.status})`);
+  }
+  const data = (await response.json()) as { content?: string };
+  if (typeof data.content !== "string") {
+    throw new Error("Skill file response has no content");
+  }
+  return data.content;
+}

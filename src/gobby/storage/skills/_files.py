@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -215,6 +216,30 @@ class SkillFilesMixin:
             (skill_id, path),
         )
         return SkillFile.from_row(row) if row else None
+
+    def update_skill_file(self, skill_id: str, path: str, content: str) -> SkillFile | None:
+        """Update one skill file's content in place.
+
+        Args:
+            skill_id: Parent skill ID
+            path: Relative file path
+            content: New file text content
+
+        Returns:
+            The updated SkillFile with content, or None if no live file matches
+        """
+        content_bytes = content.encode("utf-8")
+        content_hash = hashlib.sha256(content_bytes).hexdigest()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE skill_files
+                   SET content = %s, content_hash = %s, size_bytes = %s, updated_at = %s
+                   WHERE skill_id = %s AND path = %s AND deleted_at IS NULL""",
+                (content, content_hash, len(content_bytes), utc_now(), skill_id, path),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_skill_file(skill_id, path)
 
     def delete_skill_files(self, skill_id: str) -> int:
         """Soft-delete all files for a skill.

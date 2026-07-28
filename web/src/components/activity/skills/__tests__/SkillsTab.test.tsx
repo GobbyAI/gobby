@@ -14,6 +14,12 @@ vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
 
+vi.mock("../../../shared/MarkdownBody", () => ({
+  MarkdownBody: ({ content }: { content: string }) => (
+    <div data-testid="markdown-body">{content}</div>
+  ),
+}));
+
 vi.mock("../../../shared/CodeMirrorEditor", () => ({
   CodeMirrorEditor: ({
     content,
@@ -274,7 +280,7 @@ describe("Skills activity Installed segment", () => {
     expect(screen.getByDisplayValue("1.2.3")).toBeInTheDocument();
   });
 
-  it("edits skill markdown from the Content alternate view", async () => {
+  it("edits skill markdown from the Content alternate view behind an explicit Edit", async () => {
     setupFetch([
       makeSkill({
         id: "sk-installed",
@@ -289,6 +295,11 @@ describe("Skills activity Installed segment", () => {
     await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
     await user.click(await screen.findByRole("button", { name: "Content" }));
 
+    // Read-only by default: rendered markdown, no editor until Edit is clicked.
+    expect(await screen.findByTestId("markdown-body")).toHaveTextContent("Use gcode first.");
+    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     const editor = await screen.findByLabelText("Skill content markdown");
     expect(editor).toHaveValue("# Code navigator\nUse gcode first.\n");
 
@@ -305,8 +316,103 @@ describe("Skills activity Installed segment", () => {
       );
     });
 
+    // Saving exits edit mode back to the read view.
+    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByLabelText("Skill description")).toBeInTheDocument();
+  });
+
+  it("cancel abandons content edits without saving", async () => {
+    setupFetch([
+      makeSkill({
+        id: "sk-installed",
+        name: "Code navigator",
+        content: "# Code navigator\nUse gcode first.\n",
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(await screen.findByRole("button", { name: "Content" }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+
+    fireEvent.change(screen.getByLabelText("Skill content markdown"), {
+      target: { value: "# Abandoned\n" },
+    });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByLabelText("Skill content markdown")).not.toBeInTheDocument();
+    expect(screen.getByTestId("markdown-body")).toHaveTextContent("Use gcode first.");
+    expect(
+      mockFetch.fn.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(false);
+  });
+
+  it("lists reference files and edits one through the read-only-first flow", async () => {
+    setupFetch([
+      makeSkill({
+        id: "sk-installed",
+        name: "Code navigator",
+        content: "# Code navigator\n",
+      }),
+    ]);
+    mockFetch.mockJsonResponse(/\/api\/skills\/sk-installed\/files$/, {
+      files: [
+        {
+          path: "references/usage.md",
+          file_type: "reference",
+          size_bytes: 20,
+          content_hash: "abc",
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/skills\/sk-installed\/files\/references\/usage\.md$/, {
+      path: "references/usage.md",
+      file_type: "reference",
+      size_bytes: 20,
+      content_hash: "abc",
+      content: "# Usage\nOriginal reference.\n",
+    });
+
+    const user = userEvent.setup();
+    render(<SkillsTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
+    await user.click(await screen.findByRole("button", { name: "Content" }));
+
+    const filesNav = await screen.findByRole("navigation", { name: "Skill files" });
+    expect(within(filesNav).getByRole("button", { name: "SKILL.md" })).toBeInTheDocument();
+
+    await user.click(
+      within(filesNav).getByRole("button", { name: "references/usage.md" }),
+    );
+    expect(await screen.findByTestId("markdown-body")).toHaveTextContent(
+      "Original reference.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = await screen.findByLabelText("references/usage.md content");
+    expect(editor).toHaveValue("# Usage\nOriginal reference.\n");
+
+    fireEvent.change(editor, {
+      target: { value: "# Usage\nUpdated reference.\n" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(
+        lastJsonBodyFor("/api/skills/sk-installed/files/references/usage.md"),
+      ).toEqual({ content: "# Usage\nUpdated reference.\n" });
+    });
+    expect(
+      screen.queryByLabelText("references/usage.md content"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("markdown-body")).toHaveTextContent("Updated reference.");
   });
 
   it("keeps the skill editor draft open and shows update failures", async () => {
@@ -323,6 +429,7 @@ describe("Skills activity Installed segment", () => {
 
     await user.click(await screen.findByRole("button", { name: /Select Code navigator/i }));
     await user.click(screen.getByRole("button", { name: "Content" }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByLabelText("Skill content markdown"), {
       target: { value: "# Code navigator\nKeep this draft.\n" },
     });

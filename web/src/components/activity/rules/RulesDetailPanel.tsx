@@ -51,22 +51,6 @@ function ReadOnlySummary({ label, value }: { label: string; value: unknown }) {
 
 type DetailViewMode = "form" | "yaml";
 
-const RULE_DRAFT_FIELDS: Array<keyof RuleDraft> = [
-  "name",
-  "description",
-  "event",
-  "group",
-  "priority",
-  "tags",
-  "audience",
-  "agent_scope",
-  "enabled",
-  "when",
-  "match",
-  "effects",
-  "extra",
-];
-
 export function RulesDetailPanel({
   detail,
   isLoading,
@@ -146,24 +130,22 @@ export function RulesDetailPanel({
     if (bundled) nextDraft.name = detail.name;
     return nextDraft;
   };
-  const applyYamlDraft = (nextDraft: RuleDraft) => {
-    for (const field of RULE_DRAFT_FIELDS) {
-      draftState.setField(field, nextDraft[field]);
-    }
-  };
-  const handleYamlChange = (value: string) => {
+  const handleYamlCommit = async (text: string) => {
     try {
-      const nextDraft = yamlToDraft(value, draft);
+      const nextDraft = yamlToDraft(text, draft);
       if (bundled) nextDraft.name = detail.name;
-      setYamlState({ sourceKey, text: value, error: null });
-      applyYamlDraft(nextDraft);
+      const saved = await draftState.save(nextDraft);
+      if (saved) {
+        setYamlState({ sourceKey, text: draftToYaml(nextDraft), error: null });
+      }
+      return saved;
     } catch (yamlParseError) {
       setYamlState({
         sourceKey,
-        text: value,
+        text: yamlText,
         error: yamlParseError instanceof Error ? yamlParseError.message : "Invalid YAML",
       });
-      draftState.setField("name", draft.name);
+      return false;
     }
   };
   const handleViewChange = (view: DetailViewMode) => {
@@ -225,8 +207,7 @@ export function RulesDetailPanel({
             bundled={bundled}
             yamlText={yamlText}
             yamlError={yamlError}
-            onYamlChange={handleYamlChange}
-            onYamlSave={() => void handleHeaderSave()}
+            onYamlSave={handleYamlCommit}
           />
         ) : (
           <>

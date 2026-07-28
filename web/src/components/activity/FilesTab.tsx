@@ -3,10 +3,11 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../shared/ResizeHandle'
-import { Button } from '../ui/Button'
 import { CodeBlock } from '../shared/CodeBlock'
 import { MarkdownBody } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
+import { EditableViewActions } from '../shared/EditableView'
+import { detectLanguageFromPath, useEditableContent } from '../shared/editableContent'
 import {
   FOLDER_ICON_COLOR_VAR,
   getGitStatusColorVar,
@@ -52,25 +53,6 @@ interface ContextMenuState {
   entry: FileEntry
 }
 
-const EXT_TO_LANG: Record<string, string> = {
-  js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust',
-  java: 'java', kt: 'kotlin', swift: 'swift', c: 'c', cpp: 'cpp',
-  cs: 'csharp', php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  xml: 'xml', html: 'html', css: 'css', scss: 'scss', less: 'less',
-  md: 'markdown', sql: 'sql', graphql: 'graphql',
-  dockerfile: 'docker', makefile: 'makefile',
-}
-
-function detectLanguage(path: string): string {
-  const name = path.split('/').pop()?.toLowerCase() ?? ''
-  if (name === 'dockerfile') return 'docker'
-  if (name === 'makefile') return 'makefile'
-  const ext = name.split('.').pop() ?? ''
-  return EXT_TO_LANG[ext] ?? 'text'
-}
-
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
@@ -90,32 +72,6 @@ function FileIconSvg({ extension }: { extension: string }) {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
       <polyline points="13 2 13 9 20 9" />
-    </svg>
-  )
-}
-
-function EditIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-    </svg>
-  )
-}
-
-function CheckIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  )
-}
-
-function XIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   )
 }
@@ -145,8 +101,6 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const [fileContent, setFileContent] = useState<string | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
-  const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState<string>('')
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
@@ -160,6 +114,25 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const openFileController = useRef<AbortController | null>(null)
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   useDialogFocus({ ref: moveDialogRef, isOpen: moving !== null, onClose: () => setMoving(null) })
+
+  const saveFileContent = useCallback(async (next: string) => {
+    if (!projectId || !selectedFile || fileError) return false
+    const baseUrl = getBaseUrl()
+    const response = await fetch(`${baseUrl}/api/files/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, path: selectedFile, content: next }),
+    })
+    if (!response.ok) {
+      console.error(`Save failed (${response.status}):`, await response.text().catch(() => ''))
+      return false
+    }
+    setFileContent(next)
+    return true
+  }, [projectId, selectedFile, fileError])
+
+  const editState = useEditableContent({ content: fileContent ?? '', onSave: saveFileContent })
+  const { cancelEdit } = editState
 
   useEffect(() => () => {
     childRequestControllers.current.forEach((controller) => controller.abort())
@@ -249,8 +222,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     setFileLoading(true)
     setFileContent(null)
     setFileError(null)
-    setEditContent('')
-    setIsEditing(false)
+    cancelEdit()
     const baseUrl = getBaseUrl()
     openFileController.current?.abort()
     const controller = new AbortController()
@@ -265,21 +237,18 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       .then((data) => {
         if (controller.signal.aborted) return
         if (typeof data.content !== 'string') throw new Error('File response has no content')
-        const content = data.content
-        setFileContent(content)
-        setEditContent(content)
+        setFileContent(data.content)
       })
       .catch(() => {
         if (controller.signal.aborted) return
         setFileContent(null)
-        setEditContent('')
         setFileError('Failed to load file')
       })
       .finally(() => {
         if (!controller.signal.aborted) setFileLoading(false)
         if (openFileController.current === controller) openFileController.current = null
       })
-  }, [projectId])
+  }, [projectId, cancelEdit])
 
   // Context menu actions
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: FileEntry) => {
@@ -406,22 +375,6 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     setChildrenMap((prev) => { const next = new Map(prev); next.delete(parentPath); return next })
     loadChildren(parentPath)
   }, [projectId, closeCtxMenu, loadChildren])
-
-  const handleSaveEdit = useCallback(async () => {
-    if (!projectId || !selectedFile || fileError) return
-    const baseUrl = getBaseUrl()
-    const response = await fetch(`${baseUrl}/api/files/write`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, path: selectedFile, content: editContent }),
-    })
-    if (!response.ok) {
-      console.error(`Save failed (${response.status}):`, await response.text().catch(() => ''))
-      return
-    }
-    setFileContent(editContent)
-    setIsEditing(false)
-  }, [projectId, selectedFile, editContent, fileError])
 
   // Close context menu on outside click
   useEffect(() => {
@@ -578,7 +531,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     return Object.keys(gitStatus).some((p) => p.startsWith(prefix))
   }
 
-  const language = selectedFile ? detectLanguage(selectedFile) : 'text'
+  const language = selectedFile ? detectLanguageFromPath(selectedFile) : 'text'
 
   return (
     <div className={`flex h-full ${useHorizontal ? 'flex-row' : 'flex-col'}`}>
@@ -617,46 +570,16 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           <div className="file-viewer-toolbar">
             <span className="file-viewer-path">{selectedFile}</span>
             <div className="file-viewer-actions">
-              {isEditing ? (
-                <>
-                  <Button
-                    variant="accent"
-                    size="sm"
-                    className="file-viewer-btn"
-                    onClick={handleSaveEdit}
-                    disabled={Boolean(fileError)}
-                    aria-label="Save"
-                    title="Save"
-                  >
-                    <CheckIcon />
-                    <span className="file-viewer-btn__label">Save</span>
-                  </Button>
-                  <Button
-                    variant="accent"
-                    size="sm"
-                    className="file-viewer-btn"
-                    onClick={() => { setIsEditing(false); setEditContent(fileContent ?? '') }}
-                    aria-label="Cancel"
-                    title="Cancel"
-                  >
-                    <XIcon />
-                    <span className="file-viewer-btn__label">Cancel</span>
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="accent"
-                  size="sm"
-                  className="file-viewer-btn"
-                  onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}
-                  disabled={fileLoading || Boolean(fileError)}
-                  aria-label="Edit"
-                  title="Edit"
-                >
-                  <EditIcon />
-                  <span className="file-viewer-btn__label">Edit</span>
-                </Button>
-              )}
+              <EditableViewActions
+                isEditing={editState.isEditing}
+                onEdit={editState.beginEdit}
+                onSave={() => void editState.saveEdit()}
+                onCancel={editState.cancelEdit}
+                editDisabled={fileLoading || Boolean(fileError)}
+                saveDisabled={Boolean(fileError)}
+                buttonClassName="file-viewer-btn"
+                labelClassName="file-viewer-btn__label"
+              />
             </div>
           </div>
           <div className="files-code-viewer">
@@ -664,13 +587,13 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
               <div className="p-3 text-xs text-muted-foreground">Loading...</div>
             ) : fileError ? (
               <div className="p-3 text-xs text-destructive-foreground" role="alert">{fileError}</div>
-            ) : isEditing ? (
+            ) : editState.isEditing ? (
               <CodeMirrorEditor
-                content={editContent}
+                content={editState.editContent}
                 language={language}
                 readOnly={false}
-                onChange={setEditContent}
-                onSave={handleSaveEdit}
+                onChange={editState.setEditContent}
+                onSave={() => void editState.saveEdit()}
               />
             ) : language === 'markdown' ? (
               <div className="files-markdown-viewer message-content">

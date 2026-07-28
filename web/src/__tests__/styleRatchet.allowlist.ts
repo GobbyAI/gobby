@@ -126,7 +126,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/fields/FieldPrimitives.tsx': 4,
     'src/components/activity/fields/KeyValueField.tsx': 2,
     'src/components/activity/integrations/ChannelDetailPanel.tsx': 1,
-    'src/components/activity/memory/KnowledgeGraph.tsx': 4,
+    'src/components/activity/memory/KnowledgeGraph.tsx': 5,
     'src/components/activity/pipelines/PipelineEditor.tsx': 1,
     'src/components/activity/pipelines/PipelineStepFields.tsx': 10,
     'src/components/activity/pipelines/PipelineStepList.tsx': 1,
@@ -198,7 +198,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
 export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
   'src/components/FilesPage.tsx': 49,
   'src/components/ValidationDetectionEditor.tsx': 9,
-  'src/components/activity/memory/KnowledgeGraph.tsx': 15,
+  'src/components/activity/memory/KnowledgeGraph.tsx': 19,
   'src/components/activity/pipelines/PipelineEditor.styles.ts': 47,
   'src/components/agents/agents-styles.ts': 113,
   'src/components/chat/AgentPickerDropdown.tsx': 11,

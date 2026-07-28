@@ -264,6 +264,37 @@ class TestSkillFileCRUD:
         result = storage.get_skill_file(sample_skill.id, "nonexistent.md")
         assert result is None
 
+    def test_update_skill_file_rewrites_content_hash_and_size(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(sample_skill.id, _build_skill_files(sample_skill.id))
+
+        updated = storage.update_skill_file(sample_skill.id, "references/api.md", "# API docs v2")
+
+        assert updated is not None
+        assert updated.content == "# API docs v2"
+        assert updated.content_hash == _hash("# API docs v2")
+        assert updated.size_bytes == len(b"# API docs v2")
+
+        stored = storage.get_skill_file(sample_skill.id, "references/api.md")
+        assert stored is not None
+        assert stored.content == "# API docs v2"
+
+    def test_update_skill_file_missing_path_returns_none(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        result = storage.update_skill_file(sample_skill.id, "nonexistent.md", "content")
+        assert result is None
+
+    def test_update_skill_file_ignores_soft_deleted(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(sample_skill.id, _build_skill_files(sample_skill.id))
+        storage.delete_skill_files(sample_skill.id)
+
+        result = storage.update_skill_file(sample_skill.id, "references/api.md", "# resurrect?")
+        assert result is None
+
     def test_delete_skill_files_cascade(
         self, storage: LocalSkillManager, sample_skill: Skill
     ) -> None:

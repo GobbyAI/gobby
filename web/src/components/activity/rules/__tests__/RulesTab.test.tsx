@@ -382,8 +382,11 @@ describe("Rules activity tab", () => {
     const yamlEditor = await screen.findByLabelText("Rule YAML");
     expect((yamlEditor as HTMLTextAreaElement).value).toContain("effects:");
     expect((yamlEditor as HTMLTextAreaElement).value).toContain("match:");
+    // Read-only by default — an explicit Edit click opens the buffered editor.
+    expect(yamlEditor).toHaveAttribute("readonly");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    fireEvent.change(yamlEditor, {
+    fireEvent.change(screen.getByLabelText("Rule YAML"), {
       target: {
         value: [
           "name: alpha-yaml",
