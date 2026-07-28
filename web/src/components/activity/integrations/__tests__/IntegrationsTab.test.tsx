@@ -1,7 +1,17 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  render as baseRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { IntegrationsTab } from "../../IntegrationsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
@@ -17,6 +27,26 @@ vi.mock("../../../../hooks/useWebSocketEvent", () => ({
 vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
+
+// The tab's toolbar (Filter / Search / New) renders in the shared panel header
+// in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
+
+// The search bar is hidden until the header Search toggle opens it.
+async function openSearch(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Search integrations" }));
+}
 
 type ChannelRecord = {
   id: string;
@@ -202,6 +232,7 @@ describe("Integrations activity tab", () => {
       await screen.findByRole("button", { name: "Select Release alerts" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
+    await openSearch(user);
     expect(screen.getByRole("searchbox", { name: "Search integrations" })).toHaveAttribute(
       "name",
       "search-integrations",
@@ -385,8 +416,9 @@ describe("Integrations activity tab", () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />);
 
-    expect(await screen.findByRole("button", { name: "+ Channel" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "+ Channel" }));
+    // Channel creation moved to the shared header "+ New" action (#19159).
+    expect(await screen.findByRole("button", { name: "New channel" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New channel" }));
     await user.selectOptions(screen.getByLabelText("Platform"), "telegram");
     await user.type(screen.getByLabelText("Name"), "Ops pager");
     expect(screen.getByLabelText("Bot Token")).toHaveAttribute(

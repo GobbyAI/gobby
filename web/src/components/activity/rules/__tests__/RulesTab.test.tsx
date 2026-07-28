@@ -1,10 +1,36 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  fireEvent,
+  render as baseRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { RulesTab } from "../../RulesTab";
 import { nextCopyName } from "../RulesTabData";
+
+// The tab's toolbar (selector / Filter / Search) renders in the shared panel
+// header in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -247,6 +273,8 @@ describe("Rules activity tab", () => {
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Enabled" }));
+    // The search bar is hidden until the header Search toggle opens it.
+    await user.click(screen.getByRole("button", { name: "Search rules" }));
     await user.type(screen.getByRole("searchbox", { name: "Search rules" }), "compaction");
     expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();

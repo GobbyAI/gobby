@@ -1,9 +1,39 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  render as baseRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { MemoryTab } from "../../MemoryTab";
+
+// The tab's toolbar (scope selector / Filter / Search) renders in the shared
+// panel header in the real layout; mount it alongside the tab so those
+// controls are reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
+
+// The search bar is hidden until the header Search toggle opens it.
+async function openSearch(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Search memories" }));
+}
 
 vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
@@ -191,6 +221,7 @@ describe("Memory activity tab", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
       .toBeInTheDocument();
+    await openSearch(user);
     expect(screen.getByRole("searchbox", { name: "Search memories" })).toBeInTheDocument();
     // Manual refresh is gone — the list stays current via live updates (#19152).
     expect(screen.queryByRole("button", { name: "Refresh memories" })).not.toBeInTheDocument();
@@ -268,6 +299,7 @@ describe("Memory activity tab", () => {
     expect(await screen.findByRole("button", { name: "Select Listed memory 0" }))
       .toBeInTheDocument();
 
+    await openSearch(user);
     await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "server-only");
 
     expect(

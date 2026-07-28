@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/Button";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import {
   ActivityActionsContext,
   useActivityActions,
@@ -60,22 +61,111 @@ function PlusGlyph() {
   );
 }
 
+function FilterGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  );
+}
+
+function SearchGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
 /**
- * Renders the active tab's registered Add/Refresh buttons. Placed in the panel
- * header between the dropdown and the Hide Chat slot. Returns nothing when the
- * active tab registers no actions.
+ * Renders the active tab's registered toolbar: selector, then Filter / Search /
+ * Refresh / New triggers. Placed in the panel header between the dropdown and
+ * the Hide Chat slot. Returns nothing when the active tab registers no actions.
  */
 export function ActivityActionButtons() {
   const actions = useActivityActions();
-  if (!actions || (!actions.onAdd && !actions.onRefresh)) return null;
+  if (
+    !actions ||
+    (!actions.selector &&
+      !actions.filter &&
+      !actions.search &&
+      !actions.onAdd &&
+      !actions.onRefresh)
+  ) {
+    return null;
+  }
 
   const refreshLabel = actions.refreshing
     ? "Refreshing"
     : (actions.refreshLabel ?? "Refresh");
-  const addLabel = actions.addLabel ?? "Add";
+  const addLabel = actions.addLabel ?? "New";
 
   return (
     <span className="activity-panel-actions-slot">
+      {actions.selector && (
+        <SegmentedControl<string>
+          value={actions.selector.value}
+          onChange={actions.selector.onChange}
+          options={actions.selector.options}
+          ariaLabel={actions.selector.ariaLabel}
+          controlHeight="sm"
+          className="activity-panel-header-segmented"
+        />
+      )}
+      {actions.filter && (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn"
+          onClick={actions.filter.onToggle}
+          aria-label={actions.filter.ariaLabel}
+          title={actions.filter.ariaLabel}
+          aria-expanded={actions.filter.open}
+        >
+          <FilterGlyph />
+          <span className="activity-panel-action-btn__label">Filter</span>
+          {(actions.filter.activeCount ?? 0) > 0 && (
+            <span className="activity-filter-badge">{actions.filter.activeCount}</span>
+          )}
+        </Button>
+      )}
+      {actions.search && (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          className="activity-panel-action-btn"
+          onClick={actions.search.onToggle}
+          aria-label={actions.search.ariaLabel}
+          title={actions.search.ariaLabel}
+          aria-expanded={actions.search.open}
+        >
+          <SearchGlyph />
+          <span className="activity-panel-action-btn__label">Search</span>
+        </Button>
+      )}
       {actions.onRefresh && (
         <Button
           type="button"

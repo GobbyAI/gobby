@@ -249,6 +249,8 @@ describe("ActivityMcpTab", () => {
     const user = userEvent.setup();
     renderMcp();
 
+    // The search bar is hidden until the header Search toggle opens it.
+    await user.click(screen.getByRole("button", { name: "Search MCP" }));
     await user.type(screen.getByPlaceholderText("Search MCP"), "list");
 
     // "list" matches gobby-tasks via its list_tasks tool, which auto-expands.
@@ -269,6 +271,7 @@ describe("ActivityMcpTab", () => {
     const user = userEvent.setup();
     renderMcp();
 
+    await user.click(screen.getByRole("button", { name: "Search MCP" }));
     await user.type(screen.getByPlaceholderText("Search MCP"), "issue");
 
     const tree = screen.getByRole("tree", { name: "MCP servers and tools" });

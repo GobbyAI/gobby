@@ -21,11 +21,12 @@ import {
   statusesForMode,
   useRunningAgents,
   useWatchingSessionEntries,
+  type SessionStatusMode,
 } from "./SessionsTab.entries";
-import {
-  SessionsEntryList,
-  SessionsTabToolbar,
-} from "./SessionsTabList";
+import { useRegisterActivityActions } from "./activityActions";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { SessionsEntryList } from "./SessionsTabList";
+import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
 import {
   SessionsTabDetailPane,
   SessionsTabResizeHandle,
@@ -36,6 +37,11 @@ import {
   SessionsInteractionModalHost,
 } from "./SessionsTabMenu";
 import { useSessionProviderOptions } from "./useSessionProviderOptions";
+
+const STATUS_MODE_OPTIONS = [
+  { value: "live", label: "Live" },
+  { value: "expired", label: "Expired" },
+] as const;
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
@@ -215,6 +221,35 @@ export const SessionsTab = memo(function SessionsTab({
       });
     },
     [filters, setFilters],
+  );
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchInput("");
+  };
+
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: statusMode,
+        onChange: (value) => setStatusMode(value as SessionStatusMode),
+        options: STATUS_MODE_OPTIONS,
+        ariaLabel: "Session status filter",
+      },
+      filter: {
+        open: showFilterDropdown,
+        onToggle: () => setShowFilterDropdown((v) => !v),
+        ariaLabel: "Filter sessions",
+        activeCount: activeFilterCount,
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search sessions",
+      },
+    },
+    [statusMode, setStatusMode, showFilterDropdown, activeFilterCount, searchOpen],
   );
 
   const sessionsWithAttention = useMemo(
@@ -543,20 +578,24 @@ export const SessionsTab = memo(function SessionsTab({
       : "No live sessions";
 
   return (
-    <div className="flex flex-col h-full">
-      <SessionsTabToolbar
-        activeFilterCount={activeFilterCount}
-        filters={filters}
-        onFiltersChange={setFilters}
-        onSearchChange={setSearchInput}
-        onStatusModeChange={setStatusMode}
-        providerOptions={providerOptions}
-        searchInput={searchInput}
-        showFilterDropdown={showFilterDropdown}
-        statusMode={statusMode}
-        toggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
-        closeFilterDropdown={() => setShowFilterDropdown(false)}
-      />
+    <div className="relative flex flex-col h-full">
+      {searchOpen && (
+        <ActivityToolbarSearchRow
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search"
+          ariaLabel="Search sessions"
+          onClose={closeSearch}
+        />
+      )}
+      {showFilterDropdown && (
+        <SessionsFilterDropdown
+          filters={filters}
+          onChange={setFilters}
+          providerOptions={providerOptions}
+          onClose={() => setShowFilterDropdown(false)}
+        />
+      )}
 
       <SessionsEntryList
         emptyState={

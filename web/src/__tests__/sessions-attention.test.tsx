@@ -1,7 +1,32 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  act,
+  fireEvent,
+  render as baseRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../components/activity/ActivityActionsContext";
 import { SessionsTab } from "../components/activity/SessionsTab";
+
+// The tab's toolbar (Filter included) renders in the shared panel header in
+// the real layout; mount it alongside the tab so it is reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
 
 type AgentEventHandler = (data: Record<string, unknown>) => void;
 

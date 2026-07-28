@@ -1,11 +1,12 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import { ResizeHandle } from '../shared/ResizeHandle'
-import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun, CronRunChild } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
 import { ActivityPanelEmpty, CronEmptyIcon } from './ActivityPanelEmpty'
+import { ActivityToolbarSearchRow } from './ActivityPanelSearch'
+import { useRegisterActivityActions } from './activityActions'
 import { ActivityRowStatusDot } from './ActivityRowStatusDot'
 import { QuickMenu, type QuickMenuItem } from './QuickMenu'
 
@@ -62,9 +63,41 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
     }
   }, [])
 
+  const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearch('')
+  }
+
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: statusFilter,
+        onChange: (value) => setStatusFilter(value as StatusFilter),
+        options: FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label })),
+        ariaLabel: 'Cron status filter',
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: 'Search cron jobs',
+      },
+    },
+    [statusFilter, searchOpen],
+  )
+
+  const query = search.trim().toLowerCase()
   const filteredJobs = useMemo(
-    () => jobs.filter((j) => (statusFilter === 'enabled' ? j.enabled : !j.enabled)),
-    [jobs, statusFilter],
+    () =>
+      jobs.filter((j) => {
+        if (statusFilter === 'enabled' ? !j.enabled : j.enabled) return false
+        if (!query) return true
+        return [j.name, j.description ?? '', j.cron_expr ?? ''].some((field) =>
+          field.toLowerCase().includes(query),
+        )
+      }),
+    [jobs, statusFilter, query],
   )
 
   const displayLimit =
@@ -94,16 +127,15 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="activity-panel-toolbar">
-        <SegmentedControl<StatusFilter>
-          value={statusFilter}
-          onChange={setStatusFilter}
-          options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
-          ariaLabel="Cron status filter"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
+      {searchOpen && (
+        <ActivityToolbarSearchRow
+          value={search}
+          onChange={setSearch}
+          placeholder="Search cron jobs"
+          ariaLabel="Search cron jobs"
+          onClose={closeSearch}
         />
-      </div>
+      )}
 
       <div
         className={`overflow-y-auto ${selectedJob ? 'border-b border-border' : 'flex-1'}`}
@@ -116,7 +148,9 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
             body={
               jobs.length === 0
                 ? 'Cron jobs appear here when scheduled'
-                : `No ${statusFilter} cron jobs yet`
+                : query
+                  ? 'No cron jobs match your search'
+                  : `No ${statusFilter} cron jobs yet`
             }
           />
         ) : (

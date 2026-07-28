@@ -1,106 +1,13 @@
 import type { MouseEvent, ReactNode } from "react";
 
 import { SourceIcon } from "../shared/SourceIcon";
-import { Button } from "../ui/Button";
-import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import { KebabIcon } from "./QuickMenu";
-import type { SessionStatusMode } from "./SessionsTab.entries";
 import {
   type WatchingSessionEntry,
   renderBadges,
 } from "./SessionsTab.helpers";
-import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
-import type { SessionsFilters } from "./sessionsFilters";
-
-const STATUS_MODE_OPTIONS = [
-  { value: "live" as const, label: "Live" },
-  { value: "expired" as const, label: "Expired" },
-] as const;
-
-interface SessionsTabToolbarProps {
-  activeFilterCount: number;
-  filters: SessionsFilters;
-  onFiltersChange: (filters: SessionsFilters) => void;
-  onSearchChange: (value: string) => void;
-  onStatusModeChange: (mode: SessionStatusMode) => void;
-  providerOptions: readonly string[];
-  searchInput: string;
-  showFilterDropdown: boolean;
-  statusMode: SessionStatusMode;
-  toggleFilterDropdown: () => void;
-  closeFilterDropdown: () => void;
-}
-
-export function SessionsTabToolbar({
-  activeFilterCount,
-  filters,
-  onFiltersChange,
-  onSearchChange,
-  onStatusModeChange,
-  providerOptions,
-  searchInput,
-  showFilterDropdown,
-  statusMode,
-  toggleFilterDropdown,
-  closeFilterDropdown,
-}: SessionsTabToolbarProps) {
-  return (
-    <div className="activity-panel-toolbar">
-      <ActivityPanelSearch
-        value={searchInput}
-        onChange={onSearchChange}
-        placeholder="Search"
-      />
-      <SegmentedControl<SessionStatusMode>
-        value={statusMode}
-        onChange={onStatusModeChange}
-        options={STATUS_MODE_OPTIONS}
-        ariaLabel="Session status filter"
-        controlHeight="sm"
-        className="activity-panel-toolbar-segmented"
-      />
-      <Button
-        type="button"
-        variant="accent"
-        size="sm"
-        className="activity-panel-action-btn activity-filter-button"
-        onClick={toggleFilterDropdown}
-        title="Filter sessions"
-        aria-label="Filter sessions"
-        aria-expanded={showFilterDropdown}
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-        </svg>
-        <span className="activity-panel-action-btn__label">Filter</span>
-        {activeFilterCount > 0 && (
-          <span className="activity-filter-badge">{activeFilterCount}</span>
-        )}
-      </Button>
-      {showFilterDropdown && (
-        <SessionsFilterDropdown
-          filters={filters}
-          onChange={onFiltersChange}
-          providerOptions={providerOptions}
-          onClose={closeFilterDropdown}
-        />
-      )}
-    </div>
-  );
-}
 
 interface SessionsEntryListProps {
   emptyState: ReactNode;

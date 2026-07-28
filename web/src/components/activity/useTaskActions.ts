@@ -101,7 +101,6 @@ export function useTaskActions({
   useRegisterActivityActions(
     {
       onAdd: handleOpenCreateTask,
-      addLabel: "Add",
       addAriaLabel: "New task",
       onRefresh: fetchTasks,
       refreshing: loading,

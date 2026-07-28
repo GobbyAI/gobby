@@ -1,10 +1,36 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  fireEvent,
+  render as baseRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { SkillsTab } from "../../SkillsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
+
+// The tab's toolbar (selector / Filter / Search) renders in the shared panel
+// header in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -194,13 +220,16 @@ describe("Skills activity Installed segment", () => {
     await user.keyboard("{Enter}");
     expect(hubSkill.parentElement).toHaveClass("activity-list-row--selected");
 
+    // Source/category filters live behind the header Filter trigger now.
+    await user.click(screen.getByRole("button", { name: "Filter skills" }));
     await user.selectOptions(screen.getByLabelText("Skill source"), "project");
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Code navigator")).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Skill category"), "Automation");
-    await user.clear(screen.getByLabelText("Search skills"));
-    await user.type(screen.getByLabelText("Search skills"), "bridge");
+    // The search bar is hidden until the header Search toggle opens it.
+    await user.click(screen.getByRole("button", { name: "Search skills" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search skills" }), "bridge");
 
     expect(screen.getAllByText("Bridge pack").length).toBeGreaterThan(0);
     expect(screen.queryByText("Hub curator")).not.toBeInTheDocument();

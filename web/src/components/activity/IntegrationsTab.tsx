@@ -5,6 +5,8 @@ import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   removeIntegrationChannel,
@@ -17,13 +19,13 @@ import {
 } from "./integrations/IntegrationsTabData";
 import { ChannelDetailPanel } from "./integrations/ChannelDetailPanel";
 import { ChannelsList } from "./integrations/ChannelsList";
+import { IntegrationsFilterPanel } from "./integrations/IntegrationsTabToolbar";
 import { MessagesView } from "./integrations/MessagesView";
 import {
   filterChannels,
   type IntegrationDraft,
   type IntegrationFilters,
 } from "./integrations/IntegrationsTabModel";
-import { IntegrationsTabToolbar } from "./integrations/IntegrationsTabToolbar";
 
 const initialFilters: IntegrationFilters = {
   search: "",
@@ -173,9 +175,48 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     [refreshChannels, selectedId, withChannelBusy],
   );
 
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setFilters({ ...filters, search: "" });
+  };
+  const activeFilterCount =
+    (filters.channelType === "all" ? 0 : 1) + (filters.status === "all" ? 0 : 1);
+
+  useRegisterActivityActions(
+    {
+      filter: {
+        open: showFilters,
+        onToggle: () => setShowFilters((value) => !value),
+        ariaLabel: "Filter integrations",
+        activeCount: activeFilterCount,
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search integrations",
+      },
+      onAdd: handleAdd,
+      addAriaLabel: "New channel",
+    },
+    [showFilters, activeFilterCount, searchOpen, filters, handleAdd],
+  );
+
   return (
-    <div className="flex h-full flex-col">
-      <IntegrationsTabToolbar filters={filters} onFiltersChange={setFilters} onAdd={handleAdd} />
+    <div className="relative flex h-full flex-col">
+      {searchOpen && (
+        <ActivityToolbarSearchRow
+          value={filters.search}
+          onChange={(search) => setFilters({ ...filters, search })}
+          placeholder="Search integrations"
+          ariaLabel="Search integrations"
+          onClose={closeSearch}
+        />
+      )}
+      {showFilters && (
+        <IntegrationsFilterPanel filters={filters} onFiltersChange={setFilters} />
+      )}
 
       {error && (
         <button

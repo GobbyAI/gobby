@@ -3,11 +3,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
   fireEvent,
-  render,
+  render as baseRender,
   screen,
   waitFor,
 } from "@testing-library/react";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../ActivityActionsContext";
 import { SessionsTab } from "../SessionsTab";
 import { defaultSessionsFilters } from "../sessionsFilters";
 import { useActivityPanel } from "../useActivityPanel";
@@ -41,6 +45,26 @@ type SessionDetailMock = {
   firstItemIndex?: number;
   transcriptDegradedReason?: string | null;
 };
+
+// The tab's toolbar (selector / Filter / Search) renders in the shared panel
+// header in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: React.ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: React.ReactElement) =>
+  baseRender(ui, { wrapper: HeaderHarness });
+
+// The search bar is hidden until the header Search toggle opens it.
+function openSearch() {
+  fireEvent.click(screen.getByRole("button", { name: "Search sessions" }));
+}
 
 const mockUseSessionDetail = vi.fn<
   (sessionId?: string | null) => SessionDetailMock
@@ -659,6 +683,7 @@ describe("SessionsTab", () => {
       expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
     });
 
+    openSearch();
     fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "paused-ext-1" },
     });
@@ -727,6 +752,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
     expect(screen.queryByText("#204: Pipeline Session")).toBeNull();
 
+    openSearch();
     fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "paused-ext-1" },
     });

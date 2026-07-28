@@ -2,9 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
-import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import "./skills/SkillsTab.css";
 import {
@@ -159,6 +159,44 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
     [segment],
   );
 
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setFilters((current) => ({ ...current, search: "" }));
+  };
+  const activeFilterCount =
+    (filters.source === "all" ? 0 : 1) + (filters.category === "all" ? 0 : 1);
+
+  // Filter and search only apply to the installed list; the hub view has its
+  // own browsing surface. The segment selector is always available.
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: segment,
+        onChange: (value) => handleSegmentChange(value as SkillSegment),
+        options: SKILL_SEGMENT_OPTIONS,
+        ariaLabel: "Skills surface",
+      },
+      ...(segment === "installed"
+        ? {
+            filter: {
+              open: showFilters,
+              onToggle: () => setShowFilters((value) => !value),
+              ariaLabel: "Filter skills",
+              activeCount: activeFilterCount,
+            },
+            search: {
+              open: searchOpen,
+              onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+              ariaLabel: "Search skills",
+            },
+          }
+        : {}),
+    },
+    [segment, handleSegmentChange, showFilters, activeFilterCount, searchOpen],
+  );
+
   const handleSelect = useCallback((skill: ActivitySkill) => {
     confirmLeaveRef.current(() => setSelectedId(skill.id));
   }, []);
@@ -245,28 +283,21 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
   );
 
   return (
-    <div className="skills-tab flex h-full flex-col">
-      <div className="activity-panel-toolbar skills-tab__toolbar">
-        {segment === "installed" && (
-          <ActivityPanelSearch
-            value={filters.search}
-            onChange={(search) => setFilters((current) => ({ ...current, search }))}
-            placeholder="Search skills"
-            ariaLabel="Search skills"
-          />
-        )}
-        <SegmentedControl<SkillSegment>
-          options={SKILL_SEGMENT_OPTIONS}
-          value={segment}
-          onChange={handleSegmentChange}
-          ariaLabel="Skills surface"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
+    <div className="skills-tab relative flex h-full flex-col">
+      {segment === "installed" && searchOpen && (
+        <ActivityToolbarSearchRow
+          value={filters.search}
+          onChange={(search) => setFilters((current) => ({ ...current, search }))}
+          placeholder="Search skills"
+          ariaLabel="Search skills"
+          onClose={closeSearch}
         />
-        {segment === "installed" && (
-          <>
+      )}
+      {segment === "installed" && showFilters && (
+        <div className="activity-filter-panel">
+          <label className="activity-filter-panel__field">
+            <span>Source</span>
             <select
-              className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
               aria-label="Skill source"
               name="skill-source"
               value={filters.source}
@@ -283,8 +314,10 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
                 </option>
               ))}
             </select>
+          </label>
+          <label className="activity-filter-panel__field">
+            <span>Category</span>
             <select
-              className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
               aria-label="Skill category"
               name="skill-category"
               value={filters.category}
@@ -299,9 +332,9 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
                 </option>
               ))}
             </select>
-          </>
-        )}
-      </div>
+          </label>
+        </div>
+      )}
 
       {error && (
         <button

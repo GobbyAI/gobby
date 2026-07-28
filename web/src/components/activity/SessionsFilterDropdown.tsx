@@ -155,12 +155,12 @@ export function SessionsFilterDropdown({
 
   // Width is capped at 320px on every viewport. On mobile (<768px) the panel
   // becomes a centered popup modal; on larger viewports it's a right-anchored
-  // dropdown attached to the filter button. Both share the same internal
-  // 2-column body so the visual treatment is identical — only positioning
-  // changes.
+  // dropdown pinned to the top of the tab content, directly below the header
+  // Filter trigger. Both share the same internal 2-column body so the visual
+  // treatment is identical — only positioning changes.
   const panelClass = isMobile
     ? "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
-    : "absolute top-full right-2 z-[100] w-80 max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col";
+    : "absolute top-1 right-2 z-[100] w-80 max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col";
 
   return (
     <>

@@ -4,10 +4,10 @@ import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
-import { SegmentedControl } from "../ui/SegmentedControl";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   copyRuleWithRetry,
@@ -208,6 +208,39 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     [data, guardedRun],
   );
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    data.setSearch("");
+  };
+
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: data.statusSegment,
+        onChange: (value) => handleStatusChange(value as RuleStatusSegment),
+        options: RULE_STATUS_OPTIONS,
+        ariaLabel: "Rule status filter",
+      },
+      filter: {
+        open: showFilters,
+        onToggle: () => setShowFilters((value) => !value),
+        ariaLabel: "Filter rules",
+        activeCount: data.activeFilterCount,
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search rules",
+      },
+    },
+    // handleStatusChange is deliberately not a dep: `data` is a fresh object
+    // every render, so listing the callback would re-register (and re-render
+    // via context) in a loop. The closures it reaches — guardedRun and the
+    // useState setters on data — are stable, so a stale capture is safe.
+    [data.statusSegment, showFilters, data.activeFilterCount, searchOpen],
+  );
+
   const handleToggle = useCallback(
     async (rule: RuleSummary) => {
       setActionError(null);
@@ -284,61 +317,26 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
 
   return (
     <div className="rules-tab">
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
+      {searchOpen && (
+        <ActivityToolbarSearchRow
           value={data.search}
           onChange={data.setSearch}
           placeholder="Search"
           ariaLabel="Search rules"
+          onClose={closeSearch}
         />
-        <SegmentedControl<RuleStatusSegment>
-          value={data.statusSegment}
-          onChange={handleStatusChange}
-          options={[...RULE_STATUS_OPTIONS]}
-          ariaLabel="Rule status filter"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
+      )}
+      {showFilters && (
+        <RulesFilterDropdown
+          filters={data.filters}
+          eventOptions={data.eventOptions}
+          groupOptions={data.groupOptions}
+          tagOptions={data.tagOptions}
+          enforcementEnabled={data.enforcementEnabled}
+          onFiltersChange={handleFiltersChange}
+          onEnforcementChange={(enabled) => void data.setEnforcement(enabled)}
         />
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn activity-filter-button"
-          onClick={() => setShowFilters((value) => !value)}
-          aria-label="Filter rules"
-          title="Filter rules"
-          aria-expanded={showFilters}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {data.activeFilterCount > 0 && (
-            <span className="activity-filter-badge">{data.activeFilterCount}</span>
-          )}
-        </Button>
-        {showFilters && (
-          <RulesFilterDropdown
-            filters={data.filters}
-            eventOptions={data.eventOptions}
-            groupOptions={data.groupOptions}
-            tagOptions={data.tagOptions}
-            enforcementEnabled={data.enforcementEnabled}
-            onFiltersChange={handleFiltersChange}
-            onEnforcementChange={(enabled) => void data.setEnforcement(enabled)}
-          />
-        )}
-      </div>
+      )}
 
       {actionError && (
         <button

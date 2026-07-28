@@ -3,13 +3,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { ResizeHandle } from "../shared/ResizeHandle";
-import { Button } from "../ui/Button";
-import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { DetailActionButton } from "./fields";
-import { FilterIcon } from "../icons/AppIcons";
 import {
   copyMemoryContent,
   deleteMemoryWithRefresh,
@@ -39,6 +37,11 @@ interface MemoryTabProps {
 
 type MemoryViewMode = "detail" | "graph";
 type MemoryScopeSegment = "all" | "project";
+
+const MEMORY_SCOPE_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "project", label: "Project" },
+] as const;
 
 const noop = () => {};
 
@@ -183,6 +186,42 @@ export const MemoryTab = memo(function MemoryTab({
     setViewMode("detail");
   }, []);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearch("");
+  };
+  const activeFilterCount =
+    (filters.memoryType ? 1 : 0) +
+    (filters.recentOnly ? 1 : 0) +
+    (filters.visibility !== "active" ? 1 : 0);
+
+  // The graph view replaces the whole tab, so it registers no header toolbar.
+  useRegisterActivityActions(
+    viewMode === "graph"
+      ? null
+      : {
+          selector: {
+            value: scope,
+            onChange: (value) => setScope(value as MemoryScopeSegment),
+            options: MEMORY_SCOPE_OPTIONS,
+            ariaLabel: "Memory scope",
+          },
+          filter: {
+            open: filtersOpen,
+            onToggle: () => setFiltersOpen((open) => !open),
+            ariaLabel: "Filter memories",
+            activeCount: activeFilterCount,
+          },
+          search: {
+            open: searchOpen,
+            onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+            ariaLabel: "Search memories",
+          },
+        },
+    [viewMode, scope, filtersOpen, activeFilterCount, searchOpen],
+  );
+
   // Persist graph limits to daemon config — the same `ui.*` paths the
   // Runtime & Infrastructure settings section edits (#19157). Optimistic:
   // the graph refetches immediately; a failed save just logs.
@@ -308,40 +347,18 @@ export const MemoryTab = memo(function MemoryTab({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
+    <div className="relative flex h-full flex-col">
+      {searchOpen && (
+        <ActivityToolbarSearchRow
           value={search}
           onChange={setSearch}
           placeholder="Search"
           ariaLabel="Search memories"
+          onClose={closeSearch}
         />
-        <SegmentedControl<MemoryScopeSegment>
-          value={scope}
-          onChange={setScope}
-          options={[
-            { value: "all", label: "All" },
-            { value: "project", label: "Project" },
-          ]}
-          ariaLabel="Memory scope"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
-        />
-        <div className="relative">
-          <Button
-            type="button"
-            variant="accent"
-            size="sm"
-            className="activity-panel-action-btn activity-filter-button"
-            aria-label="Filter memories"
-            aria-expanded={filtersOpen}
-            onClick={() => setFiltersOpen((open) => !open)}
-          >
-            <FilterIcon />
-            <span className="activity-panel-action-btn__label">Filters</span>
-          </Button>
-          {filtersOpen && (
-            <div className="absolute right-0 top-10 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
+      )}
+      {filtersOpen && (
+        <div className="absolute right-2 top-1 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
               <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Type</div>
               {MEMORY_TYPE_OPTIONS.map((option) => (
                 <label
@@ -408,8 +425,6 @@ export const MemoryTab = memo(function MemoryTab({
               </div>
             </div>
           )}
-        </div>
-      </div>
 
       {error && (
         <button

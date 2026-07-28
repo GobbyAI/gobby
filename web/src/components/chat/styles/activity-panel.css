@@ -399,15 +399,33 @@
   flex-shrink: 0;
 }
 
-/* Shared context-aware Add/Refresh buttons, between the view dropdown and the
-   Hide Chat slot. The dropdown wrapper's flex-grow pushes this and the
-   close-slot together to the right; the .activity-panel-tabs gap spaces them.
-   No margin-left:auto here so the two slots stay adjacent. */
+/* Shared context-aware header toolbar (selector + Filter/Search/Refresh/New),
+   between the view dropdown and the Hide Chat slot. The dropdown wrapper's
+   flex-grow pushes this and the close-slot together to the right; the
+   .activity-panel-tabs gap spaces them. No margin-left:auto here so the two
+   slots stay adjacent. The slot may shrink so the segmented selector can
+   compress before the header overflows. */
 .activity-panel-actions-slot {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Header-mounted view selector: the one SegmentedControl rendering, sized to
+   the status-bar control height like every other header control. Option
+   padding-inline compresses at narrow panel widths (the sanctioned dense-
+   surface override) in step with the glyph-only button collapse. */
+.activity-panel-header-segmented {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+@container activity-panel (max-width: 479px) {
+  .activity-panel-header-segmented > .segmented-control__option {
+    padding-inline: 0.5rem;
+  }
 }
 
 /* ============================================

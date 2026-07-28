@@ -6,15 +6,44 @@ import {
 } from "react";
 
 /**
- * Shared, context-aware Add/Refresh actions for the activity panel header.
+ * Shared, context-aware toolbar for the activity panel header.
  *
- * The header (between the view dropdown and the Hide Chat button) renders a
- * single pair of Add/Refresh buttons whose behaviour follows the active tab.
- * Each tab registers what it supports via {@link useRegisterActivityActions};
- * tabs that register neither action render no buttons. The actual surfaces
- * (modals, forms) stay inside the tab — the header buttons are dumb triggers.
+ * The header (between the view dropdown and the Hide Chat button) renders one
+ * toolbar whose contents follow the active tab: an optional segmented view
+ * selector, then Filter / Search / Refresh / New triggers. Each tab registers
+ * what it supports via {@link useRegisterActivityActions}; tabs that register
+ * nothing render no controls. The actual surfaces (filter dropdowns, search
+ * bars, modals) stay inside the tab — the header controls are dumb triggers,
+ * except the selector, which carries its options and value here so the header
+ * can render one canonical SegmentedControl for every tab.
  */
+export interface ActivityToolbarSelector {
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly { value: string; label: string }[];
+  ariaLabel: string;
+}
+
+/** Trigger for the tab-rendered filter dropdown. */
+export interface ActivityToolbarFilter {
+  open: boolean;
+  onToggle: () => void;
+  ariaLabel: string;
+  /** Applied-filter count rendered as a badge when > 0. */
+  activeCount?: number;
+}
+
+/** Toggle for the tab's hidden-by-default search bar. */
+export interface ActivityToolbarSearch {
+  open: boolean;
+  onToggle: () => void;
+  ariaLabel: string;
+}
+
 export interface ActivityPanelActions {
+  selector?: ActivityToolbarSelector;
+  filter?: ActivityToolbarFilter;
+  search?: ActivityToolbarSearch;
   onAdd?: () => void;
   addLabel?: string;
   addAriaLabel?: string;
