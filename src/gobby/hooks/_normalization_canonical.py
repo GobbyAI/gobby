@@ -8,6 +8,7 @@ from typing import Any
 from gobby.hooks._normalization_paths import (
     _extract_tool_input_paths,
     _setdefault_tool_input_paths,
+    extract_structured_mutation_paths,
 )
 from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
@@ -42,12 +43,39 @@ from gobby.hooks.code_navigation import (
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 CANONICAL_WRITE_TOOL_NAMES = frozenset(
     {
+        "apply_patch",
+        "applypatch",
+        "create",
+        "create_file",
+        "createfile",
+        "delete_file",
+        "deletefile",
         "edit",
         "edit_file",
+        "editfile",
+        "move_file",
+        "movefile",
         "notebook_edit",
         "notebookedit",
+        "patch_file",
+        "patchfile",
         "replace",
+        "search_replace",
+        "searchreplace",
         "write",
+        "write_file",
+        "writefile",
+    }
+)
+_MCP_FILE_MUTATION_LEAF_TOOLS = frozenset(
+    {
+        "apply_patch",
+        "create_file",
+        "delete_file",
+        "edit_file",
+        "move_file",
+        "patch_file",
+        "replace_file",
         "write_file",
     }
 )
@@ -96,6 +124,31 @@ def _build_canonical_tool_metadata(
     if extra:
         data.update(extra)
     return data
+
+
+def _compact_tool_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _is_structured_file_mutation(data: Mapping[str, Any], tool_name: Any) -> bool:
+    """Classify provider-native and known MCP file mutation tools."""
+    tool_name_lower = tool_name.casefold() if isinstance(tool_name, str) else ""
+    if (
+        tool_name_lower in CANONICAL_WRITE_TOOL_NAMES
+        or _compact_tool_name(tool_name) in CANONICAL_WRITE_TOOL_NAMES
+    ):
+        return True
+
+    mcp_tool = data.get("mcp_tool")
+    if not isinstance(mcp_tool, str):
+        return False
+    leaf_name = mcp_tool.casefold()
+    return (
+        leaf_name in _MCP_FILE_MUTATION_LEAF_TOOLS
+        or _compact_tool_name(leaf_name) in CANONICAL_WRITE_TOOL_NAMES
+    )
 
 
 def _truncate_positional_paths(parts: list[str]) -> list[str]:
@@ -611,10 +664,18 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     metadata: dict[str, Any] = {}
     tool_name_lower = tool_name.lower() if isinstance(tool_name, str) else ""
 
+    is_structured_mutation = _is_structured_file_mutation(data, tool_name)
     if tool_name_lower in _CANONICAL_READ_TOOL_NAMES:
         metadata = _build_canonical_tool_metadata("read")
-    elif tool_name_lower in CANONICAL_WRITE_TOOL_NAMES:
-        metadata = _build_canonical_tool_metadata("write", repo_mutation=True)
+    elif is_structured_mutation:
+        canonical_paths = extract_structured_mutation_paths(data)
+        metadata = _build_canonical_tool_metadata(
+            "write",
+            paths=canonical_paths,
+            repo_mutation=True,
+        )
+        metadata["canonical_structured_mutation"] = True
+        metadata["canonical_file_paths"] = canonical_paths
     elif tool_name_lower in {"grep_search", "grep"}:
         metadata = _build_canonical_tool_metadata("search")
     elif tool_name == "Bash":

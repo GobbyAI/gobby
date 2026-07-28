@@ -574,14 +574,20 @@ class TestRenameTmuxWindow:
         _RecordingTmuxManager.instances = []
         stale_session = SimpleNamespace(
             id="session-id",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={
+                "tmux_pane": "%42",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
             agent_depth=0,
             ref="#99",
             title="#99 Codex",
         )
         persisted_session = SimpleNamespace(
             id="session-id",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={
+                "tmux_pane": "%42",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
             agent_depth=0,
             ref="#99",
             title="Digest-owned title",
@@ -598,6 +604,59 @@ class TestRenameTmuxWindow:
         assert container.calls == [(container.session_manager.get, ("session-id",))]
         manager = _RecordingTmuxManager.instances[0]
         assert manager.rename_calls == [("%42", "#99 Digest-owned title")]
+
+    @pytest.mark.asyncio
+    async def test_nested_child_queued_rename_is_rejected_for_parent_owned_pane(
+        self,
+    ) -> None:
+        from gobby.terminal_ownership import PaneOwnershipDecision
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        terminal_context = {
+            "tmux_pane": "%226",
+            "tmux_socket_path": "/tmp/tmux-501/gobby",
+        }
+        parent = SimpleNamespace(
+            id="codex-parent",
+            terminal_context=terminal_context,
+            status="active",
+            title="Codex title",
+        )
+        child = SimpleNamespace(
+            id="grok-child",
+            terminal_context=terminal_context,
+            status="paused",
+            title="Grok title",
+        )
+        session_manager = SimpleNamespace(
+            get=lambda _session_id: child,
+            find_by_terminal_identity=lambda _identity: [child, parent],
+        )
+
+        async def run_db(func: Any, *args: Any) -> Any:
+            return func(*args)
+
+        container = SimpleNamespace(session_manager=session_manager, run_db=run_db)
+        ownership = PaneOwnershipDecision(
+            identity=("machine", "tmux_socket_path:/tmp/tmux-501/gobby", "%226"),
+            requested_session_id="grok-child",
+            owner=parent,
+            reason="nested_outermost_process",
+            validated_session_ids=frozenset({"codex-parent", "grok-child"}),
+        )
+        _RecordingTmuxManager.instances = []
+
+        with (
+            patch("gobby.app_context.get_app_context", return_value=container),
+            patch(
+                "gobby.workflows.summary_actions.resolve_pane_ownership",
+                return_value=ownership,
+            ),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
+        ):
+            await _rename_tmux_window(child, "Grok title")
+
+        assert _RecordingTmuxManager.instances == []
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["expired", "handoff_ready"])

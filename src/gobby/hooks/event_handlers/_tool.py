@@ -196,112 +196,125 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     )
             self._record_autonomous_tool_progress(event, session_id, tool_name)
 
-            # Track edits for session high-water mark
-            # Only if tool succeeded, matches edit tools, and session has claimed a task
-            # Skip .gobby/ internal files (tasks.jsonl, memories.jsonl, etc.)
-            tool_input = input_data.get("tool_input", {})
-
             # Structured edit tools and normalized shell writes both count as edits.
             is_canonical_edit = (
                 input_data.get("canonical_tool_kind") == "write"
                 and input_data.get("canonical_repo_mutation") is True
             )
-            is_edit = tool_name.lower() in EDIT_TOOLS or is_canonical_edit
+            is_edit = str(tool_name).lower() in EDIT_TOOLS or is_canonical_edit
 
             if not is_failure and is_edit and self._session_manager:
                 try:
-                    # Check if file is internal .gobby file
-                    legacy_file_path = (
-                        tool_input.get("file_path")
-                        or tool_input.get("target_file")
-                        or tool_input.get("path")
+                    self._record_successful_file_mutation(
+                        event,
+                        session_id,
+                        is_canonical_edit=is_canonical_edit,
                     )
-                    canonical_paths = input_data.get("canonical_file_paths")
-                    if is_canonical_edit and isinstance(canonical_paths, list):
-                        file_paths = [path for path in canonical_paths if isinstance(path, str)]
-                        if not file_paths:
-                            file_paths = [legacy_file_path]
-                    else:
-                        file_paths = [legacy_file_path]
-
-                    has_committable_edit = False
-                    for file_path in file_paths:
-                        repo_edit = (
-                            self._resolve_repo_edit_paths(str(file_path), event.cwd)
-                            if file_path
-                            else None
-                        )
-                        repo_relative_path = repo_edit[1] if repo_edit else None
-                        raw_internal = bool(file_path and ".gobby/" in str(file_path))
-                        normalized_internal = bool(
-                            repo_relative_path and Path(repo_relative_path).parts[:1] == (".gobby",)
-                        )
-                        is_internal = raw_internal or normalized_internal
-                        in_repo_edit = not file_path or repo_edit is not None
-                        # Gitignored paths (e.g. a gitignored wiki/ vault) can never
-                        # produce a commit, so they must stay out of the session/task
-                        # edit ledgers that arm commit-before-status gates.
-                        committable_edit = True
-                        if not is_internal and in_repo_edit and repo_edit is not None:
-                            from gobby.utils.git import is_path_gitignored
-
-                            committable_edit = not is_path_gitignored(
-                                repo_edit[1], os.fspath(repo_edit[0])
-                            )
-
-                        if is_internal or not in_repo_edit:
-                            continue
-
-                        has_committable_edit = has_committable_edit or committable_edit
-                        # Track repo-relative file path in session variables
-                        # (independent of task-claim gate — rules need this
-                        # for per-session has_dirty_files scoping)
-                        if file_path:
-                            if committable_edit:
-                                self._track_session_edited_file(
-                                    session_id, str(file_path), event.cwd
-                                )
-
-                            # Trigger incremental code index update
-                            if self._code_index_trigger and repo_edit:
-                                try:
-                                    root_path = os.fspath(repo_edit[0])
-                                    project_id = self._resolve_project_id(None, root_path)
-                                    if project_id:
-                                        self._code_index_trigger.notify_file_changed(
-                                            file_path=repo_edit[1],
-                                            project_id=project_id,
-                                            root_path=root_path,
-                                        )
-                                except Exception as e:
-                                    self.logger.debug("Failed to trigger code index update: %s", e)
-
-                    # Check if session has any claimed tasks before marking had_edits
-                    if has_committable_edit:
-                        has_claimed_task = False
-                        if self._task_manager:
-                            try:
-                                claimed_tasks = self._task_manager.list_tasks(
-                                    claimed_by_session_id=session_id
-                                )
-                                has_claimed_task = len(claimed_tasks) > 0
-                            except Exception as e:
-                                self.logger.debug(
-                                    "Failed to check claimed tasks for session %s: %s",
-                                    session_id,
-                                    e,
-                                )
-
-                        if has_claimed_task:
-                            self._session_manager.mark_had_edits(session_id)
                 except Exception as e:
                     # Don't fail the event if tracking fails
-                    self.logger.warning("Failed to process file edit: %s", e)
+                    self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
         else:
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         return HookResponse(decision="allow")
+
+    def _record_successful_file_mutation(
+        self,
+        event: HookEvent,
+        session_id: str,
+        *,
+        is_canonical_edit: bool,
+    ) -> None:
+        """Persist one successful mutation observation and all committable paths."""
+        input_data = event.data
+        tool_input = input_data.get("tool_input")
+        legacy_file_path = None
+        if isinstance(tool_input, dict):
+            legacy_file_path = (
+                tool_input.get("file_path")
+                or tool_input.get("target_file")
+                or tool_input.get("path")
+            )
+
+        canonical_paths = input_data.get("canonical_file_paths")
+        if is_canonical_edit and isinstance(canonical_paths, list):
+            file_paths = list(
+                dict.fromkeys(path for path in canonical_paths if isinstance(path, str) and path)
+            )
+        else:
+            file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
+
+        committable_paths: list[str] = []
+        for file_path in file_paths:
+            repo_edit = self._resolve_repo_edit_paths(file_path, event.cwd)
+            if repo_edit is None:
+                continue
+            repo_root, repo_relative_path = repo_edit
+            if Path(repo_relative_path).parts[:1] == (".gobby",):
+                continue
+
+            from gobby.utils.git import is_path_gitignored
+
+            if is_path_gitignored(repo_relative_path, os.fspath(repo_root)):
+                continue
+            if repo_relative_path not in committable_paths:
+                committable_paths.append(repo_relative_path)
+            self._notify_code_index(repo_root, repo_relative_path)
+
+        structured_mutation = input_data.get("canonical_structured_mutation") is True
+        mutation_observed = bool(committable_paths) or (structured_mutation and not file_paths)
+        if not mutation_observed:
+            return
+
+        db = getattr(self._session_manager, "db", None)
+        if db is not None:
+            SessionVariableManager(db).record_edited_files(session_id, committable_paths)
+
+        if structured_mutation and not file_paths:
+            self.logger.warning(
+                "Successful structured mutation had no attributable file paths",
+                extra={
+                    "event": "file_mutation_attribution_unavailable",
+                    "session_id": session_id,
+                    "tool_name": input_data.get("tool_name"),
+                    "mcp_server": input_data.get("mcp_server"),
+                    "mcp_tool": input_data.get("mcp_tool"),
+                },
+            )
+
+        self._mark_session_had_edits_if_claimed(session_id)
+
+    def _notify_code_index(self, repo_root: Path, repo_relative_path: str) -> None:
+        if self._code_index_trigger is None:
+            return
+        try:
+            root_path = os.fspath(repo_root)
+            project_id = self._resolve_project_id(None, root_path)
+            if project_id:
+                self._code_index_trigger.notify_file_changed(
+                    file_path=repo_relative_path,
+                    project_id=project_id,
+                    root_path=root_path,
+                )
+        except Exception as exc:
+            self.logger.debug("Failed to trigger code index update: %s", exc)
+
+    def _mark_session_had_edits_if_claimed(self, session_id: str) -> None:
+        session_manager = self._session_manager
+        if self._task_manager is None or session_manager is None:
+            return
+        try:
+            claimed_tasks = self._task_manager.list_tasks(claimed_by_session_id=session_id)
+        except Exception as exc:
+            self.logger.debug(
+                "Failed to check claimed tasks for session %s: %s",
+                session_id,
+                exc,
+            )
+            return
+        if claimed_tasks:
+            session_manager.mark_had_edits(session_id)
 
     def _record_autonomous_tool_progress(
         self, event: HookEvent, session_id: str, tool_name: str
@@ -350,40 +363,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         rel_path = os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
         return repo_root, rel_path
-
-    def _resolve_repo_relative_edit_path(self, file_path: str, cwd: str | None) -> str | None:
-        """Return a repo-relative edit path, or ``None`` when the edit escapes the repo."""
-        if not cwd and not Path(file_path).is_absolute():
-            return os.path.normpath(file_path)
-
-        repo_edit = self._resolve_repo_edit_paths(file_path, cwd)
-        if repo_edit is None:
-            return None
-        return repo_edit[1]
-
-    def _track_session_edited_file(self, session_id: str, file_path: str, cwd: str | None) -> None:
-        """Record a repo-relative file path in session_edited_files variable.
-
-        Used to scope ``has_dirty_files`` to only files this session touched,
-        preventing bleed across concurrent sessions sharing a working directory.
-        """
-        try:
-            rel_path = self._resolve_repo_relative_edit_path(file_path, cwd)
-            if rel_path is None:
-                return
-
-            db = getattr(self._session_manager, "db", None)
-            if db:
-                manager = SessionVariableManager(db)
-                try:
-                    manager.record_edited_file(session_id, rel_path)
-                except Exception:
-                    logger.warning(
-                        "Failed to track session edited file",
-                        exc_info=True,
-                    )
-        except Exception as e:
-            logger.warning("Failed to track session edited file: %s", e, exc_info=True)
 
     def handle_before_tool_selection(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_TOOL_SELECTION events."""

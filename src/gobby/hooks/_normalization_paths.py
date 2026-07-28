@@ -1,10 +1,46 @@
 """File path and write payload normalization helpers."""
 
 import re as _re
+from collections.abc import Mapping
 from typing import Any
 
 _APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
 _APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
+_PATH_FIELDS = (
+    "file_path",
+    "filePath",
+    "path",
+    "target_file",
+    "targetFile",
+    "old_path",
+    "oldPath",
+    "source_path",
+    "sourcePath",
+    "new_path",
+    "newPath",
+    "target_path",
+    "targetPath",
+    "destination_path",
+    "destinationPath",
+)
+_PATH_LIST_FIELDS = ("file_paths", "filePaths", "paths")
+_PATCH_TEXT_FIELDS = ("command", "patch", "content", "text", "diff")
+_NESTED_PAYLOAD_FIELDS = (
+    "arguments",
+    "args",
+    "input",
+    "parameters",
+    "tool_input",
+    "toolInput",
+    "tool_output",
+    "toolOutput",
+    "tool_response",
+    "toolResponse",
+    "tool_result",
+    "toolResult",
+    "result",
+    "structuredContent",
+)
 
 
 def _append_unique_path(paths: list[str], path: Any) -> None:
@@ -16,24 +52,20 @@ def _append_unique_path(paths: list[str], path: Any) -> None:
         paths.append(normalized)
 
 
+def _extract_change_paths(change: Any) -> list[str]:
+    """Extract every touched path from one file-change entry."""
+    if not isinstance(change, Mapping):
+        return []
+    paths: list[str] = []
+    for key in _PATH_FIELDS:
+        _append_unique_path(paths, change.get(key))
+    return paths
+
+
 def _extract_change_path(change: Any) -> str | None:
-    """Extract a touched file path from a file-change dict."""
-    if not isinstance(change, dict):
-        return None
-
-    for key in (
-        "file_path",
-        "path",
-        "new_path",
-        "newPath",
-        "target_path",
-        "targetPath",
-    ):
-        value = change.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    return None
+    """Return the first touched path for callers that need one target."""
+    paths = _extract_change_paths(change)
+    return paths[0] if paths else None
 
 
 def _normalize_file_change_input(tool_input: Any) -> Any:
@@ -49,7 +81,8 @@ def _normalize_file_change_input(tool_input: Any) -> Any:
 
     paths: list[str] = []
     for change in changes:
-        _append_unique_path(paths, _extract_change_path(change))
+        for path in _extract_change_paths(change):
+            _append_unique_path(paths, path)
 
     if paths:
         normalized_input.setdefault("file_path", paths[0])
@@ -66,17 +99,20 @@ def _extract_tool_input_paths(tool_input: Any) -> list[str]:
 
     paths: list[str] = []
 
-    file_paths = tool_input.get("file_paths")
-    if isinstance(file_paths, list):
-        for path in file_paths:
-            _append_unique_path(paths, path)
+    for key in _PATH_LIST_FIELDS:
+        file_paths = tool_input.get(key)
+        if isinstance(file_paths, list):
+            for path in file_paths:
+                _append_unique_path(paths, path)
 
-    _append_unique_path(paths, tool_input.get("file_path"))
+    for key in _PATH_FIELDS:
+        _append_unique_path(paths, tool_input.get(key))
 
     changes = tool_input.get("changes")
     if isinstance(changes, list):
         for change in changes:
-            _append_unique_path(paths, _extract_change_path(change))
+            for path in _extract_change_paths(change):
+                _append_unique_path(paths, path)
 
     return paths
 
@@ -99,7 +135,7 @@ def _extract_apply_patch_text(tool_input: Any) -> str | None:
     if not isinstance(tool_input, dict):
         return None
 
-    for key in ("patch", "content", "text", "diff"):
+    for key in _PATCH_TEXT_FIELDS:
         value = tool_input.get(key)
         if isinstance(value, str):
             return value
@@ -144,3 +180,63 @@ def _normalize_apply_patch_input(tool_input: Any) -> dict[str, Any]:
                 normalized_input.setdefault("file_paths", paths)
 
     return normalized_input
+
+
+def _extract_payload_paths(value: Any, paths: list[str], *, depth: int = 0) -> None:
+    """Collect paths from one structured mutation request or response envelope."""
+    if depth > 6:
+        return
+    if isinstance(value, list):
+        for item in value:
+            _extract_payload_paths(item, paths, depth=depth + 1)
+        return
+    if not isinstance(value, Mapping):
+        return
+
+    for key in _PATH_LIST_FIELDS:
+        raw_paths = value.get(key)
+        if isinstance(raw_paths, list):
+            for path in raw_paths:
+                _append_unique_path(paths, path)
+    for key in _PATH_FIELDS:
+        _append_unique_path(paths, value.get(key))
+
+    for key in _PATCH_TEXT_FIELDS:
+        patch_text = value.get(key)
+        if not isinstance(patch_text, str):
+            continue
+        for path in _parse_apply_patch_paths(patch_text):
+            _append_unique_path(paths, path)
+
+    changes = value.get("changes")
+    if isinstance(changes, list):
+        for change in changes:
+            _extract_payload_paths(change, paths, depth=depth + 1)
+
+    content_items = value.get("content")
+    if isinstance(content_items, list):
+        _extract_payload_paths(content_items, paths, depth=depth + 1)
+
+    for key in _NESTED_PAYLOAD_FIELDS:
+        nested = value.get(key)
+        if isinstance(nested, (Mapping, list)):
+            _extract_payload_paths(nested, paths, depth=depth + 1)
+
+
+def extract_structured_mutation_paths(data: Mapping[str, Any]) -> list[str]:
+    """Return ordered, deduplicated file paths from a structured mutation event."""
+    paths: list[str] = []
+    for field_name in (
+        "tool_input",
+        "toolInput",
+        "tool_output",
+        "toolOutput",
+        "tool_response",
+        "toolResponse",
+        "tool_result",
+        "toolResult",
+        "result",
+    ):
+        if field_name in data:
+            _extract_payload_paths(data[field_name], paths)
+    return paths

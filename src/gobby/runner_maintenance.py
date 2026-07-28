@@ -50,7 +50,10 @@ from gobby.shutdown_intent import (
     read_shutdown_intent,
     recover_stale_restart_intent,
 )
-from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+from gobby.workflows.summary_actions import (
+    enforce_window_name_if_unmanaged,
+    resolve_tmux_repair_owner,
+)
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -294,7 +297,7 @@ async def tmux_window_name_repair_loop(
         try:
             sessions = await asyncio.to_thread(
                 session_manager.list,
-                statuses=["active", "paused"],
+                statuses=["active", "paused", "expired", "handoff_ready"],
                 limit=normalized_session_list_limit,
             )
         except Exception as e:
@@ -303,7 +306,8 @@ async def tmux_window_name_repair_loop(
         renamed = 0
         for session in _select_tmux_repair_sessions(sessions):
             try:
-                if await enforce_window_name_if_unmanaged(session):
+                owner = await resolve_tmux_repair_owner(session)
+                if owner is not None and await enforce_window_name_if_unmanaged(owner):
                     renamed += 1
             except Exception:
                 logger.warning(

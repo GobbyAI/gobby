@@ -107,5 +107,5 @@ def task_edited_file_set(variables: dict[str, Any], task_id: str | None) -> set[
 
 
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:
-    """Return whether the resolved target task has any attributed edits."""
-    return bool(task_edited_file_set(variables, task_id))
+    """Return whether a mutation observation exists for the resolved task."""
+    return bool(task_id) and task_id in _task_edited_files(variables)

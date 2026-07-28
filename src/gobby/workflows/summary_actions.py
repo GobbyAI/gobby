@@ -32,6 +32,12 @@ from gobby.sessions.summary_validity import (
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.sessions.workspace_context import resolve_session_workspace
+from gobby.terminal_ownership import (
+    PaneOwnershipDecision,
+    log_pane_ownership_decision,
+    resolve_pane_ownership,
+    terminal_session_identity,
+)
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -541,7 +547,8 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
         if persisted_session is None:
             return
         session = persisted_session
-        if getattr(session, "status", None) not in {"active", "paused"}:
+        ownership = await _resolve_tmux_pane_ownership(session)
+        if ownership is None or not ownership.requested_session_owns_pane:
             return
         title = getattr(session, "title", None) or ""
 
@@ -574,6 +581,60 @@ async def _reload_persisted_session(session: Any) -> Any | None:
         return None
 
 
+async def _resolve_tmux_pane_ownership(session: Any) -> PaneOwnershipDecision | None:
+    """Reload every record for a pane and resolve its process-backed owner."""
+    identity = terminal_session_identity(session)
+    session_id = getattr(session, "id", None)
+    if not isinstance(session_id, str):
+        return None
+    if identity is None:
+        decision = PaneOwnershipDecision(
+            None,
+            session_id,
+            None,
+            "invalid_identity",
+        )
+        log_pane_ownership_decision(logger, decision)
+        return decision
+
+    from gobby.app_context import get_app_context
+
+    container = get_app_context()
+    session_manager = container.session_manager if container is not None else None
+    candidates = [session]
+    if (
+        container is not None
+        and session_manager is not None
+        and hasattr(session_manager, "find_by_terminal_identity")
+    ):
+        try:
+            candidates = await container.run_db(
+                session_manager.find_by_terminal_identity,
+                identity,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to load pane peers for session %s",
+                session_id,
+                exc_info=True,
+            )
+            return None
+
+    decision = await asyncio.to_thread(
+        resolve_pane_ownership,
+        candidates,
+        requested_session_id=session_id,
+    )
+    log_pane_ownership_decision(logger, decision)
+    return decision
+
+
+async def resolve_tmux_repair_owner(session: Any) -> Any | None:
+    """Return the current canonical owner for periodic pane repair."""
+    ownership = await _resolve_tmux_pane_ownership(session)
+    return ownership.owner if ownership is not None else None
+
+
 async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     """Rename a tracked session's tmux window when unmanaged or visibly stale.
 
@@ -597,7 +658,8 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
         if persisted_session is None:
             return False
         session = persisted_session
-        if getattr(session, "status", None) not in {"active", "paused"}:
+        ownership = await _resolve_tmux_pane_ownership(session)
+        if ownership is None or not ownership.requested_session_owns_pane:
             return False
 
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))

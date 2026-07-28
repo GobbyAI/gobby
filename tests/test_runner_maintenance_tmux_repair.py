@@ -156,11 +156,15 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
     session_manager = _SessionManager([paned, no_pane, none_ctx])
 
     enforce = AsyncMock(return_value=True)
-    with patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce):
+    owner = AsyncMock(side_effect=lambda session: session)
+    with (
+        patch("gobby.runner_maintenance.resolve_tmux_repair_owner", owner),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
         # is_shutdown_requested True -> startup repair runs once, then the loop exits.
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
-    assert session_manager.calls == [(["active", "paused"], 200)]
+    assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 200)]
     enforce.assert_awaited_once_with(paned)
 
 
@@ -197,11 +201,59 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
     session_manager = _SessionManager([stale, grok, other])
 
     enforce = AsyncMock(return_value=True)
-    with patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce):
+    owner = AsyncMock(side_effect=lambda session: session)
+    with (
+        patch("gobby.runner_maintenance.resolve_tmux_repair_owner", owner),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
-    assert session_manager.calls == [(["active", "paused"], 200)]
+    assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 200)]
     assert enforce.await_args_list == [call(grok), call(other)]
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_redirects_stale_child_candidate_to_live_expired_owner() -> None:
+    parent = SimpleNamespace(
+        id="codex-parent",
+        status="expired",
+        external_id="codex-session",
+        terminal_context={
+            "tmux_pane": "%226",
+            "tmux_socket_path": "/tmp/tmux-501/gobby",
+        },
+        transcript_path="/tmp/codex.jsonl",
+        message_count=1,
+        turn_count=1,
+        tool_call_count=1,
+        ref="#9790",
+    )
+    child = SimpleNamespace(
+        id="grok-child",
+        status="paused",
+        external_id="grok-session",
+        terminal_context={
+            "tmux_pane": "%226",
+            "tmux_socket_path": "/tmp/tmux-501/gobby",
+        },
+        transcript_path="/tmp/grok.jsonl",
+        message_count=2,
+        turn_count=2,
+        tool_call_count=2,
+        ref="#1",
+    )
+    session_manager = _SessionManager([parent, child])
+    owner = AsyncMock(return_value=parent)
+    enforce = AsyncMock(return_value=True)
+
+    with (
+        patch("gobby.runner_maintenance.resolve_tmux_repair_owner", owner),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
+        await tmux_window_name_repair_loop(session_manager, lambda: True)
+
+    owner.assert_awaited_once_with(child)
+    enforce.assert_awaited_once_with(parent)
 
 
 @pytest.mark.asyncio
@@ -240,7 +292,11 @@ async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
     session_manager = _SessionManager([root, shallow_agent, nested_agent])
 
     enforce = AsyncMock(return_value=True)
-    with patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce):
+    owner = AsyncMock(side_effect=lambda session: session)
+    with (
+        patch("gobby.runner_maintenance.resolve_tmux_repair_owner", owner),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert enforce.await_args_list == [call(root), call(nested_agent)]
@@ -257,7 +313,7 @@ async def test_repair_loop_uses_configured_session_list_limit() -> None:
         session_list_limit=50,
     )
 
-    assert session_manager.calls == [(["active", "paused"], 50)]
+    assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 50)]
 
 
 @pytest.mark.asyncio
@@ -271,7 +327,7 @@ async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
         session_list_limit=0,
     )
 
-    assert session_manager.calls == [(["active", "paused"], 1)]
+    assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 1)]
 
 
 @pytest.mark.asyncio
@@ -323,5 +379,5 @@ async def test_repair_loop_survives_list_failure(caplog: pytest.LogCaptureFixtur
     with caplog.at_level("WARNING", logger="gobby.runner_maintenance"):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
-    assert session_manager.calls == [(["active", "paused"], 200)]
+    assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 200)]
     assert "tmux window repair: failed to list sessions: db down" in caplog.text

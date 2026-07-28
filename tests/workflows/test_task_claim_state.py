@@ -1,11 +1,14 @@
 """Tests for task_claim_state helpers."""
 
+from typing import Any
+
 import pytest
 
 from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
     add_claimed_task,
     remove_claimed_task,
+    target_task_has_edits,
 )
 
 pytestmark = pytest.mark.unit
@@ -125,3 +128,13 @@ class TestActiveTaskIdForEdit:
 
     def test_no_claim_records_no_task(self) -> None:
         assert active_task_id_for_edit({}) is None
+
+
+class TestTargetTaskHasEdits:
+    def test_missing_task_key_means_no_mutation_observed(self) -> None:
+        assert target_task_has_edits({"task_edited_files": {}}, "task-1") is False
+
+    def test_empty_task_entry_means_mutation_paths_unavailable(self) -> None:
+        variables: dict[str, Any] = {"task_edited_files": {"task-1": []}}
+
+        assert target_task_has_edits(variables, "task-1") is True

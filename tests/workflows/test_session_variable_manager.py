@@ -782,6 +782,43 @@ def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
     assert variables["task_edited_files"] == {"task-1": ["src/app.py"]}
 
 
+def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        S1,
+        {
+            "claimed_tasks": {"task-1": "#1"},
+            "session_edited_files": ["existing.py"],
+            "task_edited_files": {"task-1": ["existing.py"]},
+        },
+    )
+
+    mgr.record_edited_files(
+        S1,
+        ["src/first.py", "docs/plan.md", "src/first.py", "existing.py"],
+    )
+
+    variables = mgr.get_variables(S1)
+    expected = ["existing.py", "src/first.py", "docs/plan.md"]
+    assert variables["session_edited_files"] == expected
+    assert variables["task_edited_files"] == {"task-1": expected}
+
+
+def test_record_edited_files_empty_paths_creates_task_mutation_sentinel(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+
+    mgr.record_edited_files(S1, [])
+
+    variables = mgr.get_variables(S1)
+    assert variables["session_edited_files"] == []
+    assert variables["task_edited_files"] == {"task-1": []}
+
+
 def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 

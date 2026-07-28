@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.sessions.liveness_monitor import SessionLivenessMonitor
+from gobby.terminal_ownership import PaneOwnershipDecision
 
 pytestmark = pytest.mark.unit
 
@@ -505,6 +506,67 @@ class TestCheckSessions:
         mock_session_storage.touch.assert_not_called()
         assert set(monitor._recently_handled) == {"s1"}
 
+    @pytest.mark.asyncio
+    async def test_dead_nested_child_expires_when_live_expired_parent_owns_pane(
+        self,
+        monitor,
+        monkeypatch,
+    ):
+        terminal_context = {
+            "tmux_pane": "%226",
+            "tmux_socket_path": "/tmp/tmux-501/gobby",
+        }
+        parent = SimpleNamespace(
+            session_id="codex-parent",
+            source="codex",
+            status="expired",
+            machine_id="machine",
+            parent_pid=100,
+            tmux_pane="%226",
+            tmux_socket_path="/tmp/tmux-501/gobby",
+            terminal_context={**terminal_context, "parent_pid": 100},
+        )
+        child = SimpleNamespace(
+            session_id="grok-child",
+            source="grok",
+            status="paused",
+            machine_id="machine",
+            parent_pid=200,
+            tmux_pane="%226",
+            tmux_socket_path="/tmp/tmux-501/gobby",
+            terminal_context={**terminal_context, "parent_pid": 200},
+        )
+        identity = ("machine", "tmux_socket_path:/tmp/tmux-501/gobby", "%226")
+        decision = PaneOwnershipDecision(
+            identity=identity,
+            requested_session_id="grok-child",
+            owner=parent,
+            reason="validated_live_process",
+            validated_session_ids=frozenset({"codex-parent"}),
+        )
+        monkeypatch.setattr(
+            monitor,
+            "_get_active_terminal_sessions",
+            lambda: [child, parent],
+        )
+        monkeypatch.setattr(
+            monitor,
+            "_get_live_tmux_panes_by_socket",
+            lambda _records: {"/tmp/tmux-501/gobby": {"%226"}},
+        )
+
+        with (
+            patch(
+                "gobby.sessions.liveness_monitor.resolve_pane_ownership",
+                return_value=decision,
+            ),
+            patch.object(monitor, "_expire_session", new=AsyncMock()) as expire,
+        ):
+            await monitor._check_sessions()
+
+        expire.assert_awaited_once_with("grok-child")
+        assert set(monitor._recently_handled) == {"grok-child"}
+
 
 class TestExpireSession:
     """Tests for _expire_session."""
@@ -822,7 +884,11 @@ class TestGetActiveTerminalSessions:
 
         assert _as_tuples(result) == [("s1", 123, None, None)]
 
-    def test_non_string_tmux_socket_path_treated_as_none(self, monitor, mock_session_storage):
+    def test_non_string_tmux_socket_path_treated_as_none(
+        self,
+        monitor: SessionLivenessMonitor,
+        mock_session_storage: MagicMock,
+    ) -> None:
         """Non-string tmux_socket_path values are normalized to None."""
         mock_session_storage.db.fetchall.return_value = [
             {

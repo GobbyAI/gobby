@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
+from gobby.terminal_ownership import TerminalIdentity, terminal_session_identity
 
 MAX_ACTIVE_SESSION_SCAN = 250
 MAX_HANDOFF_PARENT_CANDIDATES = 8
@@ -82,6 +83,29 @@ class _ManagerState(Protocol):
 
 
 class _DiscoveryMixin:
+    def find_by_terminal_identity(
+        self: _ManagerState,
+        identity: TerminalIdentity,
+    ) -> list[Session]:
+        """Find every session sharing a global machine/socket/pane identity."""
+        machine_id, _socket_identity, pane = identity
+        rows = self.db.fetchall(
+            """
+            SELECT *
+            FROM sessions
+            WHERE machine_id = %s
+              AND session_type = 'terminal'
+              AND terminal_context ->> 'tmux_pane' = %s
+            ORDER BY created_at, id
+            """,
+            (machine_id, pane),
+        )
+        return [
+            session
+            for row in rows
+            if terminal_session_identity(session := Session.from_row(row)) == identity
+        ]
+
     def find_by_external_id(
         self: _ManagerState,
         external_id: str,

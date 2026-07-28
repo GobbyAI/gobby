@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -86,6 +87,33 @@ async def test_missing_criteria_stops_before_llm() -> None:
     assert evaluation.error == "missing_validation_criteria"
     assert [gate.item for gate in evaluation.gates] == [1, 2, 3, 4, 5]
     review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_task_edit_entry_reaches_paths_unavailable_close_error() -> None:
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Mutation paths were unavailable.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "task_edit_paths_unavailable"
+    assert evaluation.gates[-1].item == 8
 
 
 @pytest.mark.asyncio
@@ -406,3 +434,35 @@ async def test_commit_epic_persists_allowed_valid_status() -> None:
 
     assert result["closed"] is True
     assert manager.close_task.call_args.kwargs["validation_status"] == "valid"
+
+
+def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:
+    variables = {
+        "claimed_tasks": {"task-1": "#1", "task-2": "#2"},
+        "active_task_id": "task-1",
+        "task_edited_files": {
+            "task-1": ["src/closed.py"],
+            "task-2": ["src/remaining.py"],
+        },
+    }
+    session_var_manager = MagicMock()
+    session_var_manager.get_variables.return_value = variables
+    session_manager = MagicMock()
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            session_task_manager=MagicMock(),
+            session_var_manager=session_var_manager,
+            session_manager=session_manager,
+        ),
+    )
+    evaluation = CloseEvaluation("task-1")
+    evaluation.task_id = "task-1"
+    evaluation.resolved_session_id = "session"
+    evaluation.edit_session_id = "session"
+
+    lifecycle._cleanup_closed_claim(ctx, evaluation, ["abc123"])
+
+    updates = session_var_manager.merge_variables.call_args.args[1]
+    assert updates["task_edited_files"] == {"task-2": ["src/remaining.py"]}
+    session_manager.clear_had_edits.assert_not_called()

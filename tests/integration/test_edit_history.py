@@ -1,12 +1,18 @@
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import cast
 
 import pytest
 
 from gobby.hooks.event_handlers import EDIT_TOOLS, EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.observer_commits import detect_bash_commit
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 
@@ -153,8 +159,8 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     handlers.handle_after_tool(event)
 
     variables = session_var_manager.get_variables(session.id)
-    assert variables["session_edited_files"] == ["docs/edited.md", "src/edited.py"]
-    assert variables["task_edited_files"] == {task.id: ["docs/edited.md", "src/edited.py"]}
+    assert variables["session_edited_files"] == ["src/edited.py", "docs/edited.md"]
+    assert variables["task_edited_files"] == {task.id: ["src/edited.py", "docs/edited.md"]}
 
 
 def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
@@ -340,3 +346,103 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py"]
     assert variables["task_edited_files"] == {second.id: ["src/edited.py"]}
+
+
+def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Reproduce session 9766's missing patch attribution through resume."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    session_manager = SessionManager(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    project = LocalProjectManager(temp_db).create("patch-ledger-project", str(repo_root))
+    variables_manager = SessionVariableManager(temp_db)
+    handlers = EventHandlers(
+        session_storage=cast(HookSessionManager, session_manager),
+        task_manager=task_manager,
+    )
+    session = session_manager.register(
+        external_id="codex-patch-ledger",
+        machine_id="machine",
+        source="codex",
+        project_id=project.id,
+    )
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Attribute Codex patch",
+        created_in_session_id=session.id,
+        validation_criteria="The exact task edit ledger survives resume.",
+    )
+    task_manager.claim_task(task.id, session.id)
+    variables_manager.merge_variables(
+        session.id,
+        add_claimed_task({}, task.id, f"#{task.seq_num}"),
+    )
+
+    patch_data = {
+        "tool_name": "apply_patch",
+        "tool_input": {
+            "command": (
+                "*** Begin Patch\n"
+                "*** Update File: src/first.py\n"
+                "*** Add File: docs/plan.md\n"
+                "*** Update File: src/first.py\n"
+                "*** End Patch\n"
+            )
+        },
+    }
+    normalize_tool_fields(patch_data)
+    patch_event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="codex-patch-ledger",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data=patch_data,
+        metadata={"_platform_session_id": session.id},
+    )
+
+    handlers.handle_after_tool(patch_event)
+
+    expected_task_map = {task.id: ["src/first.py", "docs/plan.md"]}
+    variables = variables_manager.get_variables(session.id)
+    assert variables["session_edited_files"] == ["src/first.py", "docs/plan.md"]
+    assert variables["task_edited_files"] == expected_task_map
+
+    commit_event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="codex-patch-ledger",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": "git commit -m 'patch ledger'"},
+            "tool_output": "[main abc1234] patch ledger\n 2 files changed",
+        },
+        metadata={"_platform_session_id": session.id},
+    )
+    detect_bash_commit(commit_event, variables, session.id)
+    variables_manager.merge_variables(session.id, variables)
+    assert variables_manager.get_variables(session.id)["task_edited_files"] == expected_task_map
+
+    compact_event = HookEvent(
+        event_type=HookEventType.PRE_COMPACT,
+        session_id="codex-patch-ledger",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"trigger": "manual"},
+        metadata={"_platform_session_id": session.id},
+    )
+    handlers.handle_pre_compact(compact_event)
+    resumed = session_manager.register(
+        external_id="codex-patch-ledger",
+        machine_id="machine",
+        source="codex",
+        project_id=project.id,
+    )
+
+    assert resumed.id == session.id
+    assert variables_manager.get_variables(session.id)["task_edited_files"] == expected_task_map

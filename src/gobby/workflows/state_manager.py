@@ -679,8 +679,15 @@ class SessionVariableManager:
         repo_relative_path: str,
     ) -> bool:
         """Record a successful repo file edit in session and active-task ledgers."""
-        if not repo_relative_path:
-            return True
+        return self.record_edited_files(session_id, [repo_relative_path])
+
+    def record_edited_files(
+        self,
+        session_id: str,
+        repo_relative_paths: list[str],
+    ) -> bool:
+        """Atomically record one successful mutation observation and its paths."""
+        normalized_paths = list(dict.fromkeys(path for path in repo_relative_paths if path))
 
         from gobby.workflows.task_claim_state import active_task_id_for_edit
 
@@ -696,22 +703,23 @@ class SessionVariableManager:
             stored = current_vars.get("session_edited_files", [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
-            session_files = {str(file) for file in stored if file}
-            if repo_relative_path:
-                session_files.add(repo_relative_path)
-            current_vars["session_edited_files"] = sorted(session_files)
+            session_files = list(dict.fromkeys(str(file) for file in stored if file))
+            session_files.extend(path for path in normalized_paths if path not in session_files)
+            current_vars["session_edited_files"] = session_files
 
             task_id = active_task_id_for_edit(current_vars)
-            if task_id and repo_relative_path:
+            if task_id:
                 raw_task_files = current_vars.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
                 if not isinstance(stored_for_task, list):
                     stored_for_task = [stored_for_task] if stored_for_task else []
-                files_for_task = {str(file) for file in stored_for_task if file}
-                files_for_task.add(repo_relative_path)
+                files_for_task = list(dict.fromkeys(str(file) for file in stored_for_task if file))
+                files_for_task.extend(
+                    path for path in normalized_paths if path not in files_for_task
+                )
                 task_files = dict(task_files)
-                task_files[task_id] = sorted(files_for_task)
+                task_files[task_id] = files_for_task
                 current_vars["task_edited_files"] = task_files
 
             if row:

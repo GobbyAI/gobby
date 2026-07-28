@@ -220,40 +220,39 @@ class TestToolHandlerEdgeCases:
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
     ) -> None:
         """A failed edited-file write remains visible at warning level."""
         import logging
 
         handlers = EventHandlers(**mock_dependencies)
-        variable_manager = MagicMock()
-        variable_manager.record_edited_file.side_effect = RuntimeError("primary write failed")
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(tmp_path / "src" / "failed.py")},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
 
         with (
             caplog.at_level(logging.WARNING),
-            patch.object(
-                handlers,
-                "_resolve_repo_relative_edit_path",
-                return_value="src/gobby/example.py",
-            ),
+            patch("gobby.utils.git.is_path_gitignored", return_value=False),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager",
-                return_value=variable_manager,
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                side_effect=RuntimeError("primary write failed"),
             ),
         ):
-            handlers._track_session_edited_file(
-                "sess-123",
-                "src/gobby/example.py",
-                None,
-            )
+            handlers.handle_after_tool(event)
 
         warning = next(
             record
             for record in caplog.records
-            if "Failed to track session edited file" in record.getMessage()
+            if "Failed to process file edit" in record.getMessage()
         )
         assert warning.levelno == logging.WARNING
         assert warning.exc_info is not None
-        variable_manager.merge_variables.assert_not_called()
 
     def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
@@ -345,11 +344,13 @@ class TestToolHandlerEdgeCases:
         event = make_event(HookEventType.AFTER_TOOL, data=data, metadata=metadata)
         event.cwd = "/tmp/project"
 
-        with patch.object(handlers, "_track_session_edited_file") as track:
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        track.assert_not_called()
+        record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_gitignored_edit_skips_tracking(
@@ -370,12 +371,14 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch("gobby.utils.git.is_path_gitignored", return_value=True),
-            patch.object(handlers, "_track_session_edited_file") as track,
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            ) as record_files,
         ):
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        track.assert_not_called()
+        record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         mock_dependencies["task_manager"].list_tasks.assert_not_called()
 
@@ -397,13 +400,110 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch("gobby.utils.git.is_path_gitignored", return_value=False),
-            patch.object(handlers, "_track_session_edited_file") as track,
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
         ):
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        track.assert_called_once()
+        record_files.assert_called_once_with("sess-123", ["src/main.py"])
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+
+    def test_structured_multi_file_edit_is_recorded_atomically(
+        self,
+        mock_dependencies: dict,
+        tmp_path: Path,
+    ) -> None:
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_repo_mutation": True,
+                "canonical_structured_mutation": True,
+                "canonical_file_paths": [
+                    str(tmp_path / "src" / "first.py"),
+                    str(tmp_path / "docs" / "plan.md"),
+                    str(tmp_path / "src" / "first.py"),
+                ],
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+
+        with (
+            patch("gobby.utils.git.is_path_gitignored", return_value=False),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
+        ):
+            handlers.handle_after_tool(event)
+
+        record_files.assert_called_once_with(
+            "sess-123",
+            ["src/first.py", "docs/plan.md"],
+        )
+
+    def test_structured_edit_without_paths_records_empty_sentinel_and_warns(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "WriteFile",
+                "canonical_tool_kind": "write",
+                "canonical_repo_mutation": True,
+                "canonical_structured_mutation": True,
+                "canonical_file_paths": [],
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with (
+            caplog.at_level("WARNING"),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
+        ):
+            handlers.handle_after_tool(event)
+
+        record_files.assert_called_once_with("sess-123", [])
+        assert "no attributable file paths" in caplog.text
+
+    def test_failed_structured_edit_does_not_change_attribution(
+        self,
+        mock_dependencies: dict,
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_repo_mutation": True,
+                "canonical_structured_mutation": True,
+                "canonical_file_paths": ["src/failed.py"],
+            },
+            metadata={"_platform_session_id": "sess-123", "is_failure": True},
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
+            handlers.handle_after_tool(event)
+
+        record_files.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_absolute_path_without_repo_context_not_tracked(
         self, mock_dependencies: dict
@@ -420,11 +520,13 @@ class TestToolHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch.object(handlers, "_track_session_edited_file") as track:
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        track.assert_not_called()
+        record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_notifies_code_index_with_project_root_path(
@@ -467,7 +569,10 @@ class TestToolHandlerEdgeCases:
         assert code_index_trigger.notify_file_changed.call_count == 1
         assert code_index_trigger.notify_file_changed.call_args is not None
 
-    def test_after_tool_edit_skips_gobby_internal_files(self, mock_dependencies: dict) -> None:
+    def test_after_tool_edit_skips_gobby_internal_files(
+        self,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
@@ -488,7 +593,10 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
         assert not mock_dependencies["session_storage"].mark_had_edits.called
 
-    def test_after_tool_edit_skips_out_of_repo_paths(self, mock_dependencies: dict) -> None:
+    def test_after_tool_edit_skips_out_of_repo_paths(
+        self,
+        mock_dependencies: dict[str, Any],
+    ) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for edits outside cwd."""
         repo_root = Path("/tmp/project")
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]

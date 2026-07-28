@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.terminal_ownership import terminal_session_identity
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -647,6 +649,50 @@ class TestSessionManagerLifecycle:
         independent = session_manager.get(newer.id)
         assert independent is not None
         assert independent.status == "active"
+
+    def test_find_by_terminal_identity_is_global_across_projects_providers_and_statuses(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        tmp_path: Path,
+    ) -> None:
+        project_manager = LocalProjectManager(session_manager.db)
+        other_project = project_manager.create("other-terminal-project", str(tmp_path))
+        terminal_context = {
+            "tmux_pane": "%226",
+            "tmux_socket_path": "/tmp/tmux-501/gobby",
+        }
+        codex = session_manager.register(
+            external_id="terminal-owner-codex",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        grok = session_manager.register(
+            external_id="terminal-owner-grok",
+            machine_id="machine",
+            source="grok",
+            project_id=other_project.id,
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(grok.id, "expired")
+        session_manager.register(
+            external_id="other-terminal-socket",
+            machine_id="machine",
+            source="qwen",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%226",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        )
+
+        identity = terminal_session_identity(codex)
+        assert identity is not None
+        matches = session_manager.find_by_terminal_identity(identity)
+
+        assert {session.id for session in matches} == {codex.id, grok.id}
 
     @pytest.mark.parametrize("resumable_status", ["paused", "expired"])
     def test_activate_web_chat_session_activates_resumable_row(

@@ -71,7 +71,12 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     tool_input = data.get("tool_input")
     tool_name = data.get("tool_name")
 
-    if isinstance(tool_name, str) and tool_name.lower() == "apply_patch":
+    compact_tool_name = (
+        "".join(character for character in tool_name.lower() if character.isalnum())
+        if isinstance(tool_name, str)
+        else ""
+    )
+    if compact_tool_name == "applypatch":
         data.setdefault("_original_tool_name", tool_name)
         data["tool_name"] = "Write"
         tool_input = _normalize_apply_patch_input(tool_input)
