@@ -143,6 +143,39 @@ describe('CSS token integrity', () => {
     ])
   })
 
+  it('keeps the typography ladder defined once, in tokens.css', () => {
+    const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')
+
+    expect(theme).not.toMatch(/--text-[0-9a-z]+:\s*calc\(/)
+    expect(theme).not.toMatch(/--text-[0-9a-z]+:\s*var\(--font-size-base\)/)
+    for (const step of ['2xs', 'xs', 'sm', 'md', 'base', 'lg', 'xl', '2xl', '3xl', '4xl']) {
+      expect(theme).toContain(`--text-${step}: var(--text-${step});`)
+    }
+  })
+
+  it('bridges shadow, radius, and surface families into the Tailwind theme', () => {
+    const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')
+
+    for (const shadow of ['sm', 'md', 'lg', 'xl', 'popover-up', 'panel-left']) {
+      expect(theme).toContain(`--shadow-${shadow}: var(--shadow-${shadow});`)
+    }
+    for (const radius of ['xs', 'sm', 'md', 'lg', 'xl']) {
+      expect(theme).toMatch(new RegExp(`--radius-${radius}:\\s*0\\.\\d+rem;`))
+    }
+    for (const [themeName, token] of [
+      ['color-surface-secondary', 'bg-secondary'],
+      ['color-surface-deep', 'bg-deep'],
+      ['color-surface-scrim', 'surface-scrim'],
+      ['color-surface-scrim-opaque', 'surface-scrim-opaque'],
+      ['color-foreground-muted', 'text-muted'],
+      ['color-border-soft', 'border-soft'],
+      ['color-accent-soft', 'accent-soft'],
+      ['color-accent-tint', 'accent-tint'],
+    ]) {
+      expect(theme).toContain(`--${themeName}: var(--${token});`)
+    }
+  })
+
   it('keeps state colors on the foreground-first sibling contract', () => {
     const tokens = readFileSync(join(process.cwd(), 'src/styles/tokens.css'), 'utf8')
     const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')

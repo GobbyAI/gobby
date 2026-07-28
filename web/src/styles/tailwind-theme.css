@@ -35,27 +35,57 @@
   --color-surface-tint: var(--surface-tint);
   --color-surface-tint-strong: var(--surface-tint-strong);
   --color-surface-selected: var(--surface-selected, var(--accent-soft));
+  --color-surface-secondary: var(--bg-secondary);
+  --color-surface-deep: var(--bg-deep);
+  --color-surface-scrim: var(--surface-scrim);
+  --color-surface-scrim-opaque: var(--surface-scrim-opaque);
+  --color-foreground-muted: var(--text-muted);
+  --color-border-soft: var(--border-soft);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-tint: var(--accent-tint);
 }
 
+/* Radius scale — pinned to the values the design system uses so Tailwind
+   default drift can never restyle the app. */
 @theme {
-  --text-2xs: calc(var(--font-size-base) * 0.625);
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+}
+
+/* Shadow + typography bridge. The app tokens in tokens.css share these
+   exact names, so this block is `inline reference`: utilities inline the
+   var() chain and nothing is re-emitted (a plain @theme would emit
+   self-referential :root definitions). tokens.css stays the single owner
+   of the ladder — the Settings font-size slider rescales everything. */
+@theme inline reference {
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-popover-up: var(--shadow-popover-up);
+  --shadow-panel-left: var(--shadow-panel-left);
+
+  --text-2xs: var(--text-2xs);
   --text-2xs--line-height: 1.25;
-  --text-xs: calc(var(--font-size-base) * 0.6875);
+  --text-xs: var(--text-xs);
   --text-xs--line-height: 1.25;
-  --text-sm: calc(var(--font-size-base) * 0.75);
+  --text-sm: var(--text-sm);
   --text-sm--line-height: 1.25;
-  --text-md: calc(var(--font-size-base) * 0.8125);
+  --text-md: var(--text-md);
   --text-md--line-height: 1.25;
-  --text-base: calc(var(--font-size-base) * 0.875);
+  --text-base: var(--text-base);
   --text-base--line-height: 1.4;
-  --text-lg: var(--font-size-base);
+  --text-lg: var(--text-lg);
   --text-lg--line-height: 1.4;
-  --text-xl: calc(var(--font-size-base) * 1.125);
+  --text-xl: var(--text-xl);
   --text-xl--line-height: 1.2;
-  --text-2xl: calc(var(--font-size-base) * 1.25);
+  --text-2xl: var(--text-2xl);
   --text-2xl--line-height: 1.2;
-  --text-3xl: calc(var(--font-size-base) * 1.5);
+  --text-3xl: var(--text-3xl);
   --text-3xl--line-height: 1.2;
-  --text-4xl: calc(var(--font-size-base) * 2);
+  --text-4xl: var(--text-4xl);
   --text-4xl--line-height: 1.2;
 }

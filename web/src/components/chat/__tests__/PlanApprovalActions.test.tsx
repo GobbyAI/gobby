@@ -53,8 +53,8 @@ describe('PlanApprovalActions', () => {
       />,
     )
     // primary = solid accent slab; accent = tinted accent (token-driven classes).
-    expect(screen.getByTestId('x-option-approve_yolo').className).toContain('bg-accent')
-    expect(screen.getByTestId('x-option-approve_act').className).toContain('var(--accent-tint)')
+    expect(screen.getByTestId('x-option-approve_yolo').className.split(/\s+/)).toContain('bg-accent')
+    expect(screen.getByTestId('x-option-approve_act').className.split(/\s+/)).toContain('bg-accent-tint')
   })
 
   it('holds the single-accent contract: exactly one solid primary, however many approve options (#15680)', () => {
@@ -77,15 +77,16 @@ describe('PlanApprovalActions', () => {
       />,
     )
     // The solid-accent slab (`bg-accent`) is unique to the `primary` variant;
-    // the tinted `accent` variant uses `bg-[var(--accent-tint)]`.
+    // the tinted `accent` variant uses `bg-accent-tint` (exact-token match so
+    // the tinted class can never count as a solid primary).
     const solidPrimaries = MULTI.map((o) =>
       screen.getByTestId(`x-option-${o.id}`),
-    ).filter((el) => el.className.includes('bg-accent'))
+    ).filter((el) => el.className.split(/\s+/).includes('bg-accent'))
     expect(solidPrimaries).toHaveLength(1)
     expect(solidPrimaries[0]).toBe(screen.getByTestId('x-option-approve_yolo'))
     // Remaining approve options are tinted, not peer primaries.
-    expect(screen.getByTestId('x-option-approve_act').className).toContain('var(--accent-tint)')
-    expect(screen.getByTestId('x-option-approve_edits').className).toContain('var(--accent-tint)')
+    expect(screen.getByTestId('x-option-approve_act').className.split(/\s+/)).toContain('bg-accent-tint')
+    expect(screen.getByTestId('x-option-approve_edits').className.split(/\s+/)).toContain('bg-accent-tint')
   })
 
   it('selecting an option calls onApprove with that option', () => {

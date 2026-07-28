@@ -5,10 +5,7 @@ import { describe, expect, it } from 'vitest'
 const cwd = process.cwd()
 
 const TYPOGRAPHY_ROOTS = ['src/styles', 'src/components']
-const SANCTIONED_TOKEN_FILES = new Set([
-  'src/styles/tailwind-theme.css',
-  'src/styles/tokens.css',
-])
+const SANCTIONED_TOKEN_FILES = new Set(['src/styles/tokens.css'])
 
 function readSource(rel: string): string {
   return readFileSync(join(cwd, rel), 'utf8')
