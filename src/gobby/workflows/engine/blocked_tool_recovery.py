@@ -19,6 +19,14 @@ _CODE_INDEX_REMEDIATION_RULES = {
     "prefer-gcode-for-source-read",
 }
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
+_ACTION_WORD_RE = re.compile(
+    r"\b(?:ask|call|claim|clear|continue|create|load|retrieve|retry|run|use)\b",
+    re.IGNORECASE,
+)
+_CALL_FORM_RE = re.compile(
+    r"\b(?:call_tool|get_tool_schema|set_variable|[a-z_]+_(?:memory|review|stage|task))\s*\("
+)
+_BACKTICK_FORM_RE = re.compile(r"`[^`\n]+`")
 
 
 def extract_rule_name(reason: str | None) -> str | None:
@@ -29,6 +37,83 @@ def extract_rule_name(reason: str | None) -> str | None:
     if not match:
         return None
     return match.group(1)
+
+
+def recovery_directive_suffix(reason: str) -> str:
+    """Lift complete actionable directives from a verbose block reason."""
+    text = _RULE_REASON_RE.sub("", reason, count=1).strip()
+    action_candidates: list[str] = []
+    for candidate in _directive_sentences(text):
+        has_call = _CALL_FORM_RE.search(candidate) is not None
+        has_backtick = _BACKTICK_FORM_RE.search(candidate) is not None
+        has_action = _ACTION_WORD_RE.search(candidate) is not None
+        if not has_action and not has_call and not has_backtick:
+            continue
+        if has_call and not _calls_are_complete(candidate):
+            continue
+        action_candidates.append(candidate)
+
+    if not action_candidates:
+        return ""
+    one_line = " ".join(" ".join(candidate.split()) for candidate in action_candidates)
+    return f"\nRecovery directive: {one_line}"
+
+
+def _directive_sentences(reason: str) -> list[str]:
+    sentences: list[str] = []
+    start = 0
+    parenthesis_depth = 0
+    in_backticks = False
+    for index, char in enumerate(reason):
+        if char == "`":
+            in_backticks = not in_backticks
+        elif not in_backticks:
+            if char == "(":
+                parenthesis_depth += 1
+            elif char == ")" and parenthesis_depth:
+                parenthesis_depth -= 1
+            elif char in ".?!" and parenthesis_depth == 0:
+                sentences.append(reason[start : index + 1].strip())
+                start = index + 1
+    tail = reason[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _calls_are_complete(directive: str) -> bool:
+    return all(
+        _balanced_call_end(directive, match.start()) is not None
+        for match in _CALL_FORM_RE.finditer(directive)
+    )
+
+
+def _balanced_call_end(text: str, start: int) -> int | None:
+    open_at = text.find("(", start)
+    if open_at < 0:
+        return None
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(open_at, len(text)):
+        char = text[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
 
 
 def block_source_for_rule(rule_name: str) -> str:

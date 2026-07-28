@@ -3586,9 +3586,12 @@ class TestVerboseOnceBlockReason:
         second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert second.decision == "block"
-        assert second.reason == (
+        assert second.reason is not None
+        assert second.reason.startswith(
             f"Rule enforced by Gobby: [require-code-index-skill] {self._TERSE_HINT}"
         )
+        assert "\nRecovery directive: Use gcode for code navigation:" in second.reason
+        assert "gcode outline path/to/file" in second.reason
 
     @pytest.mark.asyncio
     async def test_changed_claimed_task_required_skills_reason_emits_full_reason(
@@ -3632,9 +3635,11 @@ class TestVerboseOnceBlockReason:
         assert second.reason.endswith(skill_fetch_directive("development-discipline"))
         assert self._TERSE_HINT not in second.reason
         assert third.decision == "block"
-        assert third.reason == (
+        assert third.reason is not None
+        assert third.reason.startswith(
             f"Rule enforced by Gobby: [require-claimed-task-required-skills] {self._TERSE_HINT}"
         )
+        assert third.reason.endswith(skill_fetch_directive("development-discipline"))
 
     @pytest.mark.asyncio
     async def test_different_rule_still_emits_full_reason(

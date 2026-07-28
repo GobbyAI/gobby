@@ -20,6 +20,7 @@ from gobby.workflows.engine.blocked_tool_recovery import (
     extract_rule_name,
     format_aggregated_block_reason,
     log_block,
+    recovery_directive_suffix,
     remember_blocked_tool_recovery_state,
 )
 from gobby.workflows.engine.event_utils import (
@@ -192,6 +193,7 @@ class EvaluationMixin:
                 response.reason = (
                     f"Rule enforced by Gobby: [{resolved_rule_name}] "
                     "(full reason shown earlier this turn — scroll up)."
+                    + recovery_directive_suffix(response.reason)
                 )
             else:
                 shown.append(block_signature)
