@@ -309,12 +309,8 @@ class TestBuildStopWakesWaiter:
 
         harness = self._harness(ism_persisted=ism_persisted)
         removals = self._record_removals(monkeypatch)
-        monkeypatch.setattr(
-            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
-        )
-        monkeypatch.setattr(
-            runtime_module, "kill_agent", AsyncMock(return_value={"success": True})
-        )
+        monkeypatch.setattr(runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager)
+        monkeypatch.setattr(runtime_module, "kill_agent", AsyncMock(return_value={"success": True}))
 
         await runtime_module._cancel_active_agents(
             harness.db, [harness.run], services=harness.services
@@ -339,9 +335,7 @@ class TestBuildStopWakesWaiter:
         harness = self._harness(ism_persisted=True)
         removals = self._record_removals(monkeypatch)
         harness.run_manager.cancel.return_value = None
-        monkeypatch.setattr(
-            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
-        )
+        monkeypatch.setattr(runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager)
         monkeypatch.setattr(
             runtime_module,
             "kill_agent",
@@ -366,12 +360,8 @@ class TestBuildStopWakesWaiter:
 
         harness = self._harness(ism_persisted=True)
         removals = self._record_removals(monkeypatch)
-        monkeypatch.setattr(
-            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
-        )
-        monkeypatch.setattr(
-            runtime_module, "kill_agent", AsyncMock(return_value={"success": True})
-        )
+        monkeypatch.setattr(runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager)
+        monkeypatch.setattr(runtime_module, "kill_agent", AsyncMock(return_value={"success": True}))
         services = SimpleNamespace(agent_lifecycle_monitor=None, completion_registry=None)
 
         await runtime_module._cancel_active_agents(harness.db, [harness.run], services=services)

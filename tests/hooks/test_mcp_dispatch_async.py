@@ -84,35 +84,45 @@ class TestContextInjection:
         assert args["project_path"] == "/repo/project"
 
     @pytest.mark.asyncio
-    async def test_skips_call_when_platform_session_id_is_none(self) -> None:
+    async def test_skips_call_when_platform_session_id_is_none(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """When _platform_session_id is None (unresolved), skip the call with a warning."""
         call_tool = AsyncMock(return_value={"success": True})
         event = _make_event()
         event.metadata["_platform_session_id"] = None
 
-        await dispatch_mcp_calls(
+        results = await dispatch_mcp_calls(
             [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
         )
 
+        assert results == []
+        assert "no platform session_id resolved" in caplog.text
         call_tool.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_skips_call_when_platform_session_id_is_missing(self) -> None:
+    async def test_skips_call_when_platform_session_id_is_missing(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """When _platform_session_id key is absent, skip the call with a warning."""
         call_tool = AsyncMock(return_value={"success": True})
         event = _make_event()
         del event.metadata["_platform_session_id"]
 
-        await dispatch_mcp_calls(
+        results = await dispatch_mcp_calls(
             [{"server": "gobby-memory", "tool": "build_turn_and_digest", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
         )
 
+        assert results == []
+        assert "no platform session_id resolved" in caplog.text
         call_tool.assert_not_called()
 
     @pytest.mark.asyncio
@@ -123,7 +133,13 @@ class TestContextInjection:
         del event.metadata["_platform_session_id"]
 
         await dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "digest", "arguments": {"session_id": "explicit-123"}}],
+            [
+                {
+                    "server": "gobby-memory",
+                    "tool": "digest",
+                    "arguments": {"session_id": "explicit-123"},
+                }
+            ],
             event,
             call_tool,
             logging.getLogger("test"),

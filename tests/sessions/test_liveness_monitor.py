@@ -849,7 +849,13 @@ class TestIsTmuxPaneAlive:
         gobby_result.returncode = 0
         gobby_result.stdout = "%6\t0\n"
 
-        with patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run:
+        with (
+            patch(
+                "gobby.agents.tmux.get_configured_tmux_command_prefix",
+                return_value=["tmux", "-L", "gobby"],
+            ),
+            patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run,
+        ):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
 
         assert mock_run.call_args_list[0].args[0] == [

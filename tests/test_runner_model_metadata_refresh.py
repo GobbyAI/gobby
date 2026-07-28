@@ -52,14 +52,19 @@ class _FakeConnection:
         self.entered = asyncio.Event()
         self._cancel_count = 0
 
-    async def execute(self, query: str, _params: object = None) -> None:
-        self.activity.append(query)
+    async def execute(
+        self,
+        query: str | psycopg.sql.Composable,
+        _params: object = None,
+    ) -> None:
+        query_text = query.as_string() if isinstance(query, psycopg.sql.Composable) else query
+        self.activity.append(query_text)
         if self.delay:
             await asyncio.sleep(self.delay)
-        if self.block == "first-set" and query.startswith("SET LOCAL"):
+        if self.block == "first-set" and query_text.startswith("SET LOCAL"):
             self.block = None
             await self._stubborn_wait()
-        if self.block and self.block in query:
+        if self.block and self.block in query_text:
             await self._stubborn_wait()
 
     async def commit(self) -> None:
