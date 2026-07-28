@@ -65,6 +65,57 @@ mod serial_db {
             "deleted file facts should not leave the file stale for every later scan"
         );
     }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn token_named_css_is_indexed_while_plaintext_token_container_is_skipped() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_id = unique_test_project_id("gcode-token-content-policy");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+
+        write_file(
+            project_root.path(),
+            "styles/tokens.css",
+            b":root { --light: white; }\n",
+        );
+        write_file(project_root.path(), "token.txt", b"plaintext-token\n");
+        let ctx = test_context(
+            database_url,
+            project_root.path().to_path_buf(),
+            project_id.clone(),
+        );
+
+        index_files(
+            discovered_request(project_root.path(), true),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("index token-named files");
+
+        assert!(
+            content_chunk_count(&mut conn, &project_id, "styles/tokens.css") > 0,
+            "tokens.css should produce content chunks"
+        );
+        assert_eq!(
+            content_chunk_count(&mut conn, &project_id, "token.txt"),
+            0,
+            "token.txt should remain excluded as a plaintext secret container"
+        );
+        assert_eq!(
+            indexed_file_count(&mut conn, &project_id, "token.txt"),
+            0,
+            "excluded token.txt should not produce an indexed-file row"
+        );
+    }
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
@@ -178,6 +229,15 @@ fn indexed_file_count(conn: &mut postgres::Client, project_id: &str, rel: &str) 
     count_rows(
         conn,
         "SELECT COUNT(*) FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
+        project_id,
+        rel,
+    )
+}
+
+fn content_chunk_count(conn: &mut postgres::Client, project_id: &str, rel: &str) -> i64 {
+    count_rows(
+        conn,
+        "SELECT COUNT(*) FROM code_content_chunks WHERE project_id = $1 AND file_path = $2",
         project_id,
         rel,
     )

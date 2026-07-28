@@ -8,6 +8,12 @@ fn discovers_ast_and_content_only_text_files() {
     write_file(root, "skills/gcode/SKILL.md", b"# gcode\n");
     write_file(root, "src/lib.rs", b"fn main() {}\n");
     write_file(root, "src/module.mjs", b"export const value = 1;\n");
+    write_file(root, "src/token_budget.rs", b"pub const BUDGET: u8 = 1;\n");
+    write_file(root, "src/token_tracker.py", b"TOKENS = 1\n");
+    write_file(root, "src/local_token.rs", b"pub const LOCAL: u8 = 1;\n");
+    write_file(root, "src/tokens.ts", b"export const tokens = {};\n");
+    write_file(root, "src/api_key_client.py", b"class ApiKeyClient: pass\n");
+    write_file(root, "styles/tokens.css", b":root { --light: white; }\n");
     write_file(root, "docs/reference.markdown", b"# Reference\n");
     write_file(root, "docs/guide.rst", b"Guide\n=====\n");
     write_file(root, "notes.txt", b"plain notes\n");
@@ -17,17 +23,29 @@ fn discovers_ast_and_content_only_text_files() {
     write_file(root, "Dockerfile", b"FROM rust:latest\n");
     write_file(root, "image.bin", b"PNG\0binary");
     write_file(root, "api_key.txt", b"secret-ish\n");
+    write_file(root, "secrets/token.txt", b"secret-ish\n");
+    write_file(root, "config/credentials.json", b"{}\n");
+    write_file(root, "keys/id_rsa", b"secret-ish\n");
+    write_file(root, "certs/server.pem", b"secret-ish\n");
     write_file(root, "target/generated.txt", b"generated\n");
 
     let excludes = vec!["target".to_string()];
     let (ast, content_only) = discover_files(root, &excludes);
 
-    // discover_files omits api_key.txt via the security module
-    // (SECRET_SUBSTRINGS matches "api_key"), image.bin via binary
-    // detection, and target/* via the explicit excludes vector.
+    // Secret containers, private keys, certificates, binary files, and explicit
+    // excludes are omitted before AST/content-only routing.
     assert_eq!(
         rels(root, ast),
-        vec!["scripts/setup.sh", "src/lib.rs", "src/module.mjs"]
+        vec![
+            "scripts/setup.sh",
+            "src/api_key_client.py",
+            "src/lib.rs",
+            "src/local_token.rs",
+            "src/module.mjs",
+            "src/token_budget.rs",
+            "src/token_tracker.py",
+            "src/tokens.ts"
+        ]
     );
     assert_eq!(
         rels(root, content_only),
@@ -39,7 +57,8 @@ fn discovers_ast_and_content_only_text_files() {
             "docs/guide.rst",
             "docs/reference.markdown",
             "notes.txt",
-            "skills/gcode/SKILL.md"
+            "skills/gcode/SKILL.md",
+            "styles/tokens.css"
         ]
     );
 }

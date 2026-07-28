@@ -290,10 +290,13 @@ files, docs/Markdown, configs, scripts, CSS, SQL, `Dockerfile`/`Makefile`, and
 other extensionless text files. Markdown is content-only and does not go through
 tree-sitter AST symbol detection. Binary, excluded, empty, and >10MB files are
 skipped. Secret-like skips are filename/path checks from `src/index/security.rs`:
-extensions such as `.env`, `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
-and `.secret`; prefixes such as `credentials`, `.env`, `id_rsa`, `id_ed25519`,
-and `token`; and substrings such as `api_key`, `apikey`, `_secret.`, and
-`_token.`. No content secret scanner or external detector is currently used.
+`.env*`, private-key basenames, and secret/certificate/keystore extensions are
+always excluded. Names such as `token`, `token_*`, `*-token`, `*_token`,
+`credentials`, `api_key`, and `apikey` are excluded only for extensionless or
+plaintext/config containers (`.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.cfg`,
+`.ini`, `.conf`, `.properties`, and `.xml`). Source and documentation names such
+as `tokens.css`, `token_budget.rs`, and `api_key_client.py` remain indexable. No
+content secret scanner or external detector is currently used.
 
 ## Build
 

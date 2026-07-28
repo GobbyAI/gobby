@@ -8,12 +8,13 @@
 //! to the existing lock + incremental reconcile, which is exactly as correct as
 //! before.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::index::walker;
 
-use super::util::DEFAULT_EXCLUDES;
+use super::util::{DEFAULT_EXCLUDES, relative_path};
 
 /// Clock-skew / mtime-granularity margin. Subtracted from `last_indexed_at`
 /// before comparing file mtimes, so the gate only ever errs toward refreshing
@@ -23,11 +24,10 @@ use super::util::DEFAULT_EXCLUDES;
 /// the periodic maintenance full re-hash sweep.
 const SKEW_MARGIN: Duration = Duration::from_secs(2);
 
-/// Returns `true` if any discovered file is newer than `last_indexed_at` (a
-/// modify or add) or any previously indexed path no longer exists on disk (a
-/// delete or rename), and `false` only when the on-disk tree still matches the
-/// recorded index. A `false` result lets the caller skip the advisory lock and
-/// the full re-hash entirely.
+/// Returns `true` if a discovered file is absent from the recorded index, newer
+/// than `last_indexed_at`, or if any previously indexed path no longer exists on
+/// disk. A `false` result lets the caller skip the advisory lock and the full
+/// re-hash entirely.
 ///
 /// Discovery mirrors the indexer (`walker::discover_files` with
 /// `DEFAULT_EXCLUDES`), so the `.gobby/plans/**/*.md` allowlist and every other
@@ -46,12 +46,19 @@ pub fn project_changed_since(
 
     let (candidates, content_only) =
         walker::discover_files_with_options(project_root, DEFAULT_EXCLUDES, options);
+    let indexed_paths: HashSet<&str> = indexed_paths.iter().map(String::as_str).collect();
 
-    // Modify / add: a discovered file whose mtime is newer than the threshold.
-    // A freshly added file also carries a recent mtime, so adds are caught here
-    // without a fragile path-set diff. An unreadable mtime is treated as a
-    // change, so we never skip a refresh for a file we cannot stat.
+    // Add: any discovered path absent from code_indexed_files. Check this before
+    // mtime so previously excluded files refresh even when their mtimes are old.
+    // Modify: a discovered file whose mtime is newer than the threshold.
     for path in candidates.iter().chain(content_only.iter()) {
+        let Ok(rel) = relative_path(path, project_root) else {
+            return true;
+        };
+        if !indexed_paths.contains(rel.as_str()) {
+            return true;
+        }
+
         match path.metadata() {
             Ok(meta) => match meta.modified() {
                 Ok(modified) if modified <= threshold => {}
@@ -156,13 +163,11 @@ mod tests {
     }
 
     #[test]
-    fn reports_change_for_newly_added_file() {
-        // A new (unindexed) file carries a recent mtime, so the modify/add scan
-        // trips even though it is absent from indexed_paths.
+    fn reports_change_for_unindexed_file_even_when_mtime_is_old() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         let added = write_file(root, "src/new.rs", b"fn added() {}\n");
-        set_mtime(&added, base_time() + Duration::from_secs(7200));
+        set_mtime(&added, base_time());
 
         let last = base_time() + Duration::from_secs(3600);
         let indexed: Vec<String> = Vec::new();

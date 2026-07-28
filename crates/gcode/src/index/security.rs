@@ -7,6 +7,9 @@ const SECRET_EXTENSIONS: &[&str] = &[
     ".env",
     ".pem",
     ".key",
+    ".crt",
+    ".cer",
+    ".der",
     ".p12",
     ".pfx",
     ".jks",
@@ -14,9 +17,21 @@ const SECRET_EXTENSIONS: &[&str] = &[
     ".secret",
 ];
 
-const SECRET_PREFIXES: &[&str] = &["credentials", ".env", "id_rsa", "id_ed25519", "token"];
+const PRIVATE_KEY_NAMES: &[&str] = &["id_rsa", "id_ed25519"];
 
-const SECRET_SUBSTRINGS: &[&str] = &["api_key", "apikey", "_secret.", "_token."];
+const PLAINTEXT_SECRET_EXTENSIONS: &[&str] = &[
+    "",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".conf",
+    ".properties",
+    ".xml",
+];
 
 /// Generated output directories that are excluded only when they are the
 /// first component under the indexed root.
@@ -104,7 +119,7 @@ fn is_root_generated_dir(pattern: &str) -> bool {
     ROOT_GENERATED_DIRS.contains(&pattern)
 }
 
-/// Check if file extension suggests secret content.
+/// Check if a filename suggests secret content.
 pub fn has_secret_extension(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -118,17 +133,32 @@ pub fn has_secret_extension(path: &Path) -> bool {
     if SECRET_EXTENSIONS.contains(&suffix.as_str()) {
         return true;
     }
-    for prefix in SECRET_PREFIXES {
-        if name.starts_with(prefix) {
-            return true;
-        }
+    if name.starts_with(".env") {
+        return true;
     }
-    for substring in SECRET_SUBSTRINGS {
-        if name.contains(substring) {
-            return true;
-        }
+    if PRIVATE_KEY_NAMES.iter().any(|private_name| {
+        name == *private_name
+            || name
+                .strip_prefix(*private_name)
+                .is_some_and(|rest| rest.starts_with('.'))
+    }) {
+        return true;
     }
-    false
+
+    PLAINTEXT_SECRET_EXTENSIONS.contains(&suffix.as_str())
+        && is_plaintext_secret_name(if suffix.is_empty() {
+            name.as_str()
+        } else {
+            name.strip_suffix(&suffix).unwrap_or(name.as_str())
+        })
+}
+
+fn is_plaintext_secret_name(stem: &str) -> bool {
+    stem == "token"
+        || stem.starts_with("token_")
+        || stem.ends_with("-token")
+        || stem.ends_with("_token")
+        || matches!(stem, "credentials" | "api_key" | "apikey")
 }
 
 /// Simple glob matching supporting `*` and `?` wildcards.
@@ -157,4 +187,48 @@ fn glob_inner(pattern: &[char], text: &[char]) -> bool {
         return glob_inner(&pattern[1..], &text[1..]);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_secret_extension;
+    use std::path::Path;
+
+    #[test]
+    fn classifies_secret_names_by_boundary_and_container_extension() {
+        let cases = [
+            ("tokens.css", false),
+            ("tokens.ts", false),
+            ("token_budget.rs", false),
+            ("token_tracker.py", false),
+            ("local_token.rs", false),
+            ("api_key_client.py", false),
+            ("credentials_loader.ts", false),
+            ("token-guide.md", false),
+            ("token", true),
+            ("token.txt", true),
+            ("token_prod.json", true),
+            ("access-token.toml", true),
+            ("refresh_token.ini", true),
+            ("credentials.yaml", true),
+            ("api_key.cfg", true),
+            ("apikey.xml", true),
+            (".env", true),
+            (".env.local", true),
+            ("settings.env", true),
+            ("id_rsa", true),
+            ("id_ed25519.pub", true),
+            ("server.pem", true),
+            ("server.crt", true),
+            ("truststore.jks", true),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(
+                has_secret_extension(Path::new(path)),
+                expected,
+                "unexpected secret classification for {path}"
+            );
+        }
+    }
 }
