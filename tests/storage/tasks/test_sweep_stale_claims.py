@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
+from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -154,3 +157,17 @@ def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None
 
     assert _claim(temp_db, closed.id) == SESS_DEAD
     assert _claim(temp_db, escalated.id) == SESS_DEAD
+
+
+def test_generic_sweep_defers_live_session_claims(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
+    LocalTaskManager(temp_db).add_label(task.id, "live-session")
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 0
+    assert _claim(temp_db, task.id) == SESS_DEAD

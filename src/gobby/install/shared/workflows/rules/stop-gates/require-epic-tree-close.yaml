@@ -10,6 +10,10 @@ rules:
     when: >-
       not variables.get('plan_mode')
       and variables.get('task_claimed')
+      and not all_tasks_have_label(
+        list((variables.get('claimed_tasks') or {}).keys()),
+        'live-session'
+      )
       and not task_tree_complete(list((variables.get('claimed_tasks') or {}).keys()))
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:

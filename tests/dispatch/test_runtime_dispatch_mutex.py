@@ -114,23 +114,29 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
         def reserve(self, task_id: str) -> None:
             raise AssertionError("reserve should not run when no action reserves files")
 
-    class FakeAgentRunManager:
-        def __init__(self, _db: object) -> None:
-            pass
-
-        def cleanup_stale_pending_runs(self) -> int:
-            return 0
+    def record_live_recovery(
+        db: object,
+        *,
+        project_id: str | None = None,
+    ) -> SimpleNamespace:
+        captured["live_recovery_db"] = db
+        captured["live_recovery_project_id"] = project_id
+        return SimpleNamespace(released=0, escalated=0, raced=0)
 
     monkeypatch.setattr(dispatcher, "RuntimeDispatchMutex", SpyMutex)
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *a, **k: [candidate])
     monkeypatch.setattr(dispatcher, "sweep_stale_claims", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        dispatcher,
+        "recover_expired_live_session_claims",
+        record_live_recovery,
+    )
     monkeypatch.setattr(dispatcher, "sweep_orphan_no_run_dispatch_mutexes", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "count_active_agents", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "reload_candidate", lambda *a, **k: candidate)
     monkeypatch.setattr(dispatcher, "build_context", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *a, **k: None)
     monkeypatch.setattr(dispatcher, "DispatchWriteSetGuard", SpyWriteSetGuard)
-    monkeypatch.setattr(dispatcher, "LocalAgentRunManager", FakeAgentRunManager)
 
     result = await dispatcher.run_heartbeat(
         db=heartbeat_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
@@ -142,5 +148,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     assert captured["expected_stage_updated_at"] == _STAGE_UPDATED_AT
     assert captured["write_set_db"] is heartbeat_db
     assert captured["write_set_project_id"] == "0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
+    assert captured["live_recovery_db"] is heartbeat_db
+    assert captured["live_recovery_project_id"] == "0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
     assert "expected_lifecycle" not in captured
     assert "expected_status" not in captured

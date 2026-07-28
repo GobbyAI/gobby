@@ -14,6 +14,12 @@ from gobby.tasks.transcript_evidence import (
     derive_transcript_evidence,
     merge_transcript_evidence,
 )
+from gobby.workflows.task_dirty_state import committable_task_paths, has_committable_edits
+
+__all__ = [
+    "committable_task_paths",
+    "has_committable_edits",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -100,27 +106,6 @@ def task_session_window_start(
         ):
             return _format_git_since(row.get("created_at") or row.get("link_created_at"))
     return None
-
-
-def committable_task_paths(paths: set[str], cwd: str) -> set[str]:
-    """Remove paths that Git intentionally ignores."""
-    from gobby.utils.git import is_path_gitignored
-
-    return {path for path in paths if not is_path_gitignored(path, cwd)}
-
-
-def has_committable_edits(paths: set[str], cwd: str) -> bool:
-    """Return whether any attributed, committable path is currently dirty."""
-    if not paths:
-        return False
-    from gobby.utils.git import run_git_command
-
-    status = run_git_command(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--", *sorted(paths)],
-        cwd=cwd,
-        timeout=10,
-    )
-    return status is None or bool(status.strip())
 
 
 def _format_git_since(value: Any) -> str | None:

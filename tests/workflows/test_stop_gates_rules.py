@@ -382,7 +382,14 @@ class TestRequireTaskClose:
         variables: dict[str, object] = {"mode_level": 2, "stop_attempts": 1}
         evaluator = SafeExpressionEvaluator(
             context={"variables": variables},
-            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
+            allowed_funcs={
+                "len": len,
+                "str": str,
+                "int": int,
+                "bool": bool,
+                "list": list,
+                "all_tasks_have_label": lambda _task_ids, _label: False,
+            },
         )
         assert not evaluator.evaluate(body.when), "Rule should not fire when task_claimed is unset"
 
@@ -401,7 +408,14 @@ class TestRequireTaskClose:
         }
         evaluator = SafeExpressionEvaluator(
             context={"variables": variables},
-            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
+            allowed_funcs={
+                "len": len,
+                "str": str,
+                "int": int,
+                "bool": bool,
+                "list": list,
+                "all_tasks_have_label": lambda _task_ids, _label: False,
+            },
         )
         assert evaluator.evaluate(body.when), "Rule should fire when task_claimed is set"
 

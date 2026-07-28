@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -13,6 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    all_tasks_have_label,
     first_tdd_code_path,
     first_tdd_test_path,
     is_gobby_build_command,
@@ -593,6 +594,49 @@ class TestTouchesClaudeMemoryPath:
         tool_input = {"file_path": ".claude/plans/design.md"}
 
         assert touches_claude_memory_path({}, tool_input) is False
+
+
+class TestAllTasksHaveLabel:
+    def test_requires_every_persisted_task_to_carry_label(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        labeled = _task(manager, sample_project, labels=["live-session"])
+        ordinary = _task(manager, sample_project, labels=["ordinary"])
+
+        assert all_tasks_have_label(manager, [labeled.id], "live-session")
+        assert not all_tasks_have_label(
+            manager,
+            [labeled.id, f"#{ordinary.seq_num}"],
+            "live-session",
+        )
+
+    def test_fails_closed_for_empty_missing_or_unavailable_tasks(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=["live-session"])
+
+        assert not all_tasks_have_label(manager, [], "live-session")
+        assert not all_tasks_have_label(manager, [task.id, "#999999999"], "live-session")
+        assert not all_tasks_have_label(manager, cast(Any, object()), "live-session")
+        assert not all_tasks_have_label(None, [task.id], "live-session")
+
+    def test_reads_current_database_labels_on_each_evaluation(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=["live-session"])
+
+        assert all_tasks_have_label(manager, [task.id], "live-session")
+        manager.remove_label(task.id, "live-session")
+        assert not all_tasks_have_label(manager, [task.id], "live-session")
 
     def test_skips_non_claude_memory_path(self) -> None:
         event_data = {

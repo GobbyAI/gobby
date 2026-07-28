@@ -488,6 +488,7 @@ def build_condition_helpers(
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
     from .condition_helpers import (
+        all_tasks_have_label,
         first_tdd_code_path,
         first_tdd_test_path,
         is_gobby_build_command,
@@ -526,6 +527,9 @@ def build_condition_helpers(
     # --- Task helpers ---
 
     if task_manager:
+        funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: all_tasks_have_label(
+            task_manager, task_id_or_ids, label
+        )
         funcs["task_tree_complete"] = lambda task_id: task_tree_complete(task_manager, task_id)
         funcs["task_needs_human_review"] = lambda task_id: task_needs_human_review(
             task_manager, task_id
@@ -537,6 +541,7 @@ def build_condition_helpers(
             task_manager, task_id_or_ids, *types
         )
     else:
+        funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: False
         funcs["task_tree_complete"] = lambda task_id: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False

@@ -219,6 +219,30 @@ def release_task_claim(
     return get_task(db, task_id)
 
 
+def release_task_claim_if_owned(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    expected_owner: str,
+) -> Task | None:
+    """Clear ownership only when the task still has the expected live owner."""
+    now = utc_now()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET claimed_by_session_id = NULL,
+                   updated_at = %s
+             WHERE id = %s
+               AND claimed_by_session_id = %s
+               AND closed_at IS NULL
+               AND escalated_at IS NULL
+            """,
+            (now, task_id, expected_owner),
+        )
+    return get_task(db, task_id) if cursor.rowcount else None
+
+
 def reopen_task(
     db: HubDatabase,
     task_id: str,
@@ -314,6 +338,34 @@ def escalate_task(
         raise RuntimeError(f"Task {task_id} escalation failed without a conflicting transition")
 
     return get_task(db, task_id)
+
+
+def escalate_task_if_owned(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    reason: str,
+    expected_owner: str,
+) -> Task | None:
+    """Escalate only when the task still has the expected live owner."""
+    now = utc_now()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET claimed_by_session_id = NULL,
+                   escalated_at = %s,
+                   escalation_reason = %s,
+                   is_escalated = TRUE,
+                   updated_at = %s
+             WHERE id = %s
+               AND claimed_by_session_id = %s
+               AND closed_at IS NULL
+               AND escalated_at IS NULL
+            """,
+            (now, reason, now, task_id, expected_owner),
+        )
+    return get_task(db, task_id) if cursor.rowcount else None
 
 
 def increment_validation_failure(

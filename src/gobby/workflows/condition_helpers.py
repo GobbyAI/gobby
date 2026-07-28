@@ -732,6 +732,32 @@ def task_type_in(
     return False
 
 
+def all_tasks_have_label(
+    task_manager: TaskProvider | None,
+    task_id_or_ids: TaskIdInput,
+    label: str,
+) -> bool:
+    """Return whether every current task row carries ``label``.
+
+    Empty, malformed, and missing task sets fail closed. Task rows are loaded
+    during each evaluation so cached session label metadata cannot grant an
+    exemption.
+    """
+    if not task_manager or not isinstance(label, str) or not label:
+        return False
+    task_ids = _normalize_task_ids(task_id_or_ids, "all_tasks_have_label")
+    if not task_ids:
+        return False
+    for task_id in task_ids:
+        task = _get_task(task_manager, task_id)
+        if task is None:
+            return False
+        labels = getattr(task, "labels", None)
+        if not isinstance(labels, list | tuple | set) or label not in labels:
+            return False
+    return True
+
+
 def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     """Check if a single task and its subtree are complete."""
     task = _get_task(task_manager, task_id)

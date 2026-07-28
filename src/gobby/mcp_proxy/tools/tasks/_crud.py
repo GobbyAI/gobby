@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._formatters import (
     task_discovery_payload,
     task_summary_payload,
 )
+from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -133,6 +134,15 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     exc_info=True,
                 )
                 return {"error": f"Cannot resolve project for session '{session_id}': {e}"}
+
+        label_error = live_session_label_change_error(
+            ctx,
+            (),
+            labels,
+            session_id=resolved_session_id,
+        )
+        if label_error:
+            return {"error": label_error}
 
         # Resolve parent_task_id if it's a reference format
         if parent_task_id:
@@ -498,6 +508,14 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         current_task = ctx.task_manager.get_task(resolved_id)
         if current_task is None:
             return {"error": f"Task {task_id} not found"}
+        if labels is not None:
+            label_error = live_session_label_change_error(
+                ctx,
+                getattr(current_task, "labels", ()),
+                labels,
+            )
+            if label_error:
+                return {"error": label_error}
 
         effective_category = category if category is not None else current_task.category
         effective_task_type = task_type if task_type is not None else current_task.task_type

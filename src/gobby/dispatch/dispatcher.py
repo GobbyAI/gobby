@@ -74,6 +74,7 @@ from gobby.storage.tasks._automation import (
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+from gobby.storage.tasks._live_session_recovery import recover_expired_live_session_claims
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -216,6 +217,18 @@ async def _run_heartbeat_unlocked(
     )
     if orphan_mutexes:
         logger.info("Dispatcher cleared %d orphan no-run mutex(es)", orphan_mutexes)
+    live_recovery = await run_db(
+        recover_expired_live_session_claims,
+        resolved_db,
+        project_id=project_id,
+    )
+    if live_recovery.released or live_recovery.escalated or live_recovery.raced:
+        logger.info(
+            "Dispatcher recovered expired live-session claims: released=%d escalated=%d raced=%d",
+            live_recovery.released,
+            live_recovery.escalated,
+            live_recovery.raced,
+        )
     reclaimed = await run_db(sweep_stale_claims, resolved_db, project_id=project_id)
     if reclaimed:
         logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)

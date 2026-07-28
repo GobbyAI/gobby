@@ -1,7 +1,7 @@
 ---
 name: bridge
 description: Process Drawbridge UI annotation tasks from .moat/ files. Use when the user runs /bridge, mentions Drawbridge or moat tasks, wants browser UI annotations turned into code changes, or wants a live annotate-implement-verify session (`bridge live`).
-version: "1.1.0"
+version: "1.2.0"
 category: integration
 triggers: bridge, drawbridge, moat, ui annotation, annotation tasks, visual feedback
 metadata:
@@ -96,25 +96,20 @@ an edit fails, re-read and verify the checkbox state before retrying.
 
 ## Live Mode
 
-A continuous annotate → implement → verify loop inside **one turn**: the user
-stays in the browser annotating while you process each round as it arrives.
-One umbrella Gobby task covers every edit; a sentinel annotation ends the
-session; the wrap-up makes a single commit and closes the task.
+A continuous annotate → implement → verify loop: the user stays in the browser
+annotating while you process each round as it arrives. The generic
+`live-session` skill owns the umbrella task, turn-end exemption, validation,
+commit, and close lifecycle. Bridge owns annotation processing.
 
 ### Setup
 
 1. Locate the `.moat` files (same search order as `## Task Files`); if
    missing, follow `## When Files Are Missing` and stop.
-2. Re-entry check: if an in-progress task titled `Process live Drawbridge
-   annotations — ...` already exists, `claim_task` it, reconcile `.moat`
-   statuses (finish or reset any `doing` entries), and resume under it —
-   never stack a second umbrella task.
-3. Otherwise create and claim the umbrella task:
-   `create_task(title="Process live Drawbridge annotations — <scope or date>",
-   category="code", claim=True, validation_criteria="Every annotation
-   processed this session has status done in .moat/moat-tasks-detail.json;
-   the committed diff implements those annotations; relevant project
-   verification commands pass.")`
+2. Load `live-session` with `gobby-skills:get_skill`, then execute
+   `live start "Drawbridge annotations — <scope or date>"`. It handles
+   re-entry, mixed-claim refusal, authorization, task creation, and claiming.
+3. Reconcile `.moat` statuses: finish or reset every pre-existing `doing`
+   entry before accepting new annotations.
 4. Merge `"bridge"` into the `additional_skills` session variable so this
    skill reloads after a context compaction.
 5. Process any already-pending `"to do"` entries as round 1.
@@ -172,9 +167,6 @@ the turn is blocked, and every wait must be a tool call.
 ### Wrap-Up
 
 1. Reconcile: no entries may remain `"doing"`.
-2. Run the project's relevant verification commands for the touched files.
-3. Make a single commit of the session diff (or the final checkpoint commit)
-   referencing the umbrella task.
-4. `close_task` with the commit SHA and a `changes_summary` covering rounds,
-   annotations, and files touched.
-5. Report: rounds processed, annotations implemented, files changed.
+2. Execute `live done`. The live-session skill owns validation, the final
+   task-linked commit when changes exist, and `close_task`.
+3. Report: rounds processed, annotations implemented, files changed.

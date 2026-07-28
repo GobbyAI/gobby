@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 
@@ -20,6 +21,16 @@ def register_add_label(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
             return {"error": str(e)}
+        current_task = ctx.task_manager.get_task(resolved_id)
+        if current_task is None:
+            return {"error": f"Task {task_id} not found"}
+        label_error = live_session_label_change_error(
+            ctx,
+            current_task.labels,
+            [*(current_task.labels or ()), label],
+        )
+        if label_error:
+            return {"error": label_error}
         task = ctx.task_manager.add_label(resolved_id, label)
         if not task:
             return {"error": f"Task {task_id} not found"}
@@ -52,6 +63,13 @@ def register_remove_label(registry: InternalToolRegistry, ctx: RegistryContext) 
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
             return {"error": str(e)}
+        current_task = ctx.task_manager.get_task(resolved_id)
+        if current_task is None:
+            return {"error": f"Task {task_id} not found"}
+        next_labels = [item for item in current_task.labels or () if item != label]
+        label_error = live_session_label_change_error(ctx, current_task.labels, next_labels)
+        if label_error:
+            return {"error": label_error}
         task = ctx.task_manager.remove_label(resolved_id, label)
         if not task:
             return {"error": f"Task {task_id} not found"}

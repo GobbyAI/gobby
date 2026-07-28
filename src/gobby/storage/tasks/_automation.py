@@ -3,6 +3,7 @@
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
@@ -108,6 +109,12 @@ def sweep_stale_claims(
     """Release task claims held by sessions that are no longer active."""
     now = utc_now()
     params: list[Any] = [now]
+    live_session_clause, live_session_params = json_array_contains_condition(
+        db,
+        "tasks.labels",
+        "live-session",
+    )
+    params.extend(live_session_params)
     project_filter = ""
     if project_id is not None:
         project_filter = "AND project_id = %s"
@@ -123,6 +130,7 @@ def sweep_stale_claims(
                AND escalated_at IS NULL
                AND COALESCE(is_escalated, FALSE) IS FALSE
                AND claimed_by_session_id IS NOT NULL
+               AND NOT COALESCE(({live_session_clause}), FALSE)
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
