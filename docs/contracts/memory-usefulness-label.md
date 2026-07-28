@@ -55,14 +55,11 @@ The canonical labeled-row key is:
   injection outcome, and label.
 - `memory_id` — the memory row UUID.
 
-**Known gap this contract closes (verified 2026-07-02):** the injected set
-currently survives only in transient message payloads and the
-`injected_memory_ids` session variable, **without** `recall_request_id`. The
-feature stream (`recall_signal.jsonl`) has the request id but no injection
-outcome. #17196 MUST thread `recall_request_id` through the injection path
-(fast-recall inline formatter `EffectsMixin._format_search_memories_result`
-and the helper-delivery path via `MemoryRecallResult.recall_request_id`) so
-the injection-outcome record (§5) can be written with the full key.
+Daemon-owned recall mints `recall_request_id` in `MemoryRecallRunner.run`,
+threads it through `MemoryRecallResult`, and keeps it on the queued delivery.
+Generic recalled memories render through `build_memory_context`; review lessons
+use the separate installed-rule path through
+`DeliveryFormattingMixin._format_review_lessons_result`.
 
 ## 3. Labeled-row contract
 
@@ -232,15 +229,17 @@ injection-path recall, written at injection-decision time.
 
 Primary key: `(recall_request_id, memory_id)`.
 
-`drop_reason` enum, grounded in the actual filter sites on the injection path
-(`EffectsMixin._format_search_memories_result`,
-`src/gobby/workflows/engine/effects.py`; `build_memory_context`,
-`src/gobby/memory/context.py`):
+`drop_reason` enum, grounded in the daemon-owned recall filters
+(`MemoryRecallRunner._filter_candidates`, `src/gobby/memory/recall.py`) and
+generic memory rendering (`build_memory_context`,
+`src/gobby/memory/context.py`). Review lessons use
+`DeliveryFormattingMixin._format_review_lessons_result` and the separate
+`injected_review_lesson_ids` deduplication state.
 
 | Value | Filter site |
 | --- | --- |
 | `already_injected` | Dedup against the `injected_memory_ids` session variable. |
-| `review_lesson` | `_is_review_lesson_memory` exclusion. |
+| `review_lesson` | `MemoryRecallRunner._filter_candidates` tag exclusion. |
 | `empty_content` | Content empty after bullet-strip in `build_memory_context`. |
 | `payload_empty` | Whole payload empty → no block rendered (all returned ids get this). |
 | `budget` | Reserved: token/count budget truncation, if introduced. |

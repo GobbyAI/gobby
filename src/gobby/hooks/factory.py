@@ -532,14 +532,6 @@ class HookManagerFactory:
         # set_variable effects that follow only fire on success.
         inline_dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(tool_proxy_getter)
 
-        from gobby.memory.recall_signal_log import make_injection_outcome_recorder
-
-        memory_config = getattr(config, "memory", None) if config else None
-        injection_outcome_recorder = (
-            make_injection_outcome_recorder(memory_config, database)
-            if memory_config is not None
-            else None
-        )
         rule_engine = RuleEngine(
             db=database,
             skill_manager=skill_manager,
@@ -548,7 +540,6 @@ class HookManagerFactory:
             runner=agent_runner,
             completion_registry=completion_registry,
             task_manager=storage.task,
-            injection_outcome_recorder=injection_outcome_recorder,
         )
 
         pipeline_executor = None

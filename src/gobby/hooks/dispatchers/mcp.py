@@ -11,25 +11,15 @@ import asyncio
 import concurrent.futures
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.effect_deadline import remaining_blocking_effect_seconds
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
-from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
-from gobby.memory.context import format_memory_metadata_suffix
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
-
-REVIEW_LESSON_TAG = "review-lesson"
-# Project memories share the SDK additional-context budget; cap them at 4k chars
-# and never allow them to consume more than half of the total context.
-PROJECT_MEMORY_CONTEXT_BUDGET = min(4_000, ADDITIONAL_CONTEXT_LIMIT // 2)
-PROJECT_MEMORY_OPEN_TAG = "<project-memory>"
-PROJECT_MEMORY_CLOSE_TAG = "</project-memory>"
 
 
 def run_coro_blocking(
@@ -191,11 +181,6 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         desc = tool_info.get("description", "")
         return f"**Schema for {name}:**\n{desc}\n```json\n{json.dumps(schema, indent=2)}\n```"
 
-    elif tool == "search_memories":
-        memories = result.get("memories", [])
-        memories = [m for m in memories if not _is_review_lesson_memory(m)]
-        return _format_project_memories(memories)
-
     elif tool == "recall_review_lessons_for_files":
         lessons = result.get("lessons", [])
         if not lessons:
@@ -246,153 +231,6 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
 
     else:
         return f"**{tool} result:**\n```json\n{json.dumps(result, indent=2, default=str)}\n```"
-
-
-def _is_review_lesson_memory(memory: Any) -> bool:
-    """Return True when ``memory`` is a review lesson tagged with ``REVIEW_LESSON_TAG``.
-
-    Expects a dict with a ``tags`` iterable; non-dicts or non-iterable tag values
-    return False.
-    """
-    if not isinstance(memory, dict):
-        return False
-    tags = memory.get("tags")
-    if not isinstance(tags, (list, tuple, set, frozenset)):
-        return False
-    return REVIEW_LESSON_TAG in tags
-
-
-def _project_memory_omitted_line(count: int) -> str:
-    noun = "memory" if count == 1 else "memories"
-    return f"- ... {count} lower-ranked {noun} omitted due to context budget."
-
-
-def _render_project_memory(body_lines: list[str], omitted_count: int = 0) -> str:
-    if not body_lines:
-        return ""
-    lines = [PROJECT_MEMORY_OPEN_TAG, *body_lines]
-    if omitted_count:
-        lines.append(_project_memory_omitted_line(omitted_count))
-    lines.append(PROJECT_MEMORY_CLOSE_TAG)
-    return "\n".join(lines)
-
-
-def _project_memory_render_len(body_lines: list[str], omitted_count: int = 0) -> int:
-    return len(_render_project_memory(body_lines, omitted_count))
-
-
-def _project_memory_next_line_budget(
-    body_lines: list[str],
-    omitted_count: int,
-    budget: int,
-) -> int:
-    # Reserve room for the trailing blank separator included by _render_project_memory().
-    return budget - _project_memory_render_len(body_lines + [""], omitted_count)
-
-
-def _fit_memory_line(content: str, suffix: str, max_len: int) -> str | None:
-    prefix = "- "
-    marker = "..."
-    minimum_len = len(prefix) + len(marker) + len(suffix)
-    if max_len < minimum_len:
-        return None
-
-    full_line = f"{prefix}{content}{suffix}"
-    if len(full_line) <= max_len:
-        return full_line
-
-    content_budget = max_len - len(prefix) - len(marker) - len(suffix)
-    truncated = content[:content_budget].rstrip()
-    return f"{prefix}{truncated}{marker}{suffix}"
-
-
-@dataclass
-class ProjectMemoryRenderOutcome:
-    """Per-memory render decisions for the ``<project-memory>`` block.
-
-    Feeds the durable injection-outcome record (contract §5): ``rendered_ids``
-    are injected in render order (index = ``injection_position``);
-    ``empty_content_ids`` and ``omitted_ids`` map to the ``empty_content`` and
-    ``budget`` drop reasons. Memories without an ``id`` are untracked.
-    """
-
-    rendered_ids: list[str] = field(default_factory=list)
-    empty_content_ids: list[str] = field(default_factory=list)
-    omitted_ids: list[str] = field(default_factory=list)
-
-
-def format_project_memories_with_outcome(
-    memories: list[Any],
-    *,
-    budget: int = PROJECT_MEMORY_CONTEXT_BUDGET,
-) -> tuple[str, ProjectMemoryRenderOutcome]:
-    outcome = ProjectMemoryRenderOutcome()
-    candidates: list[tuple[str | None, str, str]] = []
-    for memory in memories:
-        if not isinstance(memory, dict):
-            continue
-        memory_id = memory.get("id")
-        if memory_id is not None:
-            memory_id = str(memory_id)
-        content = str(memory.get("content", "")).strip()
-        if not content:
-            if memory_id:
-                outcome.empty_content_ids.append(memory_id)
-            continue
-
-        score = memory.get("similarity")
-        via = memory.get("search_via")
-        suffix = format_memory_metadata_suffix(memory_id, score=score, via=via)
-        candidates.append((memory_id, content, suffix))
-
-    if not candidates:
-        return "", outcome
-
-    body_lines: list[str] = []
-    omitted_count = 0
-    for index, (_, content, suffix) in enumerate(candidates):
-        remaining_after_current = len(candidates) - index - 1
-        full_line = f"- {content}{suffix}"
-        if _project_memory_render_len(body_lines + [full_line], remaining_after_current) <= budget:
-            body_lines.append(full_line)
-            continue
-
-        max_line_len = _project_memory_next_line_budget(
-            body_lines,
-            remaining_after_current,
-            budget,
-        )
-        truncated_line = _fit_memory_line(content, suffix, max_line_len)
-        if truncated_line:
-            body_lines.append(truncated_line)
-            omitted_count = remaining_after_current
-        else:
-            omitted_count = len(candidates) - index
-        break
-
-    result = _render_project_memory(body_lines, omitted_count)
-    while body_lines and len(result) > budget:
-        body_lines.pop()
-        omitted_count += 1
-        result = _render_project_memory(body_lines, omitted_count)
-    if len(result) > budget:
-        result = ""
-        body_lines = []
-    # The render loop appends at most one line per candidate, in order, so the
-    # first len(body_lines) candidates are exactly the rendered ones.
-    rendered_n = len(body_lines)
-    outcome.rendered_ids = [mid for mid, _, _ in candidates[:rendered_n] if mid]
-    outcome.omitted_ids = [mid for mid, _, _ in candidates[rendered_n:] if mid]
-    return result, outcome
-
-
-def _format_project_memories(
-    memories: list[Any],
-    *,
-    budget: int = PROJECT_MEMORY_CONTEXT_BUDGET,
-) -> str:
-    text, _ = format_project_memories_with_outcome(memories, budget=budget)
-    return text
 
 
 def dispatch_mcp_calls(
