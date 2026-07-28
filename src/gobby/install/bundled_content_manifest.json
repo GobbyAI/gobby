@@ -360,7 +360,7 @@
     "workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml": "4ec100000dc8599fc5cb6e753157c573996469088c627e3f1d02147d69edebda",
     "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "b2916a3e9c04a559140b356213840389997a071264d64fd11d84aba06a854918",
     "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "633aeb3b013155c1da5d361004286dcdd03aff9c52cc7e4ad62dc862e9efc8a7",
-    "workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml": "062384357134c49472052fe02772040f2544075546cc40974d68576bf2a3f99f",
+    "workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml": "6c66e31d7972415984c7e74e8eaa9f21efc68eac6b6a8979be31d6d8798b76fb",
     "workflows/rules/memory-lifecycle/require-memory-review-before-status.yaml": "454515f01b3e9292c47f430c8749843dd988e60bd0f74d7d7feb9b3289468a97",
     "workflows/rules/memory-lifecycle/reset-memory-tracking-on-start.yaml": "eeb0d4944ccdb850994137d3a4aa2fdfe49e4cdade0e8ad39e33efa9376ee2ff",
     "workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml": "76622980982aa2e37fdbc9731ce3f4784f632bbe873e282ebf36f4dad4978f75",

@@ -119,6 +119,8 @@ async def test_other_tools_and_wrong_request_ids_are_blocked(
     assert result.reason is not None
     assert "get_recall_memories" in result.reason
     assert "request-first" in result.reason
+    assert "This is the only permitted call" in result.reason
+    assert "Issue it alone, not inside a parallel batch." in result.reason
 
 
 @pytest.mark.asyncio
@@ -162,6 +164,8 @@ async def test_turn_end_is_blocked_while_recall_is_pending(engine: RuleEngine) -
     assert result.decision == "block"
     assert result.reason is not None
     assert "request-stop" in result.reason
+    assert "This is the only permitted call" in result.reason
+    assert "Issue it alone, not inside a parallel batch." in result.reason
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,9 @@ rules:
         reason: >-
           call_tool("gobby-memory", "get_recall_memories",
           {"recall_request_id":"{{ pending_memory_recall_request_id() }}"})
-          to retrieve the pending memories, then continue.
+          to retrieve the pending memories, then continue. This is the only permitted
+          call — every other tool stays blocked until it completes. Issue it alone, not
+          inside a parallel batch.
 
   require-memory-recall-before-turn-end:
     description: "Block turn completion until the oldest pending memory recall is retrieved"
@@ -27,4 +29,6 @@ rules:
         reason: >-
           Retrieve the pending memories before finishing:
           call_tool("gobby-memory", "get_recall_memories",
-          {"recall_request_id":"{{ pending_memory_recall_request_id() }}"}).
+          {"recall_request_id":"{{ pending_memory_recall_request_id() }}"}). This is the
+          only permitted call — every other tool stays blocked until it completes. Issue
+          it alone, not inside a parallel batch.
