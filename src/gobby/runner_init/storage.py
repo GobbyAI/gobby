@@ -236,20 +236,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             HubManager,
             SkillsMPProvider,
         )
+        from gobby.skills.hubs.manager import resolve_hub_api_keys
 
         skills_config = runner.config.skills if hasattr(runner.config, "skills") else SkillsConfig()
-
-        api_keys: dict[str, str] = {}
-        for _hub_name, hub_config in skills_config.hubs.items():
-            key_name = (
-                hub_config.auth_token_env
-                if hub_config.type == "github-topic"
-                else hub_config.auth_key_name
-            )
-            if key_name:
-                value = os.environ.get(key_name)
-                if value:
-                    api_keys[key_name] = value
+        api_keys = resolve_hub_api_keys(skills_config.hubs, runner.secret_store)
 
         runner.hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
         runner.hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import tarfile
 from contextlib import AbstractContextManager
@@ -14,6 +15,7 @@ import pytest
 
 from gobby.config.skills import HubConfig
 from gobby.mcp_proxy.tools.skills import create_skills_registry
+from gobby.skills.hubs.base import DownloadResult
 from gobby.skills.hubs.github_topic import GitHubTopicProvider
 from gobby.skills.hubs.manager import HubManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -135,6 +137,7 @@ def _client_patch(scenario: GitHubScenario) -> AbstractContextManager[object]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_sha_pinned_identity(tmp_path: Path) -> None:
     scenario = GitHubScenario()
     item_id = "acme/example.repo:skills/demo"
@@ -169,6 +172,7 @@ async def test_sha_pinned_identity(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_duplicate_slugs_and_moving_branch(tmp_path: Path) -> None:
     scenario = GitHubScenario()
     scenario.add_repo("one/skills", SHA_A, {"tools/lint/SKILL.md": _skill_md("lint", "one")})
@@ -197,6 +201,7 @@ async def test_duplicate_slugs_and_moving_branch(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_caps_rate_limit_and_disappearing_repo(tmp_path: Path) -> None:
     now = [0.0]
     scenario = GitHubScenario()
@@ -270,6 +275,7 @@ async def test_caps_rate_limit_and_disappearing_repo(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_install_skill_topic_reference_end_to_end(temp_db: HubDatabase) -> None:
     scenario = GitHubScenario()
     item_id = "acme/example.repo:skills/demo"
@@ -294,3 +300,84 @@ async def test_install_skill_topic_reference_end_to_end(temp_db: HubDatabase) ->
     assert missing["success"] is False and "item_unavailable" in missing["error"]
     assert traversal["success"] is False and "invalid" in traversal["error"].lower()
     assert sum("/commits/" in request.url.path for request in scenario.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_discover_single_flights_concurrent_refreshes() -> None:
+    scenario = GitHubScenario()
+    scenario.add_repo(
+        "acme/example.repo",
+        SHA_A,
+        {"skills/demo/SKILL.md": _skill_md("demo", "A")},
+    )
+    provider = GitHubTopicProvider("gobby-topic", "", topic="gobby-skill")
+
+    with _client_patch(scenario):
+        first, second = await asyncio.gather(provider.discover(), provider.discover())
+
+    assert first == second
+    assert sum(request.url.path == "/search/repositories" for request in scenario.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_discover_skips_repository_with_invalid_json_shape() -> None:
+    scenario = GitHubScenario()
+    scenario.add_repo(
+        "acme/example.repo",
+        SHA_A,
+        {"skills/demo/SKILL.md": _skill_md("demo", "A")},
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/commits/" in request.url.path:
+            return httpx.Response(200, json=[])
+        return scenario.handler(request)
+
+    transport = httpx.MockTransport(handler)
+    provider = GitHubTopicProvider("gobby-topic", "", topic="gobby-skill")
+    with patch("httpx.AsyncClient", partial(httpx.AsyncClient, transport=transport)):
+        discovery = await provider.discover()
+
+    assert discovery["records"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_install_skill_rejects_mismatched_download_provenance(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    item_id = "acme/example.repo:skills/demo"
+    manager = HubManager({"gobby-topic": HubConfig(type="github-topic", topic="gobby-skill")})
+    manager.register_provider_factory("github-topic", GitHubTopicProvider)
+    provider = manager.get_provider("gobby-topic")
+    tool = create_skills_registry(temp_db, hub_manager=manager).get_tool("install_skill")
+    assert tool is not None
+    skill_dir = tmp_path / "download"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_bytes(_skill_md("demo", "A"))
+    with patch.object(
+        provider,
+        "download_skill",
+        new=AsyncMock(
+            return_value=DownloadResult(
+                success=True,
+                slug="demo",
+                path=str(skill_dir),
+                version=SHA_A,
+                provenance={
+                    "item_id": item_id,
+                    "repo": "other/repository",
+                    "path": "skills/demo",
+                    "sha": SHA_A,
+                },
+            )
+        ),
+    ):
+        result = await tool(source=f"gobby-topic:{item_id}")
+
+    assert result["success"] is False
+    assert "item_unavailable" in result["error"]
+    assert LocalSkillManager(temp_db).get_by_name("demo") is None

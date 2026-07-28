@@ -216,7 +216,9 @@ async def rebuild_vector_store(
         if callable(memory_dicts) and callable(rebuild_from_supplier):
             await rebuild_from_supplier(memory_dicts, embed_fn)
         else:
-            resolved_memories = memory_dicts() if callable(memory_dicts) else memory_dicts
+            resolved_memories = (
+                await asyncio.to_thread(memory_dicts) if callable(memory_dicts) else memory_dicts
+            )
             await vector_store.rebuild(resolved_memories, embed_fn)
         logger.info("VectorStore rebuild complete")
     except asyncio.CancelledError:

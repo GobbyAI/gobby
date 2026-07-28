@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -61,11 +62,22 @@ def test_class_injection_rule_source_uses_canonical_schema(
     assert row is not None
     body = RuleDefinitionBody.model_validate_json(row.definition_json)
     assert body.when == "True"
+    assert len(body.resolved_effects) == 1
     assert body.resolved_effects[0].type == "mcp_call"
 
 
 def _sync_bundled(db: HubDatabase) -> None:
     sync_bundled_rules(db, get_bundled_rules_path())
+
+
+def _sync_file_recall_rule(db: HubDatabase) -> None:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE workflow_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+            ("inject-review-lessons-for-touched-files",),
+        )
 
 
 def _event(data: dict[str, Any]) -> HookEvent:
@@ -101,7 +113,7 @@ def _lesson(memory_id: str = "lesson-1") -> dict[str, Any]:
 
 class TestReviewLearningRule:
     def test_rule_structure(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
         manager = LocalWorkflowDefinitionManager(temp_db)
 
         row = manager.get_by_name("inject-review-lessons-for-touched-files")
@@ -113,6 +125,7 @@ class TestReviewLearningRule:
         assert body.when is not None
         assert "canonical_file_paths" in body.when
         assert "canonical_repo_mutation" in body.when
+        assert len(body.resolved_effects) == 1
         effect = body.resolved_effects[0]
         assert effect.type == "mcp_call"
         assert effect.server == "gobby-review-learning"
@@ -122,7 +135,7 @@ class TestReviewLearningRule:
 
     @pytest.mark.asyncio
     async def test_broad_read_injects_compact_review_guidance(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
         calls: list[dict[str, Any]] = []
 
         async def dispatcher(
@@ -139,7 +152,7 @@ class TestReviewLearningRule:
                     "canonical_tool_kind": "read",
                     "canonical_file_paths": ["crates/gcode/src/config/services.rs"],
                     "canonical_code_navigation_broad": True,
-                }
+                },
             ),
             session_id=EXTERNAL_SESSION_ID,
             variables={},
@@ -157,18 +170,26 @@ class TestReviewLearningRule:
 
     @pytest.mark.asyncio
     async def test_mutation_injects_before_write(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
+        lesson_id = f"lesson-{uuid4()}"
+        calls: list[tuple[str, str]] = []
 
         async def dispatcher(
             server: str, tool: str, args: dict[str, Any], event: HookEvent
         ) -> dict[str, Any]:
-            return {"success": True, "result": {"count": 1, "lessons": [_lesson()]}}
+            calls.append((server, tool))
+            return {"success": True, "result": {"count": 1, "lessons": [_lesson(lesson_id)]}}
 
         engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
         response = await engine.evaluate(
             _event(
                 {
                     "tool_name": "Edit",
+                    "tool_input": {
+                        "file_path": "crates/gcode/src/config/services.rs",
+                        "old_string": "old",
+                        "new_string": "new",
+                    },
                     "canonical_tool_kind": "write",
                     "canonical_file_paths": ["crates/gcode/src/config/services.rs"],
                     "canonical_repo_mutation": True,
@@ -178,12 +199,13 @@ class TestReviewLearningRule:
             variables={},
         )
 
+        assert calls == [("gobby-review-learning", "recall_review_lessons_for_files")]
         assert response.context is not None
         assert "service-config-propagate-db-errors" in response.context
 
     @pytest.mark.asyncio
     async def test_unrelated_file_result_injects_nothing(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
 
         async def dispatcher(
             server: str, tool: str, args: dict[str, Any], event: HookEvent
@@ -195,6 +217,11 @@ class TestReviewLearningRule:
             _event(
                 {
                     "tool_name": "Edit",
+                    "tool_input": {
+                        "file_path": "src/unrelated.py",
+                        "old_string": "old",
+                        "new_string": "new",
+                    },
                     "canonical_tool_kind": "write",
                     "canonical_file_paths": ["src/unrelated.py"],
                     "canonical_repo_mutation": True,
@@ -208,17 +235,23 @@ class TestReviewLearningRule:
 
     @pytest.mark.asyncio
     async def test_repeated_access_does_not_spam(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
+        lesson_id = f"lesson-{uuid4()}"
 
         async def dispatcher(
             server: str, tool: str, args: dict[str, Any], event: HookEvent
         ) -> dict[str, Any]:
-            return {"success": True, "result": {"count": 1, "lessons": [_lesson()]}}
+            return {"success": True, "result": {"count": 1, "lessons": [_lesson(lesson_id)]}}
 
         engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
         event = _event(
             {
                 "tool_name": "Edit",
+                "tool_input": {
+                    "file_path": "crates/gcode/src/config/services.rs",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
                 "canonical_tool_kind": "write",
                 "canonical_file_paths": ["crates/gcode/src/config/services.rs"],
                 "canonical_repo_mutation": True,
@@ -233,7 +266,7 @@ class TestReviewLearningRule:
 
     @pytest.mark.asyncio
     async def test_narrow_read_does_not_trigger(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
+        _sync_file_recall_rule(temp_db)
         calls = 0
 
         async def dispatcher(
@@ -344,6 +377,7 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
         assert body.event == RuleTriggerEvent.TURN_START
         assert body.group == "review-learning"
         assert body.agent_scope == agent_scope
+        assert len(body.resolved_effects) == 1
         effect = body.resolved_effects[0]
         assert effect.type == "mcp_call"
         assert effect.server == "gobby-review-learning"

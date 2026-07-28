@@ -67,6 +67,15 @@ def _first_sentence(text: str) -> str:
     return text.strip()
 
 
+def is_action_first_reason(reason: str) -> bool:
+    """Return whether a block reason opens with executable recovery guidance."""
+    return (
+        reason.startswith(_ACTION_FIRST_PREFIXES)
+        or _GET_SKILL_RE.match(reason) is not None
+        or _COMMAND_CALL_RE.match(reason) is not None
+    )
+
+
 def _compact_claude_pre_tool_deny_reason(reason: str) -> str:
     """Return a compact one-line Claude PreToolUse denial reason for rule blocks."""
     match = _RULE_BLOCK_REASON_RE.match(reason.strip())
@@ -107,12 +116,7 @@ def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> st
     body = " ".join(line.strip() for line in body.splitlines() if line.strip())
     body = re.sub(r"\s+", " ", body).strip()
 
-    is_redirect = (
-        body.startswith(_ACTION_FIRST_PREFIXES)
-        or _GET_SKILL_RE.match(body) is not None
-        or _COMMAND_CALL_RE.match(body) is not None
-    )
-    if is_redirect:
+    if is_action_first_reason(body):
         action = _first_sentence(body)
         remainder = body[len(action) :].strip()
         short_reason = _first_sentence(remainder) if remainder else ""

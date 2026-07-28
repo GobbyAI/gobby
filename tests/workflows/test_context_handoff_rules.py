@@ -153,7 +153,11 @@ class TestClearPendingContextResetOnStart:
         assert body.when is not None
         assert "pending_context_reset" in body.when
 
-    def test_cleanup_runs_after_context_reset_consumers(self, db, manager) -> None:
+    def test_cleanup_runs_after_context_reset_consumers(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         cleanup = manager.get_by_name("clear-pending-context-reset-on-start")
         assert cleanup is not None
@@ -369,10 +373,15 @@ class TestPreserveContextOnCompact:
         assert len(memory_reset) == 1
         assert memory_reset[0].value == []
 
-    def test_sets_pending_context_reset(self, db, manager) -> None:
+    def test_sets_pending_context_reset(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Should set pending_context_reset to true."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
+        assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         reset_flag = [
@@ -381,9 +390,14 @@ class TestPreserveContextOnCompact:
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
 
-    def test_resets_context_nudge_cooldown(self, db, manager) -> None:
+    def test_resets_context_nudge_cooldown(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
+        assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         compacted_turn = [
@@ -413,7 +427,10 @@ class TestNudgeCompactOnContextPressure:
         assert body.effects[0].type == "inject_context"
         assert "context_compact_guidance_message" in (body.effects[0].template or "")
 
-    async def test_turn_start_observer_sets_guidance_and_rule_injects_context(self, db) -> None:
+    async def test_turn_start_observer_sets_guidance_and_rule_injects_context(
+        self,
+        db: HubDatabase,
+    ) -> None:
         from gobby.workflows.state_manager import SessionVariableManager
 
         _sync_bundled(db)

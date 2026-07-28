@@ -14,6 +14,8 @@ from gobby.mcp_proxy.tools.agents_spawn_tools import register_agent_spawn_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 
+pytestmark = pytest.mark.unit
+
 
 def test_one_registry_across_all_roots(
     temp_db: HubDatabase,
@@ -45,6 +47,7 @@ def test_one_registry_across_all_roots(
     )
     create_agents_registry(runner=runner, detection_registry=services.detection_registry)
 
+    assert captured_contexts, "spawn registrar was not invoked"
     context = captured_contexts[0]
     assert context.detection_registry is registry
 

@@ -20,11 +20,10 @@ from gobby.config.validation_detection import (
 from gobby.config.validation_detection import (
     shell_command_segments,
 )
+from gobby.hooks.memory_recall_delivery import MEMORY_RECALL_DELIVERIES_VARIABLE
 from gobby.tasks.state_semantics import projected_task_state
 
 logger = logging.getLogger(__name__)
-
-MEMORY_RECALL_DELIVERIES_VARIABLE = "memory_recall_deliveries"
 
 
 def pending_memory_recall_request_id(variables: Mapping[str, Any]) -> str | None:

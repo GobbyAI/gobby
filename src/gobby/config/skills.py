@@ -71,6 +71,11 @@ class HubConfig(BaseModel):
         description="GitHub topic discovery cache TTL in seconds",
     )
 
+    @property
+    def auth_secret_name(self) -> str | None:
+        """Return the SecretStore key used to authenticate this hub."""
+        return self.auth_token_env if self.type == "github-topic" else self.auth_key_name
+
     @field_validator("base_url")
     @classmethod
     def validate_base_url(cls, value: str | None) -> str | None:

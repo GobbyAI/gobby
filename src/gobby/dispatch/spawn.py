@@ -326,7 +326,8 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    prompt, evidence_service, evidence_id = _prepare_plan_adversary_evidence(
+    prompt, evidence_service, evidence_id = await asyncio.to_thread(
+        _prepare_plan_adversary_evidence,
         db=db,
         action=action,
         task=task,

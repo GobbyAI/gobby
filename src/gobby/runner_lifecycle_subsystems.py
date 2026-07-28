@@ -412,7 +412,9 @@ async def _register_wiki_cron_handlers(
             register_wiki_cron_jobs_for_projects,
         )
 
-        register_wiki_prune_cron(
+        await _run_db(
+            runner,
+            register_wiki_prune_cron,
             cron_storage=cron_storage,
             cron_executor=executor,
             gateway=GwikiGateway(),

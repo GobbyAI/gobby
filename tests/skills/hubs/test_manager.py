@@ -535,18 +535,27 @@ class TestResolveHubApiKeys:
             "hub-a": HubConfig(type="skillsmp", base_url="https://a.com", auth_key_name="KEY_A"),
             "hub-b": HubConfig(type="skillsmp", base_url="https://b.com", auth_key_name="KEY_B"),
             "hub-c": HubConfig(type="clawdhub", base_url="https://c.com"),  # no auth
+            "github": HubConfig(type="github-topic", auth_token_env="TOPIC_TOKEN"),
         }
 
         store = MagicMock()
-        store.get.side_effect = lambda name: {"KEY_A": "val-a", "KEY_B": "val-b"}.get(name)
+        store.get.side_effect = lambda name: {
+            "KEY_A": "val-a",
+            "KEY_B": "val-b",
+            "TOPIC_TOKEN": "github-token",
+        }.get(name)
 
         api_keys = resolve_hub_api_keys(configs, store)
 
-        assert api_keys == {"KEY_A": "val-a", "KEY_B": "val-b"}
+        assert api_keys == {
+            "KEY_A": "val-a",
+            "KEY_B": "val-b",
+            "TOPIC_TOKEN": "github-token",
+        }
         # hub-c (no auth_key_name) is skipped entirely
         # SecretStore is queried only for keys with auth_key_name set
         called_names = {call.args[0] for call in store.get.call_args_list}
-        assert called_names == {"KEY_A", "KEY_B"}
+        assert called_names == {"KEY_A", "KEY_B", "TOPIC_TOKEN"}
 
     def test_resolve_hub_api_keys_skips_missing_secrets(self) -> None:
         """Missing secrets are omitted from the result (not stored as empty)."""

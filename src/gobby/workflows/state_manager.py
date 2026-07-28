@@ -1,10 +1,10 @@
 import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -17,6 +17,8 @@ from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 from .definitions import WorkflowInstance
 
 logger = logging.getLogger(__name__)
+
+_MutationResult = TypeVar("_MutationResult")
 
 
 def _decode_variables_payload(variables: Any) -> dict[str, Any]:
@@ -262,6 +264,42 @@ class SessionVariableManager:
             return variables
         return {**defaults, **variables}
 
+    def _mutate_variables(
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], tuple[_MutationResult, bool]],
+        *,
+        apply_defaults: bool = False,
+    ) -> _MutationResult:
+        """Serialize one variable mutation and persist only changed payloads."""
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            variables = _decode_variables_payload(row["variables"]) if row else {}
+            if apply_defaults:
+                variables = self._apply_variable_defaults(variables)
+            result, changed = mutator(variables)
+            if not changed:
+                return result
+
+            now = datetime.now(UTC).isoformat()
+            encoded = _encode_variables_payload(variables)
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (encoded, now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, encoded, now),
+                )
+            return result
+
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""
         self.merge_variables(session_id, {name: value})
@@ -278,27 +316,12 @@ class SessionVariableManager:
         """
         if not updates:
             return True
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            if row:
-                current = _decode_variables_payload(row["variables"])
-                current.update(updates)
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(updates), now),
-                )
-        return True
+
+        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            variables.update(updates)
+            return True, True
+
+        return self._mutate_variables(session_id, mutate)
 
     def adjust_counter_and_derive_boolean(
         self,
@@ -309,36 +332,20 @@ class SessionVariableManager:
         boolean_name: str,
     ) -> int:
         """Atomically adjust a non-negative counter and derive its boolean flag."""
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            raw_count = current_vars.get(counter_name, 0)
+
+        def mutate(variables: dict[str, Any]) -> tuple[int, bool]:
+            raw_count = variables.get(counter_name, 0)
             stored_count: int
             if isinstance(raw_count, int) and not isinstance(raw_count, bool):
                 stored_count = raw_count
             else:
                 stored_count = 0
             count = max(0, stored_count + delta)
-            current_vars[counter_name] = count
-            current_vars[boolean_name] = count > 0
+            variables[counter_name] = count
+            variables[boolean_name] = count > 0
+            return count, True
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return count
+        return self._mutate_variables(session_id, mutate)
 
     def append_to_bounded_list_variable(
         self,
@@ -352,33 +359,17 @@ class SessionVariableManager:
         """Atomically append an item to a bounded list and merge related updates."""
         if max_items < 1:
             raise ValueError("max_items must be positive")
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            stored = current_vars.get(name, [])
+
+        def mutate(variables: dict[str, Any]) -> tuple[int, bool]:
+            stored = variables.get(name, [])
             items = stored if isinstance(stored, list) else []
             bounded_items = [*items, item][-max_items:]
-            current_vars[name] = bounded_items
+            variables[name] = bounded_items
             if updates:
-                current_vars.update(updates)
+                variables.update(updates)
+            return len(bounded_items), True
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return len(bounded_items)
+        return self._mutate_variables(session_id, mutate)
 
     def upsert_bounded_list_variable(
         self,
@@ -396,14 +387,8 @@ class SessionVariableManager:
         if max_items < 1:
             raise ValueError("max_items must be positive")
 
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            stored = current_vars.get(name, [])
+        def mutate(variables: dict[str, Any]) -> tuple[int, bool]:
+            stored = variables.get(name, [])
             items = stored if isinstance(stored, list) else []
             retained = [
                 existing
@@ -414,23 +399,12 @@ class SessionVariableManager:
                 )
             ]
             bounded_items = [*retained, item][-max_items:]
-            current_vars[name] = bounded_items
+            variables[name] = bounded_items
             if updates:
-                current_vars.update(updates)
+                variables.update(updates)
+            return len(bounded_items), True
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return len(bounded_items)
+        return self._mutate_variables(session_id, mutate)
 
     def upsert_open_tool_error(
         self,
@@ -462,14 +436,9 @@ class SessionVariableManager:
                 }
             ]
         )[0]
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            records = normalize_open_tool_error_records(current_vars.get("open_tool_errors", []))
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            records = normalize_open_tool_error_records(variables.get("open_tool_errors", []))
             match = next(
                 (
                     record
@@ -485,20 +454,10 @@ class SessionVariableManager:
                 match["error"] = incoming["error"]
                 match["last_at"] = max(match["last_at"], incoming["last_at"])
                 match["count"] = min(MAX_TOOL_ERROR_COUNT, match["count"] + 1)
-            current_vars["open_tool_errors"] = normalize_open_tool_error_records(records)
+            variables["open_tool_errors"] = normalize_open_tool_error_records(records)
+            return None, True
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
+        self._mutate_variables(session_id, mutate)
 
     def resolve_open_tool_errors(
         self,
@@ -515,26 +474,20 @@ class SessionVariableManager:
 
         canonical_tool = render_bounded_identity(sanitize_record_text(tool))
         canonical_target = render_bounded_identity(sanitize_record_text(target_key))
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            if not row:
-                return
-            current_vars = _decode_variables_payload(row["variables"])
-            records = normalize_open_tool_error_records(current_vars.get("open_tool_errors", []))
-            current_vars["open_tool_errors"] = [
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            records = normalize_open_tool_error_records(variables.get("open_tool_errors", []))
+            retained = [
                 record
                 for record in records
                 if (record["tool"], record["target_key"]) != (canonical_tool, canonical_target)
             ]
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s "
-                "WHERE session_id = %s",
-                (_encode_variables_payload(current_vars), now, session_id),
-            )
+            if retained == records:
+                return None, False
+            variables["open_tool_errors"] = retained
+            return None, True
+
+        self._mutate_variables(session_id, mutate)
 
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
         """Atomically append strings to a string-list variable (deduped, sorted).
@@ -553,30 +506,14 @@ class SessionVariableManager:
         """
         if not values:
             return True
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
-            current_vars = self._apply_variable_defaults(stored_vars)
-            existing = set(_normalize_string_list(current_vars.get(name)))
+
+        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            existing = set(_normalize_string_list(variables.get(name)))
             existing.update(values)
-            current_vars[name] = sorted(existing)
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return True
+            variables[name] = sorted(existing)
+            return True, True
+
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)
 
     def claim_set_variable_values(
         self,
@@ -593,14 +530,8 @@ class SessionVariableManager:
         if not values:
             return []
 
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            current_vars = _decode_variables_payload(row["variables"]) if row else {}
-            existing = set(_normalize_string_list(current_vars.get(name)))
+        def mutate(variables: dict[str, Any]) -> tuple[list[str], bool]:
+            existing = set(_normalize_string_list(variables.get(name)))
             claimed: list[str] = []
             for value in values:
                 if value not in existing:
@@ -608,22 +539,12 @@ class SessionVariableManager:
                     claimed.append(value)
 
             if not claimed:
-                return []
+                return [], False
 
-            current_vars[name] = sorted(existing)
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return claimed
+            variables[name] = sorted(existing)
+            return claimed, True
+
+        return self._mutate_variables(session_id, mutate)
 
     def append_to_set_variable_and_conditional_merge(
         self,
@@ -642,36 +563,18 @@ class SessionVariableManager:
         if not values and not updates:
             return True
 
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
-            current_vars = self._apply_variable_defaults(stored_vars)
-
+        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             if values:
-                existing = set(_normalize_string_list(current_vars.get(name)))
+                existing = set(_normalize_string_list(variables.get(name)))
                 existing.update(values)
-                current_vars[name] = sorted(existing)
+                variables[name] = sorted(existing)
 
-            if current_vars.get(condition_name) is True:
-                current_vars.update(updates)
+            if variables.get(condition_name) is True:
+                variables.update(updates)
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return True
+            return True, True
+
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)
 
     def record_edited_file(
         self,
@@ -691,25 +594,17 @@ class SessionVariableManager:
 
         from gobby.workflows.task_claim_state import active_task_id_for_edit
 
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
-            current_vars = self._apply_variable_defaults(stored_vars)
-
-            stored = current_vars.get("session_edited_files", [])
+        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            stored = variables.get("session_edited_files", [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
             session_files = list(dict.fromkeys(str(file) for file in stored if file))
             session_files.extend(path for path in normalized_paths if path not in session_files)
-            current_vars["session_edited_files"] = session_files
+            variables["session_edited_files"] = session_files
 
-            task_id = active_task_id_for_edit(current_vars)
+            task_id = active_task_id_for_edit(variables)
             if task_id:
-                raw_task_files = current_vars.get("task_edited_files") or {}
+                raw_task_files = variables.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
                 if not isinstance(stored_for_task, list):
@@ -720,21 +615,10 @@ class SessionVariableManager:
                 )
                 task_files = dict(task_files)
                 task_files[task_id] = files_for_task
-                current_vars["task_edited_files"] = task_files
+                variables["task_edited_files"] = task_files
+            return True, True
 
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return True
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)
 
     def claim_startup_context(self, session_id: str) -> Literal["full", "live"]:
         """Atomically claim the startup context for this session.
@@ -743,29 +627,11 @@ class SessionVariableManager:
             'full' if this call owns the startup context (first caller).
             'live' if another concurrent caller already claimed it.
         """
-        now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
-            stored_vars = _decode_variables_payload(row["variables"]) if row else {}
-            current_vars = self._apply_variable_defaults(stored_vars)
 
-            if current_vars.get("_startup_context_injected") is True:
-                return "live"
+        def mutate(variables: dict[str, Any]) -> tuple[Literal["full", "live"], bool]:
+            if variables.get("_startup_context_injected") is True:
+                return "live", False
+            variables["_startup_context_injected"] = True
+            return "full", True
 
-            current_vars["_startup_context_injected"] = True
-            if row:
-                conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (_encode_variables_payload(current_vars), now, session_id),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, _encode_variables_payload(current_vars), now),
-                )
-        return "full"
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)

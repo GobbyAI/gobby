@@ -144,7 +144,11 @@ class TestMemoryLifecycleSync:
 class TestDigestOnPlanTurnEnd:
     """Build a digest at each provider-specific plan turn boundary."""
 
-    def test_event_and_effect(self, db, manager) -> None:
+    def test_event_and_effect(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("digest-on-plan-turn-end")
         assert row is not None
@@ -166,7 +170,13 @@ class TestDigestOnPlanTurnEnd:
             ("Bash", False),
         ],
     )
-    def test_matches_plan_boundaries(self, db, manager, tool_name: str, matches: bool) -> None:
+    def test_matches_plan_boundaries(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        tool_name: str,
+        matches: bool,
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("digest-on-plan-turn-end")
         assert row is not None

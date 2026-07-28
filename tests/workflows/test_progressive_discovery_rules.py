@@ -64,7 +64,11 @@ PROGRESSIVE_DISCOVERY_RULES = {
 class TestProgressiveDiscoverySync:
     """Test that progressive-discovery rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """All progressive-discovery rules should sync to workflow_definitions."""
         _sync_bundled(db)
 
@@ -75,14 +79,22 @@ class TestProgressiveDiscoverySync:
             f"Missing: {PROGRESSIVE_DISCOVERY_RULES - rule_names}"
         )
 
-    def test_require_servers_listed_removed(self, db, manager) -> None:
+    def test_require_servers_listed_removed(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """require-servers-listed was removed (replaced by hardcoded auto-discover)."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-servers-listed")
         assert row is None
 
-    def test_sync_retires_legacy_gates_and_enables_renamed_gate(self, db, manager) -> None:
+    def test_sync_retires_legacy_gates_and_enables_renamed_gate(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Removed gate rows are retired without carrying a disabled toggle forward."""
         legacy_definition = '{"event":"before_tool","effects":[{"type":"block","reason":"legacy"}]}'
         for name in ("require-server-listed-for-schema", "require-schema-before-call"):
@@ -106,7 +118,11 @@ class TestProgressiveDiscoverySync:
         assert replacement is not None
         assert replacement.enabled is True
 
-    def test_all_rules_have_progressive_discovery_tag(self, db, manager) -> None:
+    def test_all_rules_have_progressive_discovery_tag(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """All rules should be tagged with 'progressive-discovery'."""
         _sync_bundled(db)
 
@@ -117,7 +133,11 @@ class TestProgressiveDiscoverySync:
                     f"{row.name} missing 'progressive-discovery' tag"
                 )
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -349,7 +369,7 @@ class TestRuleEngineIntegration:
     """
 
     @pytest.fixture
-    def engine(self, db) -> RuleEngine:
+    def engine(self, db: HubDatabase) -> RuleEngine:
         _sync_bundled(db)
         # Disable all rules first, then enable only the progressive discovery rules
         db.execute("UPDATE workflow_definitions SET enabled = FALSE")
@@ -724,9 +744,10 @@ class TestRuleEngineIntegration:
         ("source", "pending_context_reset"),
         [("clear", False), ("compact", False), ("resume", True)],
     )
+    @pytest.mark.asyncio
     async def test_context_loss_clears_only_schema_leases(
         self,
-        engine,
+        engine: RuleEngine,
         source: str,
         pending_context_reset: bool,
     ) -> None:

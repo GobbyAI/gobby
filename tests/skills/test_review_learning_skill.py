@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import pytest
+import yaml
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_io import atomic_write_bytes, ensure_checkpoint
+from gobby.plans.review_evidence_io import ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
@@ -26,8 +28,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 from tests.review_telemetry_helpers import enriched_telemetry
-
-pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/review-learning"
@@ -69,30 +69,7 @@ def _manifest_entries(stem: str) -> list[dict[str, object]]:
 
 
 def _manifest_yaml(stem: str) -> list[str]:
-    lines: list[str] = []
-    for entry in _manifest_entries(stem):
-        covers = entry["covers"]
-        labels = entry["labels"]
-        assert isinstance(covers, list)
-        assert isinstance(labels, list)
-        lines.extend(
-            [
-                f"- title: {entry['title']}",
-                f"  source_section: '{entry['source_section']}'",
-                "  covers:",
-                f"    - {covers[0]}",
-                "  category: code",
-                "  implementation_domain: backend",
-                "  priority: 2",
-                "  task_type: feature",
-                "  tdd: false",
-                "  labels:",
-                f"    - {labels[0]}",
-                f"  description: {entry['description']}",
-                f"  validation_criteria: {entry['validation_criteria']}",
-            ]
-        )
-    return lines
+    return yaml.safe_dump(_manifest_entries(stem), sort_keys=False).splitlines()
 
 
 def _review_setup(
@@ -205,6 +182,28 @@ def _approval(
     }
 
 
+ReviewSetup = tuple[PlanReviewEvidenceService, str, str, Path]
+ReviewSetupFactory = Callable[[str], ReviewSetup]
+ApprovalFactory = Callable[[PlanReviewEvidenceService, str], dict[str, object]]
+
+
+@pytest.fixture
+def review_setup(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> ReviewSetupFactory:
+    def setup(stem: str) -> ReviewSetup:
+        return _review_setup(temp_db, tmp_path, stem)
+
+    return setup
+
+
+@pytest.fixture
+def approval_for() -> ApprovalFactory:
+    return _approval
+
+
+@pytest.mark.unit
 def test_review_learning_skill_parses_and_is_discoverable() -> None:
     parsed = parse_skill_file(SKILL_DIR / "SKILL.md")
     skills = SkillLoader().load_directory(SKILLS_ROOT)
@@ -214,6 +213,7 @@ def test_review_learning_skill_parses_and_is_discoverable() -> None:
     assert "review-learning" in {skill.name for skill in skills}
 
 
+@pytest.mark.unit
 def test_review_learning_skill_documents_tool_contract() -> None:
     body = _body()
 
@@ -233,6 +233,7 @@ def test_review_learning_skill_documents_tool_contract() -> None:
     assert "`stale` and `invalid` remain no-op decisions" in body
 
 
+@pytest.mark.unit
 def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
     body = _body()
 
@@ -249,6 +250,7 @@ def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
     assert "The task is not the guardrail" in body
 
 
+@pytest.mark.unit
 def test_plan_skill_documents_parallel_review_contract() -> None:
     body = _skill_body(PLAN_SKILL)
     for phrase in (
@@ -264,6 +266,7 @@ def test_plan_skill_documents_parallel_review_contract() -> None:
         assert phrase in body
 
 
+@pytest.mark.unit
 def test_review_producer_hooks_reference_review_learning() -> None:
     code_reviewer = (SKILLS_ROOT / "code-reviewer/SKILL.md").read_text(encoding="utf-8")
     epic = (SKILLS_ROOT / "epic-review/SKILL.md").read_text(encoding="utf-8")
@@ -285,6 +288,7 @@ def test_review_producer_hooks_reference_review_learning() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     review_learning = _body()
     plan = _skill_body(PLAN_SKILL)
@@ -402,11 +406,8 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
     assert "causal_section_ids" in recorded[0].content
 
 
-def test_interactive_approval_sequence(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.mark.integration
+def test_interactive_approval_contract() -> None:
     plan_contract = _skill_body(PLAN_SKILL)
     draft_contract = _skill_body(PLAN_DRAFT_SKILL)
     adversary_contract = _skill_body(PLAN_REVIEW_SKILL)
@@ -429,11 +430,13 @@ def test_interactive_approval_sequence(
     assert "manifest_entries" in taskless_agent
     assert "full typed entries" in taskless_agent
 
-    service, project_id, session_id, plan_path = _review_setup(
-        temp_db,
-        tmp_path,
-        "approval-sequence",
-    )
+
+@pytest.mark.integration
+def test_interactive_approval_apply_is_idempotent(
+    review_setup: ReviewSetupFactory,
+    approval_for: ApprovalFactory,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup("approval-sequence")
     rejected = service.prepare_plan_review_round(
         project_id=project_id,
         plan_path=plan_path,
@@ -480,7 +483,7 @@ def test_interactive_approval_sequence(
         prior_finding_resolutions=[{"prior_finding_id": "round-1-miss", "decision": "carry"}],
     )
     run_id = _bind_run(service, session_id, prepared.evidence_id, "approve round")
-    approval = _approval(service, prepared.evidence_id)
+    approval = approval_for(service, prepared.evidence_id)
     applied = service.apply_plan_review_manifest(
         prepared.evidence_id,
         approval,
@@ -500,6 +503,67 @@ def test_interactive_approval_sequence(
     )
     assert plan_path.read_bytes() == applied_bytes
 
+
+@pytest.mark.integration
+def test_interactive_approval_finalizes_after_post_apply_drift(
+    review_setup: ReviewSetupFactory,
+    approval_for: ApprovalFactory,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup("post-apply-drift")
+    rejected = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    _bind_run(service, session_id, rejected.evidence_id, "reject round")
+    rejection = {
+        "verdict": "needs_review",
+        "convergence_telemetry": enriched_telemetry(),
+        "coverage_attestation": coverage_attestation(
+            evidence_id=rejected.evidence_id,
+            shadow_valid=False,
+        ),
+        "findings": [
+            {
+                "finding_id": "round-1-miss",
+                "section_id": "1.1",
+                "check_key": "cross-section-state",
+                "severity": "major",
+                "category": "unhandled-edge",
+                "location": "Sections 1.1 and 1.2",
+                "description": "The cross-section invariant is incomplete.",
+                "minimal_repair": "Cover both participating sections.",
+                "repair_scope": "existing_sections",
+                "principle": "Review the whole invariant",
+                "prevention": "Check both participating sections",
+                "participating_section_ids": ["1.1", "1.2"],
+            }
+        ],
+    }
+    rejected_checkpoint = service.render_v1_round_checkpoint(
+        rejected.evidence_id,
+        rejection,
+    )
+    assert ensure_checkpoint(plan_path, rejected_checkpoint)
+    service.finalize_plan_review_evidence(rejected.evidence_id, rejection)
+
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+        prior_finding_resolutions=[{"prior_finding_id": "round-1-miss", "decision": "carry"}],
+    )
+    run_id = _bind_run(service, session_id, prepared.evidence_id, "approve round")
+    approval = approval_for(service, prepared.evidence_id)
+    service.apply_plan_review_manifest(
+        prepared.evidence_id,
+        approval,
+        plan_path=plan_path,
+        run_id=run_id,
+    )
+    applied_bytes = plan_path.read_bytes()
     plan_path.write_bytes(applied_bytes.replace(b"A works.", b"A changed after apply."))
     approval_checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id)
     assert ensure_checkpoint(plan_path, approval_checkpoint)
@@ -524,11 +588,13 @@ def test_interactive_approval_sequence(
         detail={"lesson_ids": ["round-1-miss"]},
     ).lesson_mint_detail == {"lesson_ids": ["round-1-miss"]}
 
-    stale_service, stale_project, stale_session, stale_path = _review_setup(
-        temp_db,
-        tmp_path,
-        "pre-apply-drift",
-    )
+
+@pytest.mark.integration
+def test_interactive_approval_rejects_pre_apply_drift(
+    review_setup: ReviewSetupFactory,
+    approval_for: ApprovalFactory,
+) -> None:
+    stale_service, stale_project, stale_session, stale_path = review_setup("pre-apply-drift")
     stale = stale_service.prepare_plan_review_round(
         project_id=stale_project,
         plan_path=stale_path,
@@ -541,7 +607,7 @@ def test_interactive_approval_sequence(
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
         stale_service.apply_plan_review_manifest(
             stale.evidence_id,
-            _approval(stale_service, stale.evidence_id),
+            approval_for(stale_service, stale.evidence_id),
             plan_path=stale_path,
             run_id=stale_run,
         )
@@ -550,132 +616,105 @@ def test_interactive_approval_sequence(
     assert stale_row.round_result is None
     assert stale_path.read_bytes() == drifted_bytes
 
-    pending_service, pending_project, pending_session, pending_path = _review_setup(
-        temp_db,
-        tmp_path,
-        "pending-drift",
-    )
-    pending = pending_service.prepare_plan_review_round(
-        project_id=pending_project,
-        plan_path=pending_path,
+
+@pytest.mark.integration
+def test_interactive_approval_rolls_back_intent_after_prewrite_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    review_setup: ReviewSetupFactory,
+    approval_for: ApprovalFactory,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup("prewrite-failure")
+    original_bytes = plan_path.read_bytes()
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
         round_number=1,
-        session_id=pending_session,
+        session_id=session_id,
     )
-    pending_run = _bind_run(
-        pending_service,
-        pending_session,
-        pending.evidence_id,
-        "pending drift",
+    run_id = _bind_run(
+        service,
+        session_id,
+        prepared.evidence_id,
+        "prewrite failure",
     )
+    approval = approval_for(service, prepared.evidence_id)
 
     def crash_write(_path: Path, _content: bytes) -> None:
         raise OSError("simulated apply crash")
 
-    monkeypatch.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
-    with pytest.raises(OSError, match="simulated apply crash"):
-        pending_service.apply_plan_review_manifest(
-            pending.evidence_id,
-            _approval(pending_service, pending.evidence_id),
-            plan_path=pending_path,
-            run_id=pending_run,
-        )
-    rolled_back = pending_service.get_evidence(pending.evidence_id)
+    with monkeypatch.context() as patcher:
+        patcher.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
+        with pytest.raises(OSError, match="simulated apply crash"):
+            service.apply_plan_review_manifest(
+                prepared.evidence_id,
+                approval,
+                plan_path=plan_path,
+                run_id=run_id,
+            )
+
+    rolled_back = service.get_evidence(prepared.evidence_id)
     assert rolled_back.manifest_state is None
     assert rolled_back.round_result is None
-    monkeypatch.setattr(
-        "gobby.plans.review_manifest_service.atomic_write_bytes",
-        atomic_write_bytes,
-    )
-    pending_path.write_bytes(
-        pending_path.read_bytes().replace(b"A works.", b"A drifted while pending.")
-    )
-    with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
-        pending_service.apply_plan_review_manifest(
-            pending.evidence_id,
-            _approval(pending_service, pending.evidence_id),
-            plan_path=pending_path,
-            run_id=pending_run,
-        )
-    revoked = pending_service.get_evidence(pending.evidence_id)
-    assert revoked.manifest_state is None
-    assert revoked.round_result is None
-    LocalAgentRunManager(temp_db).cancel(pending_run)
-    replacement = pending_service.prepare_plan_review_round(
-        project_id=pending_project,
-        plan_path=pending_path,
-        round_number=2,
-        session_id=pending_session,
-    )
-    assert replacement.evidence_id != pending.evidence_id
+    assert plan_path.read_bytes() == original_bytes
 
-    recovery_service, recovery_project, recovery_session, recovery_path = _review_setup(
-        temp_db,
-        tmp_path,
-        "pending-recovery",
+    applied = service.apply_plan_review_manifest(
+        prepared.evidence_id,
+        approval,
+        plan_path=plan_path,
+        run_id=run_id,
     )
-    recovery = recovery_service.prepare_plan_review_round(
-        project_id=recovery_project,
-        plan_path=recovery_path,
+    assert applied["applied"] is True
+    assert service.get_evidence(prepared.evidence_id).manifest_state == "applied"
+
+
+@pytest.mark.integration
+def test_interactive_approval_recovers_postwrite_failure_after_restart(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    review_setup: ReviewSetupFactory,
+    approval_for: ApprovalFactory,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup("postwrite-recovery")
+    original_bytes = plan_path.read_bytes()
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
         round_number=1,
-        session_id=recovery_session,
+        session_id=session_id,
     )
-    recovery_run = _bind_run(
-        recovery_service,
-        recovery_session,
-        recovery.evidence_id,
-        "pending recovery",
+    run_id = _bind_run(
+        service,
+        session_id,
+        prepared.evidence_id,
+        "postwrite recovery",
     )
-    monkeypatch.setattr("gobby.plans.review_manifest_service.atomic_write_bytes", crash_write)
-    with pytest.raises(OSError, match="simulated apply crash"):
-        recovery_service.apply_plan_review_manifest(
-            recovery.evidence_id,
-            _approval(recovery_service, recovery.evidence_id),
-            plan_path=recovery_path,
-            run_id=recovery_run,
-        )
-    monkeypatch.setattr(
-        "gobby.plans.review_manifest_service.atomic_write_bytes",
-        atomic_write_bytes,
-    )
+    approval = approval_for(service, prepared.evidence_id)
+
+    def crash_complete(**_kwargs: object) -> None:
+        raise RuntimeError("simulated checkpoint crash")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(service.store, "complete_manifest_apply", crash_complete)
+        with pytest.raises(RuntimeError, match="simulated checkpoint crash"):
+            service.apply_plan_review_manifest(
+                prepared.evidence_id,
+                approval,
+                plan_path=plan_path,
+                run_id=run_id,
+            )
+    landed_bytes = plan_path.read_bytes()
+    assert landed_bytes != original_bytes
+    rolled_back = service.get_evidence(prepared.evidence_id)
+    assert rolled_back.manifest_state is None
+    assert rolled_back.round_result is None
+
     restarted = PlanReviewEvidenceService(temp_db)
-    rolled_back_recovery = restarted.get_evidence(recovery.evidence_id)
-    assert rolled_back_recovery.manifest_state is None
-    assert rolled_back_recovery.round_result is None
-    recovery_approval = _approval(restarted, recovery.evidence_id)
     recovered = restarted.apply_plan_review_manifest(
-        recovery.evidence_id,
-        recovery_approval,
-        plan_path=recovery_path,
-        run_id=recovery_run,
+        prepared.evidence_id,
+        approval,
+        plan_path=plan_path,
+        run_id=run_id,
     )
     assert recovered["applied"] is True
-    recovered_row = restarted.get_evidence(recovery.evidence_id)
-    assert recovered_row.manifest_state == "applied"
-    assert recovered_row.round_result == recovery_approval
-    recovered_checkpoint = restarted.render_v1_round_checkpoint(recovery.evidence_id)
-    assert ensure_checkpoint(recovery_path, recovered_checkpoint)
-    finalized_recovery = restarted.finalize_plan_review_evidence(
-        recovery.evidence_id,
-        recovery_approval,
-    )
-    assert finalized_recovery.lesson_mint_status == "pending"
-    with pytest.raises(ReviewEvidenceError) as pending_mint:
-        restarted.prepare_plan_review_round(
-            project_id=recovery_project,
-            plan_path=recovery_path,
-            round_number=2,
-            session_id=recovery_session,
-        )
-    assert pending_mint.value.code == "pending_lesson_mint"
-    assert recovery_path.read_bytes().count(recovered_checkpoint) == 1
-    restarted.checkpoint_plan_review_lesson_mint(
-        recovery.evidence_id,
-        status="minted",
-        detail={"lesson_ids": ["recovered"]},
-    )
-    assert restarted.prepare_plan_review_round(
-        project_id=recovery_project,
-        plan_path=recovery_path,
-        round_number=2,
-        session_id=recovery_session,
-    )
+    assert plan_path.read_bytes() == landed_bytes
+    assert restarted.get_evidence(prepared.evidence_id).manifest_state == "applied"

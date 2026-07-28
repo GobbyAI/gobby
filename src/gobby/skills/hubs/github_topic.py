@@ -216,6 +216,7 @@ class GitHubTopicProvider(HubProvider):
         self._details_cache: dict[tuple[str, str], HubSkillDetails] = {}
         self._cache_expires_at = 0.0
         self._probe_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROBES)
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def provider_type(self) -> str:
@@ -233,23 +234,28 @@ class GitHubTopicProvider(HubProvider):
 
     async def _get(
         self,
+        client: httpx.AsyncClient,
         path: str,
         *,
         params: dict[str, str | int] | None = None,
         accept: str = "application/vnd.github+json",
     ) -> httpx.Response:
-        async with httpx.AsyncClient() as client:
-            return await client.get(
-                f"{self.base_url.rstrip('/')}/{path.lstrip('/')}",
-                headers=self._headers(accept),
-                params=params,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
+        return await client.get(
+            f"{self.base_url.rstrip('/')}/{path.lstrip('/')}",
+            headers=self._headers(accept),
+            params=params,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
 
-    async def _search_page(self, page: int) -> list[RepoCandidate]:
+    async def _search_page(
+        self,
+        client: httpx.AsyncClient,
+        page: int,
+    ) -> list[RepoCandidate]:
         response: httpx.Response | None = None
         for attempt in range(3):
             response = await self._get(
+                client,
                 "/search/repositories",
                 params={"q": f"topic:{self.topic}", "per_page": 100, "page": page},
             )
@@ -274,23 +280,31 @@ class GitHubTopicProvider(HubProvider):
                 candidates.append(RepoCandidate(repo=repo, default_branch=branch))
         return candidates
 
-    async def _probe_repo(self, candidate: RepoCandidate) -> list[DiscoveryRecord]:
+    async def _probe_repo(
+        self,
+        client: httpx.AsyncClient,
+        candidate: RepoCandidate,
+    ) -> list[DiscoveryRecord]:
         async with self._probe_semaphore:
             try:
                 commit = await self._get(
-                    f"/repos/{candidate.repo}/commits/{candidate.default_branch}"
+                    client, f"/repos/{candidate.repo}/commits/{candidate.default_branch}"
                 )
                 commit.raise_for_status()
-                commit_payload = cast(dict[str, object], commit.json())
+                commit_payload = commit.json()
+                if not isinstance(commit_payload, dict):
+                    raise TopicHubError("repository returned invalid commit payload")
                 sha = commit_payload.get("sha")
                 if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha):
                     raise TopicHubError("repository returned invalid commit SHA")
 
                 tree_response = await self._get(
-                    f"/repos/{candidate.repo}/git/trees/{sha}", params={"recursive": 1}
+                    client, f"/repos/{candidate.repo}/git/trees/{sha}", params={"recursive": 1}
                 )
                 tree_response.raise_for_status()
-                tree_payload = cast(dict[str, object], tree_response.json())
+                tree_payload = tree_response.json()
+                if not isinstance(tree_payload, dict):
+                    raise TopicHubError("repository returned invalid tree payload")
                 raw_tree = tree_payload.get("tree")
                 if tree_payload.get("truncated") is True or not isinstance(raw_tree, list):
                     logger.warning("Skipping capped topic repository %s", candidate.repo)
@@ -329,7 +343,7 @@ class GitHubTopicProvider(HubProvider):
                         )
                         return []
                 return records
-            except (httpx.HTTPError, TopicHubError) as exc:
+            except (httpx.HTTPError, TopicHubError, ValueError) as exc:
                 logger.warning("Skipping GitHub topic repository %s: %s", candidate.repo, exc)
                 return []
 
@@ -345,18 +359,25 @@ class GitHubTopicProvider(HubProvider):
     async def discover(self) -> dict[str, object]:
         if self._records and self._clock() < self._cache_expires_at:
             return self._payload()
+        async with self._refresh_lock:
+            if self._records and self._clock() < self._cache_expires_at:
+                return self._payload()
+            return await self._refresh()
+
+    async def _refresh(self) -> dict[str, object]:
         try:
             candidates: list[RepoCandidate] = []
-            for page in range(1, MAX_SEARCH_PAGES + 1):
-                page_candidates = await self._search_page(page)
-                candidates.extend(page_candidates[: MAX_REPOS - len(candidates)])
-                if len(page_candidates) < 100 or len(candidates) >= MAX_REPOS:
-                    break
+            async with httpx.AsyncClient() as client:
+                for page in range(1, MAX_SEARCH_PAGES + 1):
+                    page_candidates = await self._search_page(client, page)
+                    candidates.extend(page_candidates[: MAX_REPOS - len(candidates)])
+                    if len(page_candidates) < 100 or len(candidates) >= MAX_REPOS:
+                        break
 
-            tasks: list[asyncio.Task[list[DiscoveryRecord]]] = []
-            async with asyncio.TaskGroup() as group:
-                for candidate in candidates:
-                    tasks.append(group.create_task(self._probe_repo(candidate)))
+                tasks: list[asyncio.Task[list[DiscoveryRecord]]] = []
+                async with asyncio.TaskGroup() as group:
+                    for candidate in candidates:
+                        tasks.append(group.create_task(self._probe_repo(client, candidate)))
             records = [record for task in tasks for record in task.result()]
             self._records = {record.item_id: record for record in records}
             self._details_cache = {
@@ -421,11 +442,13 @@ class GitHubTopicProvider(HubProvider):
             cached = self._details_cache.get(cache_key)
             if cached is not None:
                 return cached
-            response = await self._get(
-                f"/repos/{record.repo}/contents/{record.path}/SKILL.md",
-                params={"ref": record.sha},
-                accept="application/vnd.github.raw+json",
-            )
+            async with httpx.AsyncClient() as client:
+                response = await self._get(
+                    client,
+                    f"/repos/{record.repo}/contents/{record.path}/SKILL.md",
+                    params={"ref": record.sha},
+                    accept="application/vnd.github.raw+json",
+                )
             if response.status_code == 404:
                 return None
             response.raise_for_status()
@@ -451,7 +474,7 @@ class GitHubTopicProvider(HubProvider):
         url = f"{self.base_url.rstrip('/')}/repos/{record.repo}/tarball/{record.sha}"
         chunks: list[bytes] = []
         size = 0
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             async with client.stream(
                 "GET",
                 url,

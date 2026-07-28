@@ -513,12 +513,12 @@ def test_claim_set_variable_values_serializes_concurrent_claims(db: Any) -> None
     barrier = threading.Barrier(3)
 
     def claim() -> list[str]:
-        barrier.wait()
+        barrier.wait(timeout=5)
         return mgr.claim_set_variable_values(S1, "injected", ["shared"])
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(claim) for _ in range(2)]
-        barrier.wait()
+        barrier.wait(timeout=5)
         claims = [future.result() for future in futures]
 
     assert sorted(claims) == [[], ["shared"]]
@@ -569,6 +569,29 @@ def test_open_tool_error_upsert_deduplicates_and_resolves_exact_target(db: Any) 
     assert [record["target_key"] for record in remaining] == ["args:bbbbbbbb"]
 
 
+def test_resolve_open_tool_errors_skips_write_without_match(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"open_tool_errors": []})
+    db.execute(
+        "UPDATE session_variables SET updated_at = %s WHERE session_id = %s",
+        ("2000-01-01T00:00:00+00:00", S1),
+    )
+    before = db.fetchone(
+        "SELECT updated_at FROM session_variables WHERE session_id = %s",
+        (S1,),
+    )
+
+    mgr.resolve_open_tool_errors(S1, "Edit", "/repo/missing.py")
+
+    after = db.fetchone(
+        "SELECT updated_at FROM session_variables WHERE session_id = %s",
+        (S1,),
+    )
+    assert after == before
+
+
 def test_open_tool_error_upsert_caps_oldest_and_saturates_count(db: Any) -> None:
     from gobby.hooks.tool_error_tracker import MAX_OPEN_TOOL_ERRORS, MAX_TOOL_ERROR_COUNT
     from gobby.workflows.state_manager import SessionVariableManager
@@ -608,7 +631,7 @@ def test_open_tool_error_concurrent_upserts_merge_counts(db: Any) -> None:
     occurred_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
 
     def upsert() -> None:
-        barrier.wait()
+        barrier.wait(timeout=5)
         mgr.upsert_open_tool_error(
             S1,
             "Edit",
@@ -619,7 +642,7 @@ def test_open_tool_error_concurrent_upserts_merge_counts(db: Any) -> None:
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(upsert) for _ in range(2)]
-        barrier.wait()
+        barrier.wait(timeout=5)
         for future in futures:
             future.result()
 
@@ -643,7 +666,7 @@ def test_open_tool_error_concurrent_resolve_and_upsert_never_duplicate(db: Any) 
     barrier = threading.Barrier(3)
 
     def upsert() -> None:
-        barrier.wait()
+        barrier.wait(timeout=5)
         mgr.upsert_open_tool_error(
             S1,
             "Edit",
@@ -653,12 +676,12 @@ def test_open_tool_error_concurrent_resolve_and_upsert_never_duplicate(db: Any) 
         )
 
     def resolve() -> None:
-        barrier.wait()
+        barrier.wait(timeout=5)
         mgr.resolve_open_tool_errors(S1, "Edit", "/repo/a.py#12345678")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(upsert), executor.submit(resolve)]
-        barrier.wait()
+        barrier.wait(timeout=5)
         for future in futures:
             future.result()
 

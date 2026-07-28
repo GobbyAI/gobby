@@ -25,8 +25,8 @@ ACTIVE_GUIDANCE_FILES = (
 )
 ACTIVE_GUIDANCE_SUFFIXES = {".md", ".py", ".txt", ".yaml", ".yml"}
 MANDATORY_ORDERED_CHAIN = re.compile(
-    r"(?:use|follow|required?|must|all servers follow)[^\n]{0,120}"
-    r"(?:progressive[^\n]{0,40})?(?:discovery|chain)"
+    r"(?:(?:use|follow|required?|must|all servers follow)[^\n]{0,120}"
+    r"(?:progressive[^\n]{0,40})?(?:discovery|chain)|first,\s*call)"
     r".{0,240}?list_mcp_servers"
     r".{0,160}?list_tools"
     r".{0,160}?get_tool_schema"
@@ -71,3 +71,12 @@ def test_isolated_inventory_references_remain_allowed() -> None:
 
     assert MANDATORY_ORDERED_CHAIN.search(content) is None
     assert ARROW_ORDERED_CHAIN.search(content) is None
+
+
+def test_imperative_inventory_first_chain_is_detected() -> None:
+    content = (
+        "First, call list_mcp_servers, then call list_tools, then call get_tool_schema, "
+        "then call call_tool."
+    )
+
+    assert MANDATORY_ORDERED_CHAIN.search(content) is not None

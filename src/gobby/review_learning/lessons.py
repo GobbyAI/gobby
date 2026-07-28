@@ -237,7 +237,15 @@ def _validate_class_scoped_identity(
 
 def has_verified_fix(evidence: dict[str, Any]) -> bool:
     """Return whether evidence proves a CI/static/test signal was fixed."""
-    keys = ("verified_fix", "verified_fix_ref", "fix_ref", "commit", "commit_sha", "changes_id")
+    keys = (
+        "verified_fix",
+        "verified_fix_ref",
+        "confirmed_fix",
+        "fix_ref",
+        "commit",
+        "commit_sha",
+        "changes_id",
+    )
     return any(evidence.get(key) for key in keys)
 
 

@@ -1624,8 +1624,14 @@ class TestGenerateSessionSummaries:
         assert result["success"] is True
         enrich.assert_awaited_once()
         assert enrich.await_args.args[1] == Path("/workspace/project")
-        files.assert_called_once_with(project_path="/workspace/project")
-        diff.assert_called_once_with(project_path="/workspace/project")
+        files.assert_called_once_with(
+            project_path="/workspace/project",
+            paths=("src/gobby/sessions/summary_context.py",),
+        )
+        diff.assert_called_once_with(
+            project_path="/workspace/project",
+            paths=("src/gobby/sessions/summary_context.py",),
+        )
 
     @pytest.mark.asyncio
     async def test_missing_digest_uses_bounded_transcript_fallback(self) -> None:

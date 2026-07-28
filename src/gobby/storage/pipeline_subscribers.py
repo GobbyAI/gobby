@@ -51,7 +51,7 @@ class PipelineCompletionSubscriberMixin:
             VALUES {values}
             ON CONFLICT (completion_id, session_id) DO NOTHING
             RETURNING session_id
-            """,
+            """,  # nosec B608
             params,
         ).fetchall()
         inserted = {str(row["session_id"]) for row in rows}

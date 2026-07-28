@@ -827,8 +827,14 @@ async def generate_summary(
         structured_context = _format_structured_context(handoff_ctx)
 
     if unresolved_errors:
-        unresolved_errors_block = format_unresolved_errors(unresolved_errors)
-        base_budget = TRANSCRIPT_FALLBACK_MAX_CHARS - len(unresolved_errors_block) - 2
+        unresolved_errors_block = _truncate_markdown(
+            format_unresolved_errors(unresolved_errors),
+            TRANSCRIPT_FALLBACK_MAX_CHARS,
+        )[:TRANSCRIPT_FALLBACK_MAX_CHARS]
+        base_budget = max(
+            0,
+            TRANSCRIPT_FALLBACK_MAX_CHARS - len(unresolved_errors_block) - 2,
+        )
         structured_context = _truncate_markdown(
             structured_context,
             base_budget,
@@ -906,10 +912,13 @@ async def generate_summary(
         )
 
     logger.debug(
-        "Generated summary for session %s (mode=%s, reason=workflow_action, output_chars=%s)",
+        "Generated summary for session %s",
         session_id,
-        mode,
-        len(summary_content),
+        extra={
+            "mode": mode,
+            "reason": "workflow_action",
+            "output_chars": len(summary_content),
+        },
     )
     result: dict[str, Any] = {"summary_generated": True, "summary_length": len(summary_content)}
     if summary_file_path:

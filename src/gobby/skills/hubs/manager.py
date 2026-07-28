@@ -30,18 +30,14 @@ def resolve_hub_api_keys(
 ) -> dict[str, str]:
     """Resolve hub auth keys from SecretStore.
 
-    Keys are stored under their ``auth_key_name`` (the identifier is kept for
+    Keys are stored under their configured auth secret name (the identifier is kept for
     backwards compatibility with legacy env-var names). Hubs without
-    ``auth_key_name`` are skipped. Env vars are never consulted — SecretStore
+    an auth secret are skipped. Env vars are never consulted — SecretStore
     is the single source of truth for hub auth.
     """
     api_keys: dict[str, str] = {}
     for hub_config in configs.values():
-        key_name = (
-            hub_config.auth_token_env
-            if hub_config.type == "github-topic"
-            else hub_config.auth_key_name
-        )
+        key_name = hub_config.auth_secret_name
         if not key_name:
             continue
         value = store.get(key_name)
@@ -156,12 +152,13 @@ class HubManager:
         ``auth_key_name`` are reported as not requiring auth.
         """
         config = self.get_config(hub_name)
-        if not config.auth_key_name:
+        auth_secret_name = config.auth_secret_name
+        if not auth_secret_name:
             return {"auth_required": False, "auth_configured": True}
         return {
             "auth_required": True,
-            "auth_key_name": config.auth_key_name,
-            "auth_configured": bool(self._api_keys.get(config.auth_key_name)),
+            "auth_key_name": auth_secret_name,
+            "auth_configured": bool(self._api_keys.get(auth_secret_name)),
         }
 
     def warn_missing_auth(self) -> None:
@@ -172,9 +169,10 @@ class HubManager:
         (auth lives in SecretStore, never env).
         """
         for hub_name, config in self._configs.items():
-            if not config.auth_key_name:
+            auth_secret_name = config.auth_secret_name
+            if not auth_secret_name:
                 continue
-            if self._api_keys.get(config.auth_key_name):
+            if self._api_keys.get(auth_secret_name):
                 continue
             logger.warning(
                 "Skill hub '%s' is missing required auth. Run 'gobby install' to configure.",
@@ -209,9 +207,7 @@ class HubManager:
 
         # Resolve auth token from api_keys if auth_key_name is set
         auth_token: str | None = None
-        auth_key_name = (
-            config.auth_token_env if config.type == "github-topic" else config.auth_key_name
-        )
+        auth_key_name = config.auth_secret_name
         if auth_key_name:
             auth_token = self._api_keys.get(auth_key_name)
             if auth_token is None:

@@ -91,22 +91,11 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
     ]
 
     recorded: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
     for entry in entries:
-        required = (
-            "check_key",
-            "lesson_classes",
-            "prevention",
-            "leaf_task_ref",
-            "path",
-            "confirmed_fix_evidence",
-            "finding_fingerprint",
-        )
-        if any(not entry.get(field) for field in required) or not (
-            entry.get("principle") or entry.get("root_cause")
-        ):
-            continue
         for lesson_type in entry["lesson_classes"]:
             guardrail_target = "checklist" if lesson_type == "qa-miss" else "validation"
+            finding_fingerprint = entry.get("finding_fingerprint")
             result = await service.record(
                 source_kind="qa_rejection",
                 source="epic-reviewer",
@@ -117,7 +106,9 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
                     "check_key": entry["check_key"],
                     "lesson_type": lesson_type,
                     "pattern_id": f"epic-qa:{lesson_type}:{entry['check_key']}",
-                    "finding_fingerprint": (f"{entry['finding_fingerprint']}:{lesson_type}"),
+                    "finding_fingerprint": (
+                        f"{finding_fingerprint}:{lesson_type}" if finding_fingerprint else None
+                    ),
                     "principle": entry.get("principle"),
                     "root_cause": entry.get("root_cause"),
                     "prevention": entry["prevention"],
@@ -125,12 +116,15 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
                     "guardrail_target": guardrail_target,
                 },
                 evidence={
-                    "confirmed_fix": entry["confirmed_fix_evidence"],
+                    "confirmed_fix": entry.get("confirmed_fix_evidence"),
                     "leaf_task_ref": entry["leaf_task_ref"],
                     "files": [entry["path"]],
                 },
             )
-            recorded.append(result)
+            if result.get("skipped_reason"):
+                skipped.append(result)
+            else:
+                recorded.append(result)
 
     assert {result["pattern_id"] for result in recorded} == {
         "epic-qa:qa-miss:stale-section",
@@ -139,3 +133,5 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
     assert [result["occurrence_count"] for result in recorded] == [1, 1]
     assert len(memories.memories) == 2
     assert all("lesson-domain:code" in (memory.tags or []) for memory in memories.memories)
+    assert len(skipped) == 1
+    assert skipped[0]["skipped_reason"] == "missing_verified_fix"

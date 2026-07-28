@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.claude_code import is_action_first_reason
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
@@ -117,19 +118,6 @@ def _load_bundled_rule(
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 
 
-_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
-_GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
-_COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
-
-
-def _is_action_first_reason(reason: str) -> bool:
-    return (
-        reason.startswith(_ACTION_FIRST_PREFIXES)
-        or _GET_SKILL_RE.match(reason) is not None
-        or _COMMAND_CALL_RE.match(reason) is not None
-    )
-
-
 class TestBundledBlockReasonFraming:
     def test_every_live_before_tool_block_is_classified_once(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
@@ -142,7 +130,7 @@ class TestBundledBlockReasonFraming:
 
         for rule_name in sorted(REDIRECT_RULES - {"require-claimed-task-required-skills"}):
             reason = reasons[rule_name]
-            assert _is_action_first_reason(reason), f"{rule_name}: {reason!r}"
+            assert is_action_first_reason(reason), f"{rule_name}: {reason!r}"
             assert not reason.lower().startswith(("do not", "blocked", "disabled"))
 
     def test_skill_fetch_template_is_the_only_marker_exception(self) -> None:

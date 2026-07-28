@@ -96,9 +96,11 @@ def test_handoff_context_defaults_unresolved_errors_to_an_independent_list() -> 
     ["d" * TRANSCRIPT_FALLBACK_MAX_CHARS, None],
     ids=["digest", "analyzer"],
 )
+@pytest.mark.parametrize("record_count", [10, 200], ids=["normal-errors", "errors-exceed-cap"])
 @pytest.mark.asyncio
 async def test_generate_summary_reserves_unresolved_errors_within_context_cap(
     digest_markdown: str | None,
+    record_count: int,
     mock_session_manager: MagicMock,
     mock_llm_service: MagicMock,
     mock_transcript_processor: MagicMock,
@@ -128,7 +130,7 @@ async def test_generate_summary_reserves_unresolved_errors_within_context_cap(
             "last_at": "2026-07-23T00:00:01+00:00",
             "count": 999_999,
         }
-        for index in range(10)
+        for index in range(record_count)
     ]
     main_thread = threading.get_ident()
     loader_threads: list[int] = []
@@ -170,8 +172,12 @@ async def test_generate_summary_reserves_unresolved_errors_within_context_cap(
     assert result["summary_generated"] is True
     structured_context = captured_context["structured_context"]
     expected_block = format_unresolved_errors(records)
-    assert structured_context.endswith(expected_block)
     assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS
+    if len(expected_block) > TRANSCRIPT_FALLBACK_MAX_CHARS:
+        assert structured_context.startswith("Unresolved Tool Errors:")
+        assert "a" * 100 not in structured_context
+    else:
+        assert structured_context.endswith(expected_block)
     assert loader_threads and len(loader_threads) == 1
     assert loader_threads[0] != main_thread
 
@@ -1257,9 +1263,10 @@ class TestGenerateSummary:
             and record.getMessage().startswith("Generated summary for session ")
             for record in caplog.records
         )
-        assert "mode=clear" in generation_record.getMessage()
-        assert "reason=workflow_action" in generation_record.getMessage()
-        assert f"output_chars={len(VALID_SUMMARY_CONTENT)}" in generation_record.getMessage()
+        assert generation_record.getMessage() == "Generated summary for session test-session"
+        assert generation_record.__dict__["mode"] == "clear"
+        assert generation_record.__dict__["reason"] == "workflow_action"
+        assert generation_record.__dict__["output_chars"] == len(VALID_SUMMARY_CONTENT)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

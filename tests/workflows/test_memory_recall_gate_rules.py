@@ -58,12 +58,13 @@ def _event(
 @pytest.fixture
 def engine(temp_db: HubDatabase) -> RuleEngine:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
-    temp_db.execute("UPDATE workflow_definitions SET enabled = FALSE")
-    for rule_name in RULE_NAMES:
-        temp_db.execute(
-            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
-            (rule_name,),
-        )
+    with temp_db.transaction() as conn:
+        conn.execute("UPDATE workflow_definitions SET enabled = FALSE")
+        for rule_name in RULE_NAMES:
+            conn.execute(
+                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
+                (rule_name,),
+            )
     return RuleEngine(temp_db)
 
 

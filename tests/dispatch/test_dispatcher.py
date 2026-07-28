@@ -2261,6 +2261,8 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
     )
     spawn_kwargs: dict[str, object] = {}
+    main_thread = threading.get_ident()
+    evidence_threads: list[int] = []
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         spawn_kwargs.update(kwargs)
@@ -2278,9 +2280,14 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
+
+    def prepare_evidence(**kwargs: object) -> tuple[str, None, None]:
+        evidence_threads.append(threading.get_ident())
+        return str(kwargs["prompt"]), None, None
+
     monkeypatch.setattr(
         "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
-        lambda **kwargs: (str(kwargs["prompt"]), None, None),
+        prepare_evidence,
     )
     monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
@@ -2304,6 +2311,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
     assert artifacts.worktree_id is None
     assert artifacts.worktree_path is None
     assert artifacts.base_commit_sha is None
+    assert evidence_threads and evidence_threads[0] != main_thread
 
 
 @pytest.mark.asyncio

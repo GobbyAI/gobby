@@ -225,3 +225,68 @@ In @tests/workflows/test_condition_helpers.py around lines 42 - 47, Update the t
 ## Finding #786
 
 In @tests/workflows/test_memory_lifecycle_rules.py around lines 143 - 163, Update the new test methods test_event_and_effect and test_matches_plan_boundaries to annotate db as HubDatabase and manager as LocalWorkflowDefinitionManager, preserving the existing return and parameter annotations.
+
+## Forward-Port Disposition Ledger
+
+- Source commit: `f8dbf6d9291d5071636da6f233ceca75fecbd829`
+- Original task: `#19005`
+- Forward-port base: `23e5b2d74cb5f867a2a575e388a8cb96736f35db`
+- Integration task: `#19171`
+
+| Finding | Disposition | Accounting |
+| --- | --- | --- |
+| #201 | Carried | Runner server initialization now uses the runner attention manager directly. |
+| #202 | Carried | Skill hub credentials are resolved through the secret store. |
+| #203 | Carried | Prune cron registration now runs through the async database boundary. |
+| #204 | Carried | The maintenance memory supplier is evaluated off the event loop. |
+| #210 | Carried | GitHub-topic refreshes share one HTTP client. |
+| #211 | Carried | Concurrent GitHub-topic refreshes are single-flighted. |
+| #212 | Carried | GitHub-topic discovery validates JSON response shapes. |
+| #213 | Carried | GitHub archive downloads follow redirects. |
+| #214 | Carried | Hub authentication uses the configured secret-name field consistently. |
+| #245 | Carried | Detection-registry composition asserts that the spawn registrar was invoked. |
+| #246 | Carried | Detection-registry composition tests have an explicit unit marker. |
+| #254 | Carried | GitHub-topic tests carry the appropriate unit/integration markers. |
+| #255 | Carried | Skill installation rejects mismatched download provenance. |
+| #287 | Carried | Pipeline history deletion verifies the locked project row exists. |
+| #297 | Already satisfied | Wiki skill tests already had the requested unit marker. |
+| #364 | Obsolete | Packet 06 removed the receipt-persistence subsystem containing this finding. |
+| #365 | Obsolete | Packet 06 removed the receipt-persistence subsystem containing this finding. |
+| #367 | Obsolete | Packet 06 removed the observer-verification subsystem containing this finding. |
+| #368 | Obsolete | Packet 06 removed the observer-verification subsystem containing this finding. |
+| #369 | Obsolete | Packet 06 removed the observer-verification subsystem containing this finding. |
+| #370 | Obsolete | Packet 06 removed the observer-verification subsystem containing this finding. |
+| #371 | Obsolete | Packet 06 removed the observer-verification subsystem containing this finding. |
+| #384 | Obsolete | Packet 06 removed the receipt/checklist subsystem containing this finding. |
+| #385 | Obsolete | Packet 06 removed the receipt/checklist subsystem containing this finding. |
+| #429 | Carried | Active progressive-discovery guidance recognizes inventory-first imperative phrasing. |
+| #430 | Obsolete | Packet 06 removed the success-handler verification-evidence path containing this finding. |
+| #431 | Carried | Context-handoff tests now annotate fixture parameters and return types. |
+| #432 | Carried | The context-loss async test now has an explicit asyncio marker. |
+| #433 | Carried | Newly introduced progressive-discovery tests now have complete annotations. |
+| #434 | Already satisfied | The review-workflow test already had the requested return annotation. |
+| #488 | Carried | Pipeline subscriber SQL documents the intentional dynamic fragment for Bandit. |
+| #496 | Already satisfied | Plan-delegation tests already had the requested unit marker. |
+| #497 | Adapted | Worker-wait owners retain wake/sweep assertions while plan-review timeout budgets remain distinct from the removed wait tool. |
+| #510 | Obsolete | Current stage-native evidence transports snapshots by paged evidence handle, so inline snapshot delimiters no longer exist. |
+| #511 | Carried | Planning-agent evidence preparation runs off the event loop. |
+| #571 | Obsolete | Commit `12f15a6bd` deliberately removed recurring-validation lessons from development discipline; the stale contract test remains removed. |
+| #572 | Obsolete | The marker finding targeted the deliberately retired recurring-validation contract test. |
+| #573 | Carried | Epic-review tests exercise incomplete entries through the production recorder. |
+| #574 | Adapted | The split interactive-approval tests use Packet 1's current request anchors, repair proof, atomic rollback, and idempotent retry contracts. |
+| #575 | Carried | Review-learning manifest fixtures use safe YAML serialization. |
+| #576 | Carried | Interactive-approval scenarios carry integration markers. |
+| #585 | Adapted | Review-learning rule tests assert exact effect cardinality and isolate realistic normalized write events from unrelated bundled gates. |
+| #622 | Carried | Rewrite tests use the production Claude action-first classifier. |
+| #663 | Adapted | Session-variable mutations share one transactional helper while preserving current batched edited-file attribution and ordering. |
+| #664 | Carried | Resolving a missing open-tool error is now a no-op without a timestamp write. |
+| #679 | Carried | Concurrent session-variable barrier waits now use finite timeouts. |
+| #680 | Carried | Summary tests cover both small and oversized unresolved-error collections. |
+| #711 | Adapted | Summary generation keeps the current debug level while recording structured mode, reason, and output-size fields. |
+| #749 | Carried | Condition helpers import the shared memory-recall-deliveries constant. |
+| #752 | Adapted | Mutations share one transaction, retain current batched file attribution, and use the required psycopg `%s` placeholders. |
+| #753 | Already satisfied | Skill-loaded call-path tests already had the requested integration marker. |
+| #754 | Carried | Skill-loaded callback tests use typed call-tool callback parameters. |
+| #755 | Carried | Step-enforcement tests validate the exact guidance delimiter. |
+| #785 | Carried | Condition-helper fixtures preserve caller-supplied validation criteria. |
+| #786 | Carried | Memory-lifecycle test fixtures now have concrete manager/database annotations. |

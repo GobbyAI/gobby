@@ -110,7 +110,12 @@ class PipelineHistoryStorageMixin:
         with self.db.transaction() as conn:
             # Prevent new executions from appearing between the safety check
             # and the cascading delete.
-            conn.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+            project_row = conn.execute(
+                "SELECT id FROM projects WHERE id = %s FOR UPDATE",
+                (project_id,),
+            ).fetchone()
+            if project_row is None:
+                raise ValueError(f"Project {project_id} not found")
             rows = conn.execute(self._history_query(for_update=True), params).fetchall()
             summary = _summarize_history(rows, name, project_id)
             if summary["blocking_count"]:

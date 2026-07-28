@@ -292,6 +292,23 @@ class ReviewLearningService:
             risk=risk,
             lesson_domain=lesson_domain,
         )
+        if normalized.source_kind == "qa_rejection" and source == "epic-reviewer":
+            missing_fields = _missing_qa_rejection_fields(finding, evidence)
+            if missing_fields:
+                skipped_reason = (
+                    "missing_verified_fix"
+                    if "confirmed_fix_evidence" in missing_fields
+                    else "incomplete_finding"
+                )
+                return {
+                    "pattern_id": normalized.identity.pattern_id,
+                    "finding_fingerprint": finding_fingerprint,
+                    "occurrence_key": occurrence_key,
+                    "decision": validated_decision,
+                    "promotable": normalized.identity.promotable,
+                    "skipped_reason": skipped_reason,
+                    "missing_fields": missing_fields,
+                }
 
         lock = ReviewLearningPatternMutation(
             project_id=project_id,
@@ -606,6 +623,26 @@ def _validate_recorded_finding(finding: dict[str, Any]) -> None:
     if missing_groups:
         joined = "; ".join(missing_groups)
         raise ValueError(f"finding missing required non-empty field group(s): {joined}")
+
+
+def _missing_qa_rejection_fields(
+    finding: dict[str, Any],
+    evidence: dict[str, Any],
+) -> list[str]:
+    def present(value: object) -> bool:
+        return bool(str(value or "").strip())
+
+    missing: list[str] = []
+    for field in ("check_key", "lesson_type", "prevention", "path", "finding_fingerprint"):
+        if not present(finding.get(field)):
+            missing.append(field)
+    if not any(present(finding.get(field)) for field in ("principle", "root_cause")):
+        missing.append("principle_or_root_cause")
+    if not present(evidence.get("leaf_task_ref")):
+        missing.append("leaf_task_ref")
+    if not has_verified_fix(evidence):
+        missing.append("confirmed_fix_evidence")
+    return missing
 
 
 def _snippet(content: str, length: int = 240) -> str:

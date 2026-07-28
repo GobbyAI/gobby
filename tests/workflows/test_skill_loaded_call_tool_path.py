@@ -153,12 +153,17 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
         "success": True,
         "skill": {"name": "tasks", "content": "instructions-" + ("x" * 16_000)},
     }
+
+    def get_oversized_skill(name: str) -> dict[str, object]:
+        del name
+        return oversized_skill
+
     registry = InternalToolRegistry("gobby-skills")
     registry.register(
         name="get_skill",
         description="Return an oversized skill.",
         input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
-        func=lambda name: oversized_skill,
+        func=get_oversized_skill,
     )
     manager = InternalRegistryManager()
     manager.add_registry(registry)

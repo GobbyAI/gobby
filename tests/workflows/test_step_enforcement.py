@@ -344,7 +344,9 @@ class TestStepToolBlocking:
 
         assert response.decision == "block"
         assert response.reason is not None
-        guidance = response.reason.split("\nDuring this skill-loading step:", maxsplit=1)[-1]
+        delimiter = "\nDuring this skill-loading step:"
+        assert delimiter in response.reason
+        guidance = response.reason.split(delimiter, maxsplit=1)[1]
         assert "list_tools" not in guidance
         assert "get_tool_schema" not in guidance
         assert 'call_tool("gobby-skills", "get_skill", {"name":"plan-review"})' in guidance

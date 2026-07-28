@@ -33,7 +33,14 @@ async def test_wiki_cron_registration_uses_canonical_default_scope(
         received.update(kwargs)
         return 7
 
-    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[tuple[str, None]], list[Any]]:
+    async def run_db(
+        _runner: object,
+        operation: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if operation is prune_job.register_wiki_prune_cron:
+            return operation(*args, **kwargs)
         return ([("project-id", None)], [])
 
     monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
@@ -53,7 +60,14 @@ async def test_wiki_cron_registration_failure_logs_traceback(
     async def fail_registration(**_kwargs: Any) -> int:
         raise RuntimeError("registration failed")
 
-    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[tuple[str, None]], list[Any]]:
+    async def run_db(
+        _runner: object,
+        operation: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if operation is prune_job.register_wiki_prune_cron:
+            return operation(*args, **kwargs)
         return ([("project-id", None)], [])
 
     monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
@@ -85,7 +99,14 @@ async def test_global_wiki_prune_registers_before_empty_project_return(
 ) -> None:
     registrations: list[dict[str, Any]] = []
 
-    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[Any], list[Any]]:
+    async def run_db(
+        _runner: object,
+        operation: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if operation is prune_job.register_wiki_prune_cron:
+            return operation(*args, **kwargs)
         return ([], [])
 
     monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)

@@ -210,3 +210,20 @@ def test_builder_type_alias_exported() -> None:
     from gobby.dispatch.prompts import PromptBuilder
 
     assert PromptBuilder
+
+
+def test_plan_review_evidence_uses_stage_native_snapshot_handle() -> None:
+    from gobby.dispatch.prompts import attach_plan_review_evidence
+
+    rendered = attach_plan_review_evidence(
+        "review this plan",
+        evidence_id="evidence-1",
+        round_number=2,
+    )
+
+    assert rendered.startswith("review this plan\n")
+    assert "`get_plan_review_snapshot`" in rendered
+    assert "`offset: 0`" in rendered
+    assert "`limit: 8000`" in rendered
+    assert '{"evidence_id":"evidence-1","round_number":2}' in rendered
+    assert "<plan-review-snapshot-" not in rendered

@@ -206,6 +206,13 @@ class TestPipelineExecutionHistoryCleanup:
         with pytest.raises(ValueError, match="requires a project scope"):
             unscoped.preview_pipeline_execution_history("wiki-research")
 
+    def test_clear_history_rejects_missing_project(self, db: HubDatabase) -> None:
+        missing_project_id = "00000000-0000-4000-8000-000000000099"
+        manager = LocalPipelineExecutionManager(db, project_id=missing_project_id)
+
+        with pytest.raises(ValueError, match=f"Project {missing_project_id} not found"):
+            manager.clear_pipeline_execution_history("wiki-research")
+
 
 class TestCreateExecution:
     """Tests for create_execution method."""

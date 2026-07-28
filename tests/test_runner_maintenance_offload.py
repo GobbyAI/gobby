@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,7 @@ from gobby.runner_maintenance import (
     cleanup_comms_messages_loop,
     expire_approval_timeouts_loop,
     metric_snapshot_loop,
+    rebuild_vector_store,
 )
 from gobby.runner_maintenance_recurring import metrics_archive_loop, metrics_cleanup_loop
 
@@ -29,10 +31,27 @@ class RecordingDbRunner:
 
 
 @pytest.mark.asyncio
+async def test_vector_rebuild_offloads_callable_supplier() -> None:
+    main_thread = threading.get_ident()
+    supplier_threads: list[int] = []
+
+    def memory_dicts() -> list[dict[str, str]]:
+        supplier_threads.append(threading.get_ident())
+        return [{"id": "memory-1", "content": "content"}]
+
+    vector_store = SimpleNamespace(rebuild=AsyncMock())
+
+    await rebuild_vector_store(vector_store, memory_dicts, object())
+
+    vector_store.rebuild.assert_awaited_once()
+    assert supplier_threads and supplier_threads[0] != main_thread
+
+
+@pytest.mark.asyncio
 async def test_startup_metrics_cleanup_uses_db_executor() -> None:
     cleanup = MagicMock(return_value=4)
     run_db = RecordingDbRunner()
-    runner = SimpleNamespace(
+    runner: Any = SimpleNamespace(
         metrics_manager=SimpleNamespace(cleanup_old_metrics=cleanup),
         db_executor=SimpleNamespace(run=run_db),
     )

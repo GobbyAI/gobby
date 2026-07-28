@@ -38,11 +38,11 @@ def _task(
     **kwargs: Any,
 ) -> Task:
     title = kwargs.pop("title", "Condition helper task")
+    kwargs.setdefault("validation_criteria", "Test task completion is observable.")
     return manager.create_task(
         project_id=sample_project["id"],
         title=title,
         **kwargs,
-        validation_criteria="Test task completion is observable.",
     )
 
 
