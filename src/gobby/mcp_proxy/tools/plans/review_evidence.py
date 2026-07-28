@@ -16,6 +16,16 @@ from gobby.agents.code_index import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.plans.review_evidence_schemas import (
+    CANDIDATE_DISPOSITIONS_SCHEMA,
+    INDEX_TOKEN_SCHEMA,
+    LANE_RESULTS_SCHEMA,
+    LESSON_MINT_DETAIL_SCHEMA,
+    PRIOR_FINDING_RESOLUTIONS_SCHEMA,
+    REPAIR_ATTESTATIONS_SCHEMA,
+    ROUND_RESULT_SCHEMA,
+    ROUTING_DECISIONS_SCHEMA,
+)
 from gobby.plans.consumer_sweep import derive_candidate_site_inventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
@@ -167,14 +177,18 @@ def register_review_evidence_tools(
 
     registry.register(
         name="verify_plan_review_index_token",
-        description="Read-only verification of a settled plan-review index token.",
+        description=(
+            "Read-only verification of a settled plan-review index token. "
+            "Example: verify a repository_digest, last_indexed_at, and sorted source_files."
+        ),
         input_schema={
             "type": "object",
             "properties": {
-                "index_token": {"type": "object"},
+                "index_token": INDEX_TOKEN_SCHEMA,
                 "project": {"type": "string"},
             },
             "required": ["index_token"],
+            "additionalProperties": False,
         },
         func=verify_plan_review_index_token,
     )
@@ -262,7 +276,11 @@ def register_review_evidence_tools(
 
     registry.register(
         name="prepare_plan_review_round",
-        description="Capture immutable, server-hashed evidence for one plan review round.",
+        description=(
+            "Capture immutable, server-hashed evidence for one plan review round. "
+            "Example: round 2 carries [{prior_finding_id: F1, decision: repair}] "
+            "with its repair attestation."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -270,8 +288,11 @@ def register_review_evidence_tools(
                 "round_number": {"type": "integer", "minimum": 1},
                 "project": {"type": "string"},
                 **_BINDING_PROPERTIES,
+                "prior_finding_resolutions": PRIOR_FINDING_RESOLUTIONS_SCHEMA,
+                "repair_attestations": REPAIR_ATTESTATIONS_SCHEMA,
             },
             "required": ["plan_path", "round_number"],
+            "additionalProperties": False,
         },
         func=prepare_plan_review_round,
     )
@@ -404,14 +425,18 @@ def register_review_evidence_tools(
 
     registry.register(
         name="derive_plan_review_manifest",
-        description="Read-only canonical shadow-manifest derivation for a review snapshot.",
+        description=(
+            "Read-only canonical shadow-manifest derivation for a review snapshot. "
+            "Example: {routing_decisions: {5.3: {category: code, tdd: true}}}."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "routing_decisions": {"type": "object"},
+                "routing_decisions": ROUTING_DECISIONS_SCHEMA,
             },
             "required": ["evidence_id", "routing_decisions"],
+            "additionalProperties": False,
         },
         func=derive_plan_review_manifest,
     )
@@ -437,45 +462,16 @@ def register_review_evidence_tools(
         name="validate_plan_review_coverage",
         description=(
             "Read-only validation of review lanes, structured sweep records, "
-            "dispositions, and source hashes."
+            "dispositions, and source hashes. Example: three completed lanes plus "
+            "a disposition bundle and per-deliverable routing decisions."
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "lane_results": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                },
-                "candidate_dispositions": {
-                    "type": "object",
-                    "properties": {
-                        "cross_lane_interactions": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
-                        "adjacent_variant_sweeps": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
-                        "causal_repair_sweeps": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
-                        "candidate_dispositions": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
-                    },
-                    "required": [
-                        "cross_lane_interactions",
-                        "adjacent_variant_sweeps",
-                        "causal_repair_sweeps",
-                        "candidate_dispositions",
-                    ],
-                    "additionalProperties": False,
-                },
-                "routing_decisions": {"type": "object"},
+                "lane_results": LANE_RESULTS_SCHEMA,
+                "candidate_dispositions": CANDIDATE_DISPOSITIONS_SCHEMA,
+                "routing_decisions": ROUTING_DECISIONS_SCHEMA,
             },
             "required": [
                 "evidence_id",
@@ -507,16 +503,21 @@ def register_review_evidence_tools(
 
     registry.register(
         name="apply_plan_review_manifest",
-        description="Compare and atomically apply an approved, server-validated M1 manifest.",
+        description=(
+            "Compare and atomically apply an approved, server-validated M1 manifest. "
+            "Example: apply {verdict: approved, findings: [], routing_decisions: {...}, "
+            "manifest_entries: [...], coverage_attestation: {...}}."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
                 "plan_path": {"type": "string"},
                 "run_id": {"type": "string"},
-                "round_result": {"type": "object"},
+                "round_result": ROUND_RESULT_SCHEMA,
             },
             "required": ["evidence_id", "plan_path", "run_id", "round_result"],
+            "additionalProperties": False,
         },
         func=apply_plan_review_manifest,
     )
@@ -537,14 +538,18 @@ def register_review_evidence_tools(
 
     registry.register(
         name="render_v1_round_checkpoint",
-        description="Render the canonical interactive V1 reconciliation checkpoint.",
+        description=(
+            "Render the canonical interactive V1 reconciliation checkpoint. "
+            "Example: render an approved round_result, or omit it after manifest application."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "round_result": {"type": "object"},
+                "round_result": ROUND_RESULT_SCHEMA,
             },
             "required": ["evidence_id"],
+            "additionalProperties": False,
         },
         func=render_v1_round_checkpoint,
     )
@@ -566,14 +571,19 @@ def register_review_evidence_tools(
 
     registry.register(
         name="finalize_plan_review_evidence",
-        description="Atomically finalize evidence with its canonical durable round result.",
+        description=(
+            "Atomically finalize evidence with its canonical durable round result. "
+            "Example: finalize {verdict: needs_review, findings: [...], "
+            "coverage_attestation: {...}}."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "round_result": {"type": "object"},
+                "round_result": ROUND_RESULT_SCHEMA,
             },
             "required": ["evidence_id", "round_result"],
+            "additionalProperties": False,
         },
         func=finalize_plan_review_evidence,
     )
@@ -600,7 +610,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="checkpoint_plan_review_lesson_mint",
-        description="Checkpoint the terminal lesson-mint result for an interactive approval.",
+        description=(
+            "Checkpoint the terminal lesson-mint result for an interactive approval. "
+            "Example: {status: minted, detail: {minted_lesson_ids: [lesson-1], detail: null}}."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -609,9 +622,10 @@ def register_review_evidence_tools(
                     "type": "string",
                     "enum": ["minted", "failed", "none"],
                 },
-                "detail": {"type": "object"},
+                "detail": LESSON_MINT_DETAIL_SCHEMA,
             },
             "required": ["evidence_id", "status", "detail"],
+            "additionalProperties": False,
         },
         func=checkpoint_plan_review_lesson_mint,
     )
