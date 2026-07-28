@@ -1153,6 +1153,7 @@ CREATE TABLE cron_jobs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL UNIQUE,
+    display_name TEXT,
     description TEXT,
     schedule_type TEXT NOT NULL,
     cron_expr TEXT,

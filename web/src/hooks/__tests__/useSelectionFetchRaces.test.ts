@@ -33,6 +33,7 @@ function cronJob(id: string, projectId: string): CronJob {
     id,
     project_id: projectId,
     name: id,
+    display_name: null,
     description: null,
     schedule_type: 'cron',
     cron_expr: '* * * * *',

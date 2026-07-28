@@ -9,6 +9,9 @@ export interface CronJob {
   id: string
   project_id: string
   name: string
+  /** Effective display label from the API: stored rename, generated default
+   * for gobby-namespaced system identifiers, or the raw name. */
+  display_name: string | null
   description: string | null
   schedule_type: 'cron' | 'interval' | 'once'
   cron_expr: string | null
@@ -65,11 +68,14 @@ export interface CreateCronJobRequest {
   interval_seconds?: number
   run_at?: string
   timezone?: string
+  display_name?: string
   description?: string
 }
 
 export interface UpdateCronJobRequest {
   name?: string
+  /** Empty string resets the label to the generated default. */
+  display_name?: string
   description?: string
   schedule_type?: string
   cron_expr?: string

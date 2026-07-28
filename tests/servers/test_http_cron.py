@@ -308,6 +308,87 @@ class TestCronUpdateJob:
         cron_storage.update_job.assert_not_called()
 
 
+class TestCronDisplayName:
+    def test_list_jobs_include_generated_display_name(
+        self, client: TestClient, cron_storage: MagicMock
+    ) -> None:
+        cron_storage.list_jobs.return_value = [_make_job(name="gobby:wiki-prune")]
+
+        resp = client.get("/api/cron/jobs")
+
+        assert resp.status_code == 200
+        job = resp.json()["jobs"][0]
+        assert job["name"] == "gobby:wiki-prune"
+        assert job["display_name"] == "Wiki prune"
+
+    def test_list_jobs_resolve_project_uuid_in_display_name(
+        self,
+        client: TestClient,
+        cron_storage: MagicMock,
+        project_storage: LocalProjectManager,
+    ) -> None:
+        project = project_storage.create(name="gobby")
+        cron_storage.list_jobs.return_value = [
+            _make_job(name=f"gobby:wiki-recap:project:{project.id}")
+        ]
+
+        resp = client.get("/api/cron/jobs")
+
+        assert resp.status_code == 200
+        assert resp.json()["jobs"][0]["display_name"] == "Wiki recap — gobby"
+
+    def test_update_job_renames_display_name(
+        self, client: TestClient, cron_storage: MagicMock
+    ) -> None:
+        cron_storage.update_job.return_value = _make_job(
+            name="gobby:wiki-prune", display_name="My prune"
+        )
+
+        resp = client.patch("/api/cron/jobs/cj-abc123", json={"display_name": "My prune"})
+
+        assert resp.status_code == 200
+        cron_storage.update_job.assert_called_once_with("cj-abc123", display_name="My prune")
+        assert resp.json()["job"]["display_name"] == "My prune"
+
+    def test_update_job_empty_display_name_resets_to_default(
+        self, client: TestClient, cron_storage: MagicMock
+    ) -> None:
+        cron_storage.update_job.return_value = _make_job(name="gobby:wiki-prune")
+
+        resp = client.patch("/api/cron/jobs/cj-abc123", json={"display_name": ""})
+
+        assert resp.status_code == 200
+        cron_storage.update_job.assert_called_once_with("cj-abc123", display_name="")
+        assert resp.json()["job"]["display_name"] == "Wiki prune"
+
+    def test_create_job_passes_display_name(
+        self,
+        client: TestClient,
+        cron_storage: MagicMock,
+        project_storage: LocalProjectManager,
+    ) -> None:
+        project = project_storage.create(name="display-project")
+        cron_storage.create_job.return_value = _make_job(
+            project_id=project.id, display_name="Nightly report"
+        )
+
+        resp = client.post(
+            "/api/cron/jobs",
+            json={
+                "name": "report",
+                "project_id": project.id,
+                "display_name": "Nightly report",
+                "action_type": "shell",
+                "action_config": {"command": "echo"},
+                "cron_expr": "0 7 * * *",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert cron_storage.create_job.call_args.kwargs["display_name"] == "Nightly report"
+        assert resp.json()["job"]["display_name"] == "Nightly report"
+
+
 class TestCronDeleteJob:
     def test_delete_job(self, client, cron_storage) -> None:
         cron_storage.delete_job.return_value = True

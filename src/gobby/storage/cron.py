@@ -40,6 +40,9 @@ SYSTEM_ROW_UPDATE_ALLOWED_FIELDS = frozenset(
         "interval_seconds",
         "run_at",
         "timezone",
+        # Renaming the display label is safe on system rows: the identifier
+        # (name) stays stable, so scheduler lookups are unaffected.
+        "display_name",
     }
 )
 
@@ -160,6 +163,7 @@ class CronJobStorage(CronRunStorageMixin):
         schedule_type: Literal["cron", "interval", "once"],
         action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
         action_config: dict[str, Any],
+        display_name: str | None = None,
         description: str | None = None,
         cron_expr: str | None = None,
         interval_seconds: int | None = None,
@@ -187,6 +191,7 @@ class CronJobStorage(CronRunStorageMixin):
             action_config=action_config,
             created_at=now,
             updated_at=now,
+            display_name=(display_name or "").strip() or None,
             description=description,
             cron_expr=cron_expr,
             interval_seconds=interval_seconds,
@@ -205,18 +210,19 @@ class CronJobStorage(CronRunStorageMixin):
         self.db.execute(
             """
             INSERT INTO cron_jobs (
-                id, project_id, name, description, schedule_type,
+                id, project_id, name, display_name, description, schedule_type,
                 cron_expr, interval_seconds, run_at, timezone,
                 action_type, action_config, enabled, is_system, next_run_at,
                 last_run_at, last_status, consecutive_failures,
                 created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 job.id,
                 job.project_id,
                 job.name,
+                job.display_name,
                 job.description,
                 job.schedule_type,
                 job.cron_expr,
@@ -329,6 +335,7 @@ class CronJobStorage(CronRunStorageMixin):
     _VALID_UPDATE_FIELDS = frozenset(
         {
             "name",
+            "display_name",
             "description",
             "schedule_type",
             "cron_expr",
@@ -418,6 +425,10 @@ class CronJobStorage(CronRunStorageMixin):
                     "scheduler state or reconcile_system_job_definition for bundled "
                     "action repair."
                 )
+
+        if "display_name" in fields:
+            # Empty string clears the override back to the generated default.
+            fields["display_name"] = (fields["display_name"] or "").strip() or None
 
         self._normalize_update_fields(job, fields)
         schedule_fields = {

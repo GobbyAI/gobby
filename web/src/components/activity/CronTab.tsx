@@ -24,8 +24,17 @@ type StatusFilter = (typeof FILTER_OPTIONS)[number]['id']
 const PAGE_SIZE = 20
 
 export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
-  const { jobs, selectedJob, selectJob, runs, isRunsLoading, isLoading, toggleJob, deleteJob } =
-    useCronJobs(projectId)
+  const {
+    jobs,
+    selectedJob,
+    selectJob,
+    runs,
+    isRunsLoading,
+    isLoading,
+    toggleJob,
+    deleteJob,
+    updateJob,
+  } = useCronJobs(projectId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('enabled')
   const [topHeight, setTopHeight] = useState(50)
   const [displayLimitState, setDisplayLimitState] = useState<{
@@ -93,8 +102,8 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
       jobs.filter((j) => {
         if (statusFilter === 'enabled' ? !j.enabled : j.enabled) return false
         if (!query) return true
-        return [j.name, j.description ?? '', j.cron_expr ?? ''].some((field) =>
-          field.toLowerCase().includes(query),
+        return [j.name, j.display_name ?? '', j.description ?? '', j.cron_expr ?? ''].some(
+          (field) => field.toLowerCase().includes(query),
         )
       }),
     [jobs, statusFilter, query],
@@ -156,22 +165,36 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
         ) : (
           <>
             {visibleJobs.map((job) => {
-              const menuItems: QuickMenuItem[] = [
-                {
-                  label: job.enabled ? 'Disable' : 'Enable',
-                  onSelect: () => void toggleJob(job.id),
-                },
-                { type: 'separator' },
-                {
-                  label: 'Delete',
-                  destructive: true,
-                  onSelect: () => {
-                    if (window.confirm(`Delete cron job "${job.name}"?`)) {
-                      void deleteJob(job.id)
-                    }
-                  },
-                },
-              ]
+              const jobLabel = job.display_name ?? job.name
+              const renameJob = () => {
+                const next = window.prompt(
+                  'Rename cron job (empty resets to the default name)',
+                  jobLabel,
+                )
+                if (next === null || next === jobLabel) return
+                void updateJob(job.id, { display_name: next.trim() })
+              }
+              // System crons reject operator toggle and delete server-side,
+              // so they only get the rename action (identifier stays stable).
+              const menuItems: QuickMenuItem[] = job.is_system
+                ? [{ label: 'Rename', onSelect: renameJob }]
+                : [
+                    { label: 'Rename', onSelect: renameJob },
+                    {
+                      label: job.enabled ? 'Disable' : 'Enable',
+                      onSelect: () => void toggleJob(job.id),
+                    },
+                    { type: 'separator' },
+                    {
+                      label: 'Delete',
+                      destructive: true,
+                      onSelect: () => {
+                        if (window.confirm(`Delete cron job "${job.name}"?`)) {
+                          void deleteJob(job.id)
+                        }
+                      },
+                    },
+                  ]
               return (
                 <div
                   key={job.id}
@@ -180,26 +203,22 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                   <button
                     type="button"
                     className="activity-list-row__body"
-                    aria-label={`Select ${job.name}`}
+                    aria-label={`Select ${jobLabel}`}
                     onClick={() => selectJob(job)}
                   >
                     <CronStatusDot enabled={job.enabled} />
-                    <span className="activity-row-title">{job.name}</span>
+                    <span className="activity-row-title">{jobLabel}</span>
                     <span className="activity-row-meta shrink-0">
                       {formatNextFiring(job, now)}
                     </span>
                   </button>
-                  {/* System crons reject operator toggle and delete server-side,
-                      so they get no actions menu at all. */}
-                  {!job.is_system && (
-                    <div className="flex items-center px-1">
-                      <QuickMenu
-                        items={menuItems}
-                        menuLabel={`Actions for ${job.name}`}
-                        triggerLabel={`Open actions for ${job.name}`}
-                      />
-                    </div>
-                  )}
+                  <div className="flex items-center px-1">
+                    <QuickMenu
+                      items={menuItems}
+                      menuLabel={`Actions for ${jobLabel}`}
+                      triggerLabel={`Open actions for ${jobLabel}`}
+                    />
+                  </div>
                 </div>
               )
             })}
@@ -237,9 +256,18 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
             <div className="flex items-center gap-2 min-w-0">
               <CronStatusDot enabled={selectedJob.enabled} />
               <span className="activity-row-title">
-                {selectedJob.name}
+                {selectedJob.display_name ?? selectedJob.name}
               </span>
-              <span className="activity-row-meta">
+              {selectedJob.display_name != null &&
+                selectedJob.display_name !== selectedJob.name && (
+                  <span
+                    className="activity-row-meta font-mono truncate"
+                    title={selectedJob.name}
+                  >
+                    {selectedJob.name}
+                  </span>
+                )}
+              <span className="activity-row-meta shrink-0">
                 {selectedJob.schedule_type === 'cron'
                   ? selectedJob.cron_expr
                   : selectedJob.schedule_type === 'interval'

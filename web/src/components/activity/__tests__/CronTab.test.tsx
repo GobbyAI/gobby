@@ -33,6 +33,7 @@ const cronMock = vi.hoisted(() => ({
   isLoading: false,
   toggleJob: vi.fn(),
   deleteJob: vi.fn(),
+  updateJob: vi.fn(),
 }))
 
 vi.mock('../../../hooks/useCronJobs', () => ({
@@ -48,6 +49,7 @@ function makeJob(overrides: Partial<CronJob> = {}): CronJob {
     id: 'job-1',
     project_id: 'p',
     name: 'job-name',
+    display_name: null,
     description: null,
     schedule_type: 'cron',
     cron_expr: '0 3 * * *',
@@ -77,6 +79,7 @@ beforeEach(() => {
   cronMock.isLoading = false
   cronMock.toggleJob = vi.fn()
   cronMock.deleteJob = vi.fn()
+  cronMock.updateJob = vi.fn()
 })
 
 describe('CronTab', () => {
@@ -126,17 +129,13 @@ describe('CronTab', () => {
     expect(screen.queryByText('paused-job')).toBeNull()
   })
 
-  it('offers Disable and Delete from the row menu, hiding it for system crons (#19152)', async () => {
+  it('offers Rename, Disable, and Delete from the row menu (#19152)', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    cronMock.jobs = [
-      makeJob({ id: 'a', name: 'alpha' }),
-      makeJob({ id: 'sys', name: 'gobby-system-job', is_system: true }),
-    ]
+    cronMock.jobs = [makeJob({ id: 'a', name: 'alpha' })]
     render(<CronTab projectId="p" />)
 
-    expect(screen.queryByRole('button', { name: 'Open actions for gobby-system-job' })).toBeNull()
-
     await userEvent.click(screen.getByRole('button', { name: 'Open actions for alpha' }))
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('menuitem', { name: 'Disable' }))
     expect(cronMock.toggleJob).toHaveBeenCalledWith('a')
 
@@ -144,6 +143,92 @@ describe('CronTab', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
     expect(window.confirm).toHaveBeenCalled()
     expect(cronMock.deleteJob).toHaveBeenCalledWith('a')
+  })
+
+  it('limits system cron menus to Rename (#19160)', async () => {
+    cronMock.jobs = [
+      makeJob({
+        id: 'sys',
+        name: 'gobby:wiki-prune',
+        display_name: 'Wiki prune',
+        is_system: true,
+      }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for Wiki prune' }))
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Disable' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull()
+  })
+
+  it('renders display names in rows without the raw identifier (#19160)', () => {
+    cronMock.jobs = [
+      makeJob({ id: 'sys', name: 'gobby:wiki-prune', display_name: 'Wiki prune' }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    expect(screen.getByText('Wiki prune')).toBeInTheDocument()
+    expect(screen.queryByText('gobby:wiki-prune')).toBeNull()
+  })
+
+  it('renames a job through the row menu (#19160)', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('Prune nightly')
+    cronMock.jobs = [
+      makeJob({ id: 'sys', name: 'gobby:wiki-prune', display_name: 'Wiki prune' }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for Wiki prune' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+
+    expect(cronMock.updateJob).toHaveBeenCalledWith('sys', { display_name: 'Prune nightly' })
+  })
+
+  it('sends an empty display name to reset the label, skipping cancelled prompts (#19160)', async () => {
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('')
+    cronMock.jobs = [
+      makeJob({ id: 'sys', name: 'gobby:wiki-prune', display_name: 'Wiki prune' }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for Wiki prune' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(cronMock.updateJob).toHaveBeenCalledWith('sys', { display_name: '' })
+
+    cronMock.updateJob.mockClear()
+    prompt.mockReturnValue(null)
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for Wiki prune' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(cronMock.updateJob).not.toHaveBeenCalled()
+  })
+
+  it('matches search queries against display names (#19160)', async () => {
+    cronMock.jobs = [
+      makeJob({ id: 'a', name: 'gobby:wiki-prune', display_name: 'Wiki prune' }),
+      makeJob({ id: 'b', name: 'other-job' }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Search cron jobs' }))
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search cron jobs' }), 'wiki pr')
+
+    expect(screen.getByText('Wiki prune')).toBeInTheDocument()
+    expect(screen.queryByText('other-job')).toBeNull()
+  })
+
+  it('demotes the raw identifier to secondary text in the detail header (#19160)', () => {
+    const job = makeJob({
+      id: 'sel',
+      name: 'gobby:wiki-prune',
+      display_name: 'Wiki prune',
+      is_system: true,
+    })
+    cronMock.jobs = [job]
+    cronMock.selectedJob = job
+    render(<CronTab projectId="p" />)
+
+    expect(screen.getByTitle('gobby:wiki-prune')).toHaveTextContent('gobby:wiki-prune')
   })
 
   it('labels the row menu toggle Enable for disabled jobs (#19152)', async () => {

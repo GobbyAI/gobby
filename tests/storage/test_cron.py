@@ -321,6 +321,67 @@ def test_toggle_job_refuses_system_row(cron_storage: CronJobStorage) -> None:
         cron_storage.toggle_job(job.id)
 
 
+def test_create_job_persists_display_name(cron_storage: CronJobStorage) -> None:
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="operator-report",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "report.tick"},
+        interval_seconds=60,
+        display_name="Nightly report",
+    )
+
+    stored = cron_storage.get_job(job.id)
+    assert stored is not None
+    assert stored.display_name == "Nightly report"
+
+
+def test_create_job_normalizes_blank_display_name(cron_storage: CronJobStorage) -> None:
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="operator-report",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "report.tick"},
+        interval_seconds=60,
+        display_name="   ",
+    )
+
+    stored = cron_storage.get_job(job.id)
+    assert stored is not None
+    assert stored.display_name is None
+
+
+def test_update_job_allows_display_name_on_system_row(cron_storage: CronJobStorage) -> None:
+    job = _job(cron_storage, is_system=True)
+
+    updated = cron_storage.update_job(job.id, display_name="Dispatcher tick")
+
+    assert updated is not None
+    assert updated.display_name == "Dispatcher tick"
+    assert updated.name == job.name
+
+
+def test_update_job_empty_display_name_clears_override(cron_storage: CronJobStorage) -> None:
+    job = _job(cron_storage, is_system=False)
+    cron_storage.update_job(job.id, display_name="Custom label")
+
+    updated = cron_storage.update_job(job.id, display_name="")
+
+    assert updated is not None
+    assert updated.display_name is None
+
+
+def test_update_job_still_rejects_name_change_on_system_row(
+    cron_storage: CronJobStorage,
+) -> None:
+    job = _job(cron_storage, is_system=True)
+
+    with pytest.raises(SystemRowProtected, match="'name'"):
+        cron_storage.update_job(job.id, name="renamed", display_name="Label")
+
+
 def test_system_row_constants_and_sentinel_exist() -> None:
     from gobby.storage.cron import SYSTEM_ROW_UPDATE_ALLOWED_FIELDS, UNSET
 
@@ -331,6 +392,7 @@ def test_system_row_constants_and_sentinel_exist() -> None:
         "interval_seconds",
         "run_at",
         "timezone",
+        "display_name",
     }
     assert repr(UNSET) == "UNSET"
 

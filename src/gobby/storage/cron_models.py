@@ -40,6 +40,7 @@ class CronJob:
     action_config: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    display_name: str | None = None
     description: str | None = None
     cron_expr: str | None = None
     interval_seconds: int | None = None
@@ -72,6 +73,7 @@ class CronJob:
             action_config=action_config,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            display_name=row["display_name"] if "display_name" in keys else None,
             description=row["description"] if "description" in keys else None,
             cron_expr=row["cron_expr"] if "cron_expr" in keys else None,
             interval_seconds=row["interval_seconds"] if "interval_seconds" in keys else None,
@@ -93,6 +95,7 @@ class CronJob:
             "id": self.id,
             "project_id": self.project_id,
             "name": self.name,
+            "display_name": self.display_name,
             "description": self.description,
             "schedule_type": self.schedule_type,
             "cron_expr": self.cron_expr,
@@ -116,6 +119,7 @@ class CronJob:
         return {
             "id": self.id,
             "name": self.name,
+            "display_name": self.display_name,
             "schedule_type": self.schedule_type,
             "cron_expr": self.cron_expr,
             "interval_seconds": self.interval_seconds,

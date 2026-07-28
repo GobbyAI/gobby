@@ -183,6 +183,7 @@ def create_cron_registry(
     def update_cron_job(
         job_id: str,
         name: str | None = None,
+        display_name: str | None = None,
         description: str | None = None,
         schedule_type: str | None = None,
         cron_expr: str | None = None,
@@ -198,6 +199,8 @@ def create_cron_registry(
         Args:
             job_id: The cron job ID
             name: New name
+            display_name: New display label (empty string resets to the
+                generated default; allowed on system jobs)
             description: New description
             schedule_type: New schedule type
             cron_expr: New cron expression
@@ -211,6 +214,7 @@ def create_cron_registry(
             kwargs: dict[str, Any] = {}
             for field, val in [
                 ("name", name),
+                ("display_name", display_name),
                 ("description", description),
                 ("schedule_type", schedule_type),
                 ("cron_expr", cron_expr),

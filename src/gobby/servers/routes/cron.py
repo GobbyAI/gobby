@@ -12,11 +12,13 @@ from pydantic import BaseModel, Field, model_validator
 
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.storage.cron import SystemRowProtected, is_removed_automation_job
+from gobby.storage.cron_display import effective_cron_display_name
 from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
     from gobby.storage.cron import CronJobStorage
+    from gobby.storage.cron_models import CronJob
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ class CreateCronJobRequest(BaseModel):
 
     name: str
     project_id: str | None = None
+    display_name: str | None = None
     description: str | None = None
     schedule_type: Literal["cron", "interval", "once"] = "cron"
     cron_expr: str | None = None
@@ -50,6 +53,7 @@ class UpdateCronJobRequest(BaseModel):
     """Request body for PATCH /api/cron/jobs/{job_id}."""
 
     name: str | None = None
+    display_name: str | None = None
     description: str | None = None
     schedule_type: Literal["cron", "interval", "once"] | None = None
     cron_expr: str | None = None
@@ -127,6 +131,19 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             )
         return resolved_project_id
 
+    async def _job_payloads(jobs: "list[CronJob]") -> list[dict[str, Any]]:
+        """Serialize jobs with the effective display name (stored override,
+        generated default for gobby-namespaced identifiers, or raw name)."""
+        project_manager = LocalProjectManager(server.services.database)
+        projects = await server.run_db(project_manager.list)
+        project_names = {project.id: project.name for project in projects}
+        payloads: list[dict[str, Any]] = []
+        for job in jobs:
+            payload = job.to_dict()
+            payload["display_name"] = effective_cron_display_name(job, project_names)
+            payloads.append(payload)
+        return payloads
+
     @router.get("/jobs")
     async def list_jobs(
         project_id: str | None = Query(None),
@@ -144,7 +161,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             ]
             return {
                 "status": "success",
-                "jobs": [j.to_dict() for j in jobs],
+                "jobs": await _job_payloads(jobs),
                 "count": len(jobs),
             }
         except HTTPException:
@@ -170,9 +187,10 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
                 timezone=request.timezone,
+                display_name=request.display_name,
                 description=request.description,
             )
-            return {"status": "success", "job": job.to_dict()}
+            return {"status": "success", "job": (await _job_payloads([job]))[0]}
         except HTTPException:
             raise
         except ValueError as e:
@@ -189,7 +207,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             job = await server.run_db(storage.get_job, job_id)
             if not job:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
-            return {"status": "success", "job": job.to_dict()}
+            return {"status": "success", "job": (await _job_payloads([job]))[0]}
         except HTTPException:
             raise
         except Exception as e:
@@ -204,6 +222,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             kwargs: dict[str, Any] = {}
             for field in [
                 "name",
+                "display_name",
                 "description",
                 "schedule_type",
                 "cron_expr",
@@ -224,7 +243,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             updated = await server.run_db(storage.update_job, job_id, **kwargs)
             if not updated:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
-            return {"status": "success", "job": updated.to_dict()}
+            return {"status": "success", "job": (await _job_payloads([updated]))[0]}
         except HTTPException:
             raise
         except SystemRowProtected as e:
@@ -258,7 +277,7 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
             job = await server.run_db(storage.toggle_job, job_id)
             if not job:
                 raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
-            return {"status": "success", "job": job.to_dict()}
+            return {"status": "success", "job": (await _job_payloads([job]))[0]}
         except HTTPException:
             raise
         except SystemRowProtected as e:
