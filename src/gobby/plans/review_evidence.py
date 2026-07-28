@@ -334,6 +334,7 @@ class PlanReviewEvidenceService:
             candidate_dispositions=candidate_dispositions,
             shadow_manifest_status=shadow,
             expected_shadow_manifest_status=expected_shadow,
+            prior_round_context=evidence.prior_round_context,
         )
 
     def verify_plan_unchanged(

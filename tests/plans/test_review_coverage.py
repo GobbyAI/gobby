@@ -14,7 +14,9 @@ from gobby.plans.review_coverage import (
     validate_coverage_attestation,
     validate_review_coverage,
 )
+from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_ledger import inject_dismissed_ledger_context
 from tests.review_coverage_helpers import coverage_attestation, manifest_digest
 
 
@@ -155,9 +157,12 @@ def _coverage_case(
         "items": [
             {
                 "candidate_id": f"candidate-{index}",
+                "check_key": "candidate-parity",
+                "source_section_ids": [section_ids[0]],
+                "source_hash": citation["sha256"],
                 "disposition": "emitted_finding",
                 "finding_id": f"finding-{index}",
-                "reason": "Verified",
+                "rationale": "Verified",
             }
             for index in range(1, candidate_count + 1)
         ],
@@ -179,6 +184,7 @@ def _validate(
     lanes: list[object],
     dispositions: dict[str, object],
     shadow: dict[str, object],
+    prior_round_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return validate_review_coverage(
         evidence_id="evidence-1",
@@ -189,6 +195,7 @@ def _validate(
         candidate_dispositions=dispositions,
         shadow_manifest_status=shadow,
         expected_shadow_manifest_status=shadow,
+        prior_round_context=prior_round_context,
     )
 
 
@@ -249,6 +256,70 @@ def test_coverage_rejects_undisposed_candidates(tmp_path: Path) -> None:
         _validate(tmp_path, document, lanes, dispositions, shadow)
 
     assert error.value.code == "undisposed_candidates"
+
+
+def test_unchanged_dismissal_reopen_rejected(tmp_path: Path) -> None:
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    items = dispositions["items"]
+    assert isinstance(items, list)
+    item = items[0]
+    assert isinstance(item, dict)
+    current_hashes = {
+        section.section_id: section.section_hash
+        for section in build_section_manifest(document.source_path.read_bytes())
+    }
+
+    def context(*, source_hash: str, section_hash: str) -> dict[str, object]:
+        return inject_dismissed_ledger_context(
+            prior_round_context={"prior_evidence_id": "evidence-prior"},
+            prior_ledger=[
+                {
+                    "ledger_entry_id": "ledger-" + "d" * 64,
+                    "kind": "dismissed",
+                    "check_key": item["check_key"],
+                    "aliases": ["candidate-prior"],
+                    "first_seen_round": 1,
+                    "rounds_carried": 1,
+                    "source_section_ids": item["source_section_ids"],
+                    "section_hashes_at_entry": {"1.1": section_hash},
+                    "stale": False,
+                    "source_hash": source_hash,
+                    "rationale": "Previously dismissed.",
+                }
+            ],
+            current_section_hashes=current_hashes,
+        )
+
+    with pytest.raises(ReviewEvidenceError) as error:
+        _validate(
+            tmp_path,
+            document,
+            lanes,
+            dispositions,
+            shadow,
+            context(
+                source_hash=str(item["source_hash"]),
+                section_hash=current_hashes["1.1"],
+            ),
+        )
+    assert error.value.code == "unchanged_dismissal_reopened"
+
+    assert _validate(
+        tmp_path,
+        document,
+        lanes,
+        dispositions,
+        shadow,
+        context(source_hash="b" * 64, section_hash=current_hashes["1.1"]),
+    )
+    assert _validate(
+        tmp_path,
+        document,
+        lanes,
+        dispositions,
+        shadow,
+        context(source_hash=str(item["source_hash"]), section_hash="b" * 64),
+    )
 
 
 def test_coverage_rejects_duplicate_finding_ids(tmp_path: Path) -> None:
@@ -316,6 +387,7 @@ def test_coverage_rejects_shadow_manifest_mismatch(tmp_path: Path) -> None:
             candidate_dispositions=dispositions,
             shadow_manifest_status=supplied,
             expected_shadow_manifest_status=shadow,
+            prior_round_context=None,
         )
 
     assert error.value.code == "shadow_manifest_mismatch"

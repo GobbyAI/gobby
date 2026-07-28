@@ -15,6 +15,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_object,
 )
 from gobby.plans.review_findings import validate_plan_review_findings
+from gobby.plans.review_ledger import inject_dismissed_ledger_context
 
 REPAIR_SUBMISSION_ARTIFACT_KEY = "plan_review_repair_submission"
 
@@ -347,6 +348,7 @@ def validate_repair_preparation(
             findings=findings,
             resolutions=resolutions,
             attestations=attestations,
+            current_sections=current_sections,
             current_snapshot=current_snapshot,
         ),
     )
@@ -358,11 +360,12 @@ def build_prior_round_context(
     findings: Sequence[Mapping[str, object]],
     resolutions: Sequence[Mapping[str, object]],
     attestations: Sequence[Mapping[str, object]],
+    current_sections: Sequence[SectionHash],
     current_snapshot: bytes,
 ) -> dict[str, object]:
     """Assemble durable causal routing context from consecutive round inputs."""
     round_diff = build_inter_round_diff(prior_evidence.snapshot, current_snapshot)
-    return {
+    context: dict[str, object] = {
         "prior_evidence_id": prior_evidence.evidence_id,
         "prior_findings": [
             {
@@ -376,6 +379,13 @@ def build_prior_round_context(
         "changed_acceptance_item_ids": list(round_diff.acceptance_item_ids),
         "changed_section_targets": list(round_diff.section_targets),
     }
+    return inject_dismissed_ledger_context(
+        prior_round_context=context,
+        prior_ledger=prior_evidence.quality_ledger or (),
+        current_section_hashes={
+            section.section_id: section.section_hash for section in current_sections
+        },
+    )
 
 
 def repair_preparation_for_round(

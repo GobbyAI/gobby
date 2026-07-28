@@ -8,7 +8,11 @@ import pytest
 
 from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
 from gobby.plans.review_findings import CHECK_KEY_RE, FINDING_CATEGORIES
-from gobby.plans.review_ledger import merge_quality_ledger, validate_quality_ledger
+from gobby.plans.review_ledger import (
+    inject_dismissed_ledger_context,
+    merge_quality_ledger,
+    validate_quality_ledger,
+)
 from tests.review_coverage_helpers import coverage_attestation
 
 
@@ -224,6 +228,37 @@ def test_dismissed_entries_from_canonical_result() -> None:
             dispositions=[_disposition("candidate-one")],
             counts={"total": 2, "emitted_findings": 0, "dismissed": 2},
         )
+
+
+def test_dismissal_injection_and_reopen_rule() -> None:
+    hashes = {"1.1": "a" * 64}
+    ledger = merge_quality_ledger(
+        prior_ledger=[],
+        round_number=1,
+        current_section_hashes=hashes,
+        round_result=_round_result(dispositions=[_disposition("candidate-one")]),
+    )
+
+    unchanged = inject_dismissed_ledger_context(
+        prior_round_context={"prior_evidence_id": "evidence-1"},
+        prior_ledger=ledger,
+        current_section_hashes=hashes,
+    )
+    entries = unchanged["dismissed_ledger_entries"]
+    assert isinstance(entries, list)
+    assert entries[0]["aliases"] == ["candidate-one"]
+    assert entries[0]["reopenable"] is False
+    assert entries[0]["source_hash"] == "c" * 64
+    assert entries[0]["section_hashes_at_entry"] == hashes
+
+    changed = inject_dismissed_ledger_context(
+        prior_round_context={"prior_evidence_id": "evidence-1"},
+        prior_ledger=ledger,
+        current_section_hashes={"1.1": "b" * 64},
+    )
+    changed_entries = changed["dismissed_ledger_entries"]
+    assert isinstance(changed_entries, list)
+    assert changed_entries[0]["reopenable"] is True
 
 
 def test_ledger_validation_shares_finding_vocabularies() -> None:

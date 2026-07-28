@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import cast
 
 from gobby.plans.parser import Kind, PlanDocument
+from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
+from gobby.plans.review_findings import CHECK_KEY_RE
+from gobby.plans.review_ledger import dismissed_ledger_entries_from_context
 from gobby.plans.semantic_lint import collect_target_inventory
 
 REVIEW_LANES = (
@@ -68,10 +71,11 @@ def validate_review_coverage(
     candidate_dispositions: Mapping[str, object],
     shadow_manifest_status: Mapping[str, object],
     expected_shadow_manifest_status: Mapping[str, object],
+    prior_round_context: Mapping[str, object] | None,
 ) -> dict[str, object]:
     """Validate exhaustive lane output and return a canonical attestation."""
     lanes = _validate_lanes(document, lane_results)
-    disposition_counts = _validate_dispositions(lanes, candidate_dispositions)
+    disposition_counts, dispositions = _validate_dispositions(lanes, candidate_dispositions)
     canonical_shadow = canonical_json_object(shadow_manifest_status)
     expected_shadow = canonical_json_object(expected_shadow_manifest_status)
     if canonical_shadow != expected_shadow:
@@ -86,6 +90,15 @@ def validate_review_coverage(
         for candidate in candidates:
             citations.extend(cast(list[dict[str, object]], candidate["source_citations"]))
     source_hashes = _rehash_sources(project_root, citations)
+    current_section_hashes = {
+        section.section_id: section.section_hash
+        for section in build_section_manifest(document.source_path.read_bytes())
+    }
+    _reject_unchanged_dismissal_reopens(
+        dispositions=dispositions,
+        prior_round_context=prior_round_context,
+        current_section_hashes=current_section_hashes,
+    )
     source_digest = _source_digest(plan_hash, source_hashes)
     shadow_summary: dict[str, object] = {"status": expected_shadow["status"]}
     if expected_shadow["status"] == "valid":
@@ -391,13 +404,14 @@ def _validate_candidate(
         candidate.get("adjacent_sites_checked"),
         "adjacent_sites_checked",
     )
+    candidate["section_ids"] = section_ids
     return candidate
 
 
 def _validate_dispositions(
     lanes: Sequence[Mapping[str, object]],
     raw: Mapping[str, object],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[dict[str, object]]]:
     payload = canonical_json_object(raw)
     if payload.get("cross_lane_interaction_complete") is not True:
         raise ReviewEvidenceError(
@@ -415,7 +429,7 @@ def _validate_dispositions(
             "invalid_dispositions",
             "candidate_dispositions.items must be an array",
         )
-    candidate_ids: set[str] = set()
+    candidates_by_id: dict[str, dict[str, object]] = {}
     for lane in lanes:
         candidates = lane.get("candidate_issues")
         if not isinstance(candidates, list):
@@ -423,9 +437,12 @@ def _validate_dispositions(
                 "invalid_lane_results",
                 "validated lane candidate_issues must be an array",
             )
-        candidate_ids.update(str(candidate["candidate_id"]) for candidate in candidates)
+        for candidate in candidates:
+            candidate_id = str(candidate["candidate_id"])
+            candidates_by_id[candidate_id] = candidate
     seen: set[str] = set()
     finding_ids: set[str] = set()
+    dispositions: list[dict[str, object]] = []
     emitted = 0
     dismissed = 0
     for raw_item in items:
@@ -436,13 +453,46 @@ def _validate_dispositions(
             )
         item = canonical_json_object(raw_item)
         candidate_id = _required_string(item, "candidate_id", "candidate disposition")
-        if candidate_id not in candidate_ids or candidate_id in seen:
+        if candidate_id not in candidates_by_id or candidate_id in seen:
             raise ReviewEvidenceError(
                 "invalid_dispositions",
                 f"unknown or duplicate candidate disposition: {candidate_id}",
             )
         seen.add(candidate_id)
-        _required_string(item, "reason", "candidate disposition")
+        candidate = candidates_by_id[candidate_id]
+        check_key = _required_string(item, "check_key", "candidate disposition")
+        if not CHECK_KEY_RE.fullmatch(check_key):
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition check_key is invalid",
+            )
+        source_section_ids = _string_list(
+            item.get("source_section_ids"),
+            "candidate disposition source_section_ids",
+        )
+        candidate_section_ids = cast(list[str], candidate["section_ids"])
+        if source_section_ids != sorted(candidate_section_ids):
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition source_section_ids differ from the candidate",
+            )
+        item["source_section_ids"] = source_section_ids
+        source_hash = _required_string(item, "source_hash", "candidate disposition")
+        if not _SHA256_RE.fullmatch(source_hash):
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition source_hash must be SHA-256",
+            )
+        citation_hashes = {
+            str(citation["sha256"])
+            for citation in cast(list[dict[str, object]], candidate["source_citations"])
+        }
+        if source_hash not in citation_hashes:
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition source_hash is absent from candidate citations",
+            )
+        _required_string(item, "rationale", "candidate disposition")
         disposition = item.get("disposition")
         if disposition == "emitted_finding":
             finding_id = _required_string(item, "finding_id", "emitted candidate disposition")
@@ -460,13 +510,68 @@ def _validate_dispositions(
                 "invalid_dispositions",
                 "candidate disposition must be emitted_finding or dismissed",
             )
+        allowed_fields = {
+            "candidate_id",
+            "check_key",
+            "source_section_ids",
+            "source_hash",
+            "rationale",
+            "disposition",
+        }
+        if disposition == "emitted_finding":
+            allowed_fields.add("finding_id")
+        unknown = sorted(set(item) - allowed_fields)
+        if unknown:
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                f"candidate disposition has unknown fields: {', '.join(unknown)}",
+            )
+        dispositions.append(item)
+    candidate_ids = set(candidates_by_id)
     if seen != candidate_ids:
         missing = sorted(candidate_ids - seen)
         raise ReviewEvidenceError(
             "undisposed_candidates",
             "every candidate requires a disposition: " + ", ".join(missing),
         )
-    return {"total": len(candidate_ids), "emitted_findings": emitted, "dismissed": dismissed}
+    return (
+        {"total": len(candidate_ids), "emitted_findings": emitted, "dismissed": dismissed},
+        dispositions,
+    )
+
+
+def _reject_unchanged_dismissal_reopens(
+    *,
+    dispositions: Sequence[Mapping[str, object]],
+    prior_round_context: Mapping[str, object] | None,
+    current_section_hashes: Mapping[str, str],
+) -> None:
+    prior_dismissals = dismissed_ledger_entries_from_context(prior_round_context)
+    for disposition in dispositions:
+        source_sections = cast(list[str], disposition["source_section_ids"])
+        for dismissal in prior_dismissals:
+            if (
+                dismissal["check_key"] != disposition["check_key"]
+                or dismissal["source_section_ids"] != source_sections
+                or dismissal["source_hash"] != disposition["source_hash"]
+            ):
+                continue
+            stored_hashes = cast(dict[str, str], dismissal["section_hashes_at_entry"])
+            section_hash_changed = any(
+                current_section_hashes.get(section_id) != section_hash
+                for section_id, section_hash in stored_hashes.items()
+            )
+            if dismissal["reopenable"] is not section_hash_changed:
+                raise ReviewEvidenceError(
+                    "invalid_dismissal_context",
+                    "dismissal reopenable marker differs from the bound section hashes",
+                )
+            if not section_hash_changed:
+                raise ReviewEvidenceError(
+                    "unchanged_dismissal_reopened",
+                    "candidate reopens a prior dismissal without a source or section hash change",
+                    details={"ledger_entry_id": dismissal["ledger_entry_id"]},
+                )
 
 
 def _citation_list(raw: object) -> list[dict[str, object]]:

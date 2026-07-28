@@ -46,6 +46,7 @@ _FINDING_FIELDS = frozenset(
     }
 )
 _DISMISSED_FIELDS = frozenset({"source_hash", "rationale"})
+DISMISSED_LEDGER_CONTEXT_KEY = "dismissed_ledger_entries"
 _FINDING_REQUIRED = (
     "category",
     "severity",
@@ -160,6 +161,66 @@ def validate_quality_ledger(
         keys.add(key)
         entries.append(entry)
     return entries
+
+
+def inject_dismissed_ledger_context(
+    *,
+    prior_round_context: Mapping[str, object],
+    prior_ledger: Sequence[Mapping[str, object]],
+    current_section_hashes: Mapping[str, str],
+) -> dict[str, object]:
+    """Inject active dismissals with a server-derived section-hash reopen marker."""
+    context = canonical_json_object(prior_round_context)
+    section_hashes = _validate_section_hashes(current_section_hashes)
+    dismissed: list[dict[str, object]] = []
+    for entry in validate_quality_ledger(prior_ledger):
+        if entry["kind"] != "dismissed" or entry["stale"] is True:
+            continue
+        stored_hashes = cast(dict[str, str], entry["section_hashes_at_entry"])
+        contextual_entry = dict(entry)
+        contextual_entry["reopenable"] = any(
+            section_hashes.get(section_id) != section_hash
+            for section_id, section_hash in stored_hashes.items()
+        )
+        dismissed.append(contextual_entry)
+    context[DISMISSED_LEDGER_CONTEXT_KEY] = dismissed
+    return context
+
+
+def dismissed_ledger_entries_from_context(
+    prior_round_context: Mapping[str, object] | None,
+) -> list[dict[str, object]]:
+    """Validate and return the server-owned dismissed-ledger context projection."""
+    if prior_round_context is None:
+        return []
+    context = canonical_json_object(prior_round_context)
+    if DISMISSED_LEDGER_CONTEXT_KEY not in context:
+        raise _invalid(f"prior_round_context.{DISMISSED_LEDGER_CONTEXT_KEY} is required")
+    raw_entries = context[DISMISSED_LEDGER_CONTEXT_KEY]
+    if not isinstance(raw_entries, list):
+        raise _invalid(f"prior_round_context.{DISMISSED_LEDGER_CONTEXT_KEY} must be an array")
+    ledger_entries: list[dict[str, object]] = []
+    reopenable_flags: list[bool] = []
+    for index, raw in enumerate(raw_entries):
+        if not isinstance(raw, Mapping):
+            raise _invalid(f"{DISMISSED_LEDGER_CONTEXT_KEY}[{index}] must be an object")
+        entry = canonical_json_object(raw)
+        reopenable = entry.pop("reopenable", None)
+        if not isinstance(reopenable, bool):
+            raise _invalid(f"{DISMISSED_LEDGER_CONTEXT_KEY}[{index}].reopenable must be boolean")
+        ledger_entries.append(entry)
+        reopenable_flags.append(reopenable)
+    validated = validate_quality_ledger(ledger_entries)
+    result: list[dict[str, object]] = []
+    for index, entry in enumerate(validated):
+        if entry["kind"] != "dismissed" or entry["stale"] is not False:
+            raise _invalid(
+                f"{DISMISSED_LEDGER_CONTEXT_KEY}[{index}] must be an active dismissed entry"
+            )
+        contextual_entry = dict(entry)
+        contextual_entry["reopenable"] = reopenable_flags[index]
+        result.append(contextual_entry)
+    return result
 
 
 def validate_candidate_dispositions(

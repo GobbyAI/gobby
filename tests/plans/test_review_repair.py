@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import textwrap
 from pathlib import Path
@@ -131,6 +132,8 @@ def _finalize_prior_round(
     project_id: str,
     plan_path: Path,
     findings: list[dict[str, object]],
+    *,
+    candidate_dispositions: list[dict[str, object]] | None = None,
 ) -> PlanReviewEvidence:
     task_id = _new_task_id(service, project_id)
     prepared = service.prepare_plan_review_round(
@@ -140,17 +143,35 @@ def _finalize_prior_round(
         task_id=task_id,
         stage="planning",
     )
-    return service.finalize_plan_review_evidence(
-        prepared.evidence_id,
-        {
-            "verdict": "needs_review",
-            "findings": findings,
-            "coverage_attestation": coverage_attestation(
-                evidence_id=prepared.evidence_id,
-                shadow_valid=False,
-            ),
-        },
+    attestation = coverage_attestation(
+        evidence_id=prepared.evidence_id,
+        shadow_valid=False,
     )
+    result: dict[str, object] = {
+        "verdict": "needs_review",
+        "findings": findings,
+        "coverage_attestation": attestation,
+    }
+    if candidate_dispositions:
+        lanes = attestation["lanes"]
+        assert isinstance(lanes, list)
+        assert isinstance(lanes[0], dict)
+        lanes[0]["candidate_count"] = len(candidate_dispositions)
+        attestation["disposition_counts"] = {
+            "total": len(candidate_dispositions),
+            "emitted_findings": sum(
+                record["disposition"] == "emitted_finding" for record in candidate_dispositions
+            ),
+            "dismissed": sum(
+                record["disposition"] == "dismissed" for record in candidate_dispositions
+            ),
+        }
+        unsigned = {key: value for key, value in attestation.items() if key != "attestation_digest"}
+        attestation["attestation_digest"] = hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        result["candidate_dispositions"] = candidate_dispositions
+    return service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
 
 def _mark_plan_repaired(plan_path: Path) -> None:
@@ -371,6 +392,7 @@ def test_mixed_repair_carry_preparation(
         "repair_attestations": attestations,
         "changed_acceptance_item_ids": ["1.1.1"],
         "changed_section_targets": [],
+        "dismissed_ledger_entries": [],
     }
 
 
@@ -413,9 +435,53 @@ def test_prior_round_context_structure(
         "repair_attestations": attestations,
         "changed_acceptance_item_ids": ["1.1.1"],
         "changed_section_targets": ["src/example.py", "src/repaired.py"],
+        "dismissed_ledger_entries": [],
     }
     assert context == expected
     assert service.snapshot_payload(current.evidence_id)["prior_round_context"] == expected
+
+
+def test_preparation_injects_persisted_dismissal(
+    repair_setup: tuple[PlanReviewEvidenceService, str, Path],
+) -> None:
+    service, project_id, plan_path = repair_setup
+    prior = _finalize_prior_round(
+        service,
+        project_id,
+        plan_path,
+        [],
+        candidate_dispositions=[
+            {
+                "candidate_id": "candidate-prior",
+                "check_key": "candidate-parity",
+                "source_section_ids": ["1.1"],
+                "source_hash": "c" * 64,
+                "disposition": "dismissed",
+                "rationale": "Previously satisfied by the existing invariant.",
+            }
+        ],
+    )
+
+    current = _prepare_round_two(
+        service,
+        project_id,
+        plan_path,
+        resolutions=[],
+        attestations=[],
+    )
+
+    context = current.prior_round_context
+    assert context is not None
+    assert prior.quality_ledger is not None
+    entries = context["dismissed_ledger_entries"]
+    assert isinstance(entries, list)
+    assert entries == [
+        {
+            **prior.quality_ledger[0],
+            "reopenable": False,
+        }
+    ]
+    assert service.snapshot_payload(current.evidence_id)["prior_round_context"] == context
 
 
 def test_omitted_resolution_record_refuses(
