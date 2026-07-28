@@ -85,6 +85,10 @@ prepared snapshot/evidence, `artifact_path`,
 `round_number`, `max_review_rounds`, and the parent session id in the prompt or
 variables, together with the current requirements context. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.
+Evidence preparation is the single indexing site for the round.
+Do not run a separate pre-spawn `gcode index`; pass preparation's settled `index_token` to
+the reviewer and let every lane verify that token under the protocol in
+`plan-review`.
 For every round after the first, also pass `prior_finding_resolutions` and
 `repair_attestations` to `prepare_plan_review_round`. Build exactly one
 resolution record per finding in the prior finalized result:

@@ -101,6 +101,21 @@ instructions: |
   the prior finalized round. Otherwise execute all three lanes sequentially in
   this parent.
 
+  INDEX GENERATION PROTOCOL:
+  Every lane receives the immutable snapshot's `index_token`. Each lane calls
+  `verify_plan_review_index_token(index_token)` immediately before analysis,
+  runs every gcode search/callers/usages/blast-radius/content query with
+  `--no-freshness`, then calls
+  `verify_plan_review_index_token(index_token)` after its final repository search
+  and before returning lane output. A lane with no repository query
+  still makes both calls. Any mismatch ends this whole reviewer run: emit the
+  exact typed `inconclusive`/`index_mismatch` result using canonical compact
+  JSON strings of the verifier's `expected_token` and `actual_token`, deliver
+  it to the parent, and terminate. Do not continue analysis, return candidates,
+  validate coverage, expire/reprepare evidence, or rerun any lane in place.
+  The parent expires the evidence and spawns a newly bound reviewer that reruns
+  all three lanes with a fresh snapshot, inventory, and token.
+
   In parallel mode, launch one read-only provider-native internal subagent per
   lane through the current CLI/runtime's internal collaboration facility. Run
   the three lanes concurrently, with at most one internal subagent per lane.
@@ -350,6 +365,17 @@ steps:
       - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
+    allowed_mcp_tools:
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
+      - "gobby-tasks:escalate_task"
+      - "gobby-plans:get_plan_review_snapshot"
+      - "gobby-plans:verify_plan_review_index_token"
+      - "gobby-plans:derive_plan_review_manifest"
+      - "gobby-plans:validate_plan_review_coverage"
+      - "gobby-plans:expire_plan_review_evidence"
+      - "gobby-review-learning:recall_review_lessons_by_class"
+      - "gobby-review-learning:list_check_keys"
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: approve_review

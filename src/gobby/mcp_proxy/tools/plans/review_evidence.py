@@ -140,7 +140,17 @@ def register_review_evidence_tools(
                 f"project has no local repository: {project_id}",
             ).to_dict()
         try:
-            verification = verify_index_token(Path(record.repo_path), index_token)
+            storage = CodeIndexStorage(db)
+
+            def read_last_indexed_at() -> str:
+                stats = storage.get_project_stats(project_id)
+                return stats.last_indexed_at.isoformat() if stats is not None else ""
+
+            verification = verify_index_token(
+                Path(record.repo_path),
+                index_token,
+                read_last_indexed_at=read_last_indexed_at,
+            )
         except (IndexInventoryError, OSError) as exc:
             if isinstance(exc, IndexInventoryError):
                 return exc.to_dict()

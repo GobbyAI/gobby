@@ -304,6 +304,28 @@ snapshot:
 3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
    sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
+Every lane receives the immutable snapshot's `index_token` and follows this
+index-generation protocol:
+
+1. Call `verify_plan_review_index_token(index_token)` immediately before analysis.
+   A mismatch ends the whole reviewer run.
+2. Run every gcode search, callers, usages, blast-radius, and content query with
+   `--no-freshness`. Keep the protocol implementors as an explicit prompt
+   obligation in `repository_blast_radius`: sweep the token producer, canonical
+   verifier, verifier MCP wrapper, coordinator spawn prompt, and both reviewer
+   allowlists.
+3. Call `verify_plan_review_index_token(index_token)` after its final repository search
+   and before returning lane output. A lane with no repository query still
+   performs both verifier calls.
+
+On either mismatch, emit the exact typed `inconclusive`/`index_mismatch` branch
+using canonical compact JSON strings of the verifier's `expected_token` and
+`actual_token`, deliver it to the parent, and terminate. Do not continue
+analysis, return candidates, validate coverage, expire or reprepare evidence,
+or rerun any lane in place. The parent expires the old evidence, prepares a
+fresh snapshot/inventory/token, and spawns a newly bound reviewer that reruns
+all three lanes.
+
 `get_plan_review_snapshot` supplies deterministic complexity counts. Run lanes
 in parallel when the snapshot has at least 8 deliverables, 24 acceptance items,
 12 distinct target files, or 4 sections changed since the prior finalized round.

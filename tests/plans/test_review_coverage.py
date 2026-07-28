@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.plans.manifest_emitter import derive_manifest_entries
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
@@ -19,6 +20,40 @@ from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
 from gobby.plans.review_ledger import inject_dismissed_ledger_context
 from tests.review_coverage_helpers import coverage_attestation, manifest_digest
+
+ROOT = Path(__file__).resolve().parents[2]
+PLAN_SKILL = ROOT / "src/gobby/install/shared/skills/plan/SKILL.md"
+PLAN_REVIEW_SKILL = ROOT / "src/gobby/install/shared/skills/plan-review/SKILL.md"
+ADVERSARY_DIR = ROOT / "src/gobby/install/shared/workflows/agents"
+
+
+def test_lane_verifier_invocation_and_allowlist() -> None:
+    plan = PLAN_SKILL.read_text(encoding="utf-8")
+    review = PLAN_REVIEW_SKILL.read_text(encoding="utf-8")
+
+    assert "Do not run a separate pre-spawn `gcode index`" in plan
+    assert review.count("verify_plan_review_index_token(index_token)") >= 2
+    assert "immediately before analysis" in review
+    assert "after its final repository search" in review
+    assert "--no-freshness" in review
+    assert "protocol implementors" in review
+    assert "rerun any lane in place" in review
+
+    for filename in ("plan-adversary-taskless.yaml", "plan-adversary.yaml"):
+        definition = yaml.safe_load((ADVERSARY_DIR / filename).read_text(encoding="utf-8"))
+        instructions = definition["instructions"]
+        review_step = next(step for step in definition["steps"] if step["name"] == "review")
+        allowed = set(review_step["allowed_mcp_tools"])
+
+        assert "gobby-plans:verify_plan_review_index_token" in allowed
+        assert all(not tool.endswith(":*") for tool in allowed)
+        assert instructions.count("verify_plan_review_index_token(index_token)") >= 2
+        assert "--no-freshness" in instructions
+        assert "immediately before analysis" in instructions
+        assert "after its final repository search" in instructions
+        assert "inconclusive" in instructions
+        assert "index_mismatch" in instructions
+        assert "terminate" in instructions
 
 
 def _document(

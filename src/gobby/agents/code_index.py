@@ -131,16 +131,16 @@ class IndexTokenVerification:
     """Typed read-only comparison of a token with its exact digest inputs."""
 
     matched: bool
-    expected_digest: str
-    actual_digest: str
-    source_files: tuple[str, ...]
+    mismatch_reasons: tuple[str, ...]
+    expected_token: IndexToken
+    actual_token: IndexToken
 
     def to_dict(self) -> dict[str, object]:
         return {
             "matched": self.matched,
-            "expected_digest": self.expected_digest,
-            "actual_digest": self.actual_digest,
-            "source_files": list(self.source_files),
+            "mismatch_reasons": list(self.mismatch_reasons),
+            "expected_token": self.expected_token.to_dict(),
+            "actual_token": self.actual_token.to_dict(),
         }
 
 
@@ -179,6 +179,8 @@ def repository_source_digest(
 def verify_index_token(
     repository_root: Path,
     token: IndexToken | Mapping[str, object],
+    *,
+    read_last_indexed_at: Callable[[], str],
 ) -> IndexTokenVerification:
     """Recompute the producer's exact digest inputs without mutating index state."""
     canonical = token if isinstance(token, IndexToken) else IndexToken.from_mapping(token)
@@ -186,11 +188,27 @@ def verify_index_token(
         repository_root,
         source_files=canonical.source_files,
     )
+    actual_last_indexed_at = read_last_indexed_at()
+    if not isinstance(actual_last_indexed_at, str) or not actual_last_indexed_at:
+        raise IndexInventoryError(
+            "inventory_unavailable",
+            "code index did not report last_indexed_at",
+        )
+    actual_token = IndexToken(
+        repository_digest=actual.digest,
+        last_indexed_at=actual_last_indexed_at,
+        source_files=actual.source_files,
+    )
+    mismatch_reasons: list[str] = []
+    if actual_token.repository_digest != canonical.repository_digest:
+        mismatch_reasons.append("repository_digest")
+    if actual_token.last_indexed_at != canonical.last_indexed_at:
+        mismatch_reasons.append("last_indexed_at")
     return IndexTokenVerification(
-        matched=actual.digest == canonical.repository_digest,
-        expected_digest=canonical.repository_digest,
-        actual_digest=actual.digest,
-        source_files=canonical.source_files,
+        matched=not mismatch_reasons,
+        mismatch_reasons=tuple(mismatch_reasons),
+        expected_token=canonical,
+        actual_token=actual_token,
     )
 
 
@@ -243,7 +261,11 @@ def settle_indexed_value[T](
                 source_files=after.source_files,
             )
             value = derive()
-            if verify_index_token(repository_root, token).matched:
+            if verify_index_token(
+                repository_root,
+                token,
+                read_last_indexed_at=read_last_indexed_at,
+            ).matched:
                 return token, value
         remaining = deadline - monotonic()
         if attempts < max_attempts and remaining > 0 and backoff_seconds > 0:

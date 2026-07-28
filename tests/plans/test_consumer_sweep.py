@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import textwrap
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,10 +15,13 @@ import pytest
 from gobby.agents.code_index import (
     IndexInventoryError,
     IndexToken,
+    IndexTokenVerification,
     repository_source_digest,
     settle_indexed_value,
     verify_index_token,
 )
+from gobby.code_index.models import IndexedProject
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans import consumer_sweep as consumer_sweep_module
 from gobby.plans.consumer_sweep import (
@@ -696,7 +700,54 @@ def test_index_token_brackets_index_operation(tmp_path: Path) -> None:
     assert value == "inventory"
     assert index_calls == 2
     assert derive_calls == 1
-    assert verify_index_token(tmp_path, token).matched is True
+    assert (
+        verify_index_token(
+            tmp_path,
+            token,
+            read_last_indexed_at=lambda: token.last_indexed_at,
+        ).matched
+        is True
+    )
+
+
+def test_verifier_classifies_mutation_and_reindex(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("version = 1\n", encoding="utf-8")
+    digest = repository_source_digest(tmp_path, source_files=("src/service.py",))
+    token = IndexToken(
+        repository_digest=digest.digest,
+        last_indexed_at="2026-07-27T00:00:00+00:00",
+        source_files=digest.source_files,
+    )
+
+    matched = verify_index_token(
+        tmp_path,
+        token,
+        read_last_indexed_at=lambda: token.last_indexed_at,
+    )
+    assert isinstance(matched, IndexTokenVerification)
+    assert matched.matched is True
+    assert matched.mismatch_reasons == ()
+
+    source.write_text("version = 2\n", encoding="utf-8")
+    mutation = verify_index_token(
+        tmp_path,
+        token,
+        read_last_indexed_at=lambda: token.last_indexed_at,
+    )
+    assert mutation.matched is False
+    assert mutation.mismatch_reasons == ("repository_digest",)
+
+    source.write_text("version = 1\n", encoding="utf-8")
+    reindex = verify_index_token(
+        tmp_path,
+        token,
+        read_last_indexed_at=lambda: "2026-07-27T00:01:00+00:00",
+    )
+    assert reindex.matched is False
+    assert reindex.mismatch_reasons == ("last_indexed_at",)
+    assert reindex.actual_token.last_indexed_at == "2026-07-27T00:01:00+00:00"
 
 
 async def test_index_verifier_wrapper_registered(
@@ -714,6 +765,16 @@ async def test_index_verifier_wrapper_registered(
         repository_digest=digest.digest,
         last_indexed_at="2026-07-27T00:00:00+00:00",
         source_files=digest.source_files,
+    )
+    CodeIndexStorage(temp_db).upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(tmp_path),
+            total_files=1,
+            total_symbols=0,
+            last_indexed_at=datetime(2026, 7, 27, tzinfo=UTC),
+            index_duration_ms=1,
+        )
     )
     registry = create_plan_registry(temp_db, default_project_id=project_id)
 
