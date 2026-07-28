@@ -128,7 +128,9 @@ every adversarial review round.
 6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
 the run result as the canonical round result. It must contain the
 `coverage_attestation` returned by `validate_plan_review_coverage`; approval
-also contains exact server-derived `routing_decisions` and `manifest_entries`.
+also contains exact server-derived `routing_decisions`, `manifest_entries`, and
+`approval_result.quality_ledger`. Render that full ledger beside the manifest;
+it records every explicit non-blocking quality decision shown to the user.
 For `inconclusive/source_drift`, expire evidence and respawn the same display
 round without appending a changelog entry, incrementing the round, finalizing
 evidence, or minting lessons. Otherwise append a `## V1 Plan Changelog` entry,

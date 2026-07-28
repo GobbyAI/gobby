@@ -37,7 +37,8 @@ instructions: |
   `after_agent`, and `stop`; do not use them to mutate tasks.
 
   PLAN REVIEW EVIDENCE CONTRACT:
-  Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
+  Follow the plan-review skill's recalled-lesson pass and full finding schema,
+  including required `minimal_repair` and blocking-only required `failure_trace`. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
   one of `principle` or `root_cause`, and every field required by its claimed
@@ -163,7 +164,7 @@ instructions: |
   manifest_entries:
     - <full typed entry>
   coverage_attestation: <canonical coverage attestation>
-  findings: []
+  findings: [<zero or more typed major | minor | nit findings>]
   ```
 
   The approval payload contains full typed entries; a count alone is invalid.

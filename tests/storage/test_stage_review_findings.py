@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -680,3 +680,107 @@ def test_rejection_finalizes_evidence(
     )
     assert next_round.evidence_id != evidence_id
     assert stage_review_setup.evidence.get_evidence(evidence_id).finalized_at is not None
+
+
+def test_approval_ledger_is_server_derived(
+    stage_review_setup: StageReviewSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import inspect
+
+    from gobby.plans.review_ledger import merge_quality_ledger
+    from gobby.storage.tasks._stage_states import StageStatesManager
+
+    for method in (
+        stage_review_setup.manager.approve_review,
+        stage_review_setup.manager.reject_review,
+    ):
+        assert "quality_ledger" not in inspect.signature(method).parameters
+
+    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    derived = stage_review_setup.evidence.derive_plan_review_manifest(
+        evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
+    major = dict(_findings()[0])
+    major["severity"] = "major"
+    major.pop("failure_trace")
+    approval_attestation = coverage_attestation(
+        evidence_id=evidence_id,
+        manifest_entries=manifest_entries,
+    )
+
+    stage_mutated = False
+    original_stage_approval = StageStatesManager.approve_review
+    original_merge = merge_quality_ledger
+
+    def mark_stage_mutation(
+        self: StageStatesManager,
+        task_id: str,
+        stage_name: str,
+        *,
+        by_session_id: str | None,
+        notes: str | None = None,
+        dispatch_run_id: str | None = None,
+    ) -> Any:
+        nonlocal stage_mutated
+        stage_mutated = True
+        return original_stage_approval(
+            self,
+            task_id,
+            stage_name,
+            by_session_id=by_session_id,
+            notes=notes,
+            dispatch_run_id=dispatch_run_id,
+        )
+
+    def fail_derivation(**_kwargs: object) -> list[dict[str, object]]:
+        raise ReviewEvidenceError("ledger_derivation_failed", "synthetic ledger failure")
+
+    monkeypatch.setattr(StageStatesManager, "approve_review", mark_stage_mutation)
+    monkeypatch.setattr(
+        "gobby.plans.review_checkpoint_service.merge_quality_ledger",
+        fail_derivation,
+    )
+    with pytest.raises(ReviewEvidenceError, match="synthetic ledger failure"):
+        stage_review_setup.manager.approve_review(
+            stage_review_setup.task_id,
+            "planning",
+            evidence_id=evidence_id,
+            round_number=1,
+            findings=[major],
+            routing_decisions={},
+            manifest_entries=manifest_entries,
+            coverage_attestation=approval_attestation,
+            dispatch_run_id=run_id,
+        )
+    assert stage_mutated is False
+    assert (
+        stage_row(stage_review_setup.db, stage_review_setup.task_id, "planning")["state"]
+        == "needs_review"
+    )
+
+    monkeypatch.setattr(
+        "gobby.plans.review_checkpoint_service.merge_quality_ledger",
+        original_merge,
+    )
+    stage_review_setup.manager.approve_review(
+        stage_review_setup.task_id,
+        "planning",
+        evidence_id=evidence_id,
+        round_number=1,
+        findings=[major],
+        routing_decisions={},
+        manifest_entries=manifest_entries,
+        coverage_attestation=approval_attestation,
+        dispatch_run_id=run_id,
+    )
+
+    finalized = stage_review_setup.evidence.get_evidence(evidence_id)
+    assert finalized.approval_result is not None
+    displayed_ledger = finalized.approval_result["quality_ledger"]
+    assert displayed_ledger == finalized.quality_ledger
+    assert isinstance(displayed_ledger, list)
+    assert displayed_ledger[0]["check_key"] == "failure-atomicity"

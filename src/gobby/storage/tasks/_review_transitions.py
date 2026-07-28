@@ -230,7 +230,7 @@ def _approve_plan_review(
         plan_path=artifacts.plan_file_path,
         run_id=dispatch_run_id or "",
     )
-    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)):
+    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)) as transaction:
         evidence = service.authorize_current_attempt(
             evidence_id,
             project_id=task.project_id,
@@ -254,6 +254,11 @@ def _approve_plan_review(
                 "manifest_apply_incomplete",
                 "approval manifest must be durably applied before the approval commit",
             )
+        quality_ledger = service.derive_quality_ledger_for_evidence(
+            evidence_id,
+            round_result,
+            transaction=transaction,
+        )
         _stage_states(db).approve_review(
             task.id,
             stage_name,
@@ -270,7 +275,11 @@ def _approve_plan_review(
             description=description,
             claimed_by_session_id=None,
         )
-        service.finalize_plan_review_evidence(evidence_id, round_result)
+        service.finalize_plan_review_evidence(
+            evidence_id,
+            round_result,
+            _derived_quality_ledger=quality_ledger,
+        )
     return get_task(db, task.id)
 
 
@@ -283,7 +292,9 @@ def _recorded_approval_replay(
 ) -> Task | None:
     if evidence.finalized_at is None:
         return None
-    if evidence.approval_result != round_result:
+    approval_result = dict(evidence.approval_result or {})
+    delivered_ledger = approval_result.pop("quality_ledger", None)
+    if approval_result != round_result or delivered_ledger != (evidence.quality_ledger or []):
         raise ReviewEvidenceError(
             "approval_result_conflict",
             "approval retry conflicts with the durable approval result",

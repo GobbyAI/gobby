@@ -87,7 +87,7 @@ async def mint_plan_review_lessons(
                 source_kind="plan_review",
                 source="plan-review",
                 source_review=_source_review(task_id, stage, candidate),
-                decision="confirmed",
+                decision=candidate.decision,
                 finding=_lesson_finding(candidate),
                 evidence=_lesson_evidence(task_id, stage, candidate),
                 session_id=session_id,

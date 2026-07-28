@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -12,6 +12,7 @@ from gobby.plans.review_evidence_io import (
     parse_checkpoints,
     render_checkpoint,
     render_manifest_plan,
+    reviewed_section_hashes,
 )
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -19,6 +20,7 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+from gobby.plans.review_ledger import merge_quality_ledger, validate_quality_ledger
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation, Transaction
 
 
@@ -182,11 +184,10 @@ class ReviewCheckpointService:
                     f"checkpoint result conflicts for evidence {evidence_id}",
                 )
             if evidence.finalized_at is None:
-                self.store.finalize(
+                self.finalize_evidence(
                     transaction=transaction,
-                    evidence_id=evidence_id,
-                    round_result=payload,
-                    approval=payload.get("verdict") == "approved",
+                    evidence=evidence,
+                    payload=payload,
                 )
 
     def drain_interactive_intent(
@@ -230,11 +231,71 @@ class ReviewCheckpointService:
             return
         checkpoint = self.render_v1_round_checkpoint(evidence.evidence_id)
         ensure_checkpoint(plan_path, checkpoint)
-        self.store.finalize(
+        self.finalize_evidence(
+            transaction=transaction,
+            evidence=evidence,
+            payload=round_result,
+        )
+
+    def finalize_evidence(
+        self,
+        *,
+        transaction: Transaction,
+        evidence: PlanReviewEvidence,
+        payload: Mapping[str, object],
+        derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
+    ) -> PlanReviewEvidence:
+        """Persist one validated result and its single server-derived ledger."""
+        quality_ledger = (
+            validate_quality_ledger(derived_quality_ledger)
+            if derived_quality_ledger is not None
+            else self.derive_quality_ledger(
+                transaction=transaction,
+                evidence=evidence,
+                payload=payload,
+            )
+        )
+        self.store.write_quality_ledger(
             transaction=transaction,
             evidence_id=evidence.evidence_id,
-            round_result=round_result,
-            approval=True,
+            quality_ledger=quality_ledger,
+        )
+        approval_result: dict[str, object] | None = None
+        if payload["verdict"] == "approved":
+            approval_result = {**payload, "quality_ledger": quality_ledger}
+        return self.store.finalize(
+            transaction=transaction,
+            evidence_id=evidence.evidence_id,
+            round_result=payload,
+            approval_result=approval_result,
+        )
+
+    def derive_quality_ledger(
+        self,
+        *,
+        transaction: Transaction,
+        evidence: PlanReviewEvidence,
+        payload: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        """Derive the carry-forward ledger from locked finalized evidence."""
+        prior_rows = [
+            row
+            for row in self.store.list_for_path(
+                project_id=evidence.project_id,
+                plan_path=evidence.plan_path,
+                transaction=transaction,
+                for_update=True,
+            )
+            if row.finalized_at is not None
+            and row.expired_at is None
+            and row.round_number < evidence.round_number
+        ]
+        return merge_quality_ledger(
+            prior_ledger=(prior_rows[-1].quality_ledger or []) if prior_rows else [],
+            round_number=evidence.round_number,
+            current_section_hashes=reviewed_section_hashes(evidence.section_manifest),
+            round_result=payload,
+            prior_round_context=evidence.prior_round_context,
         )
 
     @staticmethod

@@ -236,9 +236,15 @@ class PlanReviewEvidenceStore:
         transaction: Transaction,
         evidence_id: str,
         round_result: Mapping[str, object],
-        approval: bool,
+        approval_result: Mapping[str, object] | None,
     ) -> PlanReviewEvidence:
         payload = json.dumps(round_result, sort_keys=True, separators=(",", ":"))
+        approval_payload = (
+            json.dumps(approval_result, sort_keys=True, separators=(",", ":"))
+            if approval_result is not None
+            else None
+        )
+        approval = approval_result is not None
         row = transaction.execute(
             """
             UPDATE plan_review_evidence
@@ -253,7 +259,15 @@ class PlanReviewEvidenceStore:
               AND (round_result IS NULL OR round_result = %s::jsonb)
             RETURNING *
             """,
-            (payload, approval, payload, approval, approval, evidence_id, payload),
+            (
+                payload,
+                approval,
+                approval_payload,
+                approval,
+                approval,
+                evidence_id,
+                payload,
+            ),
         ).fetchone()
         if row is not None:
             return PlanReviewEvidence.from_row(row)

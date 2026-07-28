@@ -408,12 +408,23 @@ coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 
 ## Escalation Policy
 
-Findings carry a **severity**:
+Findings use this normative severity matrix:
 
-- `blocking` — the plan should not be expanded until this is fixed.
-- `major` — substantive and worth repairing, but not an expansion blocker.
-- `minor` — bounded improvement that does not threaten the plan's obligations.
-- `nit` — worth noting, but not a blocker on its own.
+| Severity | Decision boundary | Required disposition |
+| --- | --- | --- |
+| blocking | Demonstrated violation of a required obligation, backed by the complete failure trace. | Repair before approval. |
+| major | Material non-gating quality or operability risk. | Record an explicit quality-ledger decision. |
+| minor | Localized hardening with bounded effect. | Carry in the quality ledger until resolved or explicitly accepted. |
+| nit | Cosmetic issue with no behavioral effect. | Carry in the quality ledger; it never blocks approval. |
+
+Boundary examples are table-driven:
+
+| Candidate | Boundary fact | Severity |
+| --- | --- | --- |
+| A required rollback path leaves a durable partial write and includes the reproducible trace. | Required obligation is demonstrably violated. | blocking |
+| Retry behavior works, but operator-visible diagnosis is materially incomplete. | Operability risk is material and non-gating. | major |
+| One validated example omits an adjacent bounded hardening case. | Effect is localized and bounded. | minor |
+| Heading punctuation differs from house style. | Effect is cosmetic. | nit |
 
 Escalate **only when context is insufficient or a true human-intervention blocker exists**.
 For routine revision rounds, return a non-approval verdict instead:
@@ -421,7 +432,7 @@ For routine revision rounds, return a non-approval verdict instead:
 - If ≥1 `blocking` finding after the second pass → return
   `verdict: needs_review` with formatted findings.
 - If only `major`, `minor`, or `nit` findings remain → record them in the
-  findings section so the drafter can see them, but return `verdict: approved`.
+  server-derived quality ledger and return `verdict: approved`.
 - If zero findings after the second pass → approve cleanly.
 
 Non-blocking nits never trigger escalation on their own.

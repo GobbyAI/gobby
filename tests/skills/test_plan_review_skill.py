@@ -141,6 +141,33 @@ class TestPlanReviewContent:
         assert "blocking" in lowered
         assert "nit" in lowered
 
+    def test_severity_matrix_and_ledger_delivery_surfaces(self, body: str) -> None:
+        contract = Path("docs/contracts/plan-coverage.md").read_text(encoding="utf-8")
+        taskless_agent = Path(
+            "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+        ).read_text(encoding="utf-8")
+        plan_skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for surface in (body, contract):
+            normalized = " ".join(surface.lower().split())
+            for severity in ("blocking", "major", "minor", "nit"):
+                assert f"| {severity} |" in normalized
+            assert "demonstrated violation of a required obligation" in normalized
+            assert "material non-gating quality or operability risk" in normalized
+            assert "localized hardening with bounded effect" in normalized
+            assert "cosmetic" in normalized
+            assert "boundary example" in normalized
+            assert "quality ledger" in normalized
+
+        assert "failure_trace" in taskless_agent
+        assert "minimal_repair" in taskless_agent
+        assert "plan-review skill" in taskless_agent.lower()
+        assert "approval_result.quality_ledger" in plan_skill
+        assert "routing_decisions" in plan_skill
+        assert "manifest_entries" in plan_skill
+
     # --- output format ------------------------------------------------------
 
     def test_round_scoped_findings_header(self, body: str) -> None:

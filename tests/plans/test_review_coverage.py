@@ -11,6 +11,7 @@ from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.plans.review_coverage import (
     REVIEW_LANES,
     review_complexity,
+    validate_approval_condition,
     validate_coverage_attestation,
     validate_review_coverage,
 )
@@ -401,3 +402,36 @@ def test_approval_rejects_invalid_shadow_manifest() -> None:
 
     with pytest.raises(ReviewEvidenceError, match="valid shadow manifest"):
         validate_coverage_attestation(attestation, verdict="approved")
+
+
+def test_approval_condition_blocking_only() -> None:
+    ledger = [
+        {
+            "ledger_entry_id": f"ledger-{digit * 64}",
+            "kind": "finding",
+            "check_key": f"{severity}-quality-risk",
+            "aliases": [f"{severity}-finding"],
+            "first_seen_round": 1,
+            "rounds_carried": 1,
+            "source_section_ids": ["1.1"],
+            "section_hashes_at_entry": {"1.1": "a" * 64},
+            "stale": False,
+            "category": "unhandled-edge",
+            "severity": severity,
+            "location": "§ 1.1",
+            "description": f"{severity} non-gating risk",
+            "minimal_repair": "Record the explicit quality decision.",
+            "prevention": "Surface the quality ledger at approval.",
+        }
+        for severity, digit in (("major", "1"), ("minor", "2"))
+    ]
+
+    approved = validate_approval_condition(findings=[], quality_ledger=ledger)
+
+    assert [entry["severity"] for entry in approved] == ["major", "minor"]
+    with pytest.raises(ReviewEvidenceError) as blocked:
+        validate_approval_condition(
+            findings=[{"finding_id": "blocking-1", "severity": "blocking"}],
+            quality_ledger=ledger,
+        )
+    assert blocked.value.code == "blocking_findings_remaining"

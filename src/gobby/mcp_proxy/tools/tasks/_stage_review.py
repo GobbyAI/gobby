@@ -332,14 +332,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         prior_owner_session_id = get_claimed_session_id(task)
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         replay = False
+        evidence_service: PlanReviewEvidenceService | None = None
         if stage_name == "planning" and evidence_id:
+            evidence_service = PlanReviewEvidenceService(ctx.task_manager.db)
             try:
-                replay = (
-                    PlanReviewEvidenceService(ctx.task_manager.db)
-                    .get_evidence(evidence_id)
-                    .finalized_at
-                    is not None
-                )
+                replay = evidence_service.get_evidence(evidence_id).finalized_at is not None
             except ReviewEvidenceError:
                 replay = False
         approval_kwargs: dict[str, Any] = {
@@ -385,7 +382,12 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 replay=replay,
             )
             if replay:
+                if evidence_service is None:
+                    raise RuntimeError("planning replay has no evidence service")
                 response = _operation_response(ctx, resolved_id, stage_name)
+                response["approval_result"] = evidence_service.get_evidence(
+                    evidence_id
+                ).approval_result
                 response.update(mint_result)
                 return response
 
@@ -440,6 +442,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             reason="approve_review",
         )
         response = _operation_response(ctx, resolved_id, stage_name)
+        if evidence_service is not None and evidence_id is not None:
+            response["approval_result"] = evidence_service.get_evidence(evidence_id).approval_result
         if mint_result is not None:
             response.update(mint_result)
         return response

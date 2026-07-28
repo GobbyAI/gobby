@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -12,11 +12,15 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_findings import validate_plan_review_findings
+from gobby.plans.review_ledger import validate_quality_ledger
 
-PlanLessonType = Literal["reviewer-miss", "fixer-induced-defect"]
+PlanLessonType = Literal["reviewer-miss", "fixer-induced-defect", "no-fix-policy"]
+PlanLessonDecision = Literal["confirmed", "no-fix-policy"]
+PlanLessonSource = Literal["finding", "quality_ledger"]
 _CLASS_ORDER: dict[PlanLessonType, int] = {
     "reviewer-miss": 0,
     "fixer-induced-defect": 1,
+    "no-fix-policy": 2,
 }
 
 
@@ -30,6 +34,8 @@ class PlanReviewLessonCandidate:
     finding: dict[str, object]
     proof: dict[str, object]
     metric: int
+    decision: PlanLessonDecision = "confirmed"
+    source: PlanLessonSource = "finding"
 
 
 def classify_plan_review_rounds(
@@ -63,6 +69,56 @@ def classify_plan_review_rounds(
             )
             if fixer is not None:
                 candidates.append(fixer)
+    candidates.extend(_no_fix_policy_candidates(lineage[-1]))
+    return candidates
+
+
+def _no_fix_policy_candidates(row: PlanReviewEvidence) -> list[PlanReviewLessonCandidate]:
+    candidates: list[PlanReviewLessonCandidate] = []
+    for entry in validate_quality_ledger(row.quality_ledger or []):
+        rounds_carried = entry["rounds_carried"]
+        if (
+            entry["kind"] != "finding"
+            or entry["stale"] is not False
+            or not isinstance(rounds_carried, int)
+            or rounds_carried < 3
+        ):
+            continue
+        ledger_entry_id = str(entry["ledger_entry_id"])
+        finding = {
+            key: value
+            for key, value in entry.items()
+            if key
+            in {
+                "check_key",
+                "category",
+                "severity",
+                "location",
+                "description",
+                "minimal_repair",
+                "prevention",
+                "principle",
+                "root_cause",
+            }
+        }
+        finding["finding_id"] = ledger_entry_id
+        finding["section_id"] = cast(list[str], entry["source_section_ids"])[0]
+        candidates.append(
+            PlanReviewLessonCandidate(
+                lesson_type="no-fix-policy",
+                evidence_id=row.evidence_id,
+                round_number=row.round_number,
+                finding=finding,
+                proof={
+                    "source": "quality_ledger",
+                    "ledger_entry_id": ledger_entry_id,
+                    "rounds_carried": rounds_carried,
+                },
+                metric=rounds_carried,
+                decision="no-fix-policy",
+                source="quality_ledger",
+            )
+        )
     return candidates
 
 

@@ -273,6 +273,30 @@ Structural over-engineering is `blocking` ("simplify before expansion");
 ceremony is a `nit`. This dimension only *adds* to review — the adversary keeps
 sole correctness-gate authority and its write-scope invariant.
 
+## Review Severity and Approval
+
+The shared normative severity matrix is:
+
+| Severity | Decision boundary | Required disposition |
+| --- | --- | --- |
+| blocking | Demonstrated violation of a required obligation, backed by the complete failure trace. | Repair before approval. |
+| major | Material non-gating quality or operability risk. | Record an explicit quality-ledger decision. |
+| minor | Localized hardening with bounded effect. | Carry in the quality ledger until resolved or explicitly accepted. |
+| nit | Cosmetic issue with no behavioral effect. | Carry in the quality ledger; it never blocks approval. |
+
+Boundary examples are table-driven:
+
+| Candidate | Boundary fact | Severity |
+| --- | --- | --- |
+| A required rollback path leaves a durable partial write and includes the reproducible trace. | Required obligation is demonstrably violated. | blocking |
+| Retry behavior works, but operator-visible diagnosis is materially incomplete. | Operability risk is material and non-gating. | major |
+| One validated example omits an adjacent bounded hardening case. | Effect is localized and bounded. | minor |
+| Heading punctuation differs from house style. | Effect is cosmetic. | nit |
+
+Approval requires zero `blocking` findings. Open `major`, `minor`, and `nit`
+entries remain visible in the server-derived quality ledger carried beside the
+canonical manifest in the approved result envelope.
+
 ## Coverage CLI
 
 ```bash

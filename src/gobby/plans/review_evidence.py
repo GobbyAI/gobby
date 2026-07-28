@@ -9,7 +9,11 @@ from pathlib import Path
 
 from gobby.plans.parser import PlanDocument
 from gobby.plans.review_checkpoint_service import ReviewCheckpointService
-from gobby.plans.review_coverage import review_complexity, validate_review_coverage
+from gobby.plans.review_coverage import (
+    review_complexity,
+    validate_approval_condition,
+    validate_review_coverage,
+)
 from gobby.plans.review_evidence_io import (
     build_section_manifest,
     normalize_plan_path,
@@ -22,11 +26,15 @@ from gobby.plans.review_evidence_models import (
     ReviewEvidenceError,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
-from gobby.plans.review_ledger import merge_quality_ledger
+from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
 from gobby.plans.review_repair import repair_preparation_for_round
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    PlanReviewEvidenceMutation,
+    Transaction,
+)
 from gobby.storage.projects import LocalProjectManager
 
 EVIDENCE_LEASE_SECONDS = 7_200
@@ -504,6 +512,8 @@ class PlanReviewEvidenceService:
         self,
         evidence_id: str,
         round_result: Mapping[str, object],
+        *,
+        _derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
         payload = self._round_result_for_evidence(evidence_id, round_result)
@@ -529,36 +539,28 @@ class PlanReviewEvidenceService:
             plan_path=evidence.plan_path,
         )
         with self.db.transaction_immediate(mutation) as transaction:
-            prior_rows = [
-                row
-                for row in self.store.list_for_path(
-                    project_id=evidence.project_id,
-                    plan_path=evidence.plan_path,
-                    transaction=transaction,
-                    for_update=True,
-                )
-                if row.finalized_at is not None
-                and row.expired_at is None
-                and row.round_number < evidence.round_number
-            ]
-            quality_ledger = merge_quality_ledger(
-                prior_ledger=(prior_rows[-1].quality_ledger or []) if prior_rows else [],
-                round_number=evidence.round_number,
-                current_section_hashes=reviewed_section_hashes(evidence.section_manifest),
-                round_result=payload,
-                prior_round_context=evidence.prior_round_context,
-            )
-            self.store.write_quality_ledger(
+            return self.checkpoints.finalize_evidence(
                 transaction=transaction,
-                evidence_id=evidence_id,
-                quality_ledger=quality_ledger,
+                evidence=evidence,
+                payload=payload,
+                derived_quality_ledger=_derived_quality_ledger,
             )
-            return self.store.finalize(
-                transaction=transaction,
-                evidence_id=evidence_id,
-                round_result=payload,
-                approval=payload["verdict"] == "approved",
-            )
+
+    def derive_quality_ledger_for_evidence(
+        self,
+        evidence_id: str,
+        round_result: Mapping[str, object],
+        *,
+        transaction: Transaction,
+    ) -> list[dict[str, object]]:
+        """Derive the single server-owned ledger before any terminal stage mutation."""
+        evidence = self.get_evidence(evidence_id)
+        payload = self._round_result_for_evidence(evidence_id, round_result)
+        return self.checkpoints.derive_quality_ledger(
+            evidence=evidence,
+            payload=payload,
+            transaction=transaction,
+        )
 
     def apply_plan_review_manifest(
         self,
@@ -586,10 +588,27 @@ class PlanReviewEvidenceService:
         evidence_id: str,
         round_result: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.checkpoints.round_result_for_evidence(
+        payload = self.checkpoints.round_result_for_evidence(
             evidence_id,
             round_result,
         )
+        if payload["verdict"] not in {"approved", "needs_review"}:
+            return payload
+        evidence = self.get_evidence(evidence_id)
+        raw_findings = payload["findings"]
+        if not isinstance(raw_findings, list):
+            raise ReviewEvidenceError(
+                "invalid_round_result",
+                "reviewed round result findings must be an array",
+            )
+        findings = validate_plan_review_findings(raw_findings, evidence=evidence)
+        payload["findings"] = findings
+        if payload["verdict"] == "approved":
+            validate_approval_condition(
+                findings=findings,
+                quality_ledger=evidence.quality_ledger or [],
+            )
+        return payload
 
     def _changed_sections_since_prior_round(
         self,

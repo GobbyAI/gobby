@@ -582,13 +582,14 @@ def test_manifest_compare_and_apply(
     assert plan_path.read_bytes() == first_bytes
 
     changed = {**approval, "findings": [{"message": "different"}]}
-    with pytest.raises(ReviewEvidenceError, match="different manifest payload"):
+    with pytest.raises(ReviewEvidenceError) as invalid_finding:
         service.apply_plan_review_manifest(
             prepared.evidence_id,
             changed,
             plan_path=plan_path,
             run_id=run.id,
         )
+    assert invalid_finding.value.code == "invalid_review_findings"
 
     landed_path = plan_path.with_name("review-evidence-landed.md")
     landed_path.write_bytes(original_bytes)

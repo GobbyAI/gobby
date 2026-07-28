@@ -13,7 +13,10 @@ from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
 from gobby.plans.review_findings import CHECK_KEY_RE
-from gobby.plans.review_ledger import dismissed_ledger_entries_from_context
+from gobby.plans.review_ledger import (
+    dismissed_ledger_entries_from_context,
+    validate_quality_ledger,
+)
 from gobby.plans.semantic_lint import collect_target_inventory
 
 REVIEW_LANES = (
@@ -59,6 +62,26 @@ def review_complexity(
         "lanes": list(REVIEW_LANES),
         "max_workers": 3 if complex_review else 0,
     }
+
+
+def validate_approval_condition(
+    *,
+    findings: Sequence[Mapping[str, object]],
+    quality_ledger: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Require zero blocking findings while preserving non-gating ledger entries."""
+    blocking_ids = [
+        str(finding.get("finding_id", f"finding-{index}"))
+        for index, finding in enumerate(findings)
+        if finding.get("severity") == "blocking"
+    ]
+    if blocking_ids:
+        raise ReviewEvidenceError(
+            "blocking_findings_remaining",
+            "approval requires zero blocking findings",
+            details={"finding_ids": blocking_ids},
+        )
+    return validate_quality_ledger(quality_ledger)
 
 
 def validate_review_coverage(

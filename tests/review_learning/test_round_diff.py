@@ -666,7 +666,11 @@ def test_approval_evidence_finalization(
     assert approved.id == setup.task_id
     assert setup.manager.stage_states.current_stage(setup.task_id).state == "review_approved"
     assert finalized.finalized_at is not None
-    assert finalized.approval_result == {"verdict": "approved", **approval}
+    assert finalized.approval_result == {
+        "verdict": "approved",
+        **approval,
+        "quality_ledger": [],
+    }
     assert finalized.lesson_mint_status == "pending"
 
     replay = setup.manager.approve_review(
