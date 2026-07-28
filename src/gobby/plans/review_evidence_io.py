@@ -862,13 +862,13 @@ def _validate_checkpoint_envelope(payload: Mapping[str, object]) -> None:
             "checkpoint_reconciliation_error",
             "checkpoint round_result must be an object",
         )
-    try:
-        validate_round_result(cast(Mapping[str, object], result))
-    except ReviewEvidenceError as exc:
-        raise ReviewEvidenceError(
-            "checkpoint_reconciliation_error",
-            f"checkpoint round_result is invalid: {exc}",
-        ) from exc
+    # Deliberately structural only. This parser reads durable records the system
+    # already wrote and accepted; re-validating them against the *current*
+    # round-result schema rejects every checkpoint written before that schema
+    # gained a required field, which permanently blocks preparation of any plan
+    # carrying prior rounds. The full schema is enforced wherever a round result
+    # is produced -- render_checkpoint above, terminal delivery, and evidence
+    # finalization -- so no write path can create an invalid one.
 
 
 def _sha256(content: bytes) -> str:
