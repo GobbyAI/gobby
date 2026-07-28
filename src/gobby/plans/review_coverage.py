@@ -350,6 +350,21 @@ def _validate_candidate(
     if not isinstance(raw, Mapping):
         raise ReviewEvidenceError("invalid_candidate", "candidate issue must be an object")
     candidate: dict[str, object] = canonical_json_object(raw)
+    allowed_fields = {
+        "candidate_id",
+        "violated_invariant",
+        "suggested_fix",
+        "section_ids",
+        "confidence",
+        "source_citations",
+        "adjacent_sites_checked",
+    }
+    unknown = sorted(set(candidate) - allowed_fields)
+    if unknown:
+        raise ReviewEvidenceError(
+            "invalid_candidate",
+            f"candidate issue has unknown fields: {', '.join(unknown)}",
+        )
     _required_string(candidate, "candidate_id", "candidate issue")
     _required_string(candidate, "violated_invariant", "candidate issue")
     _required_string(candidate, "suggested_fix", "candidate issue")

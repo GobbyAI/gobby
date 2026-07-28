@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -180,6 +181,44 @@ def _findings() -> list[dict[str, object]]:
             },
         },
     ]
+
+
+def _repair_submission() -> dict[str, object]:
+    attestations = []
+    for finding in _findings():
+        attestations.append(
+            {
+                "prior_finding_id": finding["finding_id"],
+                "check_key": finding["check_key"],
+                "changed_section_ids": ["1.1"],
+                "accepted_resolution": finding["minimal_repair"],
+                "deviation_from_minimal_repair": None,
+                "changed_symbols": ["gobby.example.rollback"],
+                "consumer_sites_swept": ["src/example.py:consumer"],
+                "adjacent_variants_swept": ["src/example.py:retry"],
+                "validation_evidence": ["pytest tests/test_example.py"],
+                "deferred_sites": [],
+            }
+        )
+    return {
+        "round_number": 2,
+        "prior_finding_resolutions": [
+            {"prior_finding_id": finding["finding_id"], "decision": "repair"}
+            for finding in _findings()
+        ],
+        "repair_attestations": attestations,
+    }
+
+
+def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
+    setup.plan_path.write_text(
+        setup.plan_path.read_text(encoding="utf-8").replace(
+            "Implemented.",
+            "Implemented with rollback before retry.",
+        ),
+        encoding="utf-8",
+    )
+    return _repair_submission()
 
 
 def _prepare_bound(
@@ -467,6 +506,18 @@ async def test_pre_spawn_snapshot_transport(
         round_number=1,
         dispatch_run_id=run_id,
     )
+    TaskDispatchMutexManager(stage_review_setup.db).clear_by_run_id(run_id)
+    repair_submission = _apply_round_one_repairs(stage_review_setup)
+    stage_review_setup.manager.stage_states.start_stage(
+        stage_review_setup.task_id,
+        "planning",
+        by_session_id=None,
+    )
+    stage_review_setup.manager.submit_for_review(
+        stage_review_setup.task_id,
+        "planning",
+        repair_submission=repair_submission,
+    )
 
     async def failed_spawn(**_kwargs: object) -> dict[str, object]:
         raise DispatchSpawnFailed("provider_failed")
@@ -611,12 +662,21 @@ def test_rejection_finalizes_evidence(
             dispatch_run_id="wrong-run",
         )
 
+    repair_submission = _apply_round_one_repairs(stage_review_setup)
     next_round = stage_review_setup.evidence.prepare_plan_review_round(
         project_id=stage_review_setup.project_id,
         plan_path=stage_review_setup.plan_path,
         round_number=2,
         task_id=stage_review_setup.task_id,
         stage="planning",
+        prior_finding_resolutions=cast(
+            list[dict[str, object]],
+            repair_submission["prior_finding_resolutions"],
+        ),
+        repair_attestations=cast(
+            list[dict[str, object]],
+            repair_submission["repair_attestations"],
+        ),
     )
     assert next_round.evidence_id != evidence_id
     assert stage_review_setup.evidence.get_evidence(evidence_id).finalized_at is not None

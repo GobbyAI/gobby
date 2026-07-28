@@ -33,6 +33,8 @@ def register_review_evidence_tools(
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
+        prior_finding_resolutions: list[dict[str, object]] | None = None,
+        repair_attestations: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         try:
             prepared = service.prepare_plan_review_round(
@@ -42,6 +44,8 @@ def register_review_evidence_tools(
                 session_id=session_id,
                 task_id=task_id,
                 stage=stage,
+                prior_finding_resolutions=prior_finding_resolutions,
+                repair_attestations=repair_attestations,
             )
         except (ReviewEvidenceError, ValueError, OSError) as exc:
             return _error_payload(exc, "prepare_plan_review_round_failed")

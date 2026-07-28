@@ -85,6 +85,19 @@ prepared snapshot/evidence, `artifact_path`,
 `round_number`, `max_review_rounds`, and the parent session id in the prompt or
 variables, together with the current requirements context. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.
+For every round after the first, also pass `prior_finding_resolutions` and
+`repair_attestations` to `prepare_plan_review_round`. Build exactly one
+resolution record per finding in the prior finalized result:
+`prior_finding_id` plus `decision: repair | carry`. Every `repair` record needs
+one attestation carrying `prior_finding_id`, `check_key`,
+`changed_section_ids`, `accepted_resolution`,
+`deviation_from_minimal_repair`, `changed_symbols`,
+`consumer_sites_swept`, `adjacent_variants_swept`, `validation_evidence`, and
+`deferred_sites`. Derive these fields from the recorded vote and the actual
+plan edit and validation sweep. Preparation loads the prior finding universe
+server-side and refuses omissions, duplicate identities, stale check keys, and
+section claims outside the real hash diff. `carry` applies only to non-blocking
+findings.
 The coordinator waits only for the parent adversary result; the adversary owns
 provider-native internal research results, timeouts, and sequential lane
 fallbacks. The adversary never uses Gobby-managed agents for lane research.
@@ -117,8 +130,11 @@ including its description, finding detail, and metadata. When a finding
    `kind: deferred` plan section that points to its follow-up task (section 2.3
    is the worked example).
 7. If the verdict is `needs_review`, recall `fixer-induced-defect` plan lessons
-before revising, revise the plan with the user, rerun validation, and dispatch
-the next taskless adversary round until the review cap is reached.
+before revising. Record one `repair` or `carry` vote for every finding, revise
+the plan with the user, capture the actual changed sections and symbols plus
+consumer, adjacent-variant, validation, and deferred-site evidence for each
+repair vote, rerun validation, and dispatch the next taskless adversary round
+until the review cap is reached.
 8. If the verdict is `approved`, run the approval sequence below. Ensure the
 resulting `## M1 Task Manifest` passes expansion-mode validation:
 

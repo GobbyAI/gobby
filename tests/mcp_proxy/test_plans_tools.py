@@ -123,7 +123,11 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
 @pytest.mark.asyncio
 async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
-    root_task = LocalTaskManager(temp_db).create_task(project_id, "Plan root")
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id,
+        "Plan root",
+        validation_criteria="Plan tool operations preserve the root task.",
+    )
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
 
@@ -251,7 +255,11 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
     tmp_path: Path,
 ) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
-    root_task = LocalTaskManager(temp_db).create_task(project_id, "Plan root")
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id,
+        "Plan root",
+        validation_criteria="Unresolvable project deletion preserves the scoped plan.",
+    )
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
     created = await registry.call(

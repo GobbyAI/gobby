@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -30,6 +30,7 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+from gobby.plans.review_repair import repair_preparation_for_round
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation, Transaction
 from gobby.storage.projects import LocalProjectManager
@@ -55,6 +56,8 @@ class PlanReviewEvidenceService:
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
+        prior_finding_resolutions: Sequence[Mapping[str, object]] | None = None,
+        repair_attestations: Sequence[Mapping[str, object]] | None = None,
     ) -> PreparedReviewEvidence:
         """Capture one immutable round snapshot under a per-plan mutation lock."""
         if round_number <= 0:
@@ -135,6 +138,24 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     ):
+                        context = repair_preparation_for_round(
+                            evidence_rows=self.store.list_for_path(
+                                project_id=project_id,
+                                plan_path=relative_path,
+                                transaction=transaction,
+                            ),
+                            round_number=round_number,
+                            current_sections=active.section_manifest,
+                            prior_finding_resolutions=prior_finding_resolutions,
+                            repair_attestations=repair_attestations,
+                        )
+                        if context is not None:
+                            active = self.store.write_preparation_context(
+                                transaction=transaction,
+                                evidence_id=active.evidence_id,
+                                repair_attestations=context.repair_attestations,
+                                prior_round_context=context.prior_round_context,
+                            )
                         prepared = active.prepared_result()
                     elif self._attempt_is_dead(active):
                         self.store.expire(
@@ -152,6 +173,17 @@ class PlanReviewEvidenceService:
                 if prepared is None:
                     plan_hash = hashlib.sha256(snapshot).hexdigest()
                     sections = build_section_manifest(snapshot)
+                    context = repair_preparation_for_round(
+                        evidence_rows=self.store.list_for_path(
+                            project_id=project_id,
+                            plan_path=relative_path,
+                            transaction=transaction,
+                        ),
+                        round_number=round_number,
+                        current_sections=sections,
+                        prior_finding_resolutions=prior_finding_resolutions,
+                        repair_attestations=repair_attestations,
+                    )
                     evidence = self.store.insert(
                         transaction=transaction,
                         project_id=project_id,
@@ -165,6 +197,13 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     )
+                    if context is not None:
+                        evidence = self.store.write_preparation_context(
+                            transaction=transaction,
+                            evidence_id=evidence.evidence_id,
+                            repair_attestations=context.repair_attestations,
+                            prior_round_context=context.prior_round_context,
+                        )
                     prepared = evidence.prepared_result()
         if pending_payload:
             raise ReviewEvidenceError(

@@ -229,7 +229,7 @@ def test_stale_write_guard_and_lifecycle(
     assert replayed_coverage.value.code == "coverage_evidence_mismatch"
     rejection = {
         "verdict": "needs_review",
-        "findings": [{"message": "fix it"}],
+        "findings": [],
         "coverage_attestation": coverage_attestation(
             evidence_id=prepared.evidence_id,
             shadow_valid=False,

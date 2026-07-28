@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -388,6 +389,7 @@ def submit_for_review(
     *,
     review_notes: str | None = None,
     by_session_id: str | None = None,
+    repair_submission: Mapping[str, object] | None = None,
     dispatch_run_id: str | None = None,
 ) -> Task:
     """Submit a stage for review and release ownership."""
@@ -403,6 +405,7 @@ def submit_for_review(
         stage_name,
         by_session_id=by_session_id,
         notes=review_notes,
+        repair_submission=repair_submission,
         dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET

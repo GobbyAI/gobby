@@ -34,6 +34,10 @@ from gobby.dispatch.spawn_completion import (
 from gobby.dispatch.spawn_errors import DispatchSpawnFailed, DispatchSpawnUnavailable
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_repair import (
+    REPAIR_SUBMISSION_ARTIFACT_KEY,
+    decode_repair_submission,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -103,6 +107,20 @@ def _prepare_plan_adversary_evidence(
     if not isinstance(review_round_count, int) or isinstance(review_round_count, bool):
         raise DispatchSpawnFailed("plan_review_round_invalid")
     round_number = review_round_count + 1
+    artifact_refs = _field(stage, "artifact_refs", {}) or {}
+    raw_submission = (
+        artifact_refs.get(REPAIR_SUBMISSION_ARTIFACT_KEY)
+        if isinstance(artifact_refs, dict)
+        else None
+    )
+    submission = (
+        decode_repair_submission(
+            raw_submission,
+            expected_round_number=round_number,
+        )
+        if isinstance(raw_submission, str) and raw_submission
+        else None
+    )
     service = PlanReviewEvidenceService(db)
     prepared = service.prepare_plan_review_round(
         project_id=project_id,
@@ -110,6 +128,10 @@ def _prepare_plan_adversary_evidence(
         round_number=round_number,
         task_id=task_id,
         stage=stage_name,
+        prior_finding_resolutions=(
+            submission.prior_finding_resolutions if submission is not None else None
+        ),
+        repair_attestations=(submission.repair_attestations if submission is not None else None),
     )
     try:
         transport = attach_plan_review_evidence(
@@ -368,6 +390,25 @@ async def spawn_agent(
                 f"plan_review_evidence_bind_failed:{exc.code}",
                 spawned_run_id=str(run_id),
             ) from exc
+        stage_name = str((action.initial_variables or {}).get("stage_name") or "")
+        current_stage = task_manager.stage_states.get(action.task_id, stage_name)
+        artifact_refs = current_stage.artifact_refs if current_stage is not None else None
+        raw_submission = (
+            artifact_refs.get(REPAIR_SUBMISSION_ARTIFACT_KEY) if artifact_refs is not None else None
+        )
+        if raw_submission:
+            try:
+                task_manager.stage_states.consume_plan_review_submission(
+                    action.task_id,
+                    stage_name,
+                    raw_submission=raw_submission,
+                    evidence_id=evidence_id,
+                )
+            except ValueError as exc:
+                raise DispatchSpawnFailed(
+                    "plan_review_submission_consume_failed",
+                    spawned_run_id=str(run_id),
+                ) from exc
 
     try:
         _persist_spawn_artifacts(db, action.task_id, result)

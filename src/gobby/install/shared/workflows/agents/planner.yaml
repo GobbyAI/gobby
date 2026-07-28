@@ -78,6 +78,16 @@ instructions: |
     repair stale file paths, and resolve contradictions with the codebase. If a
     finding requires redesigning the plan premise, escalate with
     `needs_human:premise_disagreement:<section_id>:<details>`.
+  - On every revision-round resubmission, pass one typed `repair_submission`
+    to `submit_for_review`. Bind it to round N+1 with `round_number`; include
+    exactly one `prior_finding_resolutions` record (`prior_finding_id`,
+    `decision: repair | carry`) for every Round N finding; and include one
+    `repair_attestations` record for every `repair` decision. Each attestation
+    carries `prior_finding_id`, `check_key`, `changed_section_ids`,
+    `accepted_resolution`, `deviation_from_minimal_repair`, `changed_symbols`,
+    `consumer_sites_swept`, `adjacent_variants_swept`, `validation_evidence`,
+    and `deferred_sites`. Derive its evidence from the actual plan edit and
+    validation sweep. `carry` applies only to non-blocking findings.
   - Treat any `<!-- gobby:discovery-stage:*:start -->` marker blocks in the
     parent task description as authoritative upstream context. Preserve their
     stated constraints, evidence, architecture decisions, PRD scope, and
@@ -98,8 +108,8 @@ instructions: |
     inside the task-expansion workflow.
   - When the plan is ready for review, append one concise bullet to
     `## V1 Plan Changelog`, then call `submit_for_review` on the planning
-    task with `stage_name="planning"` and mention the plan artifact path in
-    your review notes. Do not call
+    task with `stage_name="planning"`, the revision-round `repair_submission`
+    when applicable, and the plan artifact path in your review notes. Do not call
     remove_label for `planning-current-verdict:rejected`; the transition tool
     clears it atomically with the resubmission.
 

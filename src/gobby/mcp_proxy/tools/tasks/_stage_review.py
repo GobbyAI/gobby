@@ -215,6 +215,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task_id: str,
         stage_name: str,
         review_notes: str | None = None,
+        repair_submission: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         """Submit a stage for review."""
         session_or_error = _resolve_session(ctx)
@@ -239,6 +240,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 stage_name,
                 review_notes=review_notes,
                 by_session_id=resolved_session_id,
+                repair_submission=repair_submission,
                 **dispatch_kwargs,
             )
         except ValueError as e:
