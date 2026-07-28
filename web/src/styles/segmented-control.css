@@ -1,7 +1,23 @@
-.segmented-control__option--sm {
-  padding-inline: 0.5rem;
+/* Canonical selector (segmented control) type + padding. One rendering for
+ * every instance — the app-header project selector is the reference. Rows
+ * control height via --control-row-height / --control-row-height-sm; dense
+ * surfaces may override option padding-inline, never font. See .impeccable.md
+ * "Canonical Components". */
+
+.segmented-control {
+  font-size: var(--text-base);
 }
 
-.segmented-control__option--md {
+.segmented-control__option {
   padding-inline: 0.75rem;
+}
+
+@media (max-width: 768px) {
+  .segmented-control {
+    font-size: var(--text-sm);
+  }
+
+  .segmented-control__option {
+    padding-inline: 0.55rem;
+  }
 }

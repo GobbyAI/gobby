@@ -506,7 +506,7 @@ export default function App() {
             <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
             <button
               type="button"
-              className="btn btn-accent btn-sm app-settings-cog"
+              className="btn btn-accent btn-sm btn-icon app-settings-cog"
               onClick={() => settingsOverlay.open()}
               aria-label="Open settings"
               aria-haspopup="dialog"
@@ -518,7 +518,7 @@ export default function App() {
             {authRequired && authenticated && (
               <button
                 type="button"
-                className="btn btn-ghost btn-sm app-logout-btn"
+                className="btn btn-accent btn-sm btn-icon app-logout-btn"
                 onClick={() => logout()}
                 aria-label="Log out"
                 title="Log out"

@@ -286,7 +286,6 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           onChange={handleStatusChange}
           options={[...RULE_STATUS_OPTIONS]}
           ariaLabel="Rule status filter"
-          size="md"
           controlHeight="sm"
           className="activity-panel-toolbar-segmented"
         />

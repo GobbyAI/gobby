@@ -24,7 +24,6 @@ interface ChatInputToolbarProps {
   disabled: boolean
   fileInputRef: RefObject<HTMLInputElement>
   handleFilesSelected: (files: FileList | null) => void
-  isNarrow: boolean
   isRecording: boolean
   isSpeaking: boolean
   metaRef: RefObject<HTMLDivElement>
@@ -65,7 +64,6 @@ export function ChatInputToolbar({
   disabled,
   fileInputRef,
   handleFilesSelected,
-  isNarrow,
   isRecording,
   isSpeaking,
   metaRef,
@@ -113,7 +111,6 @@ export function ChatInputToolbar({
               onModeChange={onModeChange}
               disabled={disabled || modeDisabled}
               modes={modeOptions}
-              size={isNarrow ? 'sm' : 'md'}
             />
           )}
           <Button

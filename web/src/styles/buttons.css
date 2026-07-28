@@ -7,6 +7,12 @@
  *
  * Reserve `.btn-primary` (solid accent fill) for genuine call-to-action.
  * Default to `.btn-secondary` for normal action buttons.
+ *
+ * App-header chrome (theme toggle, settings cog, logout) is a deliberate
+ * cluster: every icon button there is `btn btn-accent btn-sm btn-icon` plus
+ * a hook class (`app-theme-toggle`, `app-settings-cog`, `app-logout-btn`)
+ * sized by app-shell.css. `btn-icon` keeps widths equal regardless of icon
+ * art. New header buttons must join this cluster, not invent a variant.
  */
 
 .btn {

@@ -1,6 +1,7 @@
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
 import { SourceIcon } from '../shared/SourceIcon'
+import { DropdownCaret } from '../ui/DropdownCaret'
 import { PanelIcon } from './icons/PanelIcon'
 
 interface CommandBarProps {
@@ -54,7 +55,7 @@ export function CommandBar({
           <span className="command-bar-title">
             {getSessionTitleText(title)}
           </span>
-          <ChevronDownIcon />
+          <DropdownCaret />
         </button>
       </div>
 
@@ -76,24 +77,5 @@ export function CommandBar({
         )}
       </div>
     </div>
-  )
-}
-
-function ChevronDownIcon() {
-  return (
-    <svg
-      className="command-bar-caret"
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="4 6 8 10 12 6" />
-    </svg>
   )
 }

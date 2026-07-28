@@ -57,7 +57,6 @@ export function SessionsTabToolbar({
         onChange={onStatusModeChange}
         options={STATUS_MODE_OPTIONS}
         ariaLabel="Session status filter"
-        size="md"
         controlHeight="sm"
         className="activity-panel-toolbar-segmented"
       />

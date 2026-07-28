@@ -312,10 +312,10 @@ describe('mobile chrome CSS', () => {
       height: 'var(--control-row-height)',
       'min-height': 'var(--control-row-height)',
     })
-    expectDeclarations(segmentedControlCss, '.segmented-control__option--sm', {
-      'padding-inline': '0.5rem',
+    expectDeclarations(segmentedControlCss, '.segmented-control', {
+      'font-size': 'var(--text-base)',
     })
-    expectDeclarations(segmentedControlCss, '.segmented-control__option--md', {
+    expectDeclarations(segmentedControlCss, '.segmented-control__option', {
       'padding-inline': '0.75rem',
     })
     expectDeclarations(shellCss, '.app-header-actions', {
@@ -366,14 +366,6 @@ describe('mobile chrome CSS', () => {
     })
     expectDeclarations(activityCss, '.activity-panel-toolbar .btn-sm', {
       'min-height': 'var(--status-bar-control-height)',
-    })
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-toolbar-segmented > .segmented-control__option',
-      { 'padding-inline': '0.55rem' },
-    )
-    expectDeclarations(activityCss, '.activity-panel-toolbar-segmented', {
-      'font-size': 'var(--text-sm)',
     })
     expectDeclarations(
       activityCss,

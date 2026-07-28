@@ -31,7 +31,7 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
   return (
     <button
       type="button"
-      className="btn btn-accent btn-sm app-theme-toggle"
+      className="btn btn-accent btn-sm btn-icon app-theme-toggle"
       disabled={disabled}
       aria-label={label}
       title={label}

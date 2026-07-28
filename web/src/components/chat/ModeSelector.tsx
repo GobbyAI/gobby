@@ -7,7 +7,6 @@ interface ModeSelectorProps {
   onModeChange: (mode: ChatMode) => void
   disabled?: boolean
   modes?: ChatModeInfo[]
-  size?: 'sm' | 'md'
 }
 
 export function ModeSelector({
@@ -15,7 +14,6 @@ export function ModeSelector({
   onModeChange,
   disabled,
   modes = CHAT_MODES,
-  size = 'md',
 }: ModeSelectorProps) {
   return (
     <SegmentedControl<ChatMode>
@@ -27,7 +25,6 @@ export function ModeSelector({
         title: m.description,
       }))}
       ariaLabel="Chat mode"
-      size={size}
       controlHeight="sm"
       // Dense app chrome exception to the .impeccable.md 44px touch-target floor.
       coarseTouchTarget={false}

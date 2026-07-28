@@ -487,7 +487,6 @@ export function ChatInput({
           disabled={disabled}
           fileInputRef={fileInputRef}
           handleFilesSelected={handleFilesSelected}
-          isNarrow={isNarrow}
           isRecording={isRecording}
           isSpeaking={isSpeaking}
           metaRef={metaRef}

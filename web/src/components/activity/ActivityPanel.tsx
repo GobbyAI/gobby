@@ -7,6 +7,7 @@ import {
   type CSSProperties,
 } from "react";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { DropdownCaret } from "../ui/DropdownCaret";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
 import { SessionsTab } from "./SessionsTab";
@@ -150,26 +151,11 @@ function ActivityDropdown({
           <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
           <span>{activeTabConfig.label}</span>
         </span>
-        <span className="activity-panel-mobile-trigger__caret" aria-hidden="true">
-          <svg
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            {isOpen ? (
-              <polyline points="4 10 8 6 12 10" />
-            ) : (
-              <polyline points="4 6 8 10 12 6" />
-            )}
-          </svg>
-        </span>
+        <DropdownCaret open={isOpen} />
       </button>
       {isOpen && (
         <div className="activity-panel-mobile-menu">
-          {tabs.map((tab) => (
+          {[...tabs].sort((a, b) => a.label.localeCompare(b.label)).map((tab) => (
             <button
               key={tab.id}
               type="button"

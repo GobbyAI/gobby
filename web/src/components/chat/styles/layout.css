@@ -311,10 +311,6 @@
   white-space: nowrap;
 }
 
-.command-bar-caret {
-  flex-shrink: 0;
-}
-
 /* ============================================
    Command Palette
    ============================================ */

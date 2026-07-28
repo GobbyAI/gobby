@@ -392,7 +392,6 @@ export function WikiAskMode({ scope, nav, offline, onSearchVault }: WikiAskModeP
             onChange={setAnswerMode}
             options={MODE_OPTIONS}
             ariaLabel="Answer mode"
-            size="sm"
             disabled={composerDisabled}
           />
           <button

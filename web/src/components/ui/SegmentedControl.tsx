@@ -27,7 +27,6 @@ interface SegmentedControlProps<T extends string> {
   onChange: (value: T) => void
   options: readonly SegmentedControlOption<T>[]
   ariaLabel: string
-  size?: 'sm' | 'md'
   controlHeight?: 'sm' | 'md'
   disabled?: boolean
   className?: string
@@ -39,7 +38,6 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   ariaLabel,
-  size = 'sm',
   controlHeight = 'md',
   disabled = false,
   className,
@@ -67,8 +65,6 @@ export function SegmentedControl<T extends string>({
     selectIndex(nextIndex)
   }
 
-  const sizeText = size === 'md' ? 'text-base' : 'text-xs'
-  const sizePad = size === 'md' ? 'segmented-control__option--md' : 'segmented-control__option--sm'
   const heightVar = controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'
 
   // Light: recessed bg-secondary track + a brighter neutral --surface-selected
@@ -89,10 +85,10 @@ export function SegmentedControl<T extends string>({
       aria-disabled={disabled || undefined}
       style={{ height: heightVar }}
       className={cn(
+        'segmented-control',
         'inline-flex items-stretch rounded-md border border-border',
         coarseTouchTarget && 'pointer-coarse:min-h-11',
         trackBg,
-        sizeText,
         className,
       )}
     >
@@ -124,7 +120,6 @@ export function SegmentedControl<T extends string>({
               'segmented-control__option',
               'inline-flex items-center justify-center',
               coarseTouchTarget && 'pointer-coarse:min-h-11 pointer-coarse:min-w-11',
-              sizePad,
               'transition-colors motion-reduce:transition-none',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               index === 0 && 'rounded-l-md',

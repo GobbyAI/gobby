@@ -1,0 +1,15 @@
+/* Canonical dropdown caret — pairs with components/ui/DropdownCaret.tsx.
+ * Inherits currentColor from the trigger; size scales with the type ladder. */
+
+.dropdown-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.dropdown-caret svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
