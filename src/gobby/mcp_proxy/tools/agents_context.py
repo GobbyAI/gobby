@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.clones import LocalCloneManager
@@ -32,6 +33,7 @@ class AgentsRegistryContext:
     agent_run_manager: LocalAgentRunManager
     resolve_session_id: Callable[[str], str]
     get_current_session_id: Callable[[], str | None]
+    get_current_agent_run_id: Callable[[], str | None]
     get_project_context: Callable[[], dict[str, object] | None]
     session_manager: SessionManager | None = None
     task_manager: LocalTaskManager | None = None
@@ -48,3 +50,4 @@ class AgentsRegistryContext:
     code_index: CodeIndexContext | None = None
     transcript_reader: TranscriptReader | None = None
     detection_registry: DetectionManifestRegistry | None = None
+    review_evidence_store: PlanReviewEvidenceStore | None = None

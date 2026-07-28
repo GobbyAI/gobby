@@ -9,6 +9,7 @@ from gobby.mcp_proxy.tools.agents_lifecycle_tools import register_agent_lifecycl
 from gobby.mcp_proxy.tools.agents_query_tools import register_agent_query_tools
 from gobby.mcp_proxy.tools.agents_spawn_tools import register_agent_spawn_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
@@ -74,9 +75,14 @@ def create_agents_registry(
         InternalToolRegistry with all agent tools registered.
     """
     from gobby.utils.project_context import get_project_context
-    from gobby.utils.session_context import get_current_session_id, resolve_session_ref
+    from gobby.utils.session_context import (
+        get_current_agent_run_id,
+        get_current_session_id,
+        resolve_session_ref,
+    )
 
     agent_run_manager = LocalAgentRunManager(db) if db else runner.run_storage
+    review_evidence_store = PlanReviewEvidenceStore(db) if db else None
 
     def _resolve_session_id(ref: str) -> str:
         return resolve_session_ref(session_manager, ref)
@@ -103,8 +109,10 @@ def create_agents_registry(
         transcript_reader=transcript_reader,
         detection_registry=detection_registry,
         agent_run_manager=agent_run_manager,
+        review_evidence_store=review_evidence_store,
         resolve_session_id=_resolve_session_id,
         get_current_session_id=get_current_session_id,
+        get_current_agent_run_id=get_current_agent_run_id,
         get_project_context=get_project_context,
     )
 

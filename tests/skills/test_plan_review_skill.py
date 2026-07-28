@@ -186,5 +186,6 @@ class TestPlanReviewContent:
         assert "derive_plan_review_manifest" in body
         assert "validate_plan_review_coverage" in body
         assert "coverage_attestation" in body
-        assert "inconclusive/source_drift" in body
+        assert '"verdict":"inconclusive"' in body
+        assert '"reason_code":"source_drift"' in body
         assert "needs_human:unstable_review_source:<paths>" in body

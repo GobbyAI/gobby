@@ -178,10 +178,12 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
 
     payload = canonical_json_object(raw)
     verdict = payload.get("verdict")
+    if verdict in {"needs_requirements", "inconclusive"}:
+        return _validate_non_attested_result(payload, verdict=str(verdict))
     if verdict not in {"approved", "needs_review"}:
         raise ReviewEvidenceError(
             "invalid_round_result",
-            "round_result.verdict must be 'approved' or 'needs_review'",
+            "round_result.verdict is not a supported terminal verdict",
         )
     findings = payload.get("findings")
     if not isinstance(findings, list):
@@ -217,6 +219,107 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
                 "approved round_result requires routing_decisions",
             )
     return payload
+
+
+def _validate_non_attested_result(
+    payload: dict[str, object],
+    *,
+    verdict: str,
+) -> dict[str, object]:
+    if set(payload) != {"verdict", "evidence_id", "reason"}:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            f"{verdict} round_result must contain exactly verdict, evidence_id, and reason",
+        )
+    evidence_id = payload.get("evidence_id")
+    if not isinstance(evidence_id, str) or not evidence_id:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            f"{verdict} round_result requires a non-empty evidence_id",
+        )
+    reason = payload.get("reason")
+    if not isinstance(reason, dict):
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            f"{verdict} round_result.reason must be an object",
+        )
+    reason_code = reason.get("reason_code")
+    if verdict == "needs_requirements":
+        _validate_string_list_reason(
+            reason,
+            reason_code="missing_requirements",
+            field="questions",
+        )
+        return payload
+    if reason_code == "source_drift":
+        _validate_string_list_reason(reason, reason_code="source_drift", field="paths")
+    elif reason_code == "index_mismatch":
+        _validate_index_mismatch_reason(reason)
+    elif reason_code == "timeout":
+        _validate_timeout_reason(reason)
+    else:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            "inconclusive reason_code must be source_drift, index_mismatch, or timeout",
+        )
+    return payload
+
+
+def _validate_string_list_reason(
+    reason: dict[str, object],
+    *,
+    reason_code: str,
+    field: str,
+) -> None:
+    if set(reason) != {"reason_code", field} or reason.get("reason_code") != reason_code:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            f"{reason_code} reason must contain exactly reason_code and {field}",
+        )
+    values = reason.get(field)
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(not isinstance(value, str) or not value for value in values)
+    ):
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            f"{reason_code} reason.{field} must be a non-empty string array",
+        )
+
+
+def _validate_index_mismatch_reason(reason: dict[str, object]) -> None:
+    expected_keys = {"reason_code", "expected_token", "actual_token"}
+    if set(reason) != expected_keys:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            "index_mismatch reason must contain reason_code, expected_token, and actual_token",
+        )
+    for field in ("expected_token", "actual_token"):
+        value = reason.get(field)
+        if not isinstance(value, str) or not value:
+            raise ReviewEvidenceError(
+                "invalid_round_result",
+                f"index_mismatch reason.{field} must be a non-empty string",
+            )
+
+
+def _validate_timeout_reason(reason: dict[str, object]) -> None:
+    if set(reason) != {"reason_code", "timeout_seconds"}:
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            "timeout reason must contain exactly reason_code and timeout_seconds",
+        )
+    timeout_seconds = reason.get("timeout_seconds")
+    if (
+        not isinstance(timeout_seconds, int | float)
+        or isinstance(timeout_seconds, bool)
+        or timeout_seconds <= 0
+    ):
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            "timeout reason.timeout_seconds must be a positive number",
+        )
 
 
 def canonical_json_object(raw: Mapping[str, object]) -> dict[str, object]:

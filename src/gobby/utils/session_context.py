@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+AGENT_RUN_ID_HEADER = "X-Gobby-Agent-Run-Id"
+
 
 @dataclass(frozen=True)
 class SessionContext:
@@ -42,6 +44,9 @@ class SessionContext:
 
 _current_session_context: contextvars.ContextVar[SessionContext | None] = contextvars.ContextVar(
     "current_session_context", default=None
+)
+_current_agent_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_agent_run_id", default=None
 )
 
 
@@ -68,6 +73,21 @@ def get_current_session_id() -> str | None:
 def reset_session_context(token: contextvars.Token[SessionContext | None]) -> None:
     """Reset session context after tool call completes."""
     _current_session_context.reset(token)
+
+
+def set_current_agent_run_id(run_id: str) -> contextvars.Token[str | None]:
+    """Bind a server-validated agent-run identity to the current request."""
+    return _current_agent_run_id.set(run_id)
+
+
+def get_current_agent_run_id() -> str | None:
+    """Return the server-validated agent-run identity for this request."""
+    return _current_agent_run_id.get()
+
+
+def reset_current_agent_run_id(token: contextvars.Token[str | None]) -> None:
+    """Reset the request-scoped agent-run identity."""
+    _current_agent_run_id.reset(token)
 
 
 def resolve_session_ref(
@@ -130,6 +150,7 @@ class SeededContextTokens:
     """
 
     session_token: contextvars.Token[SessionContext | None] | None = None
+    agent_run_token: contextvars.Token[str | None] | None = None
     project_token: contextvars.Token[dict[str, Any] | None] | None = field(default=None)
     resolved_session_id: str | None = None
     resolved_project_id: str | None = None
@@ -444,6 +465,11 @@ def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
     """Reset any ContextVar tokens that were set. Safe on empty/partial tokens."""
     from gobby.utils.project_context import reset_project_context
 
+    if tokens.agent_run_token is not None:
+        try:
+            reset_current_agent_run_id(tokens.agent_run_token)
+        except Exception as exc:
+            logger.debug("reset_current_agent_run_id failed: %s", exc)
     if tokens.session_token is not None:
         try:
             reset_session_context(tokens.session_token)

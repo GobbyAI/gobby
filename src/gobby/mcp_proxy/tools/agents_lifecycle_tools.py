@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import Any, cast
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
@@ -12,6 +14,63 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
+
+
+def _review_completion_error(
+    ctx: AgentsRegistryContext,
+    *,
+    run_id: str,
+    run_result: str | None,
+) -> dict[str, object] | None:
+    store = ctx.review_evidence_store
+    if store is None:
+        return None
+    evidence = store.get_by_dispatch_run(run_id)
+    if evidence is None or not evidence.is_live:
+        return None
+    if not run_result:
+        return {
+            "success": False,
+            "run_id": run_id,
+            "error": "Bound plan-review evidence requires a delivered round result",
+        }
+    try:
+        raw = json.loads(run_result)
+    except json.JSONDecodeError as exc:
+        return {
+            "success": False,
+            "run_id": run_id,
+            "error": f"Delivered round result is not valid JSON: {exc.msg}",
+        }
+    if not isinstance(raw, Mapping):
+        return {
+            "success": False,
+            "run_id": run_id,
+            "error": "Delivered round result must be a JSON object",
+        }
+    try:
+        payload = validate_round_result(raw)
+    except ReviewEvidenceError as exc:
+        return {
+            "success": False,
+            "run_id": run_id,
+            "error": f"Delivered round result is invalid: {exc}",
+            "error_code": exc.code,
+        }
+    attestation = payload.get("coverage_attestation")
+    delivered_evidence_id = (
+        attestation.get("evidence_id")
+        if isinstance(attestation, Mapping)
+        else payload.get("evidence_id")
+    )
+    if delivered_evidence_id != evidence.evidence_id:
+        return {
+            "success": False,
+            "run_id": run_id,
+            "error": (f"Delivered round result must attest bound evidence {evidence.evidence_id}"),
+        }
+    return None
 
 
 def register_agent_lifecycle_tools(
@@ -103,18 +162,40 @@ def register_agent_lifecycle_tools(
         ),
     )
     async def end_agent_run() -> dict[str, Any]:
+        trusted_run_id = ctx.get_current_agent_run_id()
         current_session_id = ctx.get_current_session_id()
-        if not current_session_id:
+        if not current_session_id and not trusted_run_id:
             return {"success": False, "error": "No active session context available"}
 
-        db_agent = ctx.agent_run_manager.get_by_session(current_session_id)
-        run_id = db_agent.id if db_agent else ctx.runner.get_run_id_by_session(current_session_id)
+        run_id = trusted_run_id
+        if run_id is None:
+            assert current_session_id is not None
+            db_agent = ctx.agent_run_manager.get_by_session(current_session_id)
+            run_id = (
+                db_agent.id if db_agent else ctx.runner.get_run_id_by_session(current_session_id)
+            )
         if not run_id:
             return {"success": False, "error": f"No agent found for session {current_session_id}"}
 
         db_run = ctx.runner.get_run(run_id)
         if not db_run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
+        if (
+            current_session_id
+            and db_run.child_session_id
+            and db_run.child_session_id != current_session_id
+        ):
+            return {
+                "success": False,
+                "error": "Trusted agent run does not match the active session context",
+            }
+        completion_error = _review_completion_error(
+            ctx,
+            run_id=run_id,
+            run_result=db_run.result,
+        )
+        if completion_error is not None:
+            return cast(dict[str, Any], completion_error)
 
         result = cast(
             dict[str, Any],

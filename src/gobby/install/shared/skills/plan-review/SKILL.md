@@ -339,8 +339,22 @@ dispositions, and the exact shadow-manifest result. The returned
 three completed lanes, source digest, disposition counts, cross-lane and
 adjacent-variant completion, and shadow-manifest status.
 
+TERMINAL_RESULT_UNION_V1_START
+Every parent delivery is one JSON object matching one branch:
+`{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
+`{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
+`{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+Reviewed branches require canonical coverage. Non-attested branches use exactly
+the shown top-level and reason keys. `reason_code` is closed to
+`missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
+TERMINAL_RESULT_UNION_V1_END
+
 If cited source hashes drift, rerun only affected lanes once during the same
-review run. Repeated drift yields `inconclusive/source_drift`. Interactive
+review run. Repeated drift yields the exact `inconclusive`/`source_drift`
+branch above. Interactive
 coordination expires evidence and retries the same display round without a
 changelog checkpoint or lesson mint. Stage-native review expires evidence and
 escalates with `needs_human:unstable_review_source:<paths>`.
@@ -528,8 +542,9 @@ specific questions rather than manufacturing findings or rubber-stamping.
 
 ## Autonomous Exit
 
-When running as spawned `plan-adversary-taskless`, send the structured result
+When running as spawned `plan-adversary-taskless`, send the exact JSON result
 to the parent first. Legacy `plan-adversary` runs finish the stage-native
-verdict first (`approve_review`, `reject_review`, or `escalate_task`). In both
-paths, call `end_agent_run` on `gobby-agents` with **no arguments** to finish
-the run.
+verdict first (`approve_review`, `reject_review`, or `escalate_task`), then send
+the exact JSON result returned or assembled for that verdict to the parent.
+`send_message` durably binds that result to the run. In both paths, call
+`end_agent_run` on `gobby-agents` with **no arguments** only after delivery.

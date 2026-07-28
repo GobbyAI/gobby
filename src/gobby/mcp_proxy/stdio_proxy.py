@@ -38,6 +38,7 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_process_fingerprint,
 )
 from gobby.utils.local_token import daemon_auth_headers
+from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
 
 class CheckDaemonHealth(Protocol):
@@ -173,6 +174,9 @@ class DaemonProxy:
             headers["X-Gobby-Caller-Project-Id"] = caller_project_id
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
+        managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
+        if managed_run_id:
+            headers[AGENT_RUN_ID_HEADER] = managed_run_id
 
         try:
             client = self._get_client()

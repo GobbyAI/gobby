@@ -19,14 +19,17 @@ from gobby.mcp_proxy.wait_tools import (
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import (
+    AGENT_RUN_ID_HEADER,
     SeededContextTokens,
     get_current_session_id,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
+    set_current_agent_run_id,
 )
 
 if TYPE_CHECKING:
@@ -233,7 +236,7 @@ async def _set_context_for_request(
             )
 
     db = server.session_manager.db if server.session_manager else None
-    return await resolve_and_seed_contexts(
+    tokens = await resolve_and_seed_contexts(
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
@@ -242,6 +245,47 @@ async def _set_context_for_request(
         project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )
+    try:
+        await _bind_agent_run_context(server, request, tokens, db=db)
+    except Exception:
+        reset_seeded_contexts(tokens)
+        raise
+    return tokens
+
+
+async def _bind_agent_run_context(
+    server: "HTTPServer",
+    request: Request | None,
+    tokens: SeededContextTokens,
+    *,
+    db: Any,
+) -> None:
+    if request is None or db is None:
+        return
+    header_run_id = request.headers.get(AGENT_RUN_ID_HEADER)
+    manager = LocalAgentRunManager(db)
+    if header_run_id:
+        run = await server.run_db(manager.get, header_run_id)
+        if (
+            run is None
+            or run.status not in {"pending", "running"}
+            or (
+                tokens.resolved_session_id is not None
+                and run.child_session_id != tokens.resolved_session_id
+            )
+        ):
+            raise HTTPException(status_code=403, detail="Invalid agent run identity")
+        tokens.agent_run_token = set_current_agent_run_id(header_run_id)
+        return
+    if tokens.resolved_session_id is None:
+        return
+    active_run = await server.run_db(manager.get_by_session, tokens.resolved_session_id)
+    if (
+        active_run is not None
+        and isinstance(active_run.id, str)
+        and active_run.child_session_id == tokens.resolved_session_id
+    ):
+        raise HTTPException(status_code=403, detail="Missing agent run identity")
 
 
 def _reset_context(tokens: SeededContextTokens) -> None:

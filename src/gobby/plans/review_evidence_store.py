@@ -31,6 +31,14 @@ class PlanReviewEvidenceStore:
         ).fetchone()
         return PlanReviewEvidence.from_row(row) if row is not None else None
 
+    def get_by_dispatch_run(self, run_id: str) -> PlanReviewEvidence | None:
+        """Return the evidence row bound to one dispatched reviewer run."""
+        row = self.db.execute(
+            "SELECT * FROM plan_review_evidence WHERE dispatch_run_id = %s",
+            (run_id,),
+        ).fetchone()
+        return PlanReviewEvidence.from_row(row) if row is not None else None
+
     def require(
         self,
         evidence_id: str,

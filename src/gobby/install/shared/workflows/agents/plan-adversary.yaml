@@ -123,8 +123,23 @@ instructions: |
   `validate_plan_review_coverage` before approve/reject and pass its
   `coverage_attestation` to the lifecycle tool. Approval also passes the exact
   server-derived routing_decisions and manifest_entries. On first source drift,
-  rerun affected lanes once. Repeated drift must expire evidence and call
-  `escalate_task(reason="needs_human:unstable_review_source:<paths>")`; do not
+  rerun affected lanes once.
+
+  TERMINAL_RESULT_UNION_V1_START
+  Every parent delivery is one JSON object matching one branch:
+  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
+  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
+  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+  Reviewed branches require canonical coverage. Non-attested branches use exactly
+  the shown top-level and reason keys. `reason_code` is closed to
+  `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
+  TERMINAL_RESULT_UNION_V1_END
+
+  Repeated drift must expire evidence, record the stage-native escalation, and
+  deliver the exact `inconclusive`/`source_drift` JSON branch above; do not
   approve, reject, append findings, advance the round, or mint lessons.
 
   WORKFLOW:
@@ -378,7 +393,7 @@ steps:
     transitions:
       - to: backfill_lessons
         when: "vars.lesson_backfill_required"
-      - to: terminate
+      - to: deliver_result
         when: "vars.review_complete"
 
   - name: backfill_lessons
@@ -420,7 +435,7 @@ steps:
     transitions:
       - to: relay_backfill_failure
         when: "vars.lesson_backfill_failed"
-      - to: terminate
+      - to: deliver_result
         when: "vars.review_complete"
 
   - name: relay_backfill_failure
@@ -448,8 +463,31 @@ steps:
         variable: review_complete
         value: true
     transitions:
-      - to: terminate
+      - to: deliver_result
         when: "vars.review_complete"
+
+  - name: deliver_result
+    description: "Deliver the canonical round result"
+    status_message: |
+      Send one gobby-agents:send_message to the parent containing only the
+      canonical JSON round result from the completed verdict. This durable
+      message populates agent_runs.result and must precede end_agent_run.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:send_message"
+    on_mcp_success:
+      - server: gobby-agents
+        tool: send_message
+        action: set_variable
+        variable: result_delivered
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.result_delivered"
 
   - name: terminate
     description: "Self-terminate"

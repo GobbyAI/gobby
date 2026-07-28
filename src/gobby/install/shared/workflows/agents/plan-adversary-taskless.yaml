@@ -90,9 +90,22 @@ instructions: |
   `coverage_attestation` in `round_result`. Approval also returns the exact
   server-derived `routing_decisions` and `manifest_entries`.
 
+  TERMINAL_RESULT_UNION_V1_START
+  Every parent delivery is one JSON object matching one branch:
+  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
+  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
+  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+  Reviewed branches require canonical coverage. Non-attested branches use exactly
+  the shown top-level and reason keys. `reason_code` is closed to
+  `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
+  TERMINAL_RESULT_UNION_V1_END
+
   If coverage validation reports source drift (`source_drift`), rerun only affected lanes once
-  against fresh hashes during this run. Repeated drift returns
-  `verdict: inconclusive`, `reason: inconclusive/source_drift`, and the paths.
+  against fresh hashes during this run. Repeated drift returns the exact
+  `inconclusive`/`source_drift` JSON branch above.
   Expire the evidence; do not append a changelog entry, increment the review
   round, or mint lessons.
 
@@ -126,8 +139,8 @@ instructions: |
             line_end: <optional-positive-line>
   ```
 
-  If requirements are insufficient, use `verdict: needs_requirements` and list
-  the exact decisions needed.
+  If requirements are insufficient, use the exact
+  `needs_requirements`/`missing_requirements` JSON branch above.
 
   PLAN IDENTITY PRECONDITION: before any manifest handoff or approval, verify the
   plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
@@ -155,8 +168,9 @@ instructions: |
 
   The approval payload contains full typed entries; a count alone is invalid.
   The parent appends `## V1 Plan Changelog`; do not overwrite prior changelog
-  history. Terminate by calling end_agent_run after the structured result is in
-  your final response or inter-agent message.
+  history. Send the exact JSON object to the parent with `send_message`, then
+  call end_agent_run. The durable parent message is the run result checked at
+  termination.
 
   CRITICAL RULES:
   - Do NOT call any gobby-tasks or gobby-tasks-ops lifecycle tool.

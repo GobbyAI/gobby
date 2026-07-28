@@ -110,9 +110,11 @@ class TestLessonBackfill:
         review = find_step(agent.steps or [], "review")
         backfill = find_step(agent.steps or [], "backfill_lessons")
         relay = find_step(agent.steps or [], "relay_backfill_failure")
+        deliver = find_step(agent.steps or [], "deliver_result")
         assert review is not None
         assert backfill is not None
         assert relay is not None
+        assert deliver is not None
 
         assert any(
             transition.to == "backfill_lessons"
@@ -126,7 +128,9 @@ class TestLessonBackfill:
             for transition in backfill.transitions
         )
         assert relay.allowed_mcp_tools == ["gobby-agents:send_message"]
-        assert any(transition.to == "terminate" for transition in relay.transitions)
+        assert any(transition.to == "deliver_result" for transition in relay.transitions)
+        assert deliver.allowed_mcp_tools == ["gobby-agents:send_message"]
+        assert any(transition.to == "terminate" for transition in deliver.transitions)
 
 
 class TestCoordinatorOwnedWrites:
