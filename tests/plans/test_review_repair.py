@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -12,9 +13,12 @@ from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import (
+    DEVIATION_PROOF_FIELDS,
     REPAIR_SUBMISSION_ARTIFACT_KEY,
     build_repair_submission,
+    canonicalize_repair_submission,
     decode_repair_submission,
+    encode_repair_submission,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -179,6 +183,29 @@ def _attestation(
         "adjacent_variants_swept": ["src/example.py:adjacent"],
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
+    }
+
+
+def _deviation_proof() -> dict[str, str]:
+    return {
+        "violated_invariant": "Every consumer must use the revised contract.",
+        "original_counterexample": "src/example.py still called the removed branch.",
+        "how_alternative_closes_it": "The alternative updates the shared caller boundary.",
+        "validation_evidence": "pytest tests/test_example.py::test_revised_contract",
+        "accepted_risk": "none",
+    }
+
+
+def _submission_payload(
+    finding: dict[str, object],
+    deviation: object,
+) -> dict[str, object]:
+    attestation = _attestation(finding)
+    attestation["deviation_from_minimal_repair"] = deviation
+    return {
+        "round_number": 2,
+        "prior_finding_resolutions": [_resolution(str(finding["finding_id"]), "repair")],
+        "repair_attestations": [attestation],
     }
 
 
@@ -414,6 +441,121 @@ def test_remedy_vocabulary_round_trip(
                     }
                 },
             )
+
+
+def test_deviation_requires_proof() -> None:
+    finding = _finding("finding-1")
+    for missing_field in (
+        "violated_invariant",
+        "original_counterexample",
+        "how_alternative_closes_it",
+    ):
+        incomplete = _deviation_proof()
+        incomplete.pop(missing_field)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            canonicalize_repair_submission(_submission_payload(finding, incomplete))
+
+    submission = canonicalize_repair_submission(_submission_payload(finding, _deviation_proof()))
+    assert submission.repair_attestations[0]["deviation_from_minimal_repair"] == (
+        _deviation_proof()
+    )
+
+
+def test_deviation_counterexample_and_risk() -> None:
+    finding = _finding("finding-1")
+    for missing_field in ("validation_evidence", "accepted_risk"):
+        incomplete = _deviation_proof()
+        incomplete.pop(missing_field)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            canonicalize_repair_submission(_submission_payload(finding, incomplete))
+
+    for empty_field in ("validation_evidence", "accepted_risk"):
+        incomplete = _deviation_proof()
+        incomplete[empty_field] = " "
+        with pytest.raises(ReviewEvidenceError, match=empty_field):
+            canonicalize_repair_submission(_submission_payload(finding, incomplete))
+
+    accepted = canonicalize_repair_submission(_submission_payload(finding, _deviation_proof()))
+    deviation = accepted.repair_attestations[0]["deviation_from_minimal_repair"]
+    assert isinstance(deviation, dict)
+    assert deviation["accepted_risk"] == "none"
+
+
+def test_deviation_schema_parity_across_surfaces(
+    repair_setup: tuple[PlanReviewEvidenceService, str, Path],
+) -> None:
+    service, project_id, plan_path = repair_setup
+    finding = _finding("finding-1")
+    _finalize_prior_round(service, project_id, plan_path, [finding])
+    _mark_plan_repaired(plan_path)
+    proof = _deviation_proof()
+
+    assert DEVIATION_PROOF_FIELDS == (
+        "violated_invariant",
+        "original_counterexample",
+        "how_alternative_closes_it",
+        "validation_evidence",
+        "accepted_risk",
+    )
+
+    for malformed in (
+        {**proof, "extra": "closed schemas reject this"},
+        {key: value for key, value in proof.items() if key != "accepted_risk"},
+    ):
+        raw = _submission_payload(finding, malformed)
+        resolutions = raw["prior_finding_resolutions"]
+        attestations = raw["repair_attestations"]
+        assert isinstance(resolutions, list)
+        assert isinstance(attestations, list)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            canonicalize_repair_submission(raw)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            encode_repair_submission(raw)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            decode_repair_submission(json.dumps(raw), expected_round_number=2)
+        with pytest.raises(ReviewEvidenceError, match="deviation_from_minimal_repair"):
+            _prepare_round_two(
+                service,
+                project_id,
+                plan_path,
+                resolutions=resolutions,
+                attestations=attestations,
+            )
+
+    submission = build_repair_submission(
+        round_number=2,
+        prior_findings=[finding],
+        recorded_votes=[
+            {
+                "prior_finding_id": "finding-1",
+                "decision": "repair",
+                "accepted_resolution": finding["minimal_repair"],
+            }
+        ],
+        edit_diff={
+            "finding-1": {
+                **_attestation(finding),
+                "deviation_from_minimal_repair": proof,
+            }
+        },
+    )
+    rendered = submission.to_dict()
+    canonical = canonicalize_repair_submission(rendered)
+    decoded = decode_repair_submission(
+        encode_repair_submission(rendered),
+        expected_round_number=2,
+    )
+    prepared = _prepare_round_two(
+        service,
+        project_id,
+        plan_path,
+        resolutions=list(submission.prior_finding_resolutions),
+        attestations=list(submission.repair_attestations),
+    )
+
+    for surface in (submission, canonical, decoded):
+        assert surface.repair_attestations[0]["deviation_from_minimal_repair"] == proof
+    assert prepared.repair_attestations == list(submission.repair_attestations)
 
 
 @pytest.mark.asyncio

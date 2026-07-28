@@ -98,6 +98,11 @@ plan edit and validation sweep. Preparation loads the prior finding universe
 server-side and refuses omissions, duplicate identities, stale check keys, and
 section claims outside the real hash diff. `carry` applies only to non-blocking
 findings.
+Set `deviation_from_minimal_repair` to `null` when following the minimal repair.
+For a deviation, use one closed object with exactly `violated_invariant`,
+`original_counterexample`, `how_alternative_closes_it`, `validation_evidence`,
+and `accepted_risk`. Every value is a non-empty string; use the literal `none`
+for `accepted_risk` when the deviation adds no risk.
 The coordinator waits only for the parent adversary result; the adversary owns
 provider-native internal research results, timeouts, and sequential lane
 fallbacks. The adversary never uses Gobby-managed agents for lane research.

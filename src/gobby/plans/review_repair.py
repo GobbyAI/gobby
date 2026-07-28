@@ -18,7 +18,16 @@ from gobby.plans.review_findings import validate_plan_review_findings
 
 REPAIR_SUBMISSION_ARTIFACT_KEY = "plan_review_repair_submission"
 
+DEVIATION_PROOF_FIELDS = (
+    "violated_invariant",
+    "original_counterexample",
+    "how_alternative_closes_it",
+    "validation_evidence",
+    "accepted_risk",
+)
+
 _RESOLUTION_FIELDS = frozenset({"prior_finding_id", "decision"})
+_DEVIATION_PROOF_FIELD_SET = frozenset(DEVIATION_PROOF_FIELDS)
 _ATTESTATION_FIELDS = frozenset(
     {
         "prior_finding_id",
@@ -417,14 +426,32 @@ def _canonical_attestation(
     _required_string(attestation, "prior_finding_id", owner)
     _required_string(attestation, "check_key", owner)
     _required_string(attestation, "accepted_resolution", owner)
-    deviation = attestation["deviation_from_minimal_repair"]
-    if deviation is not None and (not isinstance(deviation, str) or not deviation.strip()):
-        raise _invalid(f"{owner}.deviation_from_minimal_repair must be null or non-empty")
+    attestation["deviation_from_minimal_repair"] = _canonical_deviation_proof(
+        attestation["deviation_from_minimal_repair"],
+        owner=f"{owner}.deviation_from_minimal_repair",
+    )
     for field in _ATTESTATION_LIST_FIELDS:
         attestation[field] = _string_array(attestation[field], owner=f"{owner}.{field}")
     if not attestation["changed_section_ids"]:
         raise _invalid(f"{owner}.changed_section_ids must be non-empty")
     return attestation
+
+
+def _canonical_deviation_proof(raw: object, *, owner: str) -> dict[str, str] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise _invalid(f"{owner} must be null or an object")
+    proof = canonical_json_object(raw)
+    unknown = sorted(set(proof) - _DEVIATION_PROOF_FIELD_SET)
+    if unknown:
+        raise _invalid(f"{owner} has unknown fields: {', '.join(unknown)}")
+    missing = sorted(_DEVIATION_PROOF_FIELD_SET - set(proof))
+    if missing:
+        raise _invalid(f"{owner} is missing fields: {', '.join(missing)}")
+    for field in DEVIATION_PROOF_FIELDS:
+        _required_string(proof, field, owner)
+    return cast(dict[str, str], proof)
 
 
 def _unique_records(
