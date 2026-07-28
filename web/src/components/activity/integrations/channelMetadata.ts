@@ -1,5 +1,7 @@
 import type { ChannelType } from "../../../hooks/useIntegrations";
 
+// gobby_chat is deliberately absent: the internal chat channel is hidden from
+// the Integrations surface entirely (#19152).
 export const INTEGRATION_CHANNEL_TYPES: ChannelType[] = [
   "slack",
   "telegram",
@@ -7,7 +9,6 @@ export const INTEGRATION_CHANNEL_TYPES: ChannelType[] = [
   "teams",
   "email",
   "sms",
-  "gobby_chat",
 ];
 
 export const CHANNEL_DISPLAY_NAMES: Record<ChannelType, string> = {

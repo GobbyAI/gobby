@@ -1,6 +1,5 @@
 import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn, previewContent } from "../../../lib/utils";
-import { formatRelativeTime } from "../../../utils/formatTime";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import {
   dreamFlagLabel,
@@ -164,6 +163,8 @@ export function MemoryTabList({
               aria-label={`Select ${previewContent(memory.content)}`}
               onClick={() => onSelect(memory)}
             >
+              <span className="activity-row-title">{previewContent(memory.content)}</span>
+              {hidden && <DreamFlagBadge memory={memory} />}
               <span className="activity-chip">
                 {memoryTypeLabel(memory.memory_type)}
               </span>
@@ -174,11 +175,6 @@ export function MemoryTabList({
                 )}
               >
                 {memoryScopeLabel(memory)}
-              </span>
-              {hidden && <DreamFlagBadge memory={memory} />}
-              <span className="activity-row-title">{previewContent(memory.content)}</span>
-              <span className="activity-row-meta">
-                {formatRelativeTime(memory.created_at)}
               </span>
             </button>
             <div className="flex items-center px-1">

@@ -4,11 +4,12 @@ import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { DetailActionButton } from "./fields";
-import { FilterIcon, RefreshIcon } from "../icons/AppIcons";
+import { FilterIcon } from "../icons/AppIcons";
 import {
   copyMemoryContent,
   deleteMemoryWithRefresh,
@@ -35,8 +36,32 @@ interface MemoryTabProps {
 }
 
 type MemoryViewMode = "detail" | "graph";
+type MemoryScopeSegment = "all" | "project";
 
 const noop = () => {};
+
+function GraphIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="5" cy="6" r="2.5" />
+      <circle cx="19" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M7.3 7.7 10.7 15.9" />
+      <path d="M16.7 7.7 13.3 15.9" />
+      <path d="M7.5 6h9" />
+    </svg>
+  );
+}
 
 export const MemoryTab = memo(function MemoryTab({
   projectId,
@@ -55,7 +80,6 @@ export const MemoryTab = memo(function MemoryTab({
     restoreMemory,
     promoteMemoryToGlobal,
     searchMemories,
-    refreshMemories,
     fetchKnowledgeGraph,
     fetchEntityNeighbors,
   } = useMemory(projectId);
@@ -67,6 +91,7 @@ export const MemoryTab = memo(function MemoryTab({
   const [error, setError] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [viewMode, setViewMode] = useState<MemoryViewMode>("detail");
+  const [scope, setScope] = useState<MemoryScopeSegment>("project");
   const [purgeGraceDays, setPurgeGraceDays] = useState<DreamPurgeGraceDays | null>(null);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
@@ -83,8 +108,11 @@ export const MemoryTab = memo(function MemoryTab({
     [memories, search, searchResults],
   );
   const filteredMemories = useMemo(
-    () => filterMemories(displayedMemories, tabFilters),
-    [displayedMemories, tabFilters],
+    () =>
+      filterMemories(displayedMemories, tabFilters).filter(
+        (memory) => scope === "all" || !memory.is_global,
+      ),
+    [displayedMemories, scope, tabFilters],
   );
   const selectedMemory = useMemo(
     () => displayedMemories.find((memory) => memory.id === selectedId) ?? null,
@@ -96,13 +124,12 @@ export const MemoryTab = memo(function MemoryTab({
   }, [search, searchMemories]);
 
   useEffect(() => {
-    if (filteredMemories.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
-      return;
-    }
-    if (!selectedId || !filteredMemories.some((memory) => memory.id === selectedId)) {
-      setSelectedId(filteredMemories[0].id);
-    }
+    const keep =
+      selectedId !== null &&
+      filteredMemories.some((memory) => memory.id === selectedId);
+    const next = keep ? selectedId : filteredMemories[0]?.id ?? null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- default-selection sync with the filtered list (SkillsTab pattern); settles in one pass.
+    if (next !== selectedId) setSelectedId(next);
   }, [filteredMemories, selectedId]);
 
   useEffect(() => {
@@ -234,22 +261,10 @@ export const MemoryTab = memo(function MemoryTab({
 
   const hasDetail = Boolean(selectedMemory);
 
-  const detailActions = (
-    <>
-          {selectedMemory && !selectedMemory.is_global && (
-        <DetailActionButton
-          label={busyId === selectedMemory.id ? "Promoting..." : "Promote to global"}
-          variant="secondary"
-          disabled={busyId === selectedMemory.id}
-          onClick={() => void handlePromoteToGlobal(selectedMemory)}
-        />
-      )}
-      {isMobile ? (
-        <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
-      ) : (
-        <DetailActionButton label="Graph" onClick={handleOpenGraph} />
-      )}
-    </>
+  const detailActions = isMobile ? (
+    <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
+  ) : (
+    <DetailActionButton label="Show Graph" icon={<GraphIcon />} onClick={handleOpenGraph} />
   );
 
   if (viewMode === "graph") {
@@ -271,6 +286,17 @@ export const MemoryTab = memo(function MemoryTab({
           onChange={setSearch}
           placeholder="Search"
           ariaLabel="Search memories"
+        />
+        <SegmentedControl<MemoryScopeSegment>
+          value={scope}
+          onChange={setScope}
+          options={[
+            { value: "all", label: "All" },
+            { value: "project", label: "Project" },
+          ]}
+          ariaLabel="Memory scope"
+          controlHeight="sm"
+          className="activity-panel-toolbar-segmented"
         />
         <div className="relative">
           <Button
@@ -354,18 +380,6 @@ export const MemoryTab = memo(function MemoryTab({
             </div>
           )}
         </div>
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn"
-          aria-label="Refresh memories"
-          disabled={isLoading}
-          onClick={refreshMemories}
-        >
-          <RefreshIcon />
-          <span className="activity-panel-action-btn__label">Refresh</span>
-        </Button>
       </div>
 
       {error && (
@@ -434,6 +448,8 @@ export const MemoryTab = memo(function MemoryTab({
               memory={selectedMemory}
               onSave={handleSave}
               onRestore={(memory) => handleRestore(memory)}
+              onPromote={(memory) => void handlePromoteToGlobal(memory)}
+              promoting={busyId === selectedMemory.id}
               purgeGraceDays={purgeGraceDays}
               actions={detailActions}
               onConfirmLeaveChange={(handler) => {

@@ -12,6 +12,8 @@ const cronMock = vi.hoisted(() => ({
   runs: [] as CronRun[],
   isRunsLoading: false,
   isLoading: false,
+  toggleJob: vi.fn(),
+  deleteJob: vi.fn(),
 }))
 
 vi.mock('../../../hooks/useCronJobs', () => ({
@@ -36,6 +38,7 @@ function makeJob(overrides: Partial<CronJob> = {}): CronJob {
     action_type: 'shell',
     action_config: {},
     enabled: true,
+    is_system: false,
     next_run_at: '2099-01-01T00:00:00Z',
     last_run_at: null,
     last_status: null,
@@ -53,6 +56,8 @@ beforeEach(() => {
   cronMock.runs = []
   cronMock.isRunsLoading = false
   cronMock.isLoading = false
+  cronMock.toggleJob = vi.fn()
+  cronMock.deleteJob = vi.fn()
 })
 
 describe('CronTab', () => {
@@ -70,28 +75,65 @@ describe('CronTab', () => {
   it('renders rows for each job and calls selectJob on click', async () => {
     cronMock.jobs = [makeJob({ id: 'a', name: 'alpha' }), makeJob({ id: 'b', name: 'beta' })]
     render(<CronTab projectId="p" />)
-    const alpha = screen.getByRole('button', { name: /alpha/i })
-    expect(alpha).toBeInTheDocument()
-    await userEvent.click(alpha)
+    const beta = screen.getByRole('button', { name: 'Select beta' })
+    expect(beta).toBeInTheDocument()
+    await userEvent.click(beta)
+    expect(cronMock.selectJob).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }))
+  })
+
+  it('default-selects the topmost job so the runs pane is populated (#19152)', () => {
+    cronMock.jobs = [makeJob({ id: 'a', name: 'alpha' }), makeJob({ id: 'b', name: 'beta' })]
+    render(<CronTab projectId="p" />)
     expect(cronMock.selectJob).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }))
   })
 
-  it('filters by enabled / disabled', async () => {
+  it('defaults to the Enabled filter with no All option (#19152)', async () => {
     cronMock.jobs = [
       makeJob({ id: 'on', name: 'live-job', enabled: true }),
       makeJob({ id: 'off', name: 'paused-job', enabled: false }),
     ]
     render(<CronTab projectId="p" />)
-    expect(screen.getByText('live-job')).toBeInTheDocument()
-    expect(screen.getByText('paused-job')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('radio', { name: 'Enabled' }))
+    expect(screen.queryByRole('radio', { name: 'All' })).toBeNull()
+    expect(screen.getByRole('radio', { name: 'Enabled' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('live-job')).toBeInTheDocument()
     expect(screen.queryByText('paused-job')).toBeNull()
 
     await userEvent.click(screen.getByRole('radio', { name: 'Disabled' }))
     expect(screen.queryByText('live-job')).toBeNull()
     expect(screen.getByText('paused-job')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Enabled' }))
+    expect(screen.getByText('live-job')).toBeInTheDocument()
+    expect(screen.queryByText('paused-job')).toBeNull()
+  })
+
+  it('offers Disable and Delete from the row menu, hiding it for system crons (#19152)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    cronMock.jobs = [
+      makeJob({ id: 'a', name: 'alpha' }),
+      makeJob({ id: 'sys', name: 'gobby-system-job', is_system: true }),
+    ]
+    render(<CronTab projectId="p" />)
+
+    expect(screen.queryByRole('button', { name: 'Open actions for gobby-system-job' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for alpha' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Disable' }))
+    expect(cronMock.toggleJob).toHaveBeenCalledWith('a')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for alpha' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+    expect(window.confirm).toHaveBeenCalled()
+    expect(cronMock.deleteJob).toHaveBeenCalledWith('a')
+  })
+
+  it('labels the row menu toggle Enable for disabled jobs (#19152)', async () => {
+    cronMock.jobs = [makeJob({ id: 'off', name: 'paused-job', enabled: false })]
+    render(<CronTab projectId="p" />)
+    await userEvent.click(screen.getByRole('radio', { name: 'Disabled' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Open actions for paused-job' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Enable' }))
+    expect(cronMock.toggleJob).toHaveBeenCalledWith('off')
   })
 
   it('shows a Load more button when more jobs are available than the page size', () => {

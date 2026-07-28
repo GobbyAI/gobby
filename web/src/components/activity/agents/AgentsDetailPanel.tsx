@@ -14,7 +14,6 @@ import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import {
   DetailPaneHeader,
   SelectField,
-  SwitchField,
   TagsField,
   TextAreaField,
   TextField,
@@ -141,12 +140,6 @@ export function AgentsDetailPanel({
             ariaLabel="Name"
             value={form.name}
             onChange={(value) => setFormField("name", value)}
-          />
-          <SwitchField
-            label="Enabled"
-            ariaLabel="Enabled"
-            value={draft.enabled}
-            onChange={(value) => setDraftField("enabled", value)}
           />
           <TextAreaField
             label="Description"

@@ -27,6 +27,8 @@ function ActivityPanelSearchImpl({
       className="activity-panel-search pointer-coarse:min-h-11"
       value={value}
       name={inputName}
+      autoComplete="off"
+      data-1p-ignore
       onChange={(event: ChangeEvent<HTMLInputElement>) =>
         onChange(event.target.value)
       }

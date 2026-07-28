@@ -121,6 +121,7 @@ export function filterInstalledSkills(
   const query = filters.search.trim().toLowerCase();
 
   return skills.filter((skill) => {
+    if (skill.deleted_at && filters.source !== "deleted") return false;
     if (filters.source !== "all" && skillSourceKey(skill) !== filters.source) return false;
     if (filters.category !== "all" && skillCategory(skill) !== filters.category) return false;
     if (!query) return true;

@@ -6,6 +6,7 @@ import { Button } from "../../ui/Button";
 import {
   DetailPaneHeader,
   SelectField,
+  SwitchField,
   TagsField,
   TextAreaField,
   useDetailDraft,
@@ -27,6 +28,8 @@ interface MemoryDetailPanelProps {
   onSave: (draft: MemoryDraft) => Promise<boolean>;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
   onRestore?: (memory: GobbyMemory) => Promise<void> | void;
+  onPromote?: (memory: GobbyMemory) => Promise<void> | void;
+  promoting?: boolean;
   purgeGraceDays?: DreamPurgeGraceDays | null;
   actions?: ReactNode;
 }
@@ -52,6 +55,8 @@ export function MemoryDetailPanel({
   onSave,
   onConfirmLeaveChange,
   onRestore,
+  onPromote,
+  promoting = false,
   purgeGraceDays = null,
   actions,
 }: MemoryDetailPanelProps) {
@@ -164,6 +169,17 @@ export function MemoryDetailPanel({
           value={draft.tags}
           placeholder="Add tag"
           onChange={(value) => detailDraft.setField("tags", value)}
+        />
+        {/* Promotion is one-way today (no demote endpoint), so the toggle
+            locks on once the memory is global. */}
+        <SwitchField
+          label="Global"
+          ariaLabel="Global memory"
+          value={memory.is_global}
+          disabled={memory.is_global || promoting}
+          onChange={(next) => {
+            if (next && onPromote) void onPromote(memory);
+          }}
         />
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-[var(--bg-secondary)] p-3 text-xs">
           <dt className="text-muted-foreground">Scope</dt>

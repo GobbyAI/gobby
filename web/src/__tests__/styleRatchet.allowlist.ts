@@ -59,7 +59,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/pipelines/PipelineStepFields.tsx': 2,
     'src/components/activity/pipelines/PipelineStepList.tsx': 6,
     'src/components/activity/pipelines/PipelinesDefsList.tsx': 1,
-    'src/components/activity/rules/RulesDetailPanel.tsx': 1,
     'src/components/activity/rules/RulesTabList.tsx': 1,
     'src/components/activity/skills/SkillsHubView.tsx': 1,
     'src/components/activity/skills/SkillsInstalledList.tsx': 1,

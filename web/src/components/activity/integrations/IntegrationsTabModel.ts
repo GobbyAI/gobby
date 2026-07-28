@@ -44,6 +44,7 @@ export function channelTypeOptions() {
 export function filterChannels(channels: Channel[], filters: IntegrationFilters): Channel[] {
   const query = filters.search.trim().toLowerCase();
   return channels.filter((channel) => {
+    if (channel.channel_type === "gobby_chat") return false;
     if (filters.channelType !== "all" && channel.channel_type !== filters.channelType) {
       return false;
     }

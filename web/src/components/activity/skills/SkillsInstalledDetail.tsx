@@ -13,7 +13,12 @@ import {
   useDetailDraft,
 } from "../fields";
 import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
-import { skillCategory, skillSourceLabel, type ActivitySkill } from "./SkillsTabData";
+import {
+  skillCategory,
+  skillSourceKey,
+  skillSourceLabel,
+  type ActivitySkill,
+} from "./SkillsTabData";
 
 type DetailViewMode = "detail" | "content";
 
@@ -87,7 +92,9 @@ export function SkillsInstalledDetail({
         onDiscard={draftState.discard}
         actions={
           <>
-            <span className="activity-chip">{skillSourceLabel(draft)}</span>
+            {skillSourceKey(draft) !== "installed" && (
+              <span className="activity-chip">{skillSourceLabel(draft)}</span>
+            )}
             {viewMode === "content" ? (
               <DetailActionButton label="Close" onClick={() => setViewMode("detail")} />
             ) : (

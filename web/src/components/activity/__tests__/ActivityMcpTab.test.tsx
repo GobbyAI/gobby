@@ -175,8 +175,9 @@ describe("ActivityMcpTab", () => {
 
     await screen.findByText("gobby-tasks");
     const serverRow = treeItemFor("gobby-tasks");
-    // The first row is the tree's tab entry point even with nothing selected.
-    expect(serverRow).toHaveAttribute("tabindex", "0");
+    // The default-selected first row (github, alphabetical) is the tree's tab
+    // entry point (#19152).
+    expect(treeItemFor("github")).toHaveAttribute("tabindex", "0");
     serverRow.focus();
     expect(document.activeElement).toBe(serverRow);
 
@@ -270,9 +271,10 @@ describe("ActivityMcpTab", () => {
 
     await user.type(screen.getByPlaceholderText("Search MCP"), "issue");
 
-    expect(screen.getByText("github")).toBeInTheDocument();
-    expect(screen.getByText("create_issue")).toBeInTheDocument();
-    expect(screen.queryByText("gobby-tasks")).toBeNull();
+    const tree = screen.getByRole("tree", { name: "MCP servers and tools" });
+    expect(within(tree).getByText("github")).toBeInTheDocument();
+    expect(within(tree).getByText("create_issue")).toBeInTheDocument();
+    expect(within(tree).queryByText("gobby-tasks")).toBeNull();
   });
 
   it("filters by server type with the All | Internal | External selector", async () => {
@@ -285,20 +287,30 @@ describe("ActivityMcpTab", () => {
       "true",
     );
 
+    const tree = screen.getByRole("tree", { name: "MCP servers and tools" });
     await user.click(within(group).getByRole("radio", { name: "Internal" }));
-    expect(screen.getByText("gobby-tasks")).toBeInTheDocument();
-    expect(screen.queryByText("github")).toBeNull();
+    expect(within(tree).getByText("gobby-tasks")).toBeInTheDocument();
+    expect(within(tree).queryByText("github")).toBeNull();
 
     await user.click(within(group).getByRole("radio", { name: "External" }));
-    expect(screen.getByText("github")).toBeInTheDocument();
-    expect(screen.queryByText("gobby-tasks")).toBeNull();
+    expect(within(tree).getByText("github")).toBeInTheDocument();
+    expect(within(tree).queryByText("gobby-tasks")).toBeNull();
+  });
+
+  it("sorts servers alphabetically and default-selects the first server (#19152)", async () => {
+    renderMcp();
+
+    const tree = await screen.findByRole("tree", { name: "MCP servers and tools" });
+    const rows = within(tree).getAllByRole("treeitem");
+    expect(rows[0]).toHaveAccessibleName("github server, External");
+    await waitFor(() => expect(rows[0]).toHaveAttribute("aria-selected", "true"));
   });
 
   it("opens a new-server detail draft from the shared header", async () => {
     const user = userEvent.setup();
     renderMcp();
 
-    await user.click(screen.getByRole("button", { name: "Add MCP server" }));
+    await user.click(screen.getByRole("button", { name: "New MCP server" }));
 
     expect(screen.queryByRole("heading", { name: "Add MCP Server" })).toBeNull();
     expect(screen.getByText("New MCP server")).toBeInTheDocument();
@@ -433,13 +445,20 @@ describe("ActivityMcpTab", () => {
     expect(screen.queryByText(/"stale": true/)).toBeNull();
   });
 
-  it("refreshes MCP tools from the shared header", async () => {
+  it("refreshes MCP tools from the server menu, with no header refresh button (#19152)", async () => {
     const user = userEvent.setup();
     const refreshToolCache = vi.fn(async () => true);
     renderMcp(makeProps({ refreshToolCache }));
 
-    await user.click(screen.getByRole("button", { name: "Refresh MCP tools" }));
+    expect(screen.queryByRole("button", { name: "Refresh MCP tools" })).toBeNull();
 
-    expect(refreshToolCache).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for gobby-tasks server" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Refresh tools" }));
+
+    await waitFor(() => {
+      expect(refreshToolCache).toHaveBeenCalledOnce();
+    });
   });
 });

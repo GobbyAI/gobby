@@ -7,13 +7,13 @@ import type { CronJob, CronRun, CronRunChild } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
 import { ActivityPanelEmpty, CronEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityRowStatusDot } from './ActivityRowStatusDot'
+import { QuickMenu, type QuickMenuItem } from './QuickMenu'
 
 interface CronTabProps {
   projectId?: string | null
 }
 
 const FILTER_OPTIONS = [
-  { id: 'all', label: 'All' },
   { id: 'enabled', label: 'Enabled' },
   { id: 'disabled', label: 'Disabled' },
 ] as const
@@ -23,13 +23,14 @@ type StatusFilter = (typeof FILTER_OPTIONS)[number]['id']
 const PAGE_SIZE = 20
 
 export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
-  const { jobs, selectedJob, selectJob, runs, isRunsLoading, isLoading } = useCronJobs(projectId)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const { jobs, selectedJob, selectJob, runs, isRunsLoading, isLoading, toggleJob, deleteJob } =
+    useCronJobs(projectId)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('enabled')
   const [topHeight, setTopHeight] = useState(50)
   const [displayLimitState, setDisplayLimitState] = useState<{
     filter: StatusFilter
     limit: number
-  }>({ filter: 'all', limit: PAGE_SIZE })
+  }>({ filter: 'enabled', limit: PAGE_SIZE })
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -61,11 +62,10 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
     }
   }, [])
 
-  const filteredJobs = useMemo(() => {
-    if (statusFilter === 'all') return jobs
-    if (statusFilter === 'enabled') return jobs.filter((j) => j.enabled)
-    return jobs.filter((j) => !j.enabled)
-  }, [jobs, statusFilter])
+  const filteredJobs = useMemo(
+    () => jobs.filter((j) => (statusFilter === 'enabled' ? j.enabled : !j.enabled)),
+    [jobs, statusFilter],
+  )
 
   const displayLimit =
     displayLimitState.filter === statusFilter ? displayLimitState.limit : PAGE_SIZE
@@ -76,11 +76,15 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
   )
   const hasMore = filteredJobs.length > visibleJobs.length
 
-  // If the selected job is filtered out, clear the selection so the detail
-  // pane doesn't refer to an invisible row.
+  // Keep the selection inside the visible rows: default-select the topmost
+  // job so the runs pane is populated as soon as the tab opens (#19152).
   useEffect(() => {
-    if (selectedJob && !filteredJobs.some((j) => j.id === selectedJob.id)) {
-      selectJob(null)
+    if (filteredJobs.length === 0) {
+      if (selectedJob) selectJob(null)
+      return
+    }
+    if (!selectedJob || !filteredJobs.some((j) => j.id === selectedJob.id)) {
+      selectJob(filteredJobs[0])
     }
   }, [filteredJobs, selectedJob, selectJob])
 
@@ -97,7 +101,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Cron status filter"
           controlHeight="sm"
-          className="ml-auto"
+          className="activity-panel-toolbar-segmented"
         />
       </div>
 
@@ -110,31 +114,61 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
             icon={<CronEmptyIcon />}
             heading="Cron Jobs"
             body={
-              statusFilter === 'all'
+              jobs.length === 0
                 ? 'Cron jobs appear here when scheduled'
                 : `No ${statusFilter} cron jobs yet`
             }
           />
         ) : (
           <>
-            {visibleJobs.map((job) => (
-              <button
-                key={job.id}
-                type="button"
-                className={`pipeline-exec-row${selectedJob?.id === job.id ? ' pipeline-exec-row--active' : ''}`}
-                onClick={() => selectJob(job)}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <CronStatusDot enabled={job.enabled} />
-                  <span className="activity-row-title">{job.name}</span>
+            {visibleJobs.map((job) => {
+              const menuItems: QuickMenuItem[] = [
+                {
+                  label: job.enabled ? 'Disable' : 'Enable',
+                  onSelect: () => void toggleJob(job.id),
+                },
+                { type: 'separator' },
+                {
+                  label: 'Delete',
+                  destructive: true,
+                  onSelect: () => {
+                    if (window.confirm(`Delete cron job "${job.name}"?`)) {
+                      void deleteJob(job.id)
+                    }
+                  },
+                },
+              ]
+              return (
+                <div
+                  key={job.id}
+                  className={`activity-list-row${selectedJob?.id === job.id ? ' activity-list-row--selected' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="activity-list-row__body"
+                    aria-label={`Select ${job.name}`}
+                    onClick={() => selectJob(job)}
+                  >
+                    <CronStatusDot enabled={job.enabled} />
+                    <span className="activity-row-title">{job.name}</span>
+                    <span className="activity-row-meta shrink-0">
+                      {formatNextFiring(job, now)}
+                    </span>
+                  </button>
+                  {/* System crons reject operator toggle and delete server-side,
+                      so they get no actions menu at all. */}
+                  {!job.is_system && (
+                    <div className="flex items-center px-1">
+                      <QuickMenu
+                        items={menuItems}
+                        menuLabel={`Actions for ${job.name}`}
+                        triggerLabel={`Open actions for ${job.name}`}
+                      />
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="activity-row-meta">
-                    {formatNextFiring(job, now)}
-                  </span>
-                </div>
-              </button>
-            ))}
+              )
+            })}
             {hasMore && (
               <button
                 type="button"

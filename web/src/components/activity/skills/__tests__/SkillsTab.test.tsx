@@ -179,7 +179,8 @@ describe("Skills activity Installed segment", () => {
       "aria-checked",
       "true",
     );
-    expect(screen.getAllByText("INSTALLED").length).toBeGreaterThan(0);
+    expect(screen.queryByText("INSTALLED")).not.toBeInTheDocument();
+    expect(screen.getByText("PROJECT")).toBeInTheDocument();
     expect(screen.getByText("hub")).toBeInTheDocument();
 
     const hubSkill = screen.getByRole("button", { name: "Select Hub curator" });

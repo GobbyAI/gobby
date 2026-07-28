@@ -263,7 +263,6 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
                 mode={isCreating ? "create" : "edit"}
                 channel={selectedChannel}
                 onSave={handleSave}
-                onDelete={handleDelete}
                 onCancelCreate={() => setIsCreating(false)}
                 onShowMessages={() => setViewMode("messages")}
                 onError={setError}

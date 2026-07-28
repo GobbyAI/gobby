@@ -66,7 +66,7 @@ export function AgentToolBlocksEditor({
   onBlockedMcpToolsChange,
 }: AgentToolBlocksEditorProps) {
   return (
-    <div>
+    <div className="flex flex-col gap-3">
       {onBlockedToolsChange && (
         <div className={AGENT_EDIT_FIELD_CLS}>
           <span className={AGENT_EDIT_LABEL_CLS}>Blocked Native Tools</span>

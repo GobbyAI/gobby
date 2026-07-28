@@ -94,8 +94,9 @@ export function SkillsInstalledList({
               />
               <span className="activity-row-title">{skill.name}</span>
               <span className="activity-chip">{skillCategory(skill)}</span>
-              <span className="activity-chip">{skillSourceLabel(skill)}</span>
-              <span className="activity-chip">{skill.enabled ? "On" : "Off"}</span>
+              {source !== "installed" && (
+                <span className="activity-chip">{skillSourceLabel(skill)}</span>
+              )}
             </button>
             <div className="px-1">
               <QuickMenu

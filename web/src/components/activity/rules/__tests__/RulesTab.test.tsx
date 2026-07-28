@@ -237,29 +237,38 @@ describe("Rules activity tab", () => {
 
     render(<RulesTab />);
 
-    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
-    expect(screen.getByText("gamma-rule")).toBeInTheDocument();
-    expect(screen.queryByText("beta-rule")).not.toBeInTheDocument();
+    const rulesList = await screen.findByRole("list", { name: "Rules" });
+    expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
+    expect(within(rulesList).getByText("gamma-rule")).toBeInTheDocument();
+    expect(within(rulesList).queryByText("beta-rule")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Disabled" }));
-    expect(await screen.findByText("beta-rule")).toBeInTheDocument();
-    expect(screen.queryByText("alpha-rule")).not.toBeInTheDocument();
+    expect(await within(rulesList).findByText("beta-rule")).toBeInTheDocument();
+    expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Enabled" }));
     await user.type(screen.getByRole("searchbox", { name: "Search rules" }), "compaction");
-    expect(await screen.findByText("gamma-rule")).toBeInTheDocument();
-    expect(screen.queryByText("alpha-rule")).not.toBeInTheDocument();
+    expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
+    expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
     await user.clear(screen.getByRole("searchbox", { name: "Search rules" }));
     await user.click(screen.getByRole("button", { name: "Filter rules" }));
-    await user.selectOptions(screen.getByLabelText("Event"), "before_tool");
-    await user.selectOptions(screen.getByLabelText("Group"), "guardrails");
-    await user.selectOptions(screen.getByLabelText("Source"), "project");
-    await user.selectOptions(screen.getByLabelText("Tag"), "safety");
+    await user.selectOptions(screen.getByLabelText("Filter by event"), "before_tool");
+    await user.selectOptions(screen.getByLabelText("Filter by group"), "guardrails");
+    await user.selectOptions(screen.getByLabelText("Filter by source"), "project");
+    await user.selectOptions(screen.getByLabelText("Filter by tag"), "safety");
 
-    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
-    expect(screen.queryByText("gamma-rule")).not.toBeInTheDocument();
-    expect(screen.queryByText("template-rule")).not.toBeInTheDocument();
+    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
+    expect(within(rulesList).queryByText("gamma-rule")).not.toBeInTheDocument();
+    expect(within(rulesList).queryByText("template-rule")).not.toBeInTheDocument();
+  });
+
+  it("selects the first rule by default so the detail pane is populated (#19152)", async () => {
+    installRulesFetch();
+    render(<RulesTab />);
+
+    expect(await screen.findByLabelText("Rule name")).toHaveValue("alpha-rule");
+    expect(screen.queryByRole("switch", { name: "Rule enabled" })).not.toBeInTheDocument();
   });
 
   it("exposes row actions and retries copy name collisions once", async () => {
@@ -267,14 +276,15 @@ describe("Rules activity tab", () => {
     const user = userEvent.setup();
 
     render(<RulesTab />);
-    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
+    const rulesList = await screen.findByRole("list", { name: "Rules" });
+    expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
     const firstMenu = screen.getByRole("menu", { name: "Actions for alpha-rule" });
-    expect(within(firstMenu).getByRole("menuitem", { name: "Deactivate" })).toBeInTheDocument();
+    expect(within(firstMenu).getByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
     expect(within(firstMenu).getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
     expect(within(firstMenu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
-    await user.click(within(firstMenu).getByRole("menuitem", { name: "Deactivate" }));
+    await user.click(within(firstMenu).getByRole("menuitem", { name: "Disable" }));
 
     await waitFor(() =>
       expect(calls.some((call) => call.url.includes("/api/rules/alpha-rule/toggle"))).toBe(true),
@@ -284,7 +294,7 @@ describe("Rules activity tab", () => {
     ).toEqual({ enabled: false });
 
     await user.click(screen.getByRole("radio", { name: "Disabled" }));
-    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
+    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
     await user.click(screen.getByRole("menuitem", { name: "Copy" }));
 
@@ -305,14 +315,15 @@ describe("Rules activity tab", () => {
     const user = userEvent.setup();
 
     render(<RulesTab />);
-    expect(await screen.findByText("alpha-rule")).toBeInTheDocument();
+    const rulesList = await screen.findByRole("list", { name: "Rules" });
+    expect(within(rulesList).getByText("alpha-rule")).toBeInTheDocument();
     const alphaRule = screen.getByRole("button", { name: "Select alpha-rule" });
     expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Open actions for alpha-rule" }));
-    await user.click(screen.getByRole("menuitem", { name: "Deactivate" }));
+    await user.click(screen.getByRole("menuitem", { name: "Disable" }));
 
-    expect(await screen.findByText("Failed to deactivate rule")).toBeInTheDocument();
+    expect(await screen.findByText("Failed to disable rule")).toBeInTheDocument();
     expect(within(alphaRule).getByLabelText("Rule enabled")).toBeInTheDocument();
   });
 
@@ -367,7 +378,7 @@ describe("Rules activity tab", () => {
     await user.click(await screen.findByRole("button", { name: /Select alpha-rule/i }));
     await screen.findByLabelText("Rule name");
 
-    await user.click(screen.getByRole("button", { name: "YAML" }));
+    await user.click(screen.getByRole("radio", { name: "YAML" }));
     const yamlEditor = await screen.findByLabelText("Rule YAML");
     expect((yamlEditor as HTMLTextAreaElement).value).toContain("effects:");
     expect((yamlEditor as HTMLTextAreaElement).value).toContain("match:");

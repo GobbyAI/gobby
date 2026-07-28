@@ -219,15 +219,10 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
       </svg>
     ),
   },
-  {
-    id: "traces",
-    label: "Traces",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M3 12h4l3-9 4 18 3-9h4" />
-      </svg>
-    ),
-  },
+  // Traces is deliberately absent: the tab is being retired, so it is hidden
+  // from the strip and dropdown while TracesTab itself sticks around
+  // (#19152, moat 66e919e3). VALID_TABS derives from this list, so persisted
+  // and event-driven tab selection can no longer land on it either.
 ];
 
 export const ACTIVITY_PANEL_DROPDOWN_TABS = [...ACTIVITY_PANEL_TABS].sort((left, right) =>

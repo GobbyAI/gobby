@@ -29,7 +29,6 @@ interface ChannelDetailPanelProps {
   mode: "create" | "edit";
   channel: Channel | null;
   onSave: (draft: IntegrationDraft) => Promise<boolean>;
-  onDelete: (channel: Channel) => void;
   onCancelCreate: () => void;
   onShowMessages: () => void;
   onError: (message: string | null) => void;
@@ -71,6 +70,8 @@ function SecretField({
         name={`integration-secret-${name}`}
         value={value}
         placeholder={placeholder}
+        autoComplete="new-password"
+        data-1p-ignore
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -101,7 +102,6 @@ export function ChannelDetailPanel({
   mode,
   channel,
   onSave,
-  onDelete,
   onCancelCreate,
   onShowMessages,
   onError,
@@ -229,18 +229,11 @@ export function ChannelDetailPanel({
               />
             ) : (
               channel && (
-                <>
-                  <DetailActionButton
-                    label="Messages"
-                    icon={<MessagesIcon />}
-                    onClick={() => draftState.confirmIfDirty(onShowMessages)}
-                  />
-                  <DetailActionButton
-                    label="Delete"
-                    variant="destructive"
-                    onClick={() => onDelete(channel)}
-                  />
-                </>
+                <DetailActionButton
+                  label="Messages"
+                  icon={<MessagesIcon />}
+                  onClick={() => draftState.confirmIfDirty(onShowMessages)}
+                />
               )
             )}
           </>

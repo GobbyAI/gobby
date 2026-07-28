@@ -8,7 +8,8 @@
   flex-direction: column;
 }
 
-.rules-filter-dropdown {
+/* Shared toolbar filter panel — used by Rules and Integrations (#19152). */
+.activity-filter-panel {
   position: absolute;
   top: calc(100% + 0.35rem);
   right: 0.75rem;
@@ -25,7 +26,7 @@
   padding: 0.75rem;
 }
 
-.rules-filter-dropdown__field {
+.activity-filter-panel__field {
   display: grid;
   gap: 0.3rem;
   min-width: 0;
@@ -34,7 +35,7 @@
   font-weight: var(--font-weight-medium);
 }
 
-.rules-filter-dropdown__field select {
+.activity-filter-panel__field select {
   min-height: 2.75rem;
   min-width: 0;
   border: 1px solid var(--border);
@@ -45,12 +46,12 @@
   font: inherit;
 }
 
-.rules-filter-dropdown__field select:focus-visible {
+.activity-filter-panel__field select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.rules-filter-dropdown__footer {
+.activity-filter-panel__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;

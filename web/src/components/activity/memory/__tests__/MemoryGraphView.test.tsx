@@ -131,8 +131,8 @@ describe("Memory graph activity view", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Graph" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(await screen.findByRole("button", { name: "Show Graph" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show Graph" }));
 
     expect(requestPanelOverride).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "Memory graph" })).toBeInTheDocument();

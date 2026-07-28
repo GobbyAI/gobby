@@ -162,7 +162,7 @@ describe("Memory activity tab", () => {
     vi.restoreAllMocks();
   });
 
-  it("registers the tab, filters rows, refreshes manually, and saves drafts", async () => {
+  it("registers the tab, filters rows, and saves drafts", async () => {
     const fetchMock = setupFetch([
       makeMemory({
         id: "mem-recent",
@@ -192,7 +192,13 @@ describe("Memory activity tab", () => {
     expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
       .toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Search memories" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Refresh memories" })).toBeInTheDocument();
+    // Manual refresh is gone — the list stays current via live updates (#19152).
+    expect(screen.queryByRole("button", { name: "Refresh memories" })).not.toBeInTheDocument();
+    // Scope selector defaults to Project.
+    expect(screen.getByRole("radio", { name: "Project" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
     const paletteMemory = screen.getByRole("button", {
       name: "Select Use a quiet palette for dashboards",
@@ -215,11 +221,6 @@ describe("Memory activity tab", () => {
       .toBeInTheDocument();
 
     await user.clear(screen.getByRole("searchbox", { name: "Search memories" }));
-    await user.click(screen.getByRole("button", { name: "Refresh memories" }));
-    await waitFor(() => {
-      const listCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/memories?"));
-      expect(listCalls.length).toBeGreaterThan(1);
-    });
 
     await user.click(screen.getByRole("button", { name: "Select Persist panel width override" }));
     await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
@@ -299,7 +300,11 @@ describe("Memory activity tab", () => {
     expect(screen.getAllByText("Project").length).toBeGreaterThan(0);
     expect(screen.getByText("Current project")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Promote to global" }));
+    // View All scopes so the row stays visible after promotion (#19152).
+    await user.click(screen.getByRole("radio", { name: "All" }));
+    const globalSwitch = screen.getByRole("switch", { name: "Global memory" });
+    expect(globalSwitch).not.toBeChecked();
+    await user.click(globalSwitch);
 
     await waitFor(() => {
       const promoted = fetchMock.mock.calls.some(
@@ -310,8 +315,9 @@ describe("Memory activity tab", () => {
       expect(promoted).toBe(true);
     });
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Promote to global" })).not.toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: "Global memory" })).toBeChecked();
     });
+    expect(screen.getByRole("switch", { name: "Global memory" })).toBeDisabled();
     expect(screen.getAllByText("Global").length).toBeGreaterThan(0);
     expect(screen.getByText("Available across projects")).toBeInTheDocument();
   });
@@ -334,7 +340,7 @@ describe("Memory activity tab", () => {
     expect(
       await screen.findByRole("button", { name: "Select Project-only checklist" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Promote to global" }));
+    await user.click(screen.getByRole("switch", { name: "Global memory" }));
 
     expect(
       await screen.findByRole("button", { name: "Dismiss error: Failed to promote memory" }),

@@ -18,6 +18,7 @@ export interface CronJob {
   action_type: 'agent_spawn' | 'pipeline' | 'shell'
   action_config: Record<string, unknown>
   enabled: boolean
+  is_system: boolean
   next_run_at: string | null
   last_run_at: string | null
   last_status: string | null

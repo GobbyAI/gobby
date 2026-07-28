@@ -206,6 +206,7 @@ describe("Integrations activity tab", () => {
       "name",
       "search-integrations",
     );
+    await user.click(screen.getByRole("button", { name: "Filter integrations" }));
     expect(screen.getByRole("combobox", { name: "Platform filter" })).toHaveAttribute(
       "name",
       "integration-platform-filter",

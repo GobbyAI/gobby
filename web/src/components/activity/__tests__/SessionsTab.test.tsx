@@ -1267,6 +1267,21 @@ describe("SessionsTab", () => {
     expect(loadNewer).not.toHaveBeenCalled();
   });
 
+  it("renders the Watching bar without a duplicated session ref prefix (#19152)", async () => {
+    const { container } = render(
+      <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+    );
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(".activity-panel-status-bar__title"),
+      ).toHaveTextContent("Watching Paused Terminal");
+    });
+    expect(
+      container.querySelector(".activity-panel-status-bar__title"),
+    ).not.toHaveTextContent("#202:");
+  });
+
   it("re-renders the watching transcript when the last message grows in place", async () => {
     localStorage.removeItem("gobby-watching-session-id");
     let transcriptContent = "abc";

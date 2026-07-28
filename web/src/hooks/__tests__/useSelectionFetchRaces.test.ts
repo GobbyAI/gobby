@@ -42,6 +42,7 @@ function cronJob(id: string, projectId: string): CronJob {
     action_type: 'pipeline',
     action_config: {},
     enabled: true,
+    is_system: false,
     next_run_at: null,
     last_run_at: null,
     last_status: null,

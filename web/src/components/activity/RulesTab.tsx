@@ -51,11 +51,11 @@ function RulesFilterDropdown({
   onEnforcementChange,
 }: RulesFilterDropdownProps) {
   return (
-    <div className="rules-filter-dropdown">
-      <label className="rules-filter-dropdown__field">
+    <div className="activity-filter-panel">
+      <label className="activity-filter-panel__field">
         <span>Event</span>
         <select
-          aria-label="Event"
+          aria-label="Filter by event"
           value={filters.event}
           onChange={(event) => onFiltersChange({ ...filters, event: event.target.value })}
         >
@@ -67,10 +67,10 @@ function RulesFilterDropdown({
           ))}
         </select>
       </label>
-      <label className="rules-filter-dropdown__field">
+      <label className="activity-filter-panel__field">
         <span>Group</span>
         <select
-          aria-label="Group"
+          aria-label="Filter by group"
           value={filters.group}
           onChange={(event) => onFiltersChange({ ...filters, group: event.target.value })}
         >
@@ -82,10 +82,10 @@ function RulesFilterDropdown({
           ))}
         </select>
       </label>
-      <label className="rules-filter-dropdown__field">
+      <label className="activity-filter-panel__field">
         <span>Source</span>
         <select
-          aria-label="Source"
+          aria-label="Filter by source"
           value={filters.source}
           onChange={(event) =>
             onFiltersChange({
@@ -101,10 +101,10 @@ function RulesFilterDropdown({
           ))}
         </select>
       </label>
-      <label className="rules-filter-dropdown__field">
+      <label className="activity-filter-panel__field">
         <span>Tag</span>
         <select
-          aria-label="Tag"
+          aria-label="Filter by tag"
           value={filters.tag}
           onChange={(event) => onFiltersChange({ ...filters, tag: event.target.value })}
         >
@@ -116,7 +116,7 @@ function RulesFilterDropdown({
           ))}
         </select>
       </label>
-      <div className="rules-filter-dropdown__footer">
+      <div className="activity-filter-panel__footer">
         <span>Enforcement</span>
         <Switch
           checked={enforcementEnabled}
@@ -143,6 +143,15 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
   const { fetchRuleDetail } = data;
 
   const existingNames = useMemo(() => data.rules.map((rule) => rule.name), [data.rules]);
+
+  useEffect(() => {
+    const keep =
+      selectedName !== null &&
+      data.filteredRules.some((rule) => rule.name === selectedName);
+    const next = keep ? selectedName : data.filteredRules[0]?.name ?? null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- default-selection sync with the filtered list (SkillsTab pattern); settles in one pass.
+    if (next !== selectedName) setSelectedName(next);
+  }, [data.filteredRules, selectedName]);
 
   useEffect(() => {
     if (!selectedName) return;
@@ -206,7 +215,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       try {
         const didToggle = await data.toggleRule(rule.name, !rule.enabled);
         if (!didToggle) {
-          setActionError(`Failed to ${rule.enabled ? "deactivate" : "activate"} rule`);
+          setActionError(`Failed to ${rule.enabled ? "disable" : "enable"} rule`);
           return;
         }
         if (selectedName === rule.name) setDetailRefreshToken((value) => value + 1);

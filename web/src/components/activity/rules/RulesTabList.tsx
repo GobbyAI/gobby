@@ -29,7 +29,7 @@ export function RulesTabList({
         const isBusy = rule.name === busyRuleName;
         const menuItems: QuickMenuItem[] = [
           {
-            label: rule.enabled ? "Deactivate" : "Activate",
+            label: rule.enabled ? "Disable" : "Enable",
             disabled: isBusy,
             onSelect: () => onToggle(rule),
           },
