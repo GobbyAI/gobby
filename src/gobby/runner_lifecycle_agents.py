@@ -95,53 +95,44 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
     subscriber_manager = CompletionSubscriberManager(db)
     run_manager = LocalAgentRunManager(db)
     delivered_count = 0
-    for status in TERMINAL_AGENT_RUN_STATUSES:
-        offset = 0
-        while True:
-            runs = await _run_db(
-                runner,
-                run_manager.list_by_status,
-                status,
-                limit=_RUN_REPLAY_PAGE_SIZE,
-                offset=offset,
-            )
-            if not runs:
-                break
-            for run in runs:
-                if is_daemon_stop_parked(run):
-                    continue
-                subscribers = await _run_db(
-                    runner,
-                    subscriber_manager.get_completion_subscribers,
+    completion_ids = await _run_db(runner, subscriber_manager.list_completion_ids)
+    for run_id in completion_ids:
+        run = await _run_db(runner, run_manager.get, run_id)
+        if (
+            run is None
+            or run.status not in TERMINAL_AGENT_RUN_STATUSES
+            or is_daemon_stop_parked(run)
+        ):
+            continue
+        subscribers = await _run_db(
+            runner,
+            subscriber_manager.get_completion_subscribers,
+            run.id,
+        )
+        acknowledged: list[str] = []
+        payload = {"status": run.status, "run_id": run.id}
+        message = f"Agent {run.id} reached terminal status {run.status}"
+        for session_id in subscribers:
+            try:
+                outcome = await wake(session_id, message, payload)
+            except Exception:
+                logger.warning(
+                    "Terminal completion redelivery failed for session %s (run %s)",
+                    session_id,
                     run.id,
+                    exc_info=True,
                 )
-                acknowledged: list[str] = []
-                payload = {"status": run.status, "run_id": run.id}
-                message = f"Agent {run.id} reached terminal status {run.status}"
-                for session_id in subscribers:
-                    try:
-                        outcome = await wake(session_id, message, payload)
-                    except Exception:
-                        logger.warning(
-                            "Terminal completion redelivery failed for session %s (run %s)",
-                            session_id,
-                            run.id,
-                            exc_info=True,
-                        )
-                        continue
-                    if wake_result_is_delivered(outcome):
-                        acknowledged.append(session_id)
-                if acknowledged:
-                    await _run_db(
-                        runner,
-                        subscriber_manager.remove_completion_subscribers,
-                        run.id,
-                        session_ids=acknowledged,
-                    )
-                    delivered_count += len(acknowledged)
-            offset += len(runs)
-            if len(runs) < _RUN_REPLAY_PAGE_SIZE:
-                break
+                continue
+            if wake_result_is_delivered(outcome):
+                acknowledged.append(session_id)
+        if acknowledged:
+            await _run_db(
+                runner,
+                subscriber_manager.remove_completion_subscribers,
+                run.id,
+                session_ids=acknowledged,
+            )
+            delivered_count += len(acknowledged)
     return delivered_count
 
 

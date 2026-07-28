@@ -110,6 +110,17 @@ class TestCompletionSubscribers:
             "e3c98b06-11a5-5e52-9b82-b47a220be090"
         ]
 
+    def test_list_completion_ids_is_distinct_and_ordered(
+        self, manager: LocalPipelineExecutionManager
+    ) -> None:
+        run_a = "11111111-1111-4111-8111-111111111111"
+        run_b = "22222222-2222-4222-8222-222222222222"
+        manager.add_completion_subscriber(run_b, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        manager.add_completion_subscriber(run_a, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        manager.add_completion_subscriber(run_b, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+
+        assert manager.list_completion_ids() == [run_a, run_b]
+
     def test_add_completion_subscribers_bulk(self, manager: LocalPipelineExecutionManager) -> None:
         """Bulk add multiple subscribers at once."""
         inserted = manager.add_completion_subscribers(

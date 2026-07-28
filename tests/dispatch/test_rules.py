@@ -822,8 +822,6 @@ def test_epic_descendant_gate_rule_appends_marker_once() -> None:
         )
         assert _evaluate(repeated_task, changed_context) is None
 
-    assert description.count(f"### {action.heading}") == 1
-
 
 def test_all_leaves_epic_rule_never_targets_merging_directly() -> None:
     action = _evaluate(

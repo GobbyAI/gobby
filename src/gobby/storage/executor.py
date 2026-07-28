@@ -56,6 +56,7 @@ class DatabaseExecutor:
         self._completed = 0
         self._active = 0
         self._shutdown = False
+        self._join_started = False
 
     async def run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Run blocking database work on the bounded executor."""
@@ -115,4 +116,14 @@ class DatabaseExecutor:
 
     def join(self) -> None:
         """Wait for running work after shutdown; callers must keep this off-loop."""
+        with self._lock:
+            if self._join_started:
+                return
+            self._shutdown = True
+            self._join_started = True
         self._executor.shutdown(wait=True, cancel_futures=False)
+
+    def is_joined(self) -> bool:
+        """Return whether one caller owns the blocking join settlement."""
+        with self._lock:
+            return self._join_started

@@ -488,6 +488,19 @@ class TestCodexAppServerClientStart:
         assert "[REDACTED]" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_start_ignores_empty_redaction_values(self) -> None:
+        client = CodexAppServerClient(env_overrides={"GOBBY_CODEX_ENDPOINT_API_KEY": ""})
+
+        with (
+            patch(
+                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                side_effect=RuntimeError("startup failed"),
+            ),
+            pytest.raises(RuntimeError, match="startup failed"),
+        ):
+            await client.start()
+
+    @pytest.mark.asyncio
     async def test_start_places_global_args_before_app_server_subcommand(self) -> None:
         """Global Codex flags precede the app-server subcommand."""
         client = CodexAppServerClient(

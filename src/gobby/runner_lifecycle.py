@@ -31,7 +31,7 @@ from gobby.runner_lifecycle_startup import (
     _refresh_provider_model_catalog,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
-from gobby.runner_pid_file import FailOpenPidOwnership, PidFileClaim, PidOwnershipResolution
+from gobby.runner_pid_file import FailOpenPidOwnership, PidOwnershipResolution
 from gobby.shutdown_intent import clear_active_shutdown_intent
 from gobby.telemetry import shutdown_telemetry
 
@@ -139,8 +139,7 @@ async def run_daemon(
         try:
             cleanup_pid_file()
         finally:
-            if isinstance(ownership_resolution, PidFileClaim):
-                ownership_resolution.release()
+            ownership_resolution.release()
 
     try:
         global _startup_tracker

@@ -69,11 +69,6 @@ class ToolResultStore:
 
         with self._db.transaction() as transaction:
             transaction.execute(
-                """DELETE FROM tool_results
-                   WHERE created_at < NOW() - make_interval(days => %s)""",
-                (self._config.retention_days,),
-            )
-            transaction.execute(
                 """INSERT INTO tool_results (
                        id, project_id, session_id, server_name, tool_name,
                        content, content_kind, total_chars, stored_chars
@@ -100,6 +95,15 @@ class ToolResultStore:
                     chunk_rows,
                 )
         return result_id
+
+    def cleanup_expired(self) -> int:
+        """Delete retained results that have exceeded the configured lifetime."""
+        cursor = self._db.execute(
+            """DELETE FROM tool_results
+               WHERE created_at < NOW() - make_interval(days => %s)""",
+            (self._config.retention_days,),
+        )
+        return max(cursor.rowcount, 0)
 
     def get_slice(
         self,

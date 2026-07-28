@@ -64,6 +64,9 @@ class FailOpenPidOwnership:
 
     error: str
 
+    def release(self) -> None:
+        """Match the ownership contract when no PID-file claim exists."""
+
 
 PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership
 

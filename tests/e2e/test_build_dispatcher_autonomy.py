@@ -191,7 +191,7 @@ class MiniBuildHarness:
             description=f"{agent_name} {stage_name}:{stage_state} spawn",
         )
         assert run is not None
-        dispatch_idle = await wait_for_async_condition(
+        await wait_for_async_condition(
             lambda: (
                 self.project_id not in self.loop._project_tasks
                 and self.project_id not in self.loop._pending_project_dispatches
@@ -199,7 +199,6 @@ class MiniBuildHarness:
             timeout=2.0,
             description=f"{agent_name} dispatch handoff",
         )
-        assert dispatch_idle
         task_id = cast(str, run["task_id"])
         session_id = cast(str, run["child_session_id"])
         schedule_after_completion = False
@@ -980,6 +979,7 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     monitor._tmux = mock_tmux
     monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
     monitor._idle_check_handler._tmux = mock_tmux
+    monitor._idle_check_handler._recovery._tmux = mock_tmux
     idle_state = monitor._idle_detector.get_state(stored_run.id)
     idle_state.first_idle_at = time.monotonic() - 120
 

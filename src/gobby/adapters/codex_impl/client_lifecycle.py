@@ -85,7 +85,8 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
         stderr = client._stderr_drain.compact_text()
         failure_detail = f"{e}; stderr: {stderr}" if stderr else str(e)
         for secret in client._redacted_env_values:
-            failure_detail = failure_detail.replace(secret, "[REDACTED]")
+            if secret:
+                failure_detail = failure_detail.replace(secret, "[REDACTED]")
         logger.debug(
             "Failed to start Codex app-server: %s",
             failure_detail,

@@ -74,7 +74,7 @@ class CodeIndexContext:
             name="Gcode daemon-config",
             probe_target="daemon config endpoint",
             operation="daemon-owned gcode work",
-            failure_threshold=1,
+            failure_threshold=self._config.sync_worker_breaker_failure_threshold,
             base_backoff_seconds=self._config.sync_worker_breaker_backoff_seconds,
             max_backoff_seconds=self._config.sync_worker_breaker_max_backoff_seconds,
         )

@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
-from gobby.adapters.codex_impl.execution_chain import validate_functions_exec_wrapper
+from gobby.adapters.codex_impl.execution_chain import (
+    ExecutionChainCorrelator,
+    validate_functions_exec_wrapper,
+)
 from gobby.adapters.codex_impl.item_normalization import (
     extract_functions_exec_command,
     extract_yielded_cell_id,
@@ -258,6 +261,7 @@ def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
     assert results[2]["_verification_pending"] is True
     assert results[3]["tool_name"] == "Bash"
     assert results[3]["_verification_pending"] is True
+    assert results[3]["tool_outcome"]["status"] == "unknown"
     assert results[-1]["tool_name"] == "Bash"
     assert results[-1]["tool_input"] == {"command": expected_command}
     assert results[-1]["tool_outcome"]["status"] == expected_status
@@ -534,3 +538,28 @@ def test_codex_yielded_cell_sentinel_rejects_prose_and_unstructured_output(
     tool_output: object,
 ) -> None:
     assert extract_yielded_cell_id({"tool_output": tool_output}) is None
+
+
+def test_codex_yielded_cell_sentinel_rejects_ambiguous_markers() -> None:
+    assert (
+        extract_yielded_cell_id(
+            {"tool_output": ("Script running with cell ID 52\nScript running with cell ID 53")}
+        )
+        is None
+    )
+
+
+def test_codex_execution_ambiguity_eviction_is_fifo() -> None:
+    correlator = ExecutionChainCorrelator(max_pending=2)
+
+    for cell_id in ("oldest", "newest", "third"):
+        for suffix, path in (("a", "tests/a.py"), ("b", "tests/b.py")):
+            call_id = f"{cell_id}-{suffix}"
+            assert correlator.register_call(
+                call_id,
+                "functions.exec",
+                f'await tools.exec_command({{cmd:"uv run pytest {path}"}});',
+            )
+            correlator.resolve_output(call_id, f"Script running with cell ID {cell_id}")
+
+    assert correlator.snapshot_state()["ambiguous_cells"] == ["newest", "third"]

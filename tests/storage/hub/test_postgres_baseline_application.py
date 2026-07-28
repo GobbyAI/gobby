@@ -4,6 +4,7 @@ import importlib
 import logging
 from collections.abc import Callable
 from contextlib import contextmanager
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -15,7 +16,7 @@ from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
 pytestmark = pytest.mark.unit
 
 
-def _postgres_module():
+def _postgres_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.postgres")
 
 
@@ -343,7 +344,7 @@ def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["opened"] == (True, 12.5)
 
 
-def test_transaction_pool_timeout_retries_without_pool_check(
+def test_transaction_pool_timeout_checks_pool_before_retry(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -408,7 +409,7 @@ def test_transaction_pool_timeout_retries_without_pool_check(
 
     pool = pool_holder["pool"]
     assert pool.connection_calls == 2
-    assert pool.check_calls == 0
+    assert pool.check_calls == 1
     assert "retrying once" in caplog.text
     assert "pool_size" in caplog.text
 
@@ -459,7 +460,7 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
 
     pool = pool_holder["pool"]
     assert pool.connection_calls == 2
-    assert pool.check_calls == 0
+    assert pool.check_calls == 1
     assert "retry failed" in caplog.text
     assert "pool_size" in caplog.text
 
@@ -471,14 +472,21 @@ def test_bounded_transaction_sets_local_bounds_before_body(
     db = object.__new__(module.PostgresHubDatabase)
     statements: list[tuple[str, tuple[object, ...]]] = []
 
+    class Cursor:
+        def fetchone(self) -> dict[str, str]:
+            return {
+                "statement_timeout": "0",
+                "lock_timeout": "0",
+            }
+
     class Transaction:
         def execute(
             self,
             sql: str,
             params: tuple[object, ...] = (),
-        ) -> object:
+        ) -> Cursor:
             statements.append((sql, params))
-            return object()
+            return Cursor()
 
     transaction = Transaction()
 
@@ -492,10 +500,131 @@ def test_bounded_transaction_sets_local_bounds_before_body(
         bounded.execute("SELECT 1")
 
     assert statements == [
-        ("SET LOCAL statement_timeout = '1234ms'", ()),
-        ("SET LOCAL lock_timeout = '567ms'", ()),
+        (
+            "SELECT current_setting('statement_timeout') AS statement_timeout, "
+            "current_setting('lock_timeout') AS lock_timeout",
+            (),
+        ),
+        ("SELECT set_config('statement_timeout', %s, true)", ("1234ms",)),
+        ("SELECT set_config('lock_timeout', %s, true)", ("567ms",)),
         ("SELECT 1", ()),
+        ("SELECT set_config('statement_timeout', %s, true)", ("0",)),
+        ("SELECT set_config('lock_timeout', %s, true)", ("0",)),
     ]
+
+
+@pytest.mark.parametrize(
+    ("statement_timeout_ms", "lock_timeout_ms"),
+    [(0, 1), (-1, 1), (1, 0), (1, -1)],
+)
+def test_bounded_transaction_rejects_nonpositive_bounds(
+    statement_timeout_ms: int,
+    lock_timeout_ms: int,
+) -> None:
+    module = _postgres_module()
+    db = object.__new__(module.PostgresHubDatabase)
+
+    with pytest.raises(ValueError, match="positive milliseconds"):
+        with db.bounded_transaction(
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+        ):
+            pass
+
+
+def test_bounded_transaction_restores_outer_bounds_after_body_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    db = object.__new__(module.PostgresHubDatabase)
+    settings = {
+        "statement_timeout": "2500ms",
+        "lock_timeout": "750ms",
+    }
+
+    class Cursor:
+        def fetchone(self) -> dict[str, str]:
+            return dict(settings)
+
+    class Transaction:
+        def execute(
+            self,
+            sql: str,
+            params: tuple[object, ...] = (),
+        ) -> Cursor:
+            if "set_config('statement_timeout'" in sql:
+                settings["statement_timeout"] = str(params[0])
+            elif "set_config('lock_timeout'" in sql:
+                settings["lock_timeout"] = str(params[0])
+            return Cursor()
+
+    @contextmanager
+    def fake_transaction(_self):
+        yield Transaction()
+
+    monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
+
+    with pytest.raises(RuntimeError, match="body failed"):
+        with db.bounded_transaction(statement_timeout_ms=100, lock_timeout_ms=50):
+            raise RuntimeError("body failed")
+
+    assert settings == {
+        "statement_timeout": "2500ms",
+        "lock_timeout": "750ms",
+    }
+
+
+def test_bounded_transaction_restores_nested_transaction_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    db = object.__new__(module.PostgresHubDatabase)
+    settings = {
+        "statement_timeout": "2500ms",
+        "lock_timeout": "750ms",
+    }
+
+    class Cursor:
+        def fetchone(self) -> dict[str, str]:
+            return dict(settings)
+
+    class Transaction:
+        def execute(
+            self,
+            sql: str,
+            params: tuple[object, ...] = (),
+        ) -> Cursor:
+            if "set_config('statement_timeout'" in sql:
+                settings["statement_timeout"] = str(params[0])
+            elif "set_config('lock_timeout'" in sql:
+                settings["lock_timeout"] = str(params[0])
+            return Cursor()
+
+    @contextmanager
+    def fake_transaction(_self):
+        yield Transaction()
+
+    monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
+
+    with db.bounded_transaction(statement_timeout_ms=100, lock_timeout_ms=50):
+        assert settings == {
+            "statement_timeout": "100ms",
+            "lock_timeout": "50ms",
+        }
+        with db.bounded_transaction(statement_timeout_ms=20, lock_timeout_ms=10):
+            assert settings == {
+                "statement_timeout": "20ms",
+                "lock_timeout": "10ms",
+            }
+        assert settings == {
+            "statement_timeout": "100ms",
+            "lock_timeout": "50ms",
+        }
+
+    assert settings == {
+        "statement_timeout": "2500ms",
+        "lock_timeout": "750ms",
+    }
 
 
 def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -827,7 +956,7 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypa
     calls: list[str] = []
 
     class FakeRunner:
-        def __init__(self, hub, *, autocommit_connection) -> None:
+        def __init__(self, hub: Any, *, autocommit_connection: Any) -> None:
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 
@@ -857,7 +986,7 @@ def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypat
     calls: list[str] = []
 
     class FakeRunner:
-        def __init__(self, hub, *, autocommit_connection) -> None:
+        def __init__(self, hub: Any, *, autocommit_connection: Any) -> None:
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 

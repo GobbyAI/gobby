@@ -117,10 +117,15 @@ def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> st
     body = re.sub(r"\s+", " ", body).strip()
 
     if is_action_first_reason(body):
-        action = _first_sentence(body)
-        remainder = body[len(action) :].strip()
+        original_action = _first_sentence(body)
+        remainder = body[len(original_action) :].strip()
         short_reason = _first_sentence(remainder) if remainder else ""
-        action_message = f"Gobby [{rule_name}]: {action}"
+        prefix = f"Gobby [{rule_name}]: "
+        action_budget = _DENY_REASON_MAX_CHARS - len(prefix)
+        action = original_action
+        if len(action) > action_budget:
+            action = f"{action[: action_budget - 1]}…"
+        action_message = f"{prefix}{action}"
         if not short_reason or len(action_message) >= _DENY_REASON_MAX_CHARS:
             return action_message
 

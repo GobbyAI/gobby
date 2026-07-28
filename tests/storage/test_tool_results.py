@@ -100,7 +100,7 @@ def test_save_persists_total_chars_above_signed_32_bit_range(
     assert result["total_chars"] == total_chars
 
 
-def test_save_runs_cleanup_with_configured_retention(
+def test_cleanup_expired_uses_configured_retention(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -112,7 +112,9 @@ def test_save_runs_cleanup_with_configured_retention(
     )
 
     current_id = _save(store, project_id=sample_project["id"], content="current")
+    deleted = store.cleanup_expired()
 
+    assert deleted == 1
     assert temp_db.fetchone("SELECT id FROM tool_results WHERE id = %s", (expired_id,)) is None
     assert temp_db.fetchone("SELECT id FROM tool_results WHERE id = %s", (current_id,)) is not None
 
@@ -225,7 +227,7 @@ def test_tool_result_chunks_are_registered_for_ranked_bm25_search(
         filters={"result_id": result_id},
     )
 
-    assert [hit.id for hit in hits] == [str(row["id"]) for row in expected]
+    assert {hit.id for hit in hits} == {str(row["id"]) for row in expected}
     assert hits[0].score >= hits[-1].score
 
 

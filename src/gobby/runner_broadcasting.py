@@ -341,13 +341,22 @@ def setup_pipeline_event_broadcasting(
     logger.debug("Pipeline event broadcasting enabled")
 
 
+_CRON_RUN_MESSAGE_DETAIL_MAX_CHARS = 4_000
+
+
+def _bounded_cron_run_detail(value: str) -> str:
+    if len(value) <= _CRON_RUN_MESSAGE_DETAIL_MAX_CHARS:
+        return value
+    return f"{value[: _CRON_RUN_MESSAGE_DETAIL_MAX_CHARS - 1]}…"
+
+
 def _format_cron_run_message(job: CronJob, run: CronRun) -> str:
     """Format a concise scheduled-run notification."""
     content = f'Scheduled job "{job.name}" {run.status}.'
     if run.error:
-        return f"{content}\n\nError: {run.error}"
+        return f"{content}\n\nError: {_bounded_cron_run_detail(run.error)}"
     if run.output:
-        return f"{content}\n\n{run.output}"
+        return f"{content}\n\n{_bounded_cron_run_detail(run.output)}"
     return content
 
 

@@ -71,6 +71,14 @@ def audit(
         raise click.ClickException("--fail-on-new requires --baseline")
     if allow_failing_baseline and write_baseline is None:
         raise click.ClickException("--allow-failing-baseline requires --write-baseline")
+    if output is not None:
+        resolved_output = output.resolve()
+        for option_name, option_path in (
+            ("--write-baseline", write_baseline),
+            ("--baseline", baseline),
+        ):
+            if option_path is not None and option_path.resolve() == resolved_output:
+                raise click.ClickException(f"--output must differ from {option_name}")
 
     audit_paths_input = paths or (Path("tests"),)
     try:

@@ -98,6 +98,7 @@ class GobbyRunner:
     _shutdown_requested: bool
     _shutdown_intent: ShutdownIntent
     _metrics_cleanup_task: asyncio.Task[None] | None
+    _tool_results_cleanup_task: asyncio.Task[None] | None
     _workflow_audit_cleanup_task: asyncio.Task[None] | None
     _vector_rebuild_task: asyncio.Task[None] | None
     _zombie_messages_task: asyncio.Task[None] | None
@@ -198,26 +199,20 @@ class GobbyRunner:
             init_services,
             init_storage_and_config,
         )
-        from gobby.runner_rollback import (
-            ConstructionRollbackLedger,
-            rollback_runner_resources,
-        )
+        from gobby.runner_rollback import rollback_runner_resources
 
         self.degraded_services = set()
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
-        ledger = ConstructionRollbackLedger()
-        ledger.add("runner resources", lambda: rollback_runner_resources(self))
         try:
             init_storage_and_config(self, config_path, verbose)
             init_services(self)
             init_orchestration(self)
             init_servers(self)
         except BaseException:
-            ledger.rollback()
+            rollback_runner_resources(self)
             raise
-        ledger.commit()
 
     async def run(self, *, ownership_resolution: PidOwnershipResolution) -> None:
         from gobby.runner_lifecycle import run_daemon
@@ -408,10 +403,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     finally:
         # run_daemon releases the claim during shutdown; release() is
         # idempotent, so this only matters when asyncio.run never ran it.
-        if ownership_resolution is not None and not isinstance(
-            ownership_resolution,
-            FailOpenPidOwnership,
-        ):
+        if ownership_resolution is not None:
             ownership_resolution.release()
         _force_exit_after_expired_settlement()
 

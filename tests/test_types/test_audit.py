@@ -11,6 +11,8 @@ import pytest
 from gobby.test_types._mypy import MypyInvocationError, resolve_mypy_command, run_mypy
 from gobby.test_types.audit import audit_types_paths
 
+pytestmark = pytest.mark.unit
+
 
 def _checker_command(tmp_path: Path, source: str) -> str:
     checker = tmp_path / "checker with spaces.py"

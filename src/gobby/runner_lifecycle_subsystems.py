@@ -797,7 +797,12 @@ async def init_subsystems(
             reconciled_runs,
         )
     try:
-        await recover_agent_completion_subscribers(runner)
+        recovered_subscribers = await recover_agent_completion_subscribers(runner)
+        if recovered_subscribers > 0:
+            logger.info(
+                "Recovered %d agent completion subscriber notification(s)",
+                recovered_subscribers,
+            )
     except Exception:
         logger.exception("Agent completion subscriber recovery failed during startup")
     _schedule_provider_model_refresh(

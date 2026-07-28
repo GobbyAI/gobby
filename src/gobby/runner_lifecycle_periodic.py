@@ -62,11 +62,13 @@ def _default_loops() -> dict[str, Any]:
         unmodeled_observation_cleanup_loop,
     )
     from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
+    from gobby.runner_maintenance_recurring import tool_result_cleanup_loop
     from gobby.runner_maintenance_resources import resource_monitor_loop
     from gobby.runner_model_metadata_refresh import model_metadata_refresh_loop
 
     return {
         "metrics_cleanup_loop": metrics_cleanup_loop,
+        "tool_result_cleanup_loop": tool_result_cleanup_loop,
         "workflow_audit_cleanup_loop": workflow_audit_cleanup_loop,
         "metrics_archive_loop": metrics_archive_loop,
         "span_cleanup_loop": span_cleanup_loop,
@@ -194,6 +196,20 @@ def start_periodic_tasks(
             run_db=getattr(db_executor, "run", None),
         ),
         name="metrics-cleanup",
+    )
+    from gobby.storage.tool_results import ToolResultStore
+
+    tool_result_store = ToolResultStore(
+        runner.database,
+        runner.config.get_tool_result_offload_config(),
+    )
+    runner._tool_results_cleanup_task = asyncio.create_task(
+        loops["tool_result_cleanup_loop"](
+            tool_result_store,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="tool-result-cleanup",
     )
     runner._workflow_audit_cleanup_task = asyncio.create_task(
         loops["workflow_audit_cleanup_loop"](
@@ -428,6 +444,7 @@ def start_periodic_tasks(
         task
         for task in (
             runner._metrics_cleanup_task,
+            runner._tool_results_cleanup_task,
             runner._workflow_audit_cleanup_task,
             runner._metrics_archive_task,
             runner._model_metadata_refresh_task,

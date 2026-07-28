@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from gobby.test_quality.baseline import AuditBaseline, diff_report
 from gobby.test_quality.models import AuditIssue, AuditReport
 from gobby.test_types.render import render_text
+
+pytestmark = pytest.mark.unit
 
 
 def _report(count: int) -> AuditReport:
@@ -40,6 +44,7 @@ def test_render_text_caps_ranked_files_and_omits_known_issue_detail() -> None:
     assert "... 5 additional files omitted" in rendered
     assert "Known baseline errors: 55" in rendered
     assert "failure 0" not in rendered
+    assert "New failing errors:" not in rendered
 
 
 def test_render_text_caps_detailed_new_errors() -> None:
@@ -48,5 +53,10 @@ def test_render_text_caps_detailed_new_errors() -> None:
 
     rendered = render_text(report, diff_report(report, baseline, min_severity="high"))
 
+    assert "New failing errors:" in rendered
     assert rendered.count(": error: ") == 100
     assert "... 5 additional new errors omitted" in rendered
+
+
+def test_render_text_without_baseline_labels_all_errors() -> None:
+    assert "\nErrors:\n" in render_text(_report(1))

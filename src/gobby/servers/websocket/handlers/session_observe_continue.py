@@ -11,7 +11,7 @@ from uuid import uuid4
 from gobby.agents import kill as agent_kill
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.agents.terminal_delivery import (
-    deliver_existing_terminal_run_unshielded,
+    deliver_existing_terminal_run_in_scope,
     shielded_terminal_delivery,
 )
 from gobby.servers.websocket.db import run_db
@@ -67,7 +67,7 @@ async def _release_source_session(
                             terminal_reason="user_cancelled",
                         )
                     finally:
-                        await deliver_existing_terminal_run_unshielded(
+                        await deliver_existing_terminal_run_in_scope(
                             db=session_manager.db,
                             agent_run_manager=arm,
                             completion_registry=mixin.completion_registry,

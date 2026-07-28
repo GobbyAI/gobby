@@ -28,6 +28,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from gobby.utils.session_context import AGENT_RUN_ID_HEADER
+
 # Mark all tests in this directory as e2e tests
 pytestmark = pytest.mark.e2e
 
@@ -919,7 +921,8 @@ class MCPTestClient:
     Set ``session_id`` to have the client send ``X-Gobby-Session-Id`` on tool
     calls. The daemon's MCP execution endpoint populates the SessionContext
     ContextVar from this header, which tools like ``gobby-tasks.create_task``
-    now require (session_id was removed from their argument schemas).
+    now require (session_id was removed from their argument schemas). Set
+    ``agent_run_id`` when the session belongs to an active agent run.
     """
 
     def __init__(self, daemon_url: str, token: str):
@@ -930,13 +933,19 @@ class MCPTestClient:
             timeout=30.0,
         )
         self.session_id: str | None = None
+        self.agent_run_id: str | None = None
 
     def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
 
     def _session_headers(self) -> dict[str, str]:
-        return {"X-Gobby-Session-Id": self.session_id} if self.session_id else {}
+        headers: dict[str, str] = {}
+        if self.session_id:
+            headers["X-Gobby-Session-Id"] = self.session_id
+        if self.agent_run_id:
+            headers[AGENT_RUN_ID_HEADER] = self.agent_run_id
+        return headers
 
     def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""

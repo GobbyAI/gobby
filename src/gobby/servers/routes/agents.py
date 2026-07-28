@@ -747,7 +747,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.agents.kill import kill_agent
             from gobby.agents.terminal_delivery import (
-                deliver_existing_terminal_run_unshielded,
+                deliver_existing_terminal_run_in_scope,
                 shielded_terminal_delivery,
             )
             from gobby.storage.agents import LocalAgentRunManager
@@ -774,7 +774,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                             run_id,
                         )
                     finally:
-                        await deliver_existing_terminal_run_unshielded(
+                        await deliver_existing_terminal_run_in_scope(
                             db=db,
                             agent_run_manager=manager,
                             completion_registry=server.services.completion_registry,

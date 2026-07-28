@@ -274,9 +274,33 @@ class PostgresHubDatabase:
         if statement_timeout_ms <= 0 or lock_timeout_ms <= 0:
             raise ValueError("Transaction bounds must be positive milliseconds")
         with self.transaction() as txn:
-            txn.execute(f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'")
-            txn.execute(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'")
-            yield txn
+            settings = txn.execute(
+                "SELECT current_setting('statement_timeout') AS statement_timeout, "
+                "current_setting('lock_timeout') AS lock_timeout"
+            ).fetchone()
+            if settings is None:
+                raise RuntimeError("Could not read transaction timeout settings")
+            statement_timeout = str(settings["statement_timeout"])
+            lock_timeout = str(settings["lock_timeout"])
+            txn.execute(
+                "SELECT set_config('statement_timeout', %s, true)",
+                (f"{statement_timeout_ms}ms",),
+            )
+            txn.execute(
+                "SELECT set_config('lock_timeout', %s, true)",
+                (f"{lock_timeout_ms}ms",),
+            )
+            try:
+                yield txn
+            finally:
+                txn.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (statement_timeout,),
+                )
+                txn.execute(
+                    "SELECT set_config('lock_timeout', %s, true)",
+                    (lock_timeout,),
+                )
 
     @contextmanager
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:

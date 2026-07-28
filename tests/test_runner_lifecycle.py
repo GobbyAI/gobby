@@ -5,7 +5,7 @@ import logging
 import os
 import signal
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import ExitStack, nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -412,6 +412,7 @@ class TestInitSubsystems:
         runner.completion_registry = None
         runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
         runner.agent_lifecycle_monitor = None
+        runner.attention_manager = None
         runner.detection_registry = None
         runner.communications_manager = None
         runner.code_indexer = None
@@ -1365,10 +1366,19 @@ class TestShutdownDaemonServices:
             assert cancel_futures is True
             events.append("db-executor")
 
+        executor_state = {"joined": False}
+
+        def join_executor() -> None:
+            executor_state["joined"] = True
+
         runner.cron_scheduler = SimpleNamespace(stop=fail_cron_stop)
         runner.message_processor = SimpleNamespace(stop=stop_message_processor)
         runner.mcp_proxy.disconnect_all = disconnect_mcp
-        runner.db_executor = SimpleNamespace(shutdown=shutdown_executor, join=lambda: None)
+        runner.db_executor = SimpleNamespace(
+            shutdown=shutdown_executor,
+            join=join_executor,
+            is_joined=lambda: executor_state["joined"],
+        )
         runner.database.close.side_effect = lambda: events.append("database")
         server = SimpleNamespace(should_exit=False)
 
@@ -1459,7 +1469,11 @@ class TestShutdownDaemonServices:
             join_calls += 1
 
         await runner_lifecycle_shutdown._shutdown_database_executor(
-            SimpleNamespace(shutdown=shutdown_executor, join=join_executor)
+            SimpleNamespace(
+                shutdown=shutdown_executor,
+                join=join_executor,
+                is_joined=lambda: False,
+            )
         )
 
         assert shutdown_calls == [True]
@@ -1530,6 +1544,9 @@ class TestShutdownDaemonServices:
             import gobby.runner_lifecycle_shutdown as shutdown
 
             class BlockingExecutor:
+                def is_joined(self) -> bool:
+                    return False
+
                 def shutdown(self, *, cancel_futures: bool = True) -> None:
                     assert cancel_futures is True
 
@@ -1546,7 +1563,7 @@ class TestShutdownDaemonServices:
             capture_output=True,
             check=False,
             text=True,
-            timeout=1.0,
+            timeout=3.0,
         )
 
         assert completed.returncode == 0, completed.stderr
@@ -2503,6 +2520,40 @@ class TestMetricsCleanupLoop:
             assert task.done()
             assert runner.metrics_manager.cleanup_old_metrics.call_count == 0
 
+    @pytest.mark.asyncio
+    async def test_tool_result_cleanup_loop_runs_once_and_stops(self) -> None:
+        from gobby.runner_maintenance_recurring import tool_result_cleanup_loop
+
+        shutdown_requested = False
+        cleanup_calls = 0
+
+        def cleanup_expired() -> int:
+            nonlocal cleanup_calls, shutdown_requested
+            cleanup_calls += 1
+            shutdown_requested = True
+            return 2
+
+        async def run_db(func: Callable[[], int]) -> int:
+            return func()
+
+        sleep_delays: list[float] = []
+
+        async def sleep(delay: float) -> None:
+            sleep_delays.append(delay)
+
+        await tool_result_cleanup_loop(
+            SimpleNamespace(cleanup_expired=cleanup_expired),
+            lambda: shutdown_requested,
+            run_db=run_db,
+            interval_seconds=1,
+            startup_delay_seconds=0,
+            sleep=sleep,
+        )
+
+        assert cleanup_calls == 1
+        assert shutdown_requested is True
+        assert sleep_delays == [1]
+
 
 class TestSignalHandlerBehavior:
     """Tests for signal handler behavior."""
@@ -2950,9 +3001,10 @@ class TestMessageProcessorWebSocketIntegration:
             mock_communications_manager.set_websocket_broadcast.assert_called_once_with(
                 mock_ws_server.broadcast
             )
-            mock_communications_manager.set_voice_transcriber_getter.assert_called_once_with(
-                mock_ws_server.get_voice_transcriber
-            )
+        mock_communications_manager.set_voice_transcriber_getter.assert_called_once_with(
+            mock_ws_server.get_voice_transcriber,
+            timeout_seconds=mock_config_with_websocket.voice.transcription_timeout_seconds,
+        )
 
 
 class TestShutdownLoop:
@@ -3539,11 +3591,10 @@ class TestAgentRestartRecoveryHelpers:
             "active-run": ["active-session"],
             "terminal-run": ["terminal-session"],
         }.get(run_id, [])
+        subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
         run_manager = MagicMock()
         run_manager.list_active.return_value = [active]
-        run_manager.list_by_status.side_effect = (
-            lambda status, **_kwargs: [terminal] if status == "success" else []
-        )
+        run_manager.get.return_value = terminal
         wake = AsyncMock(return_value={"ism_persisted": True})
         registry = CompletionEventRegistry(wake_callback=wake)
         runner = SimpleNamespace(
@@ -3620,11 +3671,10 @@ class TestAgentRestartRecoveryHelpers:
             return ["session-1"]
 
         subscriber_manager.get_completion_subscribers.side_effect = get_subscribers
+        subscriber_manager.list_completion_ids.return_value = ["racing-run"]
         run_manager = MagicMock()
         run_manager.list_active.return_value = [run]
-        run_manager.list_by_status.side_effect = (
-            lambda status, **_kwargs: [run] if status == "success" else []
-        )
+        run_manager.get.return_value = run
         wake = AsyncMock(return_value={"ism_persisted": True})
         runner = SimpleNamespace(
             database=MagicMock(),
@@ -3675,9 +3725,9 @@ class TestAgentRestartRecoveryHelpers:
         run = SimpleNamespace(id="active-run", continuation_prompt="Inspect result")
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
+        subscriber_manager.list_completion_ids.return_value = []
         run_manager = MagicMock()
         run_manager.list_active.return_value = [run]
-        run_manager.list_by_status.return_value = []
         registry = CompletionEventRegistry()
         runner = SimpleNamespace(
             database=MagicMock(),
@@ -3721,10 +3771,9 @@ class TestAgentRestartRecoveryHelpers:
         terminal = SimpleNamespace(id="terminal-run", status="error")
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
+        subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
         run_manager = MagicMock()
-        run_manager.list_by_status.side_effect = (
-            lambda status, **_kwargs: [terminal] if status == "error" else []
-        )
+        run_manager.get.return_value = terminal
         wake = AsyncMock(
             side_effect=[
                 {"ism_persisted": False, "error_code": "ism_persist_failed"},
@@ -3769,11 +3818,23 @@ class TestAgentRestartRecoveryHelpers:
         terminal = SimpleNamespace(id="terminal-run", status="cancelled")
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.return_value = ["deleted-session"]
-        run_manager = MagicMock()
-        run_manager.list_by_status.side_effect = (
-            lambda status, **_kwargs: [terminal] if status == "cancelled" else []
+        subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
+        removed: list[tuple[str, list[str]]] = []
+        subscriber_manager.remove_completion_subscribers.side_effect = (
+            lambda run_id, *, session_ids: removed.append((run_id, session_ids))
         )
-        wake = AsyncMock(return_value={"error_code": "session_not_found"})
+        run_manager = MagicMock()
+        run_manager.get.return_value = terminal
+        wake_calls: list[tuple[str, str, dict[str, str]]] = []
+
+        async def wake(
+            session_id: str,
+            message: str,
+            metadata: dict[str, str],
+        ) -> dict[str, str]:
+            wake_calls.append((session_id, message, metadata))
+            return {"error_code": "session_not_found"}
+
         runner = SimpleNamespace(
             database=MagicMock(),
             db_executor=None,
@@ -3798,19 +3859,16 @@ class TestAgentRestartRecoveryHelpers:
             )
 
         assert delivered == 1
-        wake.assert_awaited_once_with(
-            "deleted-session",
-            "Agent terminal-run reached terminal status cancelled",
-            {"status": "cancelled", "run_id": "terminal-run"},
-        )
-        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
-            "terminal-run",
-            session_ids=["deleted-session"],
-        )
+        assert wake_calls == [
+            (
+                "deleted-session",
+                "Agent terminal-run reached terminal status cancelled",
+                {"status": "cancelled", "run_id": "terminal-run"},
+            )
+        ]
+        assert removed == [("terminal-run", ["deleted-session"])]
         subscriber_manager.get_completion_subscribers.assert_called_once_with("terminal-run")
-        assert run_manager.list_by_status.call_count == len(
-            runner_lifecycle_agents.TERMINAL_AGENT_RUN_STATUSES
-        )
+        run_manager.get.assert_called_once_with("terminal-run")
 
     @pytest.mark.asyncio
     async def test_startup_terminal_redelivery_skips_parked_daemon_stop_originals(self) -> None:
@@ -3832,12 +3890,26 @@ class TestAgentRestartRecoveryHelpers:
             "genuine-run": ["genuine-session"],
             "parked-run": ["parked-session"],
         }.get(run_id, [])
+        subscriber_manager.list_completion_ids.return_value = ["genuine-run", "parked-run"]
+        removed: list[tuple[str, list[str]]] = []
+        subscriber_manager.remove_completion_subscribers.side_effect = (
+            lambda run_id, *, session_ids: removed.append((run_id, session_ids))
+        )
         run_manager = MagicMock()
-        run_manager.list_by_status.side_effect = lambda status, **_kwargs: {
-            "error": [genuine],
-            "cancelled": [parked],
-        }.get(status, [])
-        wake = AsyncMock(return_value={"ism_persisted": True})
+        run_manager.get.side_effect = lambda run_id: {
+            "genuine-run": genuine,
+            "parked-run": parked,
+        }[run_id]
+        wake_calls: list[tuple[str, str, dict[str, str]]] = []
+
+        async def wake(
+            session_id: str,
+            message: str,
+            metadata: dict[str, str],
+        ) -> dict[str, bool]:
+            wake_calls.append((session_id, message, metadata))
+            return {"ism_persisted": True}
+
         runner = SimpleNamespace(
             database=MagicMock(),
             db_executor=None,
@@ -3862,15 +3934,14 @@ class TestAgentRestartRecoveryHelpers:
             )
 
         assert delivered == 1
-        wake.assert_awaited_once_with(
-            "genuine-session",
-            "Agent genuine-run reached terminal status error",
-            {"status": "error", "run_id": "genuine-run"},
-        )
-        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
-            "genuine-run",
-            session_ids=["genuine-session"],
-        )
+        assert wake_calls == [
+            (
+                "genuine-session",
+                "Agent genuine-run reached terminal status error",
+                {"status": "error", "run_id": "genuine-run"},
+            )
+        ]
+        assert removed == [("genuine-run", ["genuine-session"])]
         # The parked original is skipped entirely: its durable subscriber rows
         # are retained for the reaper/genuine completion instead of receiving a
         # false cancellation redelivery at startup.

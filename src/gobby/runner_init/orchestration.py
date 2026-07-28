@@ -507,6 +507,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 # runner project plus every memory-bearing project with a repo
                 # path.
                 codewiki_targets: dict[str, tuple[str, str]] = {}
+                memory_scope_enumeration_succeeded = True
                 current_project = pm.get(runner.project_id) if runner.project_id else None
                 if current_project is not None and current_project.repo_path:
                     codewiki_targets[current_project.id] = (
@@ -529,6 +530,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                             enum_err,
                             exc_info=True,
                         )
+                        memory_scope_enumeration_succeeded = False
                         memory_scopes = []
                     for memory_scope in memory_scopes:
                         memory_project_id = memory_scope.project_id
@@ -541,19 +543,25 @@ def init_orchestration(runner: GobbyRunner) -> None:
                                 memory_project.repo_path,
                             )
 
-                registered_count = register_codewiki_nightly_crons(
-                    cron_storage=runner.cron_storage,
-                    cron_executor=cron_executor,
-                    projects=[
-                        (project_id, project_name, repo_path)
-                        for project_id, (project_name, repo_path) in codewiki_targets.items()
-                    ],
-                    wiki_config=runner.config.wiki,
-                )
-                logger.debug(
-                    "Codewiki nightly cron handlers registered for %d project(s)",
-                    registered_count,
-                )
+                if memory_scope_enumeration_succeeded:
+                    registered_count = register_codewiki_nightly_crons(
+                        cron_storage=runner.cron_storage,
+                        cron_executor=cron_executor,
+                        projects=[
+                            (project_id, project_name, repo_path)
+                            for project_id, (project_name, repo_path) in codewiki_targets.items()
+                        ],
+                        wiki_config=runner.config.wiki,
+                    )
+                    logger.debug(
+                        "Codewiki nightly cron handlers registered for %d project(s)",
+                        registered_count,
+                    )
+                else:
+                    logger.warning(
+                        "Skipping codewiki nightly cron reconciliation because memory scope "
+                        "enumeration failed"
+                    )
             except Exception as e:
                 mark_service_degraded(runner, "codewiki_nightly_cron")
                 logger.exception("Failed to register codewiki nightly cron handler: %s", e)

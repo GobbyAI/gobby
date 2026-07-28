@@ -2,7 +2,12 @@
 
 Runner lifecycle, dispatch/adapters, migrations, core storage, test tooling, and remaining infrastructure fixes.
 
-Unresolved original findings: **57**
+- Forward-port source: `479f36f3719b3e056fcd067a6494bdc5ea495303`
+- Original task: `#19008`
+- Integration task: `#19174`
+- Packet base: `c3c13e0ed4af73e6dc103322c559f16ffa5e5bd5`
+
+Source findings: **57**
 
 Original finding IDs: 133, 135-137, 257, 289, 293-294, 327, 380, 459, 472-480, 484-487, 491, 498, 547, 552-553, 577-578, 581-584, 590-591, 609-612, 619, 621, 662, 678, 683, 745-746, 756-759, 761-762, 767, 777, 783
 
@@ -233,3 +238,78 @@ In @tests/dispatch/test_dispatcher.py around lines 2138 - 2141, Replace the unty
 ## Finding #783
 
 In @tests/storage/test_storage_tasks.py around lines 58 - 60, Introduce a shared test constant or fixture for the repeated non-empty validation criteria, preferably in tests/conftest.py, and replace the literal in this create_task call and the other occurrences noted in the comment, including sibling test files where applicable. Reuse that shared value consistently without changing task behavior.
+
+## Disposition Ledger
+
+| Finding | Disposition | Accounting |
+| --- | --- | --- |
+| #133 | Carried | provider contract coverage now asserts the unknown fourth tool outcome. |
+| #135 | Carried | removed the duplicate epic-reviewer prompt registration test. |
+| #136 | Carried | removed the ineffective description count assertion. |
+| #137 | Carried | the dispatch handoff test directly awaits its condition. |
+| #257 | Carried | sandbox-record tests now carry the module-level unit marker. |
+| #289 | Obsolete | the referenced close-evidence regression fixture was removed by the newer close contract. |
+| #293 | Obsolete | the referenced regression test module no longer exists. |
+| #294 | Obsolete | the known-defect snapshot module was removed with the superseded behavior. |
+| #327 | Carried | ambiguity state is insertion ordered and evicted FIFO. |
+| #380 | Obsolete | the referenced verification-receipt test module no longer exists. |
+| #459 | Carried | cross-module terminal delivery uses the semantic `deliver_existing_terminal_run_in_scope` name. |
+| #472 | Carried | runner construction uses direct phases and one rollback handler without a ledger. |
+| #473 | Carried | recorded cancellation wins over a concurrent reap failure. |
+| #474 | Carried | the parent gate watchdog includes a grace interval beyond the child deadline. |
+| #475 | Carried | terminal replay starts from distinct durable subscriber completion IDs. |
+| #476 | Carried | `DatabaseExecutor` owns an explicit, idempotent join-state contract. |
+| #477 | Carried | startup logs a non-zero recovered subscription count. |
+| #478 | Carried | fail-open and claimed PID ownership share a direct `release()` contract. |
+| #479 | Obsolete | removing the single-use rollback ledger removed its callback cleanup loop. |
+| #480 | Carried | async rollback closes on the active loop or with `asyncio.run`, without a helper thread. |
+| #484 | Carried | `join()` atomically closes executor admission and reports shutdown state. |
+| #485 | Carried | bounded transactions restore ambient and nested timeout settings on every exit. |
+| #486 | Carried | timeout changes use parameterized local `set_config` calls. |
+| #487 | Carried | pool timeout retry checks the pool and waits a bounded backoff before one retry. |
+| #491 | Carried | wake wiring invokes `wait_for_agent` through the public registry API. |
+| #498 | Carried | non-positive transaction bounds fail before transaction entry. |
+| #547 | Carried | duplicate migration 339 was removed without compatibility scaffolding. |
+| #552 | Carried | CLI output collisions with either baseline path are rejected before writing. |
+| #553 | Carried | rendered headings distinguish all errors from new failing errors. |
+| #577 | Adapted | snapshot success, spawn failure, and lineage failure are independent tests with shared setup, while the current success case retains the paged evidence-handle contract instead of restoring inline snapshots. |
+| #578 | Carried | the always-raising finalizer stub returns `Never`. |
+| #581 | Carried | baseline quality tests carry a module-level unit marker. |
+| #582 | Carried | audit type tests carry a module-level unit marker. |
+| #583 | Carried | mypy parser tests carry a module-level unit marker. |
+| #584 | Carried | render type tests carry a module-level unit marker. |
+| #590 | Carried | Claude redirect actions are bounded with ellipsis inside the deny-reason cap. |
+| #591 | Carried | empty redaction values are skipped before replacement. |
+| #609 | Obsolete | the current security contract deliberately rejects out-of-root audit targets. |
+| #610 | Carried | corpus loading skips malformed rules, while an explicit strict test validates live rules. |
+| #611 | Carried | corpus classification reports missing redirects, missing restrictions, and unclassified rules separately. |
+| #612 | Already satisfied | the skill-fetch template is already line-wrapped without changing its value. |
+| #619 | Carried | the mailbox test proves the same message ID survives both reads. |
+| #621 | Carried | the module-level unit marker covers all four baseline tests. |
+| #662 | Carried | tool-result saves are write-only and expiry runs in a daily lifecycle task. |
+| #678 | Carried | BM25 result IDs compare as a set while scores remain monotonic. |
+| #683 | Carried | direct-exec normalization and correlation share one allowlist. |
+| #745 | Carried | cron output and error details are bounded before notification delivery. |
+| #746 | Carried | failed memory-scope enumeration skips CodeWiki cron reconciliation; a true empty set still reconciles. |
+| #756 | Carried | cell and session ambiguity collections preserve order and evict the oldest entry. |
+| #757 | Carried | missing literal commands now produce an empty input object, never `command: None`. |
+| #758 | Already satisfied | direct terminal-result selection already uses explicit branching. |
+| #759 | Carried | yielded-cell extraction scans all output text and rejects ambiguous markers. |
+| #761 | Adapted | the current shared daemon-config breaker remains owned by `CodeIndexContext`, which now applies the configured failure threshold instead of creating a second worker-local breaker. |
+| #762 | Carried | every armed vector/gateway breaker resolves exactly once on each terminal path. |
+| #767 | Carried | the normalized-outcome constraint is added `NOT VALID` and validated after data repair. |
+| #777 | Already satisfied | the evidence preparer replacement is a fully typed local helper. |
+| #783 | Carried | storage task tests reuse one non-empty validation-criteria constant. |
+
+## Reconciliation audit
+
+- All eight paths shared with current `0.5.0` work were reviewed, including five clean
+  auto-merges and the three code-index/stage-review conflicts.
+- The shared daemon-config breaker remains authoritative. Source probe accounting was
+  adapted so every armed shared/vector breaker resolves exactly once on each terminal path.
+- Migration `339` duplicated migration `338`'s interactive/stage unique index names,
+  columns, and `expired_at IS NULL` predicates. Because `0.5.0` is unshipped, `339` is
+  removed without compatibility scaffolding.
+- Migration `342` repairs provisional outcomes before adding its constraint `NOT VALID`,
+  then validates the constraint separately. Current migrations `345` and `346` remain
+  unchanged and ordered after it.

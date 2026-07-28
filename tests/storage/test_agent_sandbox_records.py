@@ -9,6 +9,8 @@ import pytest
 
 from gobby.storage.agents._sandbox_records import _MAX_COUNTED_VIOLATIONS, sandbox_record
 
+pytestmark = pytest.mark.unit
+
 
 def test_sandbox_record_exposes_runtime_policy_and_recent_violations(
     monkeypatch: pytest.MonkeyPatch,

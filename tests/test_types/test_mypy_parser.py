@@ -12,6 +12,8 @@ from gobby.test_types._mypy import (
     run_mypy,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_parse_mypy_output_maps_error_variants_to_namespaced_diagnostics(
     tmp_path: Path,

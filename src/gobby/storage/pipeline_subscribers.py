@@ -72,6 +72,13 @@ class PipelineCompletionSubscriberMixin:
         )
         return [row["session_id"] for row in rows]
 
+    def list_completion_ids(self) -> list[str]:
+        """List completion IDs that still have durable subscribers."""
+        rows = self.db.fetchall(
+            "SELECT DISTINCT completion_id FROM completion_subscribers ORDER BY completion_id"
+        )
+        return [str(row["completion_id"]) for row in rows]
+
     def remove_completion_subscribers(
         self,
         completion_id: str,

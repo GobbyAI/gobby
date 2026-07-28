@@ -476,7 +476,7 @@ class AgentCleanupHandler:
 
             run_ids = list(dict.fromkeys(transitioned))
             for run_id in run_ids:
-                delivered = await terminal_delivery.deliver_existing_terminal_run_unshielded(
+                delivered = await terminal_delivery.deliver_existing_terminal_run_in_scope(
                     db=self._db,
                     agent_run_manager=self._agent_run_manager,
                     completion_registry=self._completion_registry,

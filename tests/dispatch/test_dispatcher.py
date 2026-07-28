@@ -5382,7 +5382,7 @@ async def test_unattached_spawn_cleanup_delivers_terminal_run(
     )
     monkeypatch.setattr(
         spawn_actions,
-        "deliver_existing_terminal_run_unshielded",
+        "deliver_existing_terminal_run_in_scope",
         deliver_terminal_run,
     )
 

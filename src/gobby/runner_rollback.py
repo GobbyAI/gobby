@@ -4,36 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_PENDING_ASYNC_ROLLBACK_TASKS: set[asyncio.Task[None]] = set()
 
-class ConstructionRollbackLedger:
-    """Run registered construction compensations once, in reverse order."""
 
-    def __init__(self) -> None:
-        self._callbacks: list[tuple[str, Callable[[], None]]] = []
-        self._committed = False
-
-    def add(self, name: str, callback: Callable[[], None]) -> None:
-        self._callbacks.append((name, callback))
-
-    def commit(self) -> None:
-        self._committed = True
-        self._callbacks.clear()
-
-    def rollback(self) -> None:
-        if self._committed:
-            return
-        for name, callback in reversed(self._callbacks):
-            try:
-                callback()
-            except BaseException:
-                logger.warning("Runner construction rollback failed for %s", name, exc_info=True)
-        self._callbacks.clear()
+def _settled_async_close(task: asyncio.Task[None]) -> None:
+    _PENDING_ASYNC_ROLLBACK_TASKS.discard(task)
+    try:
+        task.result()
+    except BaseException:
+        logger.warning("Async construction rollback did not settle cleanly", exc_info=True)
 
 
 def _settle_async_close(awaitable: Coroutine[Any, Any, Any]) -> None:
@@ -43,26 +27,14 @@ def _settle_async_close(awaitable: Coroutine[Any, Any, Any]) -> None:
         await asyncio.wait_for(awaitable, timeout=5.0)
 
     try:
-        asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
         asyncio.run(settle_with_timeout())
         return
 
-    error: list[BaseException] = []
-
-    def settle() -> None:
-        try:
-            asyncio.run(settle_with_timeout())
-        except BaseException as exc:
-            error.append(exc)
-
-    thread = threading.Thread(target=settle, name="gobby-init-rollback", daemon=True)
-    thread.start()
-    thread.join(timeout=5.0)
-    if thread.is_alive():
-        raise TimeoutError("Async construction rollback did not settle")
-    if error:
-        raise error[0]
+    task = loop.create_task(settle_with_timeout(), name="gobby-init-rollback")
+    _PENDING_ASYNC_ROLLBACK_TASKS.add(task)
+    task.add_done_callback(_settled_async_close)
 
 
 def rollback_runner_resources(runner: Any) -> None:
@@ -109,4 +81,4 @@ def rollback_runner_resources(runner: Any) -> None:
     settle("telemetry", shutdown_telemetry)
 
 
-__all__ = ["ConstructionRollbackLedger", "rollback_runner_resources"]
+__all__ = ["rollback_runner_resources"]

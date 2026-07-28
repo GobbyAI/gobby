@@ -33,6 +33,7 @@ GATE_DIAGNOSTIC_TIMEOUT_MS = 2_000
 GATE_TERMINATE_TIMEOUT_MS = 1_000
 GATE_RETRY_BACKOFF_SECONDS = 0.1
 GATE_REAP_TIMEOUT_SECONDS = 2.0
+GATE_WATCHDOG_GRACE_SECONDS = 1.0
 
 
 class RunnerGateError(RuntimeError):
@@ -201,14 +202,24 @@ async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
 async def _settle_reap_under_cancellation(process: asyncio.subprocess.Process) -> None:
     owned = asyncio.create_task(_kill_and_reap(process), name="runner-gate-reap")
     cancellation: asyncio.CancelledError | None = None
+    reap_error: BaseException | None = None
     while not owned.done():
         try:
             await asyncio.shield(owned)
         except asyncio.CancelledError as exc:
             cancellation = cancellation or exc
-    owned.result()
+        except BaseException as exc:
+            reap_error = exc
+            break
+    if reap_error is None:
+        try:
+            owned.result()
+        except BaseException as exc:
+            reap_error = exc
     if cancellation is not None:
         raise cancellation
+    if reap_error is not None:
+        raise reap_error
 
 
 async def acquire_runner_gate(
@@ -244,7 +255,7 @@ async def acquire_runner_gate(
     try:
         stdout, stderr = await asyncio.wait_for(
             process.communicate(request),
-            timeout=deadline_seconds,
+            timeout=deadline_seconds + GATE_WATCHDOG_GRACE_SECONDS,
         )
     except TimeoutError as exc:
         await _settle_reap_under_cancellation(process)

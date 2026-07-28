@@ -302,14 +302,16 @@ def extract_exec_session_id(data: Mapping[str, Any]) -> str | None:
 def extract_yielded_cell_id(data: Mapping[str, Any]) -> str | None:
     """Read the functions wrapper correlation token without inferring outcome."""
     output = data.get("tool_output", data.get("tool_response"))
+    yielded_cells: set[str] = set()
     for text in _iter_output_text(output):
         for line in text.splitlines():
             first_nonblank = line.strip()
             if not first_nonblank:
                 continue
             match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
-            return match.group(1) if match else None
-    return None
+            if match:
+                yielded_cells.add(match.group(1))
+    return next(iter(yielded_cells)) if len(yielded_cells) == 1 else None
 
 
 def extract_wait_cell_id(data: Mapping[str, Any]) -> str | None:
@@ -372,8 +374,8 @@ class ExecutionChainCorrelator:
         self._calls: dict[str, PendingExecution] = {}
         self._cells: dict[str, PendingExecution] = {}
         self._sessions: dict[str, PendingExecution] = {}
-        self._ambiguous_cells: set[str] = set()
-        self._ambiguous_sessions: set[str] = set()
+        self._ambiguous_cells: dict[str, None] = {}
+        self._ambiguous_sessions: dict[str, None] = {}
         self._live_sequence = 0
 
     def register_call(
@@ -495,7 +497,9 @@ class ExecutionChainCorrelator:
             return data
         data["_original_tool_name"] = name
         data["tool_name"] = "Bash"
-        data["tool_input"] = {"command": execution.literal_command}
+        data["tool_input"] = (
+            {"command": execution.literal_command} if execution.literal_command is not None else {}
+        )
         data["verification_execution_id"] = execution.outer_call_id
         if resolution.state == "pending":
             data["_verification_pending"] = True
@@ -530,8 +534,8 @@ class ExecutionChainCorrelator:
             "calls": {key: value.to_state() for key, value in self._calls.items()},
             "cells": {key: value.to_state() for key, value in self._cells.items()},
             "sessions": {key: value.to_state() for key, value in self._sessions.items()},
-            "ambiguous_cells": sorted(self._ambiguous_cells),
-            "ambiguous_sessions": sorted(self._ambiguous_sessions),
+            "ambiguous_cells": list(self._ambiguous_cells),
+            "ambiguous_sessions": list(self._ambiguous_sessions),
         }
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
@@ -577,8 +581,8 @@ class ExecutionChainCorrelator:
         ):
             pending.pop(key, None)
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
-                ambiguous.pop()
-            ambiguous.add(key)
+                ambiguous.pop(next(iter(ambiguous)))
+            ambiguous[key] = None
             return
         if ambiguous is not None and key in ambiguous:
             return
@@ -586,10 +590,10 @@ class ExecutionChainCorrelator:
             pending.pop(next(iter(pending)))
         pending[key] = execution
 
-    def _hydrate_ambiguities(self, value: Any) -> set[str]:
+    def _hydrate_ambiguities(self, value: Any) -> dict[str, None]:
         if not isinstance(value, list):
-            return set()
-        return {item for item in value[: self._max_pending] if isinstance(item, str) and item}
+            return {}
+        return {item: None for item in value[: self._max_pending] if isinstance(item, str) and item}
 
     def _clear_execution(self, execution: PendingExecution) -> None:
         if execution.cell_id is not None:

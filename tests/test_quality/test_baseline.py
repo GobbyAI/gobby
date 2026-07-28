@@ -8,6 +8,8 @@ import pytest
 from gobby.test_quality.baseline import load_baseline, write_baseline
 from gobby.test_quality.models import AuditIssue, AuditReport
 
+pytestmark = pytest.mark.unit
+
 
 def _report(*, message: str) -> AuditReport:
     return AuditReport(

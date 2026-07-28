@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
@@ -50,6 +51,8 @@ from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
 
+POOL_TIMEOUT_RETRY_BACKOFF_SECONDS = 0.05
+
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -76,6 +79,8 @@ def pool_connection(
                 "PostgreSQL hub pool acquisition timed out; retrying once: pool_stats=%s",
                 pool_stats(),
             )
+            pool.check()
+            time.sleep(POOL_TIMEOUT_RETRY_BACKOFF_SECONDS)
             try:
                 conn = stack.enter_context(pool.connection())
             except PoolTimeout:

@@ -302,6 +302,19 @@ async def test_sync_worker_loop_uses_context_daemon_config_breaker(
     assert shutdown.is_set()
 
 
+def test_context_uses_configured_daemon_failure_threshold() -> None:
+    config = CodeIndexConfig(sync_worker_breaker_failure_threshold=2)
+    context = CodeIndexContext(
+        storage=MagicMock(),
+        gcode_gateway=MagicMock(),
+        config=config,
+    )
+
+    context.daemon_config_breaker.record_failure()
+
+    assert context.daemon_config_breaker.state is BreakerState.CLOSED
+
+
 @pytest.mark.asyncio
 async def test_open_breaker_fetches_graph_only_batches(tmp_path: Path) -> None:
     paths = [f"src/f{i}.py" for i in range(5)]
@@ -314,7 +327,7 @@ async def test_open_breaker_fetches_graph_only_batches(tmp_path: Path) -> None:
 
     await _sync_pass(
         storage=storage,
-        gcode_gateway=gateway,  # type: ignore[arg-type]
+        gcode_gateway=cast(Any, gateway),
         config=_config(),
         batch_size=50,
         vector_breaker=breaker,
@@ -520,6 +533,31 @@ async def test_daemon_config_half_open_allows_one_probe_then_resumes(
     assert_breaker_state(gateway_breaker, BreakerState.CLOSED)
     assert gateway.vector_calls == paths
     assert gateway.graph_calls == paths
+
+
+@pytest.mark.asyncio
+async def test_daemon_config_failure_resolves_consumed_vector_probe(tmp_path: Path) -> None:
+    path = "src/f0.py"
+    _write_files(tmp_path, [path])
+    storage = _make_storage(tmp_path, [_indexed_file(path)])
+    gateway = DaemonConfigGateway()
+    clock = FakeClock()
+    vector_breaker = make_breaker(clock, failure_threshold=1)
+    vector_breaker.record_failure()
+    clock.now = 30.0
+    gateway_breaker = make_breaker(failure_threshold=1)
+
+    await _sync_pass(
+        storage=storage,
+        gcode_gateway=gateway,  # type: ignore[arg-type]
+        config=_config(),
+        batch_size=50,
+        vector_breaker=vector_breaker,
+        gateway_breaker=gateway_breaker,
+    )
+
+    assert vector_breaker.state is BreakerState.CLOSED
+    assert gateway_breaker.state is BreakerState.OPEN
 
 
 @pytest.mark.asyncio

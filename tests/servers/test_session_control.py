@@ -501,7 +501,7 @@ class TestContinueInChatTerminalKill:
             ),
             patch(
                 "gobby.servers.websocket.handlers.session_observe_continue."
-                "deliver_existing_terminal_run_unshielded",
+                "deliver_existing_terminal_run_in_scope",
                 new=AsyncMock(return_value=True),
             ) as deliver_terminal_run,
         ):

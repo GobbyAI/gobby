@@ -115,6 +115,7 @@ class TestInterAgentMessagingE2E:
 
         # Step 2: Child reads its undelivered inbox.
         mcp_client.session_id = child_session_id
+        mcp_client.agent_run_id = run_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="get_inter_session_messages",
@@ -160,6 +161,7 @@ class TestInterAgentMessagingE2E:
 
         # Step 4: Parent reads the response from its undelivered inbox.
         mcp_client.session_id = parent_session_id
+        mcp_client.agent_run_id = None
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="get_inter_session_messages",
@@ -290,6 +292,7 @@ class TestInterAgentMessagingE2E:
 
         # First read returns the message.
         mcp_client.session_id = child_session_id
+        mcp_client.agent_run_id = run_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="get_inter_session_messages",
@@ -300,7 +303,9 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert len(result.get("messages", [])) >= 1, "First read should return messages"
+        first_messages = result.get("messages", [])
+        assert len(first_messages) >= 1, "First read should return messages"
+        first_message_id = first_messages[0]["id"]
 
         # A second read returns it again because history access does not acknowledge.
         raw_result = mcp_client.call_tool(
@@ -313,7 +318,9 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert len(result.get("messages", [])) >= 1, "Second read should preserve messages"
+        second_messages = result.get("messages", [])
+        assert len(second_messages) >= 1, "Second read should preserve messages"
+        assert second_messages[0]["id"] == first_message_id
 
         # Cleanup
         cli_events.unregister_test_agent(run_id)

@@ -22,7 +22,10 @@ SET normalized_outcome = 'pending'
 WHERE normalized_outcome = 'provisional';
 
 ALTER TABLE verification_receipts
-    ADD CONSTRAINT verification_receipts_normalized_outcome_check
-    CHECK (
-        normalized_outcome IN ('pending', 'success', 'failure', 'unknown', 'conflicting')
-    );
+ADD CONSTRAINT verification_receipts_normalized_outcome_check
+CHECK (
+    normalized_outcome IN ('pending', 'success', 'failure', 'unknown', 'conflicting')
+) NOT VALID;
+
+ALTER TABLE verification_receipts
+VALIDATE CONSTRAINT verification_receipts_normalized_outcome_check;

@@ -124,7 +124,7 @@ SKILL_FETCH_REASON_TEMPLATE = (
 )
 
 
-def bundled_before_tool_block_reasons() -> dict[str, str]:
+def bundled_before_tool_block_reasons(*, validate: bool = False) -> dict[str, str]:
     reasons: dict[str, str] = {}
     rules_path = get_bundled_rules_path()
     for yaml_file in sorted(rules_path.rglob("*.yaml")):
@@ -145,6 +145,10 @@ def bundled_before_tool_block_reasons() -> dict[str, str]:
             if raw_effects is None:
                 raw_effect = rule_data.get("effect")
                 raw_effects = [raw_effect] if raw_effect is not None else []
+            if not isinstance(raw_effects, list):
+                if validate:
+                    raise AssertionError(f"{rule_name} effects must be a list")
+                continue
             block_effects = [
                 effect
                 for effect in raw_effects
@@ -152,9 +156,18 @@ def bundled_before_tool_block_reasons() -> dict[str, str]:
             ]
             if not block_effects:
                 continue
-            assert len(block_effects) == 1, f"{rule_name} must have one block reason"
+            if len(block_effects) != 1:
+                if validate:
+                    raise AssertionError(f"{rule_name} must have one block reason")
+                continue
             reason = block_effects[0].get("reason")
-            assert isinstance(reason, str), f"{rule_name} must have a string block reason"
-            assert rule_name not in reasons, f"duplicate live block rule: {rule_name}"
+            if not isinstance(reason, str):
+                if validate:
+                    raise AssertionError(f"{rule_name} must have a string block reason")
+                continue
+            if rule_name in reasons:
+                if validate:
+                    raise AssertionError(f"duplicate live block rule: {rule_name}")
+                continue
             reasons[rule_name] = reason
     return reasons

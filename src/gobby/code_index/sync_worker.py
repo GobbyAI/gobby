@@ -67,11 +67,29 @@ def _file_needs_graph_sync(file: IndexedFile) -> bool:
     return file.symbol_count > 0 and file.language.lower() in _GRAPH_SYNC_LANGUAGES
 
 
-def _breakers_allow_attempt(*breakers: SyncCircuitBreaker | None) -> bool:
+def _arm_breakers(
+    *breakers: SyncCircuitBreaker | None,
+) -> tuple[SyncCircuitBreaker, ...] | None:
     active = tuple(breaker for breaker in breakers if breaker is not None)
     if any(not breaker.pending_allowed() for breaker in active):
-        return False
-    return all(breaker.should_attempt() for breaker in active)
+        return None
+    armed = tuple(breaker for breaker in active if breaker.should_attempt())
+    if len(armed) != len(active):
+        raise RuntimeError("breaker readiness changed while arming a sync attempt")
+    return armed
+
+
+def _record_breaker_outcomes(
+    armed: tuple[SyncCircuitBreaker, ...],
+    *,
+    failed: tuple[SyncCircuitBreaker | None, ...] = (),
+) -> None:
+    failed_ids = {id(breaker) for breaker in failed if breaker is not None}
+    for breaker in armed:
+        if id(breaker) in failed_ids:
+            breaker.record_failure()
+        else:
+            breaker.record_success()
 
 
 async def _run_db(
@@ -316,10 +334,10 @@ async def _sync_file(
 
     # Vector sync
     if not current.vectors_synced and config.embedding_enabled:
-        if gcode_gateway is not None and _breakers_allow_attempt(
-            gateway_breaker,
-            vector_breaker,
-        ):
+        armed = (
+            _arm_breakers(gateway_breaker, vector_breaker) if gcode_gateway is not None else None
+        )
+        if gcode_gateway is not None and armed is not None:
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vector_file(
@@ -328,26 +346,12 @@ async def _sync_file(
                     file=current,
                     timeout=config.sync_worker_projection_timeout_seconds,
                 )
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
-                await _run_db(
-                    run_db,
-                    storage.clear_projection_cleanup_pending,
-                    project_id,
-                    "vector",
-                )
-                did_work = True
-                if vector_breaker is not None:
-                    vector_breaker.record_success()
             except GcodeDaemonConfigUnavailableError:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_failure()
+                _record_breaker_outcomes(armed, failed=(gateway_breaker,))
                 return did_work
             except GcodeIndexedFileNotFoundError as e:
                 # Per-file data error: never affects the breaker.
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
+                _record_breaker_outcomes(armed)
                 if not await _handle_indexed_file_not_found(
                     storage=storage,
                     config=config,
@@ -361,8 +365,7 @@ async def _sync_file(
                 ):
                     return False
             except GcodeProjectNotFoundError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
+                _record_breaker_outcomes(armed)
                 await _handle_project_not_found(
                     storage=storage,
                     config=config,
@@ -376,41 +379,43 @@ async def _sync_file(
                 )
                 return False
             except GcodeEmbeddingTransportError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                if vector_breaker is not None:
-                    vector_breaker.record_failure()
+                _record_breaker_outcomes(armed, failed=(vector_breaker,))
                 logger.warning(
                     "Sync worker: vector sync transport failure for %s: %s",
                     current.file_path,
                     e,
                 )
             except (GcodeTimeoutError, GcodeUnavailableError) as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                if vector_breaker is not None:
-                    vector_breaker.record_failure()
+                _record_breaker_outcomes(armed, failed=(vector_breaker,))
                 logger.warning(
                     "Sync worker: vector sync transport failure for %s: %s",
                     current.file_path,
                     e,
                 )
             except GcodeCommandError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
+                _record_breaker_outcomes(armed)
                 logger.exception(
                     "Sync worker: vector sync failed for %s: %s",
                     current.file_path,
                     e,
                 )
             except Exception as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
+                _record_breaker_outcomes(armed)
                 logger.exception(
                     "Sync worker: vector sync failed for %s: %s",
                     current.file_path,
                     e,
                 )
+            else:
+                _record_breaker_outcomes(armed)
+                await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
+                await _run_db(
+                    run_db,
+                    storage.clear_projection_cleanup_pending,
+                    project_id,
+                    "vector",
+                )
+                did_work = True
 
     # Graph sync
     if not current.graph_synced and config.graph_enabled:
@@ -427,80 +432,86 @@ async def _sync_file(
                         "graph",
                     )
                     did_work = True
-                elif _breakers_allow_attempt(gateway_breaker):
-                    await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
-                    graph_synced = await _sync_graph(
-                        gcode_gateway=gcode_gateway,
-                        project_root=root,
-                        file=current,
-                        timeout=config.sync_worker_projection_timeout_seconds,
-                    )
-                    if gateway_breaker is not None:
-                        gateway_breaker.record_success()
-                    if graph_synced:
-                        await _run_db(
-                            run_db, storage.mark_graph_synced, current.id, current.content_hash
-                        )
-                        await _run_db(
-                            run_db,
-                            storage.clear_projection_cleanup_pending,
-                            project_id,
-                            "graph",
-                        )
-                        did_work = True
-            except GcodeDaemonConfigUnavailableError:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_failure()
-                return did_work
-            except GcodeIndexedFileNotFoundError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                if not await _handle_indexed_file_not_found(
-                    storage=storage,
-                    config=config,
-                    project_id=project_id,
-                    root=root,
-                    error=e,
-                    sync_kind="graph",
-                    synced_field="graph_synced",
-                    clear_graph=clear_graph,
-                    run_db=run_db,
-                ):
-                    return False
-            except GcodeProjectNotFoundError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                await _handle_project_not_found(
-                    storage=storage,
-                    config=config,
-                    project_id=project_id,
-                    root=root,
-                    error=e,
-                    sync_kind="graph",
-                    file_path=current.file_path,
-                    clear_graph=clear_graph,
-                    run_db=run_db,
-                )
-                return False
-            except GcodeTimeoutError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                logger.warning(
-                    "Sync worker: graph sync timed out for %s: %s",
-                    current.file_path,
-                    e,
-                )
-            except GcodeCommandError as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
-                logger.exception(
-                    "Sync worker: graph sync failed for %s: %s",
-                    current.file_path,
-                    e,
-                )
+                else:
+                    armed = _arm_breakers(gateway_breaker)
+                    if armed is not None:
+                        try:
+                            await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
+                            graph_synced = await _sync_graph(
+                                gcode_gateway=gcode_gateway,
+                                project_root=root,
+                                file=current,
+                                timeout=config.sync_worker_projection_timeout_seconds,
+                            )
+                        except GcodeDaemonConfigUnavailableError:
+                            _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                            return did_work
+                        except GcodeIndexedFileNotFoundError as e:
+                            _record_breaker_outcomes(armed)
+                            if not await _handle_indexed_file_not_found(
+                                storage=storage,
+                                config=config,
+                                project_id=project_id,
+                                root=root,
+                                error=e,
+                                sync_kind="graph",
+                                synced_field="graph_synced",
+                                clear_graph=clear_graph,
+                                run_db=run_db,
+                            ):
+                                return False
+                        except GcodeProjectNotFoundError as e:
+                            _record_breaker_outcomes(armed)
+                            await _handle_project_not_found(
+                                storage=storage,
+                                config=config,
+                                project_id=project_id,
+                                root=root,
+                                error=e,
+                                sync_kind="graph",
+                                file_path=current.file_path,
+                                clear_graph=clear_graph,
+                                run_db=run_db,
+                            )
+                            return False
+                        except GcodeTimeoutError as e:
+                            _record_breaker_outcomes(armed)
+                            logger.warning(
+                                "Sync worker: graph sync timed out for %s: %s",
+                                current.file_path,
+                                e,
+                            )
+                        except GcodeCommandError as e:
+                            _record_breaker_outcomes(armed)
+                            logger.exception(
+                                "Sync worker: graph sync failed for %s: %s",
+                                current.file_path,
+                                e,
+                            )
+                        except Exception as e:
+                            _record_breaker_outcomes(armed)
+                            logger.exception(
+                                "Sync worker: graph sync failed for %s: %s",
+                                current.file_path,
+                                e,
+                            )
+                        else:
+                            _record_breaker_outcomes(armed)
+                            if graph_synced:
+                                await _run_db(
+                                    run_db,
+                                    storage.mark_graph_synced,
+                                    current.id,
+                                    current.content_hash,
+                                )
+                                await _run_db(
+                                    run_db,
+                                    storage.clear_projection_cleanup_pending,
+                                    project_id,
+                                    "graph",
+                                )
+                                did_work = True
             except Exception as e:
-                if gateway_breaker is not None:
-                    gateway_breaker.record_success()
                 logger.exception(
                     "Sync worker: graph sync failed for %s: %s",
                     current.file_path,

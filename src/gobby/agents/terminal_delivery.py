@@ -266,6 +266,9 @@ async def deliver_existing_terminal_run_unshielded(
     return True
 
 
+deliver_existing_terminal_run_in_scope = deliver_existing_terminal_run_unshielded
+
+
 async def deliver_existing_terminal_run(
     *,
     db: HubDatabase,

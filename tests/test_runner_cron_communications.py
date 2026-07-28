@@ -9,8 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.communications.models import CommsMessage
-from gobby.runner_broadcasting import setup_cron_event_broadcasting
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.runner_broadcasting import (
+    _CRON_RUN_MESSAGE_DETAIL_MAX_CHARS,
+    _format_cron_run_message,
+    setup_cron_event_broadcasting,
+)
+from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
 
 pytestmark = pytest.mark.unit
 NOW = datetime(2026, 2, 10, tzinfo=UTC)
@@ -110,3 +114,43 @@ async def test_websocket_failure_does_not_block_comms_delivery() -> None:
             "event_id": "cr-1",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("status", "field_name", "prefix"),
+    [
+        ("completed", "output", ""),
+        ("failed", "error", "Error: "),
+    ],
+)
+def test_cron_run_message_bounds_output_and_error(
+    status: CronRunStatus,
+    field_name: str,
+    prefix: str,
+) -> None:
+    detail = "x" * (_CRON_RUN_MESSAGE_DETAIL_MAX_CHARS + 10)
+    if field_name == "output":
+        run = CronRun(
+            id="cr-1",
+            cron_job_id="cj-1",
+            triggered_at=NOW,
+            created_at=NOW,
+            status=status,
+            output=detail,
+        )
+    else:
+        run = CronRun(
+            id="cr-1",
+            cron_job_id="cj-1",
+            triggered_at=NOW,
+            created_at=NOW,
+            status=status,
+            error=detail,
+        )
+
+    message = _format_cron_run_message(_job(), run)
+    rendered_detail = message.split("\n\n", 1)[1]
+
+    assert rendered_detail.startswith(prefix)
+    assert rendered_detail.endswith("…")
+    assert len(rendered_detail.removeprefix(prefix)) == _CRON_RUN_MESSAGE_DETAIL_MAX_CHARS

@@ -52,7 +52,8 @@ def render_text(report: AuditReport, diff: AuditDiff | None = None) -> str:
 
     detailed_issues = report.sorted_issues if diff is None else diff.failing_issues
     if detailed_issues:
-        lines.extend(("", "New errors:"))
+        heading = "Errors:" if diff is None else "New failing errors:"
+        lines.extend(("", heading))
         _append_new_errors(lines, detailed_issues)
     return "\n".join(lines) + "\n"
 

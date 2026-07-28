@@ -265,6 +265,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
 
     periodic_task_attrs = (
         "_metrics_cleanup_task",
+        "_tool_results_cleanup_task",
         "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
         "_model_metadata_refresh_task",
@@ -457,7 +458,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
 
 async def _shutdown_database_executor(db_executor: Any) -> None:
     """Revoke queued database work and join bounded operations off-loop."""
-    if getattr(db_executor, "_gobby_shutdown_joined", False):
+    if db_executor.is_joined():
         return
     try:
         db_executor.shutdown(cancel_futures=True)
@@ -487,7 +488,6 @@ async def _shutdown_database_executor(db_executor: Any) -> None:
     threading.Thread(target=join_executor, name="gobby-db-join", daemon=True).start()
     try:
         await asyncio.wait_for(joined, timeout=_DATABASE_EXECUTOR_JOIN_SECONDS)
-        db_executor._gobby_shutdown_joined = True
     except TimeoutError:
         logger.error("Database executor did not settle before the shutdown deadline")
     except Exception as e:

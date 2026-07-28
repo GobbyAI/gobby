@@ -87,6 +87,28 @@ def test_audit_supports_text_json_and_output_file() -> None:
     assert payload["report"]["issue_count_by_code"] == {"mypy:arg-type": 1}
 
 
+@pytest.mark.parametrize("colliding_option", ["--write-baseline", "--baseline"])
+def test_audit_rejects_output_path_collisions(colliding_option: str) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        report_path = Path(cwd) / "report.json"
+
+        result = runner.invoke(
+            types_command,
+            [
+                "audit",
+                "tests",
+                "--output",
+                str(report_path),
+                colliding_option,
+                str(report_path),
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert f"--output must differ from {colliding_option}" in result.output
+
+
 def test_baseline_round_trip_and_additional_occurrence_fails() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem() as cwd:

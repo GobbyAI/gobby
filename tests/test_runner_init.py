@@ -648,6 +648,58 @@ class TestGobbyRunnerInitialization:
         assert call_kwargs["projects"] == []
         assert call_kwargs["wiki_config"] is runner.config.wiki
 
+    def test_init_preserves_codewiki_crons_when_memory_scope_enumeration_fails(
+        self,
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = True
+        memory_manager = MagicMock()
+        enumeration_cutoffs: list[str] = []
+
+        def fail_scope_enumeration(*, redream_cutoff: str) -> list[object]:
+            enumeration_cutoffs.append(redream_cutoff)
+            raise RuntimeError("enumeration failed")
+
+        memory_manager.list_dream_scopes.side_effect = fail_scope_enumeration
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [
+            patch_context for patch_context in patches if "MemoryManager" not in str(patch_context)
+        ]
+        patches.append(
+            patch("gobby.runner_init.services.MemoryManager", return_value=memory_manager)
+        )
+        project_manager = MagicMock()
+        project_manager.get.return_value = None
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(
+                patch(
+                    "gobby.storage.projects.LocalProjectManager",
+                    return_value=project_manager,
+                )
+            )
+            stack.enter_context(patch("gobby.code_index.storage.CodeIndexStorage"))
+            stack.enter_context(patch("gobby.code_index.context.CodeIndexContext"))
+            stack.enter_context(patch("gobby.code_index.prune.register_code_index_prune_cron"))
+            stack.enter_context(
+                patch("gobby.code_index.nightly_reindex.register_code_index_nightly_reindex_cron")
+            )
+            register = stack.enter_context(
+                patch("gobby.code_index.codewiki_nightly.register_codewiki_nightly_crons")
+            )
+
+            runner = GobbyRunner()
+
+        assert runner.code_indexer is not None
+        assert runner.memory_manager is memory_manager
+        assert enumeration_cutoffs == ["9999-12-31T23:59:59+00:00"]
+        memory_manager.list_dream_scopes.assert_called_once_with(
+            redream_cutoff="9999-12-31T23:59:59+00:00"
+        )
+        register.assert_not_called()
+
     def test_init_with_memory_backup_manager_does_not_restore_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL restore."""
         mock_config = MagicMock()

@@ -285,7 +285,7 @@ class TestRegistryWakeCallback:
         )
 
         with session_context_for_test(session_id):
-            wait_result = await registry._tools["wait_for_agent"].func(run_id)
+            wait_result = await registry.call("wait_for_agent", {"run_id": run_id})
         delivered = await completion_registry.notify(
             run_id,
             {"status": "success", "result": "done"},

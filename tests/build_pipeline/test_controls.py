@@ -97,7 +97,7 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
             new=AsyncMock(return_value={"success": True}),
         ),
         patch(
-            "gobby.build.control_runtime.deliver_existing_terminal_run_unshielded",
+            "gobby.build.control_runtime.deliver_existing_terminal_run_in_scope",
             new=AsyncMock(return_value=True),
         ) as deliver_terminal_run,
     ):

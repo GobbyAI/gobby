@@ -21,6 +21,7 @@ PROJECT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 PROJECT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NEW_UNIQUE_TASK_ID = "44444444-4444-4444-4444-444444444444"
 UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
+VALIDATION_CRITERIA = "Test task completion is observable."
 
 
 @pytest.fixture
@@ -57,9 +58,7 @@ def _planning_needs_review(
     title: str = "Enhance me",
 ):
     """Create a task whose single planning stage is in needs_review."""
-    task = task_manager.create_task(
-        project_id, title, validation_criteria="Test task completion is observable."
-    )
+    task = task_manager.create_task(project_id, title, validation_criteria=VALIDATION_CRITERIA)
     task_manager.stage_states.initialize_manifest(
         task.id,
         [StageManifestSpec("planning", 0)],
@@ -97,7 +96,7 @@ class TestLocalTaskManager:
             priority=1,
             task_type="bug",
             labels=["urgent", "backend"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         assert task.title == "Fix bug"
@@ -115,7 +114,7 @@ class TestLocalTaskManager:
         created = task_manager.create_task(
             project_id=project_id,
             title="Find me",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         fetched = task_manager.get_task(created.id)
         assert fetched == created
@@ -132,7 +131,7 @@ class TestLocalTaskManager:
         foreign_task = task_manager.create_task(
             project_id=PROJECT_B,
             title="Task B",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="not found in project"):
@@ -142,7 +141,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         updated = task_manager.update_task(task.id, title="New Title")
         assert updated.title == "New Title"
@@ -153,7 +152,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Scheduled Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         updated = task_manager.update_task(
@@ -172,7 +171,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="own parent"):
@@ -182,19 +181,19 @@ class TestLocalTaskManager:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         grandchild = task_manager.create_task(
             project_id=project_id,
             title="Grandchild",
             parent_task_id=child.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="descendants"):
@@ -204,7 +203,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="does not allow legacy state fields"):
@@ -217,7 +216,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match=f"unsupported fields: {field_name}"):
@@ -229,7 +228,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="Blocked fields: status, claimed_by_session_id"):
@@ -252,7 +251,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Original Title",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
@@ -273,7 +272,7 @@ class TestLocalTaskManager:
             title="Unchanged",
             description="Same description",
             priority=2,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         reconciled = task_manager.reconcile_task_state(
@@ -294,7 +293,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Projected",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, task.id)
 
@@ -309,7 +308,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="To Close",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         closed = task_manager.close_task(task.id, reason="Done")
         assert is_task_closed(closed)
@@ -322,7 +321,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="To Close Cleanly",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, task.id)
         task_manager.submit_for_review(task.id)
@@ -338,7 +337,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="To Delete",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.delete_task(task.id)
 
@@ -350,13 +349,13 @@ class TestLocalTaskManager:
             project_id=project_id,
             title="Task 1",
             priority=1,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _ = task_manager.create_task(
             project_id=project_id,
             title="Task 2",
             priority=2,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_tasks(project_id=project_id)
@@ -372,7 +371,7 @@ class TestLocalTaskManager:
         existing_task = task_manager.create_task(
             project_id=project_id,
             title="Existing",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Mock generate_task_id to return existing ID once, then a new one
@@ -384,7 +383,7 @@ class TestLocalTaskManager:
             new_task = task_manager.create_task(
                 project_id=project_id,
                 title="New Task",
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
             assert new_task.id == NEW_UNIQUE_TASK_ID
             # Should have called it twice (initial attempt + retry)
@@ -397,7 +396,7 @@ class TestLocalTaskManager:
         existing_task = task_manager.create_task(
             project_id=project_id,
             title="Existing",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Mock to always return existing ID
@@ -407,20 +406,20 @@ class TestLocalTaskManager:
                 task_manager.create_task(
                     project_id=project_id,
                     title="Doom",
-                    validation_criteria="Test task completion is observable.",
+                    validation_criteria=VALIDATION_CRITERIA,
                 )
 
     def test_delete_with_children_fails_without_cascade(self, task_manager, project_id) -> None:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _ = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="has children"):
@@ -430,13 +429,13 @@ class TestLocalTaskManager:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         task_manager.delete_task(parent.id, cascade=True)
@@ -453,12 +452,12 @@ class TestLocalTaskManager:
         blocker = task_manager.create_task(
             project_id=project_id,
             title="Blocker",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dependent = task_manager.create_task(
             project_id=project_id,
             title="Dependent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(dependent.id, blocker.id, "blocks")
 
@@ -472,12 +471,12 @@ class TestLocalTaskManager:
         blocker = task_manager.create_task(
             project_id=project_id,
             title="Blocker",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dependent = task_manager.create_task(
             project_id=project_id,
             title="Dependent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(dependent.id, blocker.id, "blocks")
 
@@ -505,19 +504,19 @@ class TestLocalTaskManager:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent Epic",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child1 = task_manager.create_task(
             project_id=project_id,
             title="Child 1",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child2 = task_manager.create_task(
             project_id=project_id,
             title="Child 2",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Parent depends on (is blocked by) its children - common pattern for epics
@@ -550,31 +549,31 @@ class TestLocalTaskManager:
         root_epic = task_manager.create_task(
             project_id=project_id,
             title="Root Epic",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         sub_epic = task_manager.create_task(
             project_id=project_id,
             title="Sub Epic",
             parent_task_id=root_epic.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         leaf = task_manager.create_task(
             project_id=project_id,
             title="Leaf",
             parent_task_id=sub_epic.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         sibling_subtree_root = task_manager.create_task(
             project_id=project_id,
             title="Sibling Subtree",
             parent_task_id=root_epic.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         sibling_leaf = task_manager.create_task(
             project_id=project_id,
             title="Sibling Leaf",
             parent_task_id=sibling_subtree_root.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Pathological dependency wiring: ancestors depend on descendants.
@@ -604,12 +603,12 @@ class TestLocalTaskManager:
         blocker = task_manager.create_task(
             project_id=project_id,
             title="Blocker",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dependent = task_manager.create_task(
             project_id=project_id,
             title="Dependent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(dependent.id, blocker.id, "blocks")
 
@@ -633,17 +632,17 @@ class TestLocalTaskManager:
         blocker = task_manager.create_task(
             project_id=project_id,
             title="Blocker",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep1 = task_manager.create_task(
             project_id=project_id,
             title="Dep1",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep2 = task_manager.create_task(
             project_id=project_id,
             title="Dep2",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(dep1.id, blocker.id, "blocks")
         dep_manager.add_dependency(dep2.id, blocker.id, "blocks")
@@ -658,17 +657,17 @@ class TestLocalTaskManager:
     def test_list_ready_tasks(self, task_manager, dep_manager, project_id) -> None:
         # T1 -> T2 (blocks)
         t1 = task_manager.create_task(
-            project_id, "T1", priority=2, validation_criteria="Test task completion is observable."
+            project_id, "T1", priority=2, validation_criteria=VALIDATION_CRITERIA
         )
         t2 = task_manager.create_task(
-            project_id, "T2", priority=1, validation_criteria="Test task completion is observable."
+            project_id, "T2", priority=1, validation_criteria=VALIDATION_CRITERIA
         )
 
         dep_manager.add_dependency(t1.id, t2.id, "blocks")
 
         # T3, independent
         t3 = task_manager.create_task(
-            project_id, "T3", priority=2, validation_criteria="Test task completion is observable."
+            project_id, "T3", priority=2, validation_criteria=VALIDATION_CRITERIA
         )
 
         # ready tasks: T2, T3. T1 is blocked.
@@ -692,12 +691,8 @@ class TestLocalTaskManager:
         assert t3.id in ids
 
     def test_list_blocked_tasks(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(
-            project_id, "T1", validation_criteria="Test task completion is observable."
-        )
-        t2 = task_manager.create_task(
-            project_id, "T2", validation_criteria="Test task completion is observable."
-        )
+        t1 = task_manager.create_task(project_id, "T1", validation_criteria=VALIDATION_CRITERIA)
+        t2 = task_manager.create_task(project_id, "T2", validation_criteria=VALIDATION_CRITERIA)
 
         dep_manager.add_dependency(t1.id, t2.id, "blocks")
 
@@ -714,10 +709,10 @@ class TestLocalTaskManager:
     ) -> None:
         """Review stages should not satisfy blocking dependencies."""
         blocked = task_manager.create_task(
-            project_id, "Blocked", validation_criteria="Test task completion is observable."
+            project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
@@ -745,10 +740,10 @@ class TestLocalTaskManager:
     ) -> None:
         """Blocked is an independent predicate from the active lifecycle stage."""
         blocked = task_manager.create_task(
-            project_id, "Blocked", validation_criteria="Test task completion is observable."
+            project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
@@ -763,10 +758,10 @@ class TestLocalTaskManager:
     ) -> None:
         """Canonical blocked state should ignore closed blockers but preserve dependency order."""
         blocked = task_manager.create_task(
-            project_id, "Blocked", validation_criteria="Test task completion is observable."
+            project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
@@ -787,13 +782,13 @@ class TestLocalTaskManager:
     ) -> None:
         """Parent completion blockers should not project as canonical blocked state."""
         parent = task_manager.create_task(
-            project_id, "Parent Epic", validation_criteria="Test task completion is observable."
+            project_id, "Parent Epic", validation_criteria=VALIDATION_CRITERIA
         )
         child = task_manager.create_task(
             project_id,
             "Child Task",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(parent.id, child.id, "blocks")
 
@@ -813,13 +808,13 @@ class TestLocalTaskManager:
         """
         # Create parent and child
         parent = task_manager.create_task(
-            project_id, "Parent Epic", validation_criteria="Test task completion is observable."
+            project_id, "Parent Epic", validation_criteria=VALIDATION_CRITERIA
         )
         child = task_manager.create_task(
             project_id,
             "Child Task",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Create the dependency: parent depends_on child with type "blocks"
@@ -841,7 +836,7 @@ class TestLocalTaskManager:
         external_blocker = task_manager.create_task(
             project_id,
             "External Blocker",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(parent.id, external_blocker.id, "blocks")
 
@@ -867,7 +862,7 @@ class TestLocalTaskManager:
             project_id,
             "Label Task",
             labels=["a"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Add label
@@ -888,7 +883,7 @@ class TestLocalTaskManager:
 
     def test_find_by_prefix(self, task_manager, project_id) -> None:
         t1 = task_manager.create_task(
-            project_id, "Find Me", validation_criteria="Test task completion is observable."
+            project_id, "Find Me", validation_criteria=VALIDATION_CRITERIA
         )
         # ID is like gt-123456
 
@@ -910,9 +905,7 @@ class TestLocalTaskManager:
         assert task_manager.find_task_by_prefix("gt-nomatch") is None
 
     def test_find_tasks_by_prefix(self, task_manager, project_id) -> None:
-        t1 = task_manager.create_task(
-            project_id, "T1", validation_criteria="Test task completion is observable."
-        )
+        t1 = task_manager.create_task(project_id, "T1", validation_criteria=VALIDATION_CRITERIA)
         prefix = t1.id[:5]  # gt-12
 
         tasks = task_manager.find_tasks_by_prefix(prefix)
@@ -929,7 +922,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Potential Wildcard Match",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # tasks.id is a native uuid column, so ids contain only hex digits and
@@ -944,7 +937,7 @@ class TestLocalTaskManager:
         self, task_manager: LocalTaskManager, project_id: str
     ) -> None:
         task_manager.create_task(
-            project_id, "Existing Task", validation_criteria="Test task completion is observable."
+            project_id, "Existing Task", validation_criteria=VALIDATION_CRITERIA
         )
 
         assert task_manager.find_task_by_prefix("  ") is None
@@ -953,11 +946,11 @@ class TestLocalTaskManager:
     def test_hierarchical_ordering(self, task_manager, project_id) -> None:
         # Root 1
         r1 = task_manager.create_task(
-            project_id, "R1", priority=1, validation_criteria="Test task completion is observable."
+            project_id, "R1", priority=1, validation_criteria=VALIDATION_CRITERIA
         )
         # Root 2
         r2 = task_manager.create_task(
-            project_id, "R2", priority=2, validation_criteria="Test task completion is observable."
+            project_id, "R2", priority=2, validation_criteria=VALIDATION_CRITERIA
         )
 
         # Children of R1
@@ -966,14 +959,14 @@ class TestLocalTaskManager:
             "C1.1",
             parent_task_id=r1.id,
             priority=2,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         c1_2 = task_manager.create_task(
             project_id,
             "C1.2",
             parent_task_id=r1.id,
             priority=1,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Child of C1.2
@@ -981,7 +974,7 @@ class TestLocalTaskManager:
             project_id,
             "C1.2.1",
             parent_task_id=c1_2.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_tasks(project_id)
@@ -997,9 +990,7 @@ class TestLocalTaskManager:
         assert current_indices[c1_2.id] < current_indices[c1_1.id]  # Priority 1 vs 2
 
     def test_update_all_fields(self, task_manager, project_id) -> None:
-        task = task_manager.create_task(
-            project_id, "T1", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "T1", validation_criteria=VALIDATION_CRITERIA)
 
         updated = task_manager.update_task(
             task.id,
@@ -1029,7 +1020,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id=project_id,
             title="Infra task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         updated = task_manager.update_task(
@@ -1045,14 +1036,12 @@ class TestLocalTaskManager:
         assert reloaded.validation_feedback == "generation unavailable"
 
     def test_clear_parent_task(self, task_manager, project_id) -> None:
-        parent = task_manager.create_task(
-            project_id, "P", validation_criteria="Test task completion is observable."
-        )
+        parent = task_manager.create_task(project_id, "P", validation_criteria=VALIDATION_CRITERIA)
         child = task_manager.create_task(
             project_id,
             "C",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         assert child.parent_task_id == parent.id
@@ -1062,15 +1051,13 @@ class TestLocalTaskManager:
         assert updated.parent_task_id is None
 
     def test_close_task_with_many_children(self, task_manager, project_id) -> None:
-        parent = task_manager.create_task(
-            project_id, "P", validation_criteria="Test task completion is observable."
-        )
+        parent = task_manager.create_task(project_id, "P", validation_criteria=VALIDATION_CRITERIA)
         for i in range(5):
             task_manager.create_task(
                 project_id,
                 f"C{i}",
                 parent_task_id=parent.id,
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
 
         with pytest.raises(ValueError) as exc:
@@ -1089,7 +1076,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         assert task.commits is None or task.commits == []
 
@@ -1105,7 +1092,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1123,7 +1110,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1145,7 +1132,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1158,7 +1145,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1176,7 +1163,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1193,7 +1180,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Task with commits",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1210,7 +1197,7 @@ class TestLocalTaskManager:
     def test_unlink_commit_from_empty_task(self, task_manager, project_id) -> None:
         """Test unlinking from task with no commits is a no-op."""
         task = task_manager.create_task(
-            project_id, "Empty task", validation_criteria="Test task completion is observable."
+            project_id, "Empty task", validation_criteria=VALIDATION_CRITERIA
         )
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
@@ -1228,9 +1215,7 @@ class TestLocalTaskManager:
 
     def test_commits_persist_after_update(self, task_manager, project_id) -> None:
         """Test that commits array persists through other updates."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
             mock_normalize.return_value = "commit1"
@@ -1249,7 +1234,7 @@ class TestLocalTaskManager:
     def test_reopen_task_basic(self, task_manager, project_id) -> None:
         """Test reopening a closed task."""
         task = task_manager.create_task(
-            project_id, "To Reopen", validation_criteria="Test task completion is observable."
+            project_id, "To Reopen", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.close_task(task.id, reason="Done")
 
@@ -1268,7 +1253,7 @@ class TestLocalTaskManager:
             project_id,
             "To Reopen",
             description="Original description",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.close_task(task.id)
 
@@ -1281,7 +1266,7 @@ class TestLocalTaskManager:
     def test_reopen_task_already_open_unclaimed_raises(self, task_manager, project_id) -> None:
         """Test reopening an already open, unclaimed task raises error."""
         task = task_manager.create_task(
-            project_id, "Open Task", validation_criteria="Test task completion is observable."
+            project_id, "Open Task", validation_criteria=VALIDATION_CRITERIA
         )
 
         with pytest.raises(ValueError, match="already ready"):
@@ -1300,7 +1285,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Claimed ready task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
         task_manager.update_task(task.id, validation_fail_count=2, dispatch_failure_count=3)
@@ -1318,7 +1303,7 @@ class TestLocalTaskManager:
     def test_reopen_task_from_escalated(self, task_manager, project_id) -> None:
         """Test reopening an escalated task clears escalation metadata."""
         task = task_manager.create_task(
-            project_id, "Escalated", validation_criteria="Test task completion is observable."
+            project_id, "Escalated", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.escalate_task(task.id, reason="Need input")
 
@@ -1340,7 +1325,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Claim me", validation_criteria="Test task completion is observable."
+            project_id, "Claim me", validation_criteria=VALIDATION_CRITERIA
         )
 
         claimed = task_manager.claim_task(task.id, session.id)
@@ -1360,7 +1345,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Needs review", validation_criteria="Test task completion is observable."
+            project_id, "Needs review", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id)
@@ -1382,7 +1367,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Release me", validation_criteria="Test task completion is observable."
+            project_id, "Release me", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.claim_task(task.id, session.id)
 
@@ -1403,7 +1388,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Review me", validation_criteria="Test task completion is observable."
+            project_id, "Review me", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
@@ -1425,7 +1410,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Approve me", validation_criteria="Test task completion is observable."
+            project_id, "Approve me", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
@@ -1451,7 +1436,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Reject me", validation_criteria="Test task completion is observable."
+            project_id, "Reject me", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -1483,7 +1468,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Reject me from in_progress",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -1516,7 +1501,7 @@ class TestLocalTaskManager:
             project_id,
             "Dedup me",
             description="## Adversary Findings — Round 70\n\nfuture findings",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -1727,7 +1712,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Planning in progress",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.stage_states.initialize_manifest(
             task.id,
@@ -1763,7 +1748,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Development review",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.stage_states.initialize_manifest(
             task.id,
@@ -1796,7 +1781,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Multi-round target",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -1833,7 +1818,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Escalate me", validation_criteria="Test task completion is observable."
+            project_id, "Escalate me", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.claim_task(task.id, session.id)
 
@@ -1855,7 +1840,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(
-            project_id, "Delete owner", validation_criteria="Test task completion is observable."
+            project_id, "Delete owner", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.claim_task(task.id, session.id)
 
@@ -1871,13 +1856,13 @@ class TestLocalTaskManager:
     def test_close_task_force_with_open_children(self, task_manager, project_id) -> None:
         """Test force closing a task with open children."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
             project_id,
             "Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Normal close should fail
@@ -1900,9 +1885,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
 
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         closed = task_manager.close_task(
             task.id,
@@ -1918,9 +1901,7 @@ class TestLocalTaskManager:
         self, task_manager, project_id
     ) -> None:
         """The public close-with-commit helper records both changes together."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         with patch("gobby.utils.git.normalize_commit_sha", return_value="abc123"):
             closed = task_manager.close_task_with_commit(task.id, "abc123")
@@ -1934,13 +1915,13 @@ class TestLocalTaskManager:
     ) -> None:
         """A failed close must not leave an orphan commit link."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
             project_id,
             "Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with (
@@ -1956,9 +1937,7 @@ class TestLocalTaskManager:
 
     def test_close_task_with_validation_override(self, task_manager, project_id) -> None:
         """Test closing task with validation override reason."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         closed = task_manager.close_task(
             task.id, validation_override_reason="User approved manually"
@@ -1977,9 +1956,7 @@ class TestLocalTaskManager:
 
     def test_escalate_task_sets_escalation_fields(self, task_manager, project_id) -> None:
         """Escalation metadata should be written via the lifecycle method."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         updated = task_manager.escalate_task(task.id, reason="Blocked on external dependency")
 
@@ -1992,7 +1969,7 @@ class TestLocalTaskManager:
             project_id,
             "Task",
             labels=["a", "b"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         updated = task_manager.update_task(task.id, labels=None)
@@ -2002,9 +1979,7 @@ class TestLocalTaskManager:
 
     def test_update_task_no_changes(self, task_manager, project_id) -> None:
         """Test update with no changes returns current task."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         updated = task_manager.update_task(task.id)
 
@@ -2042,16 +2017,14 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         t1 = task_manager.create_task(
-            project_id, "Open Task", validation_criteria="Test task completion is observable."
+            project_id, "Open Task", validation_criteria=VALIDATION_CRITERIA
         )
         t2 = task_manager.create_task(
-            project_id, "In Progress", validation_criteria="Test task completion is observable."
+            project_id, "In Progress", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, t2.id, session.id)
         task_manager.claim_task(t2.id, session.id)
-        t3 = task_manager.create_task(
-            project_id, "Closed", validation_criteria="Test task completion is observable."
-        )
+        t3 = task_manager.create_task(project_id, "Closed", validation_criteria=VALIDATION_CRITERIA)
         task_manager.close_task(t3.id)
 
         tasks = task_manager.list_tasks(
@@ -2076,14 +2049,14 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria="Test task completion is observable."
+            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, open_review.id, session.id)
         task_manager.submit_for_review(open_review.id)
         stale_closed_review = task_manager.create_task(
             project_id,
             "Closed stale review",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, stale_closed_review.id, session.id)
         task_manager.submit_for_review(stale_closed_review.id)
@@ -2109,14 +2082,14 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria="Test task completion is observable."
+            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, open_review.id, session.id)
         task_manager.submit_for_review(open_review.id)
         stale_closed_review = task_manager.create_task(
             project_id,
             "Closed stale review",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, stale_closed_review.id, session.id)
         task_manager.submit_for_review(stale_closed_review.id)
@@ -2135,13 +2108,13 @@ class TestLocalTaskManager:
     def test_list_tasks_with_title_like(self, task_manager, project_id) -> None:
         """Test filtering tasks by title pattern."""
         task_manager.create_task(
-            project_id, "Fix bug in auth", validation_criteria="Test task completion is observable."
+            project_id, "Fix bug in auth", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
-            project_id, "Add feature X", validation_criteria="Test task completion is observable."
+            project_id, "Add feature X", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
-            project_id, "Fix bug in API", validation_criteria="Test task completion is observable."
+            project_id, "Fix bug in API", validation_criteria=VALIDATION_CRITERIA
         )
 
         tasks = task_manager.list_tasks(project_id=project_id, title_like="Fix bug")
@@ -2166,11 +2139,9 @@ class TestLocalTaskManager:
         wildcard_match: str,
     ) -> None:
         """Treat SQL LIKE metacharacters in title filters as literals."""
+        task_manager.create_task(project_id, literal_title, validation_criteria=VALIDATION_CRITERIA)
         task_manager.create_task(
-            project_id, literal_title, validation_criteria="Test task completion is observable."
-        )
-        task_manager.create_task(
-            project_id, wildcard_match, validation_criteria="Test task completion is observable."
+            project_id, wildcard_match, validation_criteria=VALIDATION_CRITERIA
         )
 
         tasks = task_manager.list_tasks(project_id=project_id, title_like=literal_title)
@@ -2183,19 +2154,19 @@ class TestLocalTaskManager:
             project_id,
             "Task 1",
             labels=["urgent", "backend"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Task 2",
             labels=["frontend"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Task 3",
             labels=["urgent", "frontend"],
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_tasks(project_id=project_id, label="urgent")
@@ -2210,13 +2181,13 @@ class TestLocalTaskManager:
             project_id,
             "Bug 1",
             task_type="bug",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Feature 1",
             task_type="feature",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_tasks(project_id=project_id, task_type="bug")
@@ -2230,13 +2201,13 @@ class TestLocalTaskManager:
             project_id,
             "Critical Priority",
             priority=0,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Low Priority",
             priority=3,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_tasks(project_id=project_id, priority=0)
@@ -2256,13 +2227,13 @@ class TestLocalTaskManager:
             project_id,
             "Bug 1",
             task_type="bug",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Feature 1",
             task_type="feature",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_ready_tasks(project_id=project_id, task_type="bug")
@@ -2276,13 +2247,13 @@ class TestLocalTaskManager:
             project_id,
             "Critical Priority",
             priority=0,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Low Priority",
             priority=3,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         tasks = task_manager.list_ready_tasks(project_id=project_id, priority=0)
@@ -2293,23 +2264,21 @@ class TestLocalTaskManager:
     def test_list_ready_tasks_with_parent_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by parent."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
             project_id,
             "Child 1",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Child 2",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
-        task_manager.create_task(
-            project_id, "Orphan", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Orphan", validation_criteria=VALIDATION_CRITERIA)
 
         tasks = task_manager.list_ready_tasks(project_id=project_id, parent_task_id=parent.id)
 
@@ -2321,7 +2290,7 @@ class TestLocalTaskManager:
         """Test pagination in ready tasks."""
         for i in range(5):
             task_manager.create_task(
-                project_id, f"Task {i}", validation_criteria="Test task completion is observable."
+                project_id, f"Task {i}", validation_criteria=VALIDATION_CRITERIA
             )
 
         tasks = task_manager.list_ready_tasks(project_id=project_id, limit=2, offset=1)
@@ -2337,16 +2306,16 @@ class TestLocalTaskManager:
     ) -> None:
         """Test filtering blocked tasks by parent."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         child1 = task_manager.create_task(
             project_id,
             "Child 1",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
 
         dep_manager.add_dependency(child1.id, blocker.id, "blocks")
@@ -2361,13 +2330,13 @@ class TestLocalTaskManager:
     ) -> None:
         """Test pagination in blocked tasks."""
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         for i in range(5):
             task = task_manager.create_task(
                 project_id,
                 f"Blocked {i}",
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
             dep_manager.add_dependency(task.id, blocker.id, "blocks")
 
@@ -2383,7 +2352,7 @@ class TestLocalTaskManager:
         """Test counting all tasks."""
         for i in range(3):
             task_manager.create_task(
-                project_id, f"Task {i}", validation_criteria="Test task completion is observable."
+                project_id, f"Task {i}", validation_criteria=VALIDATION_CRITERIA
             )
 
         count = task_manager.count_tasks(project_id=project_id)
@@ -2391,11 +2360,9 @@ class TestLocalTaskManager:
 
     def test_count_tasks_by_current_stage_state(self, task_manager, project_id) -> None:
         """Test counting tasks by current stage state."""
-        task_manager.create_task(
-            project_id, "Open", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Open", validation_criteria=VALIDATION_CRITERIA)
         t2 = task_manager.create_task(
-            project_id, "In Progress", validation_criteria="Test task completion is observable."
+            project_id, "In Progress", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, t2.id)
 
@@ -2415,14 +2382,14 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         open_review = task_manager.create_task(
-            project_id, "Open review", validation_criteria="Test task completion is observable."
+            project_id, "Open review", validation_criteria=VALIDATION_CRITERIA
         )
         _start_current_stage(task_manager, open_review.id, session.id)
         task_manager.submit_for_review(open_review.id)
         stale_closed_review = task_manager.create_task(
             project_id,
             "Closed stale review",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         _start_current_stage(task_manager, stale_closed_review.id, session.id)
         task_manager.submit_for_review(stale_closed_review.id)
@@ -2439,15 +2406,9 @@ class TestLocalTaskManager:
 
     def test_count_by_state(self, task_manager, project_id) -> None:
         """Test grouping task counts by canonical state."""
-        task_manager.create_task(
-            project_id, "Open 1", validation_criteria="Test task completion is observable."
-        )
-        task_manager.create_task(
-            project_id, "Open 2", validation_criteria="Test task completion is observable."
-        )
-        t3 = task_manager.create_task(
-            project_id, "Closed", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Open 1", validation_criteria=VALIDATION_CRITERIA)
+        task_manager.create_task(project_id, "Open 2", validation_criteria=VALIDATION_CRITERIA)
+        t3 = task_manager.create_task(project_id, "Closed", validation_criteria=VALIDATION_CRITERIA)
         task_manager.close_task(t3.id)
 
         counts = task_manager.count_by_state(project_id=project_id)
@@ -2457,9 +2418,7 @@ class TestLocalTaskManager:
 
     def test_count_by_state_all_projects(self, task_manager, project_id) -> None:
         """Test counting by state without project filter."""
-        task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         counts = task_manager.count_by_state()
 
@@ -2467,17 +2426,13 @@ class TestLocalTaskManager:
 
     def test_count_ready_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting ready tasks."""
-        task_manager.create_task(
-            project_id, "Ready 1", validation_criteria="Test task completion is observable."
-        )
-        task_manager.create_task(
-            project_id, "Ready 2", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Ready 1", validation_criteria=VALIDATION_CRITERIA)
+        task_manager.create_task(project_id, "Ready 2", validation_criteria=VALIDATION_CRITERIA)
         blocked = task_manager.create_task(
-            project_id, "Blocked", validation_criteria="Test task completion is observable."
+            project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
@@ -2490,16 +2445,16 @@ class TestLocalTaskManager:
         self, task_manager, dep_manager, project_id
     ) -> None:
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         parent = task_manager.create_task(
-            project_id, "Blocked parent", validation_criteria="Test task completion is observable."
+            project_id, "Blocked parent", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
             project_id,
             "Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         dep_manager.add_dependency(parent.id, blocker.id, "blocks")
 
@@ -2511,10 +2466,10 @@ class TestLocalTaskManager:
     def test_count_blocked_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting blocked tasks."""
         blocked = task_manager.create_task(
-            project_id, "Blocked", validation_criteria="Test task completion is observable."
+            project_id, "Blocked", validation_criteria=VALIDATION_CRITERIA
         )
         blocker = task_manager.create_task(
-            project_id, "Blocker", validation_criteria="Test task completion is observable."
+            project_id, "Blocker", validation_criteria=VALIDATION_CRITERIA
         )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
@@ -2542,7 +2497,7 @@ class TestLocalTaskManager:
             task_type="bug",
             labels=["urgent"],
             claimed_by_session_id=session.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         brief = task.to_brief()
@@ -2574,17 +2529,13 @@ class TestLocalTaskManager:
             listener_called.append(True)
 
         task_manager.add_change_listener(listener)
-        task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         assert len(listener_called) == 1
 
     def test_change_listener_called_on_update(self, task_manager, project_id) -> None:
         """Test change listener is called when updating a task."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         listener_called = []
 
@@ -2598,9 +2549,7 @@ class TestLocalTaskManager:
 
     def test_change_listener_called_on_delete(self, task_manager, project_id) -> None:
         """Test change listener is called when deleting a task."""
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
 
         listener_called = []
 
@@ -2621,9 +2570,7 @@ class TestLocalTaskManager:
         task_manager.add_change_listener(failing_listener)
 
         # Should not raise, operation should succeed
-        task = task_manager.create_task(
-            project_id, "Task", validation_criteria="Test task completion is observable."
-        )
+        task = task_manager.create_task(project_id, "Task", validation_criteria=VALIDATION_CRITERIA)
         assert task.id is not None
 
     # =========================================================================
@@ -2684,7 +2631,7 @@ class TestConcurrentTaskCreation:
                 temp_db,
                 project_id,
                 title=f"Concurrent task {i}",
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_tasks) as pool:
@@ -2763,7 +2710,7 @@ class TestOrderTasksHierarchically:
         from gobby.storage.tasks import order_tasks_hierarchically
 
         task = task_manager.create_task(
-            project_id, "Single", validation_criteria="Test task completion is observable."
+            project_id, "Single", validation_criteria=VALIDATION_CRITERIA
         )
         result = order_tasks_hierarchically([task])
 
@@ -2775,13 +2722,13 @@ class TestOrderTasksHierarchically:
         from gobby.storage.tasks import order_tasks_hierarchically
 
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         child = task_manager.create_task(
             project_id,
             "Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Only pass child, not parent - child should be treated as root
@@ -2801,7 +2748,7 @@ class TestCreateTaskWithDecomposition:
             project_id=project_id,
             title="Simple Task",
             description="A simple description",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         assert "task" in result
@@ -2833,7 +2780,7 @@ class TestCreateTaskWithDecomposition:
                 project_id,
                 "Invalid category",
                 category="unit",
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
 
     def test_update_task_rejects_invalid_category(self, task_manager, project_id) -> None:
@@ -2841,7 +2788,7 @@ class TestCreateTaskWithDecomposition:
             project_id,
             "Valid category",
             category="code",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         with pytest.raises(ValueError, match="Invalid category"):
@@ -2859,7 +2806,7 @@ class TestCreateTaskWithDecomposition:
                 project_id=project_id,
                 title="Unexpected Field",
                 unknown_field="ignored",
-                validation_criteria="Test task completion is observable.",
+                validation_criteria=VALIDATION_CRITERIA,
             )
 
 
@@ -2869,9 +2816,7 @@ class TestListTasksBranchCoverage:
 
     def test_list_tasks_with_single_current_stage_state(self, task_manager, project_id) -> None:
         """Test filtering with a single current stage state string."""
-        task_manager.create_task(
-            project_id, "Open Task", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Open Task", validation_criteria=VALIDATION_CRITERIA)
 
         tasks = task_manager.list_tasks(project_id=project_id, current_stage_state="ready")
 
@@ -2881,23 +2826,21 @@ class TestListTasksBranchCoverage:
     def test_list_tasks_with_parent_filter(self, task_manager, project_id) -> None:
         """Test filtering tasks by parent_task_id."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         task_manager.create_task(
             project_id,
             "Child 1",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         task_manager.create_task(
             project_id,
             "Child 2",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
-        task_manager.create_task(
-            project_id, "Orphan", validation_criteria="Test task completion is observable."
-        )
+        task_manager.create_task(project_id, "Orphan", validation_criteria=VALIDATION_CRITERIA)
 
         tasks = task_manager.list_tasks(project_id=project_id, parent_task_id=parent.id)
 
@@ -2913,13 +2856,13 @@ class TestCreateTaskWithDecompositionParentTask:
     def test_create_with_parent(self, task_manager, project_id) -> None:
         """Test creating a task with a parent."""
         parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria="Test task completion is observable."
+            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
         result = task_manager.create_task_with_decomposition(
             project_id=project_id,
             title="Child Task",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         assert "task" in result
@@ -2940,7 +2883,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Root Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # seq_num is auto-assigned to 1 for first task
         path = task_manager.compute_path_cache(task.id)
@@ -2951,13 +2894,13 @@ class TestPathCacheComputation:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # seq_nums auto-assigned: parent=1, child=2
         path = task_manager.compute_path_cache(child.id)
@@ -2968,25 +2911,25 @@ class TestPathCacheComputation:
         root = task_manager.create_task(
             project_id=project_id,
             title="Root",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         level1 = task_manager.create_task(
             project_id=project_id,
             title="Level 1",
             parent_task_id=root.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         level2 = task_manager.create_task(
             project_id=project_id,
             title="Level 2",
             parent_task_id=level1.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         level3 = task_manager.create_task(
             project_id=project_id,
             title="Level 3",
             parent_task_id=level2.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # seq_nums auto-assigned: root=1, level1=2, level2=3, level3=4
@@ -3005,7 +2948,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # Simulate legacy data by clearing the seq_num
         temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (task.id,))
@@ -3020,13 +2963,13 @@ class TestPathCacheComputation:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # Simulate legacy data - parent has NULL seq_num
         temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (parent.id,))
@@ -3039,7 +2982,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # Clear the path_cache to test update_path_cache works
         temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE id = %s", (task.id,))
@@ -3056,7 +2999,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         # Simulate legacy data
         temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (task.id,))
@@ -3069,25 +3012,25 @@ class TestPathCacheComputation:
         root = task_manager.create_task(
             project_id=project_id,
             title="Root",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child1 = task_manager.create_task(
             project_id=project_id,
             title="Child 1",
             parent_task_id=root.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child2 = task_manager.create_task(
             project_id=project_id,
             title="Child 2",
             parent_task_id=root.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         grandchild = task_manager.create_task(
             project_id=project_id,
             title="Grandchild",
             parent_task_id=child1.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Clear path_cache values to test update_descendant_paths
@@ -3119,13 +3062,13 @@ class TestPathCacheComputation:
         root = task_manager.create_task(
             project_id=project_id,
             title="Root",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=root.id,
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
 
         # Clear path_cache and simulate legacy data - child has NULL seq_num
@@ -3147,7 +3090,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         data = task.to_dict()
 
@@ -3162,7 +3105,7 @@ class TestPathCacheComputation:
         task = task_manager.create_task(
             project_id=project_id,
             title="Task",
-            validation_criteria="Test task completion is observable.",
+            validation_criteria=VALIDATION_CRITERIA,
         )
         brief = task.to_brief()
 

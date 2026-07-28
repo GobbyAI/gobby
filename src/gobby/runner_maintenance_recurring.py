@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
+    from gobby.storage.tool_results import ToolResultStore
 
 # Preserve the public maintenance logger used before these loops were extracted.
 logger = logging.getLogger("gobby.runner_maintenance")
@@ -92,6 +93,42 @@ async def metrics_cleanup_loop(
             break
         except Exception as e:
             logger.error("Error in metrics cleanup loop: %s", e)
+        try:
+            await sleep_fn(interval_seconds)
+        except asyncio.CancelledError:
+            break
+        if is_shutdown_requested():
+            break
+
+
+async def tool_result_cleanup_loop(
+    store: ToolResultStore,
+    is_shutdown_requested: Callable[[], bool],
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    interval_seconds: int = 24 * 60 * 60,
+    startup_delay_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+) -> None:
+    """Clean expired offloaded tool results once per day."""
+    sleep_fn = sleep or asyncio.sleep
+    if not await _wait_for_first_maintenance_cycle(
+        "tool-result-cleanup",
+        is_shutdown_requested,
+        startup_delay_seconds=startup_delay_seconds,
+        sleep=sleep_fn,
+    ):
+        return
+
+    while True:
+        try:
+            deleted = await _run_sync_maintenance(run_db, store.cleanup_expired)
+            if deleted > 0:
+                logger.info("Periodic tool-result cleanup: removed %s expired results", deleted)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.error("Error in tool-result cleanup loop: %s", exc)
         try:
             await sleep_fn(interval_seconds)
         except asyncio.CancelledError:

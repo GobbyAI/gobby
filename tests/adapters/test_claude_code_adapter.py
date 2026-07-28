@@ -49,10 +49,17 @@ def _aggregated_compaction(rule_name: str, reason: str) -> str:
 
 class TestBundledBlockReasonFraming:
     def test_live_corpus_is_exhaustively_classified_once(self) -> None:
-        rule_names = set(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS)
+        rule_names = set(_bundled_before_tool_block_reasons(validate=True))
 
         assert _REDIRECT_BLOCK_RULES.isdisjoint(_TRUE_RESTRICTION_BLOCK_RULES)
-        assert rule_names == _REDIRECT_BLOCK_RULES | _TRUE_RESTRICTION_BLOCK_RULES
+        missing_redirects = _REDIRECT_BLOCK_RULES - rule_names
+        assert not missing_redirects, f"missing redirect rules: {sorted(missing_redirects)}"
+        missing_restrictions = _TRUE_RESTRICTION_BLOCK_RULES - rule_names
+        assert not missing_restrictions, (
+            f"missing restriction rules: {sorted(missing_restrictions)}"
+        )
+        unclassified = rule_names - (_REDIRECT_BLOCK_RULES | _TRUE_RESTRICTION_BLOCK_RULES)
+        assert not unclassified, f"unclassified live block rules: {sorted(unclassified)}"
 
     @pytest.mark.parametrize(
         ("rule_name", "raw_reason"),
@@ -846,7 +853,7 @@ class TestTranslateFromHookResponse:
         assert reason not in result
         assert len(result) == claude_code._DENY_REASON_MAX_CHARS
 
-    def test_pre_tool_use_redirect_budget_never_truncates_action(self) -> None:
+    def test_pre_tool_use_redirect_budget_truncates_oversized_action(self) -> None:
         action = f"Use {'target ' * 60}now."
 
         result = claude_code._compact_single_claude_pre_tool_deny_reason(
@@ -854,8 +861,9 @@ class TestTranslateFromHookResponse:
             f"{action} This reason should be omitted.",
         )
 
-        assert result == f"Gobby [long-action]: {action}"
-        assert len(result) > claude_code._DENY_REASON_MAX_CHARS
+        assert result.startswith("Gobby [long-action]: Use target ")
+        assert result.endswith("…")
+        assert len(result) == claude_code._DENY_REASON_MAX_CHARS
 
     def test_pre_tool_use_aggregate_block_preserves_mixed_child_framing(self) -> None:
         adapter = ClaudeCodeAdapter()

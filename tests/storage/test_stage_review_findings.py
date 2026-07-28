@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Never, cast
 
 import pytest
 
@@ -514,14 +514,34 @@ def test_free_text_rejection_fallback(stage_review_setup: StageReviewSetup) -> N
     assert "```json" not in (updated.description or "")
 
 
+def _snapshot_spawn_action(
+    stage_review_setup: StageReviewSetup,
+) -> tuple[SpawnAgentAction, SimpleNamespace]:
+    sync_bundled_agents(stage_review_setup.db)
+    action = SpawnAgentAction(
+        task_id=stage_review_setup.task_id,
+        task_ref="#1",
+        agent_slug="plan-adversary",
+        prompt="Review the prepared plan.",
+        initial_variables={"stage_name": "planning", "stage_state": "needs_review"},
+    )
+    services = SimpleNamespace(
+        database=stage_review_setup.db,
+        task_manager=stage_review_setup.manager,
+        session_manager=stage_review_setup.sessions,
+        agent_runner=SimpleNamespace(),
+    )
+    return action, services
+
+
 @pytest.mark.asyncio
 async def test_staged_prompt_uses_evidence_handle(
     stage_review_setup: StageReviewSetup,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_bundled_agents(stage_review_setup.db)
     captured: dict[str, object] = {}
     run_id = "f57e4e3b-2ac4-53ad-91ed-29ee556fef12"
+    action, services = _snapshot_spawn_action(stage_review_setup)
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         captured.update(kwargs)
@@ -559,19 +579,6 @@ async def test_staged_prompt_uses_evidence_handle(
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
-    )
-    action = SpawnAgentAction(
-        task_id=stage_review_setup.task_id,
-        task_ref="#1",
-        agent_slug="plan-adversary",
-        prompt="Review the prepared plan.",
-        initial_variables={"stage_name": "planning", "stage_state": "needs_review"},
-    )
-    services = SimpleNamespace(
-        database=stage_review_setup.db,
-        task_manager=stage_review_setup.manager,
-        session_manager=stage_review_setup.sessions,
-        agent_runner=SimpleNamespace(),
     )
 
     result = await spawn_agent(
@@ -630,6 +637,14 @@ async def test_staged_prompt_uses_evidence_handle(
         repair_submission=repair_submission,
     )
 
+
+@pytest.mark.asyncio
+async def test_pre_spawn_snapshot_expires_when_spawn_fails(
+    stage_review_setup: StageReviewSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    action, services = _snapshot_spawn_action(stage_review_setup)
+
     async def failed_spawn(**_kwargs: object) -> dict[str, object]:
         raise DispatchSpawnFailed("provider_failed")
 
@@ -643,10 +658,17 @@ async def test_staged_prompt_uses_evidence_handle(
         project_id=stage_review_setup.project_id,
         plan_path=stage_review_setup.plan_relative_path,
     )[-1]
-    assert failed_row.round_number == 2
+    assert failed_row.round_number == 1
     assert failed_row.expired_at is not None
 
+
+@pytest.mark.asyncio
+async def test_pre_spawn_snapshot_expires_when_run_lineage_is_wrong(
+    stage_review_setup: StageReviewSetup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     wrong_run_id = "dbdb2055-cd26-5eba-87f2-a0a3ffc859f8"
+    action, services = _snapshot_spawn_action(stage_review_setup)
 
     async def wrong_lineage_spawn(**kwargs: object) -> dict[str, object]:
         stage_review_setup.runs.create(
@@ -686,7 +708,7 @@ def test_rejection_finalizes_evidence(
         self: PlanReviewEvidenceService,
         target_evidence_id: str,
         round_result: dict[str, object],
-    ) -> None:
+    ) -> Never:
         del self, target_evidence_id, round_result
         raise RuntimeError("crash between rejection writes")
 

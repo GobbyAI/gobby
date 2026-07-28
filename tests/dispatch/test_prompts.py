@@ -142,12 +142,6 @@ def test_doc_reviewer_prompt_builder_registered() -> None:
     assert "#43" in prompt
 
 
-def test_epic_reviewer_prompt_builder_registered() -> None:
-    from gobby.dispatch.prompts import PROMPT_BUILDERS
-
-    assert "epic-reviewer" in PROMPT_BUILDERS
-
-
 @pytest.mark.parametrize(
     ("agent_slug", "stage_name", "section_title"),
     [

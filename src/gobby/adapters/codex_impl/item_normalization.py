@@ -12,7 +12,13 @@ import re
 from typing import Any
 
 from gobby.adapters.codex_impl.execution_chain import (
+    DIRECT_EXEC_NAMES,
+)
+from gobby.adapters.codex_impl.execution_chain import (
     DynamicExecCorrelator as DynamicExecCorrelator,
+)
+from gobby.adapters.codex_impl.execution_chain import (
+    extract_yielded_cell_id as extract_yielded_cell_id,
 )
 from gobby.hooks.normalization import normalize_tool_fields
 
@@ -46,7 +52,6 @@ TOOLISH_FIELDS: frozenset[str] = frozenset(
 )
 
 _FUNCTIONS_EXEC_NAMES = frozenset({"exec", "functions.exec"})
-_DIRECT_EXEC_COMMAND_NAMES = frozenset({"exec_command", "functions.exec_command"})
 _DIRECT_EXEC_COMPLETION_RE = re.compile(
     r"\AChunk ID: [^\r\n]+\r?\n"
     r"Wall time: [^\r\n]+\r?\n"
@@ -64,7 +69,6 @@ _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_SESSION_RE = re.compile(r"\bsession_id\s*:\s*(\"(?:\\.|[^\"\\])*\"|-?\d+)")
-_YIELDED_CELL_RE = re.compile(r"^Script running with cell ID ([A-Za-z0-9._:-]+)\s*$")
 
 
 def compose_mcp_tool_name(server: str, tool: str) -> str:
@@ -225,20 +229,6 @@ def extract_exec_session_id(data: dict[str, Any]) -> str | None:
     return None
 
 
-def extract_yielded_cell_id(data: dict[str, Any]) -> str | None:
-    """Read the functions wrapper's correlation token without inferring outcome."""
-    output = data.get("tool_output")
-    for text in _iter_wrapper_output_text(output):
-        for line in text.splitlines():
-            first_nonblank = line.strip()
-            if not first_nonblank:
-                continue
-            match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
-            if match:
-                return match.group(1)
-    return None
-
-
 def extract_wait_cell_id(data: dict[str, Any]) -> str | None:
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
@@ -328,7 +318,7 @@ def build_tool_event_data(
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["_dynamic_exec_command"] = command
-        elif dynamic_name in _DIRECT_EXEC_COMMAND_NAMES:
+        elif dynamic_name in DIRECT_EXEC_NAMES:
             command = extract_direct_exec_command(item_data.get("arguments"))
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name

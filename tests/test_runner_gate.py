@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -158,6 +158,28 @@ async def test_gate_cancellation_reaps_child_before_propagating() -> None:
 
     assert process.killed is True
     assert process.waited is True
+
+
+@pytest.mark.asyncio
+async def test_gate_cancellation_wins_over_reap_failure() -> None:
+    process = _StalledProcess()
+    reap_started = asyncio.Event()
+    release_reap = asyncio.Event()
+
+    async def fail_reap(_process: object) -> None:
+        reap_started.set()
+        await release_reap.wait()
+        raise RuntimeError("reap failed")
+
+    with patch("gobby.runner_gate._kill_and_reap", side_effect=fail_reap):
+        task = asyncio.create_task(
+            runner_gate._settle_reap_under_cancellation(cast(asyncio.subprocess.Process, process))
+        )
+        await reap_started.wait()
+        task.cancel()
+        release_reap.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 class TestRunnerGateLiveFence:

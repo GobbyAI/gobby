@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -142,3 +143,16 @@ def test_database_executor_shutdown_revokes_queued_submit() -> None:
     executor.join()
 
     assert queued.cancelled()
+
+
+def test_database_executor_join_closes_admission_and_is_idempotent() -> None:
+    executor = DatabaseExecutor(max_workers=1)
+    underlying = MagicMock(wraps=executor._executor)
+    executor._executor = underlying
+
+    executor.join()
+    executor.join()
+
+    assert executor.stats().shutdown is True
+    assert executor.is_joined() is True
+    underlying.shutdown.assert_called_once_with(wait=True, cancel_futures=False)
