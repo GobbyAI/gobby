@@ -9,7 +9,7 @@ Gobby's frontend is a single-page React application in `web/`. It is built with:
 - **React 18** and **TypeScript 5** for components and type safety.
 - **Vite 6** for the dev server and production build.
 - **Tailwind CSS 4** with `@tailwindcss/vite` for utility styling.
-- **Radix UI** primitives for dialog, select, slot, tabs, and tooltip behavior.
+- **Radix UI** primitives for dialog, select, slot, and tooltip behavior.
 - **class-variance-authority (CVA)** for component variants.
 - **clsx** and **tailwind-merge** through the shared `cn()` utility.
 
@@ -17,7 +17,11 @@ The product UI is dense, dark by default, and token-driven. Styling should feel
 industrial, efficient, and calm: solid colors, sharp type hierarchy, subtle
 motion, and no decorative gradients.
 
-The authoritative design contract is `.impeccable.md`. The deployed product UI
+The authoritative design contract is `.impeccable.md`; this guide is the
+implementation source of truth for how that contract is built. Its rules are
+enforced mechanically by the style-debt ratchet
+(`web/src/__tests__/styleRatchet.test.ts` — see
+[Style Debt Ratchet](#style-debt-ratchet)). The deployed product UI
 tokens live in `web/src/styles/tokens.css` (`web/src/styles/index.css` only
 aggregates imports); Tailwind exposes the common tokens through the `@theme`
 blocks in `web/src/styles/tailwind-theme.css`, while `web/tailwind.config.ts`
@@ -226,8 +230,8 @@ Use Tailwind's default spacing scale for component layout. The base unit is
 | `gap-6` | `1.5rem` | Page-level spacing |
 
 Prefer predictable density over large decorative whitespace. Interactive
-targets should remain touch-friendly: core buttons add `pointer-coarse:min-h-11`
-and `pointer-coarse:min-w-11`.
+targets stay touch-friendly automatically: non-`dense` `Button`s promote to the
+44px floor on coarse pointers (see the Button section).
 
 ### Border Radius
 
@@ -243,56 +247,76 @@ and `pointer-coarse:min-w-11`.
 
 ### Shared UI Primitives
 
-Shared primitives live in `web/src/components/chat/ui/`, except `Button.tsx`
-and `buttonVariants.ts`, which live in `web/src/components/shared/`.
+All shared primitives live in `web/src/components/ui/`. The ratchet's raw-element
+check exists so interactive elements are built from these primitives — only files
+under `src/components/ui/` may render raw `<button>`, `<input>`, `<select>`, or
+`<textarea>` freely.
 
 | Component | Purpose |
 |-----------|---------|
-| `shared/Button.tsx` | CVA button wrapper with Radix `Slot` support through `asChild` |
-| `shared/buttonVariants.ts` | Shared `buttonVariants` CVA definition |
+| `Button.tsx` | CVA button wrapper with Radix `Slot` support through `asChild` |
+| `buttonVariants.ts` | The `buttonVariants` CVA definition (variant/size/dense) |
 | `Badge.tsx` | Status badge variants |
 | `Dialog.tsx` | Radix dialog overlay, content, title, and description wrappers |
 | `dialogPrimitives.ts` | Re-exported Radix dialog root/trigger/close primitives |
 | `ConfirmDialog.tsx` | Confirmation dialog built from `Dialog` and `Button` |
+| `DropdownCaret.tsx` | Shared caret affordance for dropdown triggers |
 | `Input.tsx` | Standard text input |
 | `Textarea.tsx` | Standard textarea |
 | `Select.tsx` | Radix select trigger, content, and item wrappers |
 | `selectPrimitives.ts` | Re-exported Radix select root/group/value/label primitives |
+| `SegmentedControl.tsx` | Segmented control (mutually exclusive option row) |
 | `ScrollArea.tsx` | Scroll area wrapper |
+| `Switch.tsx` | Toggle switch |
 | `Tooltip.tsx` | Radix tooltip content wrapper |
 | `tooltipPrimitives.ts` | Re-exported Radix tooltip provider/root/trigger/portal primitives |
 
 #### Button
 
-```tsx
-import { Button } from '../shared/Button' // path relative to the caller
+The `.btn` CSS class system is retired; `Button` is the only sanctioned button
+surface. Choose the variant by role, not by look:
 
-<Button variant="primary">Save</Button>
-<Button variant="destructive" size="sm">Delete</Button>
+```tsx
+import { Button } from '../ui/Button' // path relative to the caller
+
+<Button variant="accent" size="sm">Refresh</Button>   // canonical action style
+<Button variant="primary">Send</Button>               // the surface's single dominant CTA
+<Button>Cancel</Button>                               // secondary (default)
 <Button variant="ghost" size="icon"><MyIcon /></Button>
-<Button variant="outline">Cancel</Button>
+<Button variant="destructive" size="sm">Delete</Button>
 ```
 
-| Variant | Appearance |
-|---------|------------|
-| `default` | Foreground background with background text |
-| `primary` | Accent background with accent foreground |
-| `accent` | Tinted accent border/background; the canonical non-CTA action style |
-| `destructive` | Transparent with error text; error-soft surface on hover |
-| `outline` | Transparent background with border |
-| `ghost` | Transparent, muted hover background |
+| Variant | Role | Appearance |
+|---------|------|------------|
+| `secondary` (default) | Ordinary actions | Bordered, transparent, muted text |
+| `accent` | The canonical style for meaningful actions (New Chat, Hide Panel) | Tinted accent surface and border |
+| `primary` | The single dominant CTA on a surface (chat Send, Approve) | Solid accent background |
+| `ghost` | Tertiary actions in dense rows | Borderless, transparent, muted hover |
+| `destructive` | Quiet destructive actions | Transparent with error text; error-soft hover |
+| `outline` | Neutral bordered alternative | Transparent with border, foreground text |
 
 | Size | Classes |
 |------|---------|
-| `sm` | `h-8 px-3 text-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11` |
-| `md` | `h-9 px-4 pointer-coarse:min-h-11 pointer-coarse:min-w-11` |
-| `lg` | `h-10 px-6 text-base pointer-coarse:min-h-11 pointer-coarse:min-w-11` |
-| `icon` | `h-9 w-9 pointer-coarse:min-h-11 pointer-coarse:min-w-11` |
+| `sm` | `min-h-7 px-2.5 text-xs` |
+| `md` (default) | `min-h-8 px-3.5 text-sm` |
+| `lg` | `min-h-10 px-4.5 text-base` |
+| `icon` | `min-h-8 w-8 p-0 text-sm` |
+
+**Coarse pointers and `dense`.** By default every `Button` promotes itself to
+the 44px touch floor on coarse pointers (`pointer-coarse:min-h-11
+pointer-coarse:min-w-11`). Pass `dense` only for desktop-only chrome that must
+keep its compact row height on touch — the app-header cluster and the
+status-bar/command-bar controls pinned to `--status-bar-control-height`.
+Content-area buttons stay non-dense.
+
+Surface-specific sizing hooks (`app-settings-cog`, `command-bar-btn`, …) stay as
+plain `className` hook classes; their rules live in the owning stylesheet
+(`app-shell.css`, `layout.css`).
 
 #### Badge
 
 ```tsx
-import { Badge } from './chat/ui/Badge'
+import { Badge } from './ui/Badge'
 
 <Badge variant="success">Connected</Badge>
 <Badge variant="error">Failed</Badge>
@@ -312,7 +336,7 @@ import {
   DialogContent,
   DialogTitle,
   DialogDescription,
-} from './chat/ui/Dialog'
+} from './ui/Dialog'
 
 <Dialog>
   <DialogTrigger asChild><Button>Open</Button></DialogTrigger>
@@ -389,27 +413,20 @@ Use semantic Tailwind mappings or CSS variables.
 
 Avoid raw hex and one-off color literals in components.
 
-### Feature-Scoped CSS
+### Legacy CSS Files
 
-When Tailwind is insufficient, use a co-located CSS or `.styles.ts` file in the
-feature directory. Use BEM-style class names for CSS files.
+**New stylesheets are banned.** The ratchet records the exact set of existing
+CSS files and fails on any addition. New styling goes in Tailwind utilities at
+the call site, `cva` definitions for variants, or a `components/ui` primitive.
 
-```css
-.my-feature { ... }
-.my-feature__header { ... }
-.my-feature__item { ... }
-.my-feature__item--active { ... }
-```
+The existing sheets (feature-scoped modules for integrations, agents,
+workflows, and chat tabs; global sheets under `web/src/styles/`) are legacy
+debt under a total line ceiling that only shrinks. When editing one:
 
-Import CSS at the component boundary:
-
-```tsx
-import './MyFeature.css'
-```
-
-Feature-scoped style modules already exist for integrations, agents,
-workflows, and chat tabs; session, source-control, and settings styles
-currently live as global sheets under `web/src/styles/`.
+- Keep to its established BEM-style naming (`.my-feature__item--active`).
+- Prefer deleting rules by migrating the styled markup onto primitives and
+  utilities over adding rules.
+- When a sheet is emptied, delete it and remove its `CSS_FILE_ALLOWLIST` entry.
 
 ### Light Mode
 
@@ -430,6 +447,34 @@ tokens.
 ```css
 background: color-mix(in srgb, var(--accent) 10%, transparent);
 ```
+
+## Style Debt Ratchet
+
+`web/src/__tests__/styleRatchet.test.ts` scans `web/src/` (skipping test
+directories, `.test.`/`.spec.` files, and `.d.ts`) and compares the result
+against the recorded debt in `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+**Attrition contract: allowlist entries may only be deleted or decreased.**
+Never add an entry, never increase a count, never raise the line ceiling. Every
+check fails in both directions — above the ceiling means new debt was
+introduced; below it means the allowlist is stale and must be tightened to the
+new, lower count. A passing run therefore proves the recorded debt is exact.
+
+The six checks:
+
+| Check | Rule | Current state |
+|-------|------|---------------|
+| `.btn` class tokens | `btn`/`btn-*` string literals in ts/tsx (comment-stripped; suffixed hook classes like `command-bar-btn` don't match) | Pure ban — `BTN_CLASS_ALLOWLIST` is empty; the `.btn` system is retired |
+| Raw interactive elements | `<button>`, `<input>`, `<select>`, `<textarea>` in tsx outside `src/components/ui/` | Per-file exact counts; migrate onto primitives to shrink them |
+| `*_CLS` constants | `const FOO_CLS = ...` style-string constants | Per-file exact counts; style at the call site instead |
+| Stylesheet set | Every `.css` file under `src/` must appear in `CSS_FILE_ALLOWLIST` | New CSS files are banned; deleted sheets must drop their entry |
+| `!important` | Per-file exact counts across ts/tsx/css | Never add one; fix specificity at the source |
+| Total CSS lines | Sum of all stylesheet lines vs `CSS_TOTAL_LINE_CEILING` | Ceiling only lowers; when total drops more than `CSS_LINE_TIGHTEN_SLACK` below it, the test demands lowering the ceiling |
+
+To pay down debt: migrate a call site (raw element → primitive, `*_CLS` →
+inline utilities, CSS rule → utility classes), run the ratchet, and tighten the
+allowlist entries it reports as stale. The failure messages name the exact file
+and remedy.
 
 ## Icons
 
@@ -593,15 +638,14 @@ web/src/
 
 | Creating... | Location |
 |-------------|----------|
-| Shared UI primitive | `web/src/components/chat/ui/` |
+| Shared UI primitive | `web/src/components/ui/` |
 | App shell or navigation helper | `web/src/components/app/` |
 | Feature-specific component | `web/src/components/<feature>/` |
 | New page/tab | `web/src/components/<feature>/` plus `AppPages.tsx` and `appNavigation.tsx` |
 | Custom hook | `web/src/hooks/use<Name>.ts` |
 | Shared app icon | `web/src/components/icons/AppIcons.tsx` |
 | Shared non-nav icon | `web/src/components/shared/Icons.tsx` |
-| Global or cross-feature CSS | `web/src/styles/` |
-| Feature-scoped CSS | Co-located in the feature directory |
+| New CSS | Nowhere — new stylesheets are banned; use Tailwind utilities at the call site |
 | Type definitions | `web/src/types/` |
 
 ## Z-Index Scale
@@ -628,6 +672,9 @@ Do not:
 - Add React Router; top-level navigation is hash-backed tab state.
 - Create broad global providers when a custom hook and local state will do.
 - Use `!important`; Tailwind utilities are already configured with `important: true`.
+- Use `btn`/`btn-*` classes — the `.btn` system is retired; use `<Button>` from `components/ui`.
+- Render raw `<button>`, `<input>`, `<select>`, or `<textarea>` outside `components/ui`; use the primitives.
+- Create new `.css` files or new `*_CLS` style-string constants (ratchet-enforced).
 - Treat light mode as a secondary pass.
 - Create new agent-specific colors.
 
@@ -640,10 +687,11 @@ Do not:
 | Raw red for errors | Use destructive/error tokens; destructive hue is magenta-pink |
 | Color-only status indicator | Add text, icon, position, or shape |
 | Forgetting light mode | Use variables that switch under `[data-theme="light"]` |
-| New modal implementation | Use `Dialog` or `ConfirmDialog` from `chat/ui/` |
+| New modal implementation | Use `Dialog` or `ConfirmDialog` from `components/ui/` |
+| `<button className="...">` in a feature component | Use `<Button>` from `components/ui/` |
 | `style={{ color: 'red' }}` | Use semantic classes or `text-[var(--color-error)]` |
 | New global context for page-local state | Write a hook or local component state |
 | String-concatenated class names | Use `cn()` |
 | New icon package | Add an inline SVG component |
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-07-27_
