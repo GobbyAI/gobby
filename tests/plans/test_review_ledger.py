@@ -23,6 +23,7 @@ def _finding(
     category: str = "unhandled-edge",
     section_ids: Sequence[str] = ("1.1",),
     description: str = "Consumer misses the new field.",
+    repair_scope: str = "existing_sections",
 ) -> dict[str, object]:
     primary, *participating = section_ids
     finding: dict[str, object] = {
@@ -34,6 +35,7 @@ def _finding(
         "location": "src/consumer.py:10",
         "description": description,
         "minimal_repair": "Read the new field.",
+        "repair_scope": repair_scope,
         "prevention": "Audit every consumer.",
     }
     if participating:
@@ -86,6 +88,19 @@ def _round_result(
     assert isinstance(lanes[0], dict)
     lanes[0]["candidate_count"] = canonical_counts["total"]
     attestation["disposition_counts"] = canonical_counts
+    record_bundle = attestation["record_bundle"]
+    assert isinstance(record_bundle, dict)
+    record_bundle["candidate_dispositions"] = records
+    record_bundle["adjacent_variant_sweeps"] = [
+        {
+            "check_key": record["check_key"],
+            "seed_candidate_id": record["candidate_id"],
+            "query_evidence": [f"gcode search {record['candidate_id']}"],
+            "sites_checked": ["src/consumer.py"],
+            "resulting_candidate_ids": [],
+        }
+        for record in records
+    ]
     unsigned = {key: value for key, value in attestation.items() if key != "attestation_digest"}
     attestation["attestation_digest"] = hashlib.sha256(
         json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
@@ -282,4 +297,28 @@ def test_ledger_validation_shares_finding_vocabularies() -> None:
             round_result=_round_result(
                 findings=[_finding("bad-check", check_key="contains spaces")]
             ),
+        )
+
+    new_deliverable = _finding("new-runbook", repair_scope="new_deliverable")
+    new_deliverable["new_deliverable_justification"] = (
+        "No existing plan section owns operator documentation."
+    )
+    ledger = merge_quality_ledger(
+        prior_ledger=[],
+        round_number=1,
+        current_section_hashes={"1.1": "a" * 64},
+        round_result=_round_result(findings=[new_deliverable]),
+    )
+    assert ledger[0]["repair_scope"] == "new_deliverable"
+    assert (
+        ledger[0]["new_deliverable_justification"]
+        == "No existing plan section owns operator documentation."
+    )
+
+    with pytest.raises(ReviewEvidenceError, match="repair_scope"):
+        merge_quality_ledger(
+            prior_ledger=[],
+            round_number=1,
+            current_section_hashes={"1.1": "a" * 64},
+            round_result=_round_result(findings=[_finding("bad-scope", repair_scope="whole_plan")]),
         )

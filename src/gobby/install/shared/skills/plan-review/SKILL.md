@@ -488,6 +488,12 @@ Each finding is one typed attestation with these fields:
 - **location** — human-readable phase/task reference.
 - **description** — one short paragraph; what is wrong or missing.
 - **minimal_repair** — the smallest change that removes the demonstrated failure.
+- **repair_scope** — `existing_sections` when the repair belongs in the finding's
+  `section_id` or `participating_section_ids`; `new_deliverable` only when no
+  existing section can own the obligation.
+- **new_deliverable_justification** — required only for `new_deliverable`; explain
+  why no existing host section can own the obligation. Omit this field for
+  `existing_sections`.
 - **failure_trace** — required for `blocking` findings and optional but
 all-or-nothing for other severities. It contains non-empty `preconditions`,
 `action`, `wrong_outcome`, and `violated_obligation` strings plus a non-empty
@@ -526,6 +532,7 @@ prevention: Check success, contention, timeout, and dependency-failure paths.
 location: Phase 2 / § 2.4
 description: The lock-held and timeout branches are unspecified.
 minimal_repair: Add retry, bail-out, and caller-visible failure behavior.
+repair_scope: existing_sections
 failure_trace:
   preconditions: The lock is already held by another worker.
   action: The planned operation attempts to acquire the lock.

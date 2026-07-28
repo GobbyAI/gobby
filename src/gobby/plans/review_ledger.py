@@ -15,6 +15,7 @@ from gobby.plans.review_evidence_models import (
 from gobby.plans.review_findings import (
     CHECK_KEY_RE,
     FINDING_CATEGORIES,
+    FINDING_REPAIR_SCOPES,
     FINDING_SEVERITIES,
 )
 
@@ -40,6 +41,8 @@ _FINDING_FIELDS = frozenset(
         "location",
         "description",
         "minimal_repair",
+        "repair_scope",
+        "new_deliverable_justification",
         "prevention",
         "principle",
         "root_cause",
@@ -53,6 +56,7 @@ _FINDING_REQUIRED = (
     "location",
     "description",
     "minimal_repair",
+    "repair_scope",
     "prevention",
 )
 _DISPOSITION_FIELDS = frozenset(
@@ -501,7 +505,19 @@ def _finding_details(
     details: dict[str, object] = {
         field: _required_string(finding, field, owner) for field in _FINDING_REQUIRED
     }
-    for field in ("principle", "root_cause"):
+    scope = cast(str, details["repair_scope"])
+    if scope not in FINDING_REPAIR_SCOPES:
+        raise _invalid(f"{owner}.repair_scope is not supported")
+    has_justification = "new_deliverable_justification" in finding
+    if scope == "new_deliverable" and not has_justification:
+        raise _invalid(
+            f"{owner}.new_deliverable_justification is required for new_deliverable repairs"
+        )
+    if scope == "existing_sections" and has_justification:
+        raise _invalid(
+            f"{owner}.new_deliverable_justification is forbidden for existing_sections repairs"
+        )
+    for field in ("principle", "root_cause", "new_deliverable_justification"):
         if field in finding:
             details[field] = _required_string(finding, field, owner)
     return details

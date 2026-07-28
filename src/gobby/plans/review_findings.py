@@ -13,6 +13,7 @@ from gobby.plans.review_evidence_models import (
 )
 
 FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "nit"})
+FINDING_REPAIR_SCOPES = frozenset({"existing_sections", "new_deliverable"})
 FINDING_CATEGORIES = frozenset(
     {
         "missing-requirement",
@@ -35,9 +36,15 @@ _REQUIRED_STRING_FIELDS = (
     "location",
     "description",
     "minimal_repair",
+    "repair_scope",
     "prevention",
 )
-_OPTIONAL_STRING_FIELDS = ("principle", "root_cause", "causal_finding_id")
+_OPTIONAL_STRING_FIELDS = (
+    "principle",
+    "root_cause",
+    "causal_finding_id",
+    "new_deliverable_justification",
+)
 _SECTION_SET_FIELDS = ("participating_section_ids", "causal_section_ids")
 _FAILURE_TRACE_STRING_FIELDS = (
     "preconditions",
@@ -105,10 +112,21 @@ def render_rejection_section(
                 "",
                 f"**Minimal repair:** {finding['minimal_repair']}",
                 "",
-                f"**Prevention:** {finding['prevention']}",
+                f"**Repair scope:** {finding['repair_scope']}",
                 "",
             ]
         )
+        if "new_deliverable_justification" in finding:
+            lines.extend(
+                [
+                    (
+                        "**New deliverable justification:** "
+                        f"{finding['new_deliverable_justification']}"
+                    ),
+                    "",
+                ]
+            )
+        lines.extend([f"**Prevention:** {finding['prevention']}", ""])
     envelope = {
         "evidence_id": evidence.evidence_id,
         "findings": list(findings),
@@ -145,6 +163,18 @@ def _validate_finding(
         raise _invalid(f"{prefix}.severity must be one of: {vocabulary}")
     if raw["category"] not in FINDING_CATEGORIES:
         raise _invalid(f"{prefix}.category is not a supported adversary category")
+    if raw["repair_scope"] not in FINDING_REPAIR_SCOPES:
+        vocabulary = ", ".join(sorted(FINDING_REPAIR_SCOPES))
+        raise _invalid(f"{prefix}.repair_scope must be one of: {vocabulary}")
+    has_new_deliverable_justification = "new_deliverable_justification" in raw
+    if raw["repair_scope"] == "new_deliverable" and not has_new_deliverable_justification:
+        raise _invalid(
+            f"{prefix}.new_deliverable_justification is required for new_deliverable repairs"
+        )
+    if raw["repair_scope"] == "existing_sections" and has_new_deliverable_justification:
+        raise _invalid(
+            f"{prefix}.new_deliverable_justification is forbidden for existing_sections repairs"
+        )
     if CHECK_KEY_RE.fullmatch(str(raw["check_key"])) is None:
         raise _invalid(f"{prefix}.check_key is invalid")
     if raw["section_id"] not in section_ids:

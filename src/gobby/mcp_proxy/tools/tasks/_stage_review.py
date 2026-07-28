@@ -24,7 +24,7 @@ from gobby.mcp_proxy.tools.tasks._plan_review_approval import complete_plan_revi
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_findings import FINDING_SEVERITIES
+from gobby.plans.review_findings import FINDING_REPAIR_SCOPES, FINDING_SEVERITIES
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -630,6 +630,14 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                             "location": {"type": "string"},
                             "description": {"type": "string"},
                             "minimal_repair": {"type": "string"},
+                            "repair_scope": {
+                                "type": "string",
+                                "enum": sorted(FINDING_REPAIR_SCOPES),
+                            },
+                            "new_deliverable_justification": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
                             "prevention": {"type": "string"},
                             "principle": {"type": "string"},
                             "root_cause": {"type": "string"},
@@ -699,6 +707,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                             "location",
                             "description",
                             "minimal_repair",
+                            "repair_scope",
                             "prevention",
                         ],
                         "allOf": [
@@ -708,7 +717,21 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                                     "required": ["severity"],
                                 },
                                 "then": {"required": ["failure_trace"]},
-                            }
+                            },
+                            {
+                                "if": {
+                                    "properties": {"repair_scope": {"const": "new_deliverable"}},
+                                    "required": ["repair_scope"],
+                                },
+                                "then": {"required": ["new_deliverable_justification"]},
+                            },
+                            {
+                                "if": {
+                                    "properties": {"repair_scope": {"const": "existing_sections"}},
+                                    "required": ["repair_scope"],
+                                },
+                                "then": {"not": {"required": ["new_deliverable_justification"]}},
+                            },
                         ],
                         "additionalProperties": False,
                     },

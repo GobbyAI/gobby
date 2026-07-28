@@ -604,6 +604,7 @@ def test_approval_condition_blocking_only() -> None:
             "location": "§ 1.1",
             "description": f"{severity} non-gating risk",
             "minimal_repair": "Record the explicit quality decision.",
+            "repair_scope": "existing_sections",
             "prevention": "Surface the quality ledger at approval.",
         }
         for severity, digit in (("major", "1"), ("minor", "2"))

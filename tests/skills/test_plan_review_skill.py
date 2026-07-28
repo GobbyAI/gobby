@@ -186,6 +186,13 @@ class TestPlanReviewContent:
         for field in ("severity", "category", "location", "description", "suggested fix"):
             assert field in body.lower(), f"Finding schema missing: {field}"
 
+    def test_minimal_repair_scope_contract(self, body: str) -> None:
+        assert "**minimal_repair**" in body
+        assert "**repair_scope**" in body
+        assert "`existing_sections`" in body
+        assert "`new_deliverable`" in body
+        assert "**new_deliverable_justification**" in body
+
     def test_three_lane_coverage_and_complexity_thresholds(self, body: str) -> None:
         for lane in (
             "requirements_traceability",

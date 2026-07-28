@@ -42,6 +42,12 @@ def _coverage(evidence_id: str) -> dict[str, object]:
         },
         "cross_lane_interaction_complete": True,
         "adjacent_variant_complete": True,
+        "record_bundle": {
+            "cross_lane_interactions": [],
+            "adjacent_variant_sweeps": [],
+            "causal_repair_sweeps": [],
+            "candidate_dispositions": [],
+        },
         "shadow_manifest_status": {
             "status": "valid",
             "manifest_digest": "b" * 64,

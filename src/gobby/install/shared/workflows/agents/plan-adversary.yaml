@@ -84,8 +84,11 @@ instructions: |
   Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
-  one of `principle` or `root_cause`, and every field required by its claimed
-  lesson class. Return section ids only; the evidence service owns hashes.
+  one of `principle` or `root_cause`, `minimal_repair`, and `repair_scope`.
+  `new_deliverable` requires `new_deliverable_justification` explaining why no
+  existing host section can own the obligation; `existing_sections` forbids that
+  field. Every finding also carries each field required by its claimed lesson
+  class. Return section ids only; the evidence service owns hashes.
 
   THREE-LANE COVERAGE PROTOCOL:
   Always complete requirements_traceability, repository_blast_radius, and

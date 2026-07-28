@@ -121,6 +121,7 @@ def _finding(
         "location": "1.1",
         "description": f"Repair {finding_id}.",
         "minimal_repair": f"Apply the minimal repair for {finding_id}.",
+        "repair_scope": "existing_sections",
         "prevention": "Validate the repaired surface.",
         "principle": "Repairs require evidence.",
     }

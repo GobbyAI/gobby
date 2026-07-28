@@ -38,7 +38,8 @@ instructions: |
 
   PLAN REVIEW EVIDENCE CONTRACT:
   Follow the plan-review skill's recalled-lesson pass and full finding schema,
-  including required `minimal_repair` and blocking-only required `failure_trace`. Recall
+  including required `minimal_repair`, required `repair_scope`, conditional
+  `new_deliverable_justification`, and blocking-only required `failure_trace`. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
   one of `principle` or `root_cause`, and every field required by its claimed
@@ -131,6 +132,8 @@ instructions: |
       prevention: <checklist action>
       description: <issue>
       minimal_repair: <smallest change that removes the failure>
+      repair_scope: <existing_sections | new_deliverable>
+      new_deliverable_justification: <why no existing section can own it; new_deliverable only>
       failure_trace:  # required for blocking; optional but all-or-nothing otherwise
         preconditions: <state required to reproduce the failure>
         action: <operation that triggers the failure>

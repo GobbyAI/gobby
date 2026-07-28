@@ -441,6 +441,7 @@ def test_interactive_approval_sequence(
                 "location": "Sections 1.1 and 1.2",
                 "description": "The cross-section invariant is incomplete.",
                 "minimal_repair": "Cover both participating sections.",
+                "repair_scope": "existing_sections",
                 "principle": "Review the whole invariant",
                 "prevention": "Check both participating sections",
                 "participating_section_ids": ["1.1", "1.2"],

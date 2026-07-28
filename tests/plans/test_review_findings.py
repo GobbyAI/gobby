@@ -28,7 +28,11 @@ def _evidence() -> PlanReviewEvidence:
     )
 
 
-def _finding(*, severity: str = "major") -> dict[str, object]:
+def _finding(
+    *,
+    severity: str = "major",
+    repair_scope: str = "existing_sections",
+) -> dict[str, object]:
     return {
         "finding_id": "F1",
         "section_id": "1.1",
@@ -38,6 +42,7 @@ def _finding(*, severity: str = "major") -> dict[str, object]:
         "location": "§ 1.1",
         "description": "The failure path can leave partial state.",
         "minimal_repair": "Specify rollback before retry.",
+        "repair_scope": repair_scope,
         "principle": "Failure handling must be atomic.",
         "prevention": "Walk every write failure boundary.",
     }
@@ -122,3 +127,33 @@ def test_single_canonical_remedy_field() -> None:
         legacy[legacy_field] = legacy.pop("minimal_repair")
         with pytest.raises(ReviewEvidenceError, match=legacy_field):
             validate_plan_review_findings([legacy], evidence=_evidence())
+
+
+def test_minimal_repair_required() -> None:
+    for required_field in ("minimal_repair", "repair_scope"):
+        incomplete = _finding()
+        incomplete.pop(required_field)
+        with pytest.raises(ReviewEvidenceError, match=required_field):
+            validate_plan_review_findings([incomplete], evidence=_evidence())
+
+    invalid_scope = _finding(repair_scope="whole_plan")
+    with pytest.raises(ReviewEvidenceError, match="repair_scope"):
+        validate_plan_review_findings([invalid_scope], evidence=_evidence())
+
+    existing = _finding()
+    assert validate_plan_review_findings([existing], evidence=_evidence())[0] == existing
+
+    existing["new_deliverable_justification"] = "A separate artifact is easier to find."
+    with pytest.raises(ReviewEvidenceError, match="new_deliverable_justification"):
+        validate_plan_review_findings([existing], evidence=_evidence())
+
+    new_deliverable = _finding(repair_scope="new_deliverable")
+    with pytest.raises(ReviewEvidenceError, match="new_deliverable_justification"):
+        validate_plan_review_findings([new_deliverable], evidence=_evidence())
+
+    new_deliverable["new_deliverable_justification"] = (
+        "No existing section owns the new operator runbook."
+    )
+    assert (
+        validate_plan_review_findings([new_deliverable], evidence=_evidence())[0] == new_deliverable
+    )

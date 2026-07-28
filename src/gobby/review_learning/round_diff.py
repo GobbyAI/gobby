@@ -96,6 +96,8 @@ def _no_fix_policy_candidates(row: PlanReviewEvidence) -> list[PlanReviewLessonC
                 "location",
                 "description",
                 "minimal_repair",
+                "repair_scope",
+                "new_deliverable_justification",
                 "prevention",
                 "principle",
                 "root_cause",

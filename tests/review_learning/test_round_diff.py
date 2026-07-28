@@ -49,6 +49,7 @@ def _finding(
         "location": "§ A",
         "description": f"Finding {finding_id}",
         "minimal_repair": f"Fix {finding_id}",
+        "repair_scope": "existing_sections",
         "prevention": f"Prevent {finding_id}",
     }
     if severity == "blocking":

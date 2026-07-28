@@ -914,6 +914,7 @@ def test_finalize_persists_server_derived_quality_ledger(
         "location": "src/example.py:1",
         "description": "A consumer misses the new field.",
         "minimal_repair": "Read the new field.",
+        "repair_scope": "existing_sections",
         "principle": "Review every consumer of a changed contract.",
         "prevention": "Audit every consumer.",
     }
