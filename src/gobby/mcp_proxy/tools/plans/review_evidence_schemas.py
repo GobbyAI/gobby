@@ -382,20 +382,6 @@ REPAIR_ATTESTATIONS_SCHEMA = {
     "items": REPAIR_ATTESTATION_SCHEMA,
 }
 
-INDEX_TOKEN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "repository_digest": _SHA256,
-        "last_indexed_at": _NONEMPTY_STRING,
-        "source_files": {
-            **_STRING_ARRAY,
-            "minItems": 1,
-        },
-    },
-    "required": ["repository_digest", "last_indexed_at", "source_files"],
-    "additionalProperties": False,
-}
-
 _FAILURE_TRACE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -727,16 +713,6 @@ ROUND_RESULT_SCHEMA = {
                                 },
                             },
                             "required": ["reason_code", "paths"],
-                            "additionalProperties": False,
-                        },
-                        {
-                            "type": "object",
-                            "properties": {
-                                "reason_code": {"const": "index_mismatch"},
-                                "expected_token": _NONEMPTY_STRING,
-                                "actual_token": _NONEMPTY_STRING,
-                            },
-                            "required": ["reason_code", "expected_token", "actual_token"],
                             "additionalProperties": False,
                         },
                         {

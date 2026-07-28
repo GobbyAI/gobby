@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from gobby.agents.code_index import IndexToken
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
@@ -156,7 +155,7 @@ def _settled_repair_inputs(
     *,
     repair_finding_ids: Sequence[str],
     **_kwargs: object,
-) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, RepairUniverse]:
     site_ids = tuple(
         site_id
         for finding_id in repair_finding_ids
@@ -203,12 +202,7 @@ def _settled_repair_inputs(
         ),
         interaction_edges=(),
     )
-    token = IndexToken(
-        repository_digest="a" * 64,
-        last_indexed_at="2026-07-28T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
-    return token, inventory, universe
+    return inventory, universe
 
 
 def _new_task_id(harness: _ReviewHarness) -> str:

@@ -70,80 +70,6 @@ class RepositoryDigest:
     source_files: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class IndexToken:
-    """Repository/index generation pair captured around one index operation."""
-
-    repository_digest: str
-    last_indexed_at: str
-    source_files: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "repository_digest": self.repository_digest,
-            "last_indexed_at": self.last_indexed_at,
-            "source_files": list(self.source_files),
-        }
-
-    @classmethod
-    def from_mapping(cls, raw: Mapping[str, object]) -> IndexToken:
-        digest = raw.get("repository_digest")
-        indexed_at = raw.get("last_indexed_at")
-        source_files = raw.get("source_files")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise IndexInventoryError(
-                "invalid_index_token",
-                "index token repository_digest must be lowercase hexadecimal SHA-256",
-                retryable=False,
-            )
-        if not isinstance(indexed_at, str) or not indexed_at:
-            raise IndexInventoryError(
-                "invalid_index_token",
-                "index token last_indexed_at must be a non-empty string",
-                retryable=False,
-            )
-        if (
-            not isinstance(source_files, list)
-            or not source_files
-            or any(not isinstance(path, str) or not path for path in source_files)
-        ):
-            raise IndexInventoryError(
-                "invalid_index_token",
-                "index token source_files must be a non-empty string array",
-                retryable=False,
-            )
-        normalized = tuple(sorted(set(source_files)))
-        if list(normalized) != source_files:
-            raise IndexInventoryError(
-                "invalid_index_token",
-                "index token source_files must be sorted and unique",
-                retryable=False,
-            )
-        return cls(
-            repository_digest=digest,
-            last_indexed_at=indexed_at,
-            source_files=normalized,
-        )
-
-
-@dataclass(frozen=True)
-class IndexTokenVerification:
-    """Typed read-only comparison of a token with its exact digest inputs."""
-
-    matched: bool
-    mismatch_reasons: tuple[str, ...]
-    expected_token: IndexToken
-    actual_token: IndexToken
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "matched": self.matched,
-            "mismatch_reasons": list(self.mismatch_reasons),
-            "expected_token": self.expected_token.to_dict(),
-            "actual_token": self.actual_token.to_dict(),
-        }
-
-
 def repository_source_digest(
     repository_root: Path,
     *,
@@ -176,42 +102,6 @@ def repository_source_digest(
     return RepositoryDigest(digest=digest.hexdigest(), source_files=inputs)
 
 
-def verify_index_token(
-    repository_root: Path,
-    token: IndexToken | Mapping[str, object],
-    *,
-    read_last_indexed_at: Callable[[], str],
-) -> IndexTokenVerification:
-    """Recompute the producer's exact digest inputs without mutating index state."""
-    canonical = token if isinstance(token, IndexToken) else IndexToken.from_mapping(token)
-    actual = repository_source_digest(
-        repository_root,
-        source_files=canonical.source_files,
-    )
-    actual_last_indexed_at = read_last_indexed_at()
-    if not isinstance(actual_last_indexed_at, str) or not actual_last_indexed_at:
-        raise IndexInventoryError(
-            "inventory_unavailable",
-            "code index did not report last_indexed_at",
-        )
-    actual_token = IndexToken(
-        repository_digest=actual.digest,
-        last_indexed_at=actual_last_indexed_at,
-        source_files=actual.source_files,
-    )
-    mismatch_reasons: list[str] = []
-    if actual_token.repository_digest != canonical.repository_digest:
-        mismatch_reasons.append("repository_digest")
-    if actual_token.last_indexed_at != canonical.last_indexed_at:
-        mismatch_reasons.append("last_indexed_at")
-    return IndexTokenVerification(
-        matched=not mismatch_reasons,
-        mismatch_reasons=tuple(mismatch_reasons),
-        expected_token=canonical,
-        actual_token=actual_token,
-    )
-
-
 def settle_indexed_value[T](
     repository_root: Path,
     *,
@@ -224,8 +114,14 @@ def settle_indexed_value[T](
     backoff_seconds: float = 0.05,
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
-) -> tuple[IndexToken, T]:
-    """Bracket indexing and derivation with one bounded repository digest token."""
+) -> T:
+    """Derive a value from an index run bracketed by one stable repository digest.
+
+    The bracket only guarantees the derivation saw a coherent index. Nothing
+    downstream pins this state: repository churn after preparation is expected
+    during planning, and a change that actually moves the plan surface is a
+    finding for the reviewer to report rather than grounds to end a round.
+    """
     if max_attempts <= 0 or timeout_seconds <= 0:
         raise ValueError("index settle bounds must be positive")
     deadline = monotonic() + timeout_seconds
@@ -255,18 +151,7 @@ def settle_indexed_value[T](
         if monotonic() > deadline:
             break
         if before.digest == after.digest:
-            token = IndexToken(
-                repository_digest=after.digest,
-                last_indexed_at=last_indexed_at,
-                source_files=after.source_files,
-            )
-            value = derive()
-            if verify_index_token(
-                repository_root,
-                token,
-                read_last_indexed_at=read_last_indexed_at,
-            ).matched:
-                return token, value
+            return derive()
         remaining = deadline - monotonic()
         if attempts < max_attempts and remaining > 0 and backoff_seconds > 0:
             sleeper(min(backoff_seconds, remaining))

@@ -108,16 +108,6 @@ def test_terminal_branch_union_producer_parity() -> None:
             "verdict": "inconclusive",
             "evidence_id": evidence_id,
             "reason": {
-                "reason_code": "index_mismatch",
-                "expected_token": "generation-1",
-                "actual_token": "generation-2",
-            },
-            "convergence_telemetry": delivered_telemetry(),
-        },
-        {
-            "verdict": "inconclusive",
-            "evidence_id": evidence_id,
-            "reason": {
                 "reason_code": "timeout",
                 "timeout_seconds": 900,
             },
@@ -141,7 +131,6 @@ def test_terminal_branch_union_producer_parity() -> None:
         '"verdict":"inconclusive"',
         '"reason_code":"source_drift"',
         '"reason_code":"missing_requirements"',
-        '"reason_code":"index_mismatch"',
         '"reason_code":"timeout"',
     ):
         assert discriminator in published[0]

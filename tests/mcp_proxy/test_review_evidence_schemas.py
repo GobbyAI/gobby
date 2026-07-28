@@ -80,7 +80,6 @@ def test_structured_payloads_publish_nested_schemas_and_examples(
 ) -> None:
     registry = _registry(temp_db)
     structured_tools = {
-        "verify_plan_review_index_token",
         "prepare_plan_review_round",
         "derive_plan_review_manifest",
         "validate_plan_review_coverage",

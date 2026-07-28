@@ -10,7 +10,6 @@ from typing import Never
 
 import pytest
 
-from gobby.agents.code_index import IndexToken, verify_index_token
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.review_evidence import PlanReviewEvidenceService
@@ -1231,7 +1230,6 @@ def _prepare_integration_repair_round(
     Path,
     CandidateSiteInventory,
     RepairUniverse,
-    IndexToken,
 ]:
     service, project_id, session_id, plan_path = review_setup
     round_one = service.prepare_plan_review_round(
@@ -1254,14 +1252,9 @@ def _prepare_integration_repair_round(
         encoding="utf-8",
     )
     inventory, universe = _integration_inventory_and_universe()
-    token = IndexToken(
-        repository_digest="a" * 64,
-        last_indexed_at="2026-07-28T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
     monkeypatch.setattr(
         "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
-        lambda **_kwargs: (token, inventory, universe),
+        lambda **_kwargs: (inventory, universe),
         raising=False,
     )
     round_two = service.prepare_plan_review_round(
@@ -1274,14 +1267,14 @@ def _prepare_integration_repair_round(
         ],
         repair_attestations=[_integration_attestation(universe)],
     )
-    return service, round_two.evidence_id, plan_path, inventory, universe, token
+    return service, round_two.evidence_id, plan_path, inventory, universe
 
 
 def test_inventory_first_call_succeeds(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, evidence_id, _plan_path, inventory, universe, _token = (
+    service, evidence_id, _plan_path, inventory, universe = (
         _prepare_integration_repair_round(review_setup, monkeypatch)
     )
 
@@ -1291,11 +1284,17 @@ def test_inventory_first_call_succeeds(
     assert context["repair_universe_digest"] == universe.digest
 
 
-def test_index_token_persistence(
+def test_round_context_records_no_index_generation(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, evidence_id, plan_path, _inventory, _universe, token = (
+    """Repository churn during a round is untracked by design.
+
+    Pinning an index generation made any concurrent commit terminate the round,
+    so nothing records one. A change that actually moves the plan surface is a
+    finding for the reviewer to report.
+    """
+    service, evidence_id, _plan_path, _inventory, _universe = (
         _prepare_integration_repair_round(review_setup, monkeypatch)
     )
 
@@ -1303,16 +1302,7 @@ def test_index_token_persistence(
     context = restarted.get_evidence(evidence_id).prior_round_context
 
     assert context is not None
-    assert context["index_token"] == token.to_dict()
-    index_token = context["index_token"]
-    assert isinstance(index_token, Mapping)
-    mismatch = verify_index_token(
-        plan_path.parents[2],
-        index_token,
-        read_last_indexed_at=lambda: token.last_indexed_at,
-    )
-    assert mismatch.matched is False
-    assert mismatch.mismatch_reasons == ("repository_digest",)
+    assert "index_token" not in context
 
 
 def test_prior_round_context_atomic_and_source_independent(
@@ -1504,7 +1494,7 @@ def test_snapshot_carries_prior_round_context(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, evidence_id, _plan_path, _inventory, _universe, _token = (
+    service, evidence_id, _plan_path, _inventory, _universe = (
         _prepare_integration_repair_round(review_setup, monkeypatch)
     )
     expected = service.get_evidence(evidence_id).prior_round_context
@@ -1661,14 +1651,9 @@ def test_repair_universe_production_sequence(
         encoding="utf-8",
     )
     inventory, universe = _integration_inventory_and_universe()
-    token = IndexToken(
-        repository_digest="c" * 64,
-        last_indexed_at="2026-07-28T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
     monkeypatch.setattr(
         "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
-        lambda **_kwargs: (token, inventory, universe),
+        lambda **_kwargs: (inventory, universe),
     )
     drifted_attestation = {
         **_integration_attestation(universe),
@@ -1794,7 +1779,7 @@ def test_production_paths_end_to_end(
     assert '"gobby-agents:send_message"' not in staged_contract
 
 
-def test_index_token_mismatch_replaces_run(
+def test_inconclusive_terminal_replaces_run(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
@@ -1818,9 +1803,8 @@ def test_index_token_mismatch_replaces_run(
             "verdict": "inconclusive",
             "evidence_id": old.evidence_id,
             "reason": {
-                "reason_code": "index_mismatch",
-                "expected_token": "repository:old-generation",
-                "actual_token": "repository:new-generation",
+                "reason_code": "source_drift",
+                "paths": [".gobby/plans/plan.md"],
             },
             "convergence_telemetry": delivered_telemetry(),
         },

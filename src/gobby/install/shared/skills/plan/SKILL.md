@@ -92,9 +92,9 @@ taskless entry has neither exact request content nor a valid persisted anchor.
 The immutable `requirements_bundle` in the prepared evidence is the reviewer's
 only requirements context; do not send a live or reconstructed requirements
 payload alongside it.
-Do not run a separate pre-spawn `gcode index`; pass preparation's settled `index_token` to
-the reviewer and let every lane verify that token under the protocol in
-`plan-review`.
+Do not run a separate pre-spawn `gcode index`; preparation already brackets the
+one index run it needs. Repository churn during a round is expected and is not
+tracked — see the repository-state section in `plan-review`.
 For every round after the first, also pass `prior_finding_resolutions` and
 `repair_attestations` to `prepare_plan_review_round`. Build exactly one
 resolution record per finding in the prior finalized result:

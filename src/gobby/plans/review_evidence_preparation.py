@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from gobby.agents.code_index import IndexToken, settle_indexed_value
+from gobby.agents.code_index import settle_indexed_value
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.consumer_sweep import (
     CandidateSiteInventory,
@@ -47,7 +47,7 @@ def derive_settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     current_snapshot: bytes,
     repair_finding_ids: Sequence[str],
-) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, RepairUniverse]:
     """Settle the index, then derive one inventory and repair universe."""
     raw_findings = (
         prior_evidence.round_result.get("findings")
@@ -85,13 +85,12 @@ def derive_settled_repair_inputs(
         )
         return inventory, universe
 
-    token, (inventory, universe) = settle_indexed_value(
+    return settle_indexed_value(
         project_root,
         index_operation=lambda: _index_repository(project_root),
         read_last_indexed_at=read_last_indexed_at,
         derive=derive,
     )
-    return token, inventory, universe
 
 
 def prepare_review_round_context(
@@ -129,7 +128,7 @@ def prepare_review_round_context(
         return base
     prior_evidence_id = base.prior_round_context["prior_evidence_id"]
     prior_evidence = next(row for row in evidence_rows if row.evidence_id == prior_evidence_id)
-    token, inventory, universe = derive_settled_repair_inputs(
+    inventory, universe = derive_settled_repair_inputs(
         db=db,
         project_id=project_id,
         project_root=project_root,
@@ -153,7 +152,6 @@ def prepare_review_round_context(
         prior_round_context=with_consumer_inventory_context(
             validated.prior_round_context,
             inventory=inventory.to_dict(),
-            index_token=token.to_dict(),
         ),
     )
 

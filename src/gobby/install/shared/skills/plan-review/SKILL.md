@@ -305,27 +305,16 @@ snapshot:
 3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
    sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
-Every lane receives the immutable snapshot's `index_token` and follows this
-index-generation protocol:
+The repository changes underneath a review. Other sessions commit while lanes
+run, and the code index updates incrementally on every commit. That is expected
+and is never a reason to stop.
 
-1. Call `verify_plan_review_index_token(index_token)` immediately before analysis.
-   A mismatch ends the whole reviewer run.
-2. Run every gcode search, callers, usages, blast-radius, and content query with
-   `--no-freshness`. Keep the protocol implementors as an explicit prompt
-   obligation in `repository_blast_radius`: sweep the token producer, canonical
-   verifier, verifier MCP wrapper, coordinator spawn prompt, and both reviewer
-   allowlists.
-3. Call `verify_plan_review_index_token(index_token)` after its final repository search
-   and before returning lane output. A lane with no repository query still
-   performs both verifier calls.
-
-On either mismatch, emit the exact typed `inconclusive`/`index_mismatch` branch
-using canonical compact JSON strings of the verifier's `expected_token` and
-`actual_token`, deliver it to the parent, and terminate. Do not continue
-analysis, return candidates, validate coverage, expire or reprepare evidence,
-or rerun any lane in place. The parent expires the old evidence, prepares a
-fresh snapshot/inventory/token, and spawns a newly bound reviewer that reruns
-all three lanes.
+Lanes read current repository state and report what they find. A code change
+that has genuinely moved the surface a plan targets — a named file that no
+longer exists, a cited symbol that moved, a pinned inventory that is now wrong —
+is a finding, emitted against the section that owns it. No lane detects, pins,
+or reconciles repository or index generations, and no run ends because the
+repository moved.
 
 Reconstruct the complete immutable evidence envelope before review. Call
 `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
@@ -384,11 +373,10 @@ Every parent delivery is one JSON object matching one branch:
 `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
 Reviewed branches require canonical coverage. Non-attested branches use exactly
 the shown top-level and reason keys. `reason_code` is closed to
-`missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
+`missing_requirements`, `source_drift`, and `timeout`.
 TERMINAL_RESULT_UNION_V1_END
 
 If cited source hashes drift, rerun only affected lanes once during the same
@@ -446,7 +434,7 @@ coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 ### Convergence telemetry contract
 
 Every reviewer-produced terminal branch (`approved`, `needs_review`,
-`needs_requirements`, `source_drift`, or `index_mismatch`) includes
+`needs_requirements`, or `source_drift`) includes
 `convergence_telemetry` with `state: delivered` and `reviewer.status:
 available`. The reviewer emits only reviewer-owned facts; it never invents the
 `daemon` object. Terminal cleanup adds that authoritative object and changes

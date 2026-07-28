@@ -10,14 +10,10 @@ import psycopg
 
 from gobby.agents.code_index import (
     IndexInventoryError,
-    IndexToken,
-    verify_index_token,
 )
-from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence_schemas import (
     CANDIDATE_DISPOSITIONS_SCHEMA,
-    INDEX_TOKEN_SCHEMA,
     LANE_RESULTS_SCHEMA,
     LESSON_MINT_DETAIL_SCHEMA,
     PRIOR_FINDING_RESOLUTIONS_SCHEMA,
@@ -52,7 +48,7 @@ def _derive_settled_repair_universe(
     prior_evidence_id: str,
     plan_path: str,
     repair_finding_ids: list[str],
-) -> tuple[IndexToken, RepairUniverse]:
+) -> RepairUniverse:
     service = PlanReviewEvidenceService(db)
     prior_evidence = service.get_evidence(prior_evidence_id)
     if prior_evidence.project_id != project_id:
@@ -66,7 +62,7 @@ def _derive_settled_repair_universe(
             "repair universe requires finalized prior evidence",
         )
     resolved_plan_path = normalize_plan_path(project_root, plan_path)
-    token, _inventory, universe = derive_settled_repair_inputs(
+    _inventory, universe = derive_settled_repair_inputs(
         db=db,
         project_id=project_id,
         project_root=project_root,
@@ -74,7 +70,7 @@ def _derive_settled_repair_universe(
         current_snapshot=resolved_plan_path.read_bytes(),
         repair_finding_ids=repair_finding_ids,
     )
-    return token, universe
+    return universe
 
 
 def register_review_evidence_tools(
@@ -86,56 +82,6 @@ def register_review_evidence_tools(
     """Register the trusted evidence producer and its lifecycle operations."""
     service = PlanReviewEvidenceService(db)
     projects = LocalProjectManager(db)
-
-    def verify_plan_review_index_token(
-        index_token: Mapping[str, object],
-        project: str | None = None,
-    ) -> dict[str, object]:
-        project_id = resolve_project_id(project)
-        record = projects.get(project_id)
-        if record is None or record.repo_path is None:
-            return IndexInventoryError(
-                "inventory_unavailable",
-                f"project has no local repository: {project_id}",
-            ).to_dict()
-        try:
-            storage = CodeIndexStorage(db)
-
-            def read_last_indexed_at() -> str:
-                stats = storage.get_project_stats(project_id)
-                return stats.last_indexed_at.isoformat() if stats is not None else ""
-
-            verification = verify_index_token(
-                Path(record.repo_path),
-                index_token,
-                read_last_indexed_at=read_last_indexed_at,
-            )
-        except (IndexInventoryError, OSError) as exc:
-            if isinstance(exc, IndexInventoryError):
-                return exc.to_dict()
-            return IndexInventoryError(
-                "inventory_unavailable",
-                f"index token verification failed: {exc}",
-            ).to_dict()
-        return {"ok": True, "verification": verification.to_dict()}
-
-    registry.register(
-        name="verify_plan_review_index_token",
-        description=(
-            "Read-only verification of a settled plan-review index token. "
-            "Example: verify a repository_digest, last_indexed_at, and sorted source_files."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "index_token": INDEX_TOKEN_SCHEMA,
-                "project": {"type": "string"},
-            },
-            "required": ["index_token"],
-            "additionalProperties": False,
-        },
-        func=verify_plan_review_index_token,
-    )
 
     def derive_plan_review_repair_universe(
         prior_evidence_id: str,
@@ -151,7 +97,7 @@ def register_review_evidence_tools(
                     "inventory_unavailable",
                     f"project has no local repository: {project_id}",
                 )
-            token, universe = _derive_settled_repair_universe(
+            universe = _derive_settled_repair_universe(
                 db=db,
                 project_id=project_id,
                 project_root=Path(record.repo_path),
@@ -167,7 +113,6 @@ def register_review_evidence_tools(
             "ok": True,
             "repair_universe": universe.to_dict(),
             "repair_universe_digest": universe.digest,
-            "index_token": token.to_dict(),
         }
 
     registry.register(

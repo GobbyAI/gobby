@@ -253,7 +253,6 @@ def test_sidecar_records_paged_and_bounded() -> None:
         "prior_evidence_id": "prior-1",
         "requirements_bundle": requirements_bundle,
         "consumer_site_inventory": inventory,
-        "index_token": {"repository_digest": "a" * 64},
     }
     quality_ledger: list[dict[str, object]] = [{"ledger_id": "ledger-1", "detail": large_value}]
     pages = _pages(

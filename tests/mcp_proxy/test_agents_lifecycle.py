@@ -164,13 +164,6 @@ async def test_verdict_discriminated_terminal_branches() -> None:
         _terminal_payload(),
         _terminal_payload(
             reason={
-                "reason_code": "index_mismatch",
-                "expected_token": "generation-1",
-                "actual_token": "generation-2",
-            }
-        ),
-        _terminal_payload(
-            reason={
                 "reason_code": "timeout",
                 "timeout_seconds": 900,
             }

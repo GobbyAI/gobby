@@ -130,12 +130,10 @@ def with_consumer_inventory_context(
     prior_round_context: Mapping[str, object],
     *,
     inventory: Mapping[str, object],
-    index_token: Mapping[str, object],
 ) -> dict[str, object]:
-    """Transport one canonical inventory/token pair into durable round context."""
+    """Transport the canonical consumer inventory into durable round context."""
     context = dict(prior_round_context)
     context["consumer_site_inventory"] = dict(inventory)
-    context["index_token"] = dict(index_token)
     return context
 
 

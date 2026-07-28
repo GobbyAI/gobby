@@ -56,20 +56,14 @@ instructions: |
   3. `runtime_invariants`: inputs, outcomes, state transitions, wrappers,
      sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
-  INDEX GENERATION PROTOCOL:
-  Every lane receives the immutable snapshot's `index_token`. Each lane calls
-  `verify_plan_review_index_token(index_token)` immediately before analysis,
-  runs every gcode search/callers/usages/blast-radius/content query with
-  `--no-freshness`, then calls
-  `verify_plan_review_index_token(index_token)` after its final repository search
-  and before returning lane output. A lane with no repository query
-  still makes both calls. Any mismatch ends this whole reviewer run: emit the
-  exact typed `inconclusive`/`index_mismatch` result using canonical compact
-  JSON strings of the verifier's `expected_token` and `actual_token`, deliver
-  it to the parent, and terminate. Do not continue analysis, return candidates,
-  validate coverage, expire/reprepare evidence, or rerun any lane in place.
-  The parent expires the evidence and spawns a newly bound reviewer that reruns
-  all three lanes with a fresh snapshot, inventory, and token.
+  REPOSITORY STATE:
+  The repository changes while you review; other sessions commit continuously.
+  That is expected and is never a reason to stop. Read current state and report
+  what you find. If a code change has genuinely moved the surface the plan
+  targets - a named file no longer exists, a cited symbol moved, an inventory
+  the plan pins is now wrong - that is a finding, so emit it against the section
+  that owns it. Do not attempt to detect, pin, or reconcile repository or index
+  generations, and never end a run because the repository moved.
 
   Reconstruct the complete immutable evidence envelope before review. Call
   `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
@@ -148,11 +142,10 @@ instructions: |
   `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
   the shown top-level and reason keys. `reason_code` is closed to
-  `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
+  `missing_requirements`, `source_drift`, and `timeout`.
   TERMINAL_RESULT_UNION_V1_END
 
   If coverage validation reports source drift (`source_drift`), rerun only affected lanes once
@@ -317,7 +310,6 @@ steps:
       - "gobby-agents:end_agent_run"
       - "gobby-agents:send_message"
       - "gobby-plans:get_plan_review_snapshot"
-      - "gobby-plans:verify_plan_review_index_token"
       - "gobby-plans:derive_plan_review_manifest"
       - "gobby-plans:validate_plan_review_coverage"
       - "gobby-plans:expire_plan_review_evidence"

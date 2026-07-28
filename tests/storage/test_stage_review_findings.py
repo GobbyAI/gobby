@@ -10,7 +10,6 @@ from typing import Any, Never, cast
 
 import pytest
 
-from gobby.agents.code_index import IndexToken
 from gobby.agents.sync import sync_bundled_agents
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
@@ -235,7 +234,7 @@ def _settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     repair_finding_ids: list[str] | tuple[str, ...],
     **_kwargs: object,
-) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, RepairUniverse]:
     assert prior_evidence.round_result is not None
     findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
     finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
@@ -280,12 +279,7 @@ def _settled_repair_inputs(
         ),
         interaction_edges=(),
     )
-    token = IndexToken(
-        repository_digest=_REPAIR_UNIVERSE_DIGEST,
-        last_indexed_at="2026-07-28T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
-    return token, inventory, universe
+    return inventory, universe
 
 
 def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:

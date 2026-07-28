@@ -31,17 +31,22 @@ PLAN_REVIEW_SKILL = ROOT / "src/gobby/install/shared/skills/plan-review/SKILL.md
 ADVERSARY_DIR = ROOT / "src/gobby/install/shared/workflows/agents"
 
 
-def test_lane_verifier_invocation_and_allowlist() -> None:
+def test_reviewers_tolerate_repository_churn() -> None:
+    """No reviewer surface may pin, verify, or terminate on index generation.
+
+    Concurrent sessions commit throughout a round and the code index updates on
+    every commit. Gating on that made rounds unrunnable, so the reviewer reads
+    current state and reports surface drift as a finding instead.
+    """
     plan = PLAN_SKILL.read_text(encoding="utf-8")
     review = PLAN_REVIEW_SKILL.read_text(encoding="utf-8")
 
     assert "Do not run a separate pre-spawn `gcode index`" in plan
-    assert review.count("verify_plan_review_index_token(index_token)") >= 2
-    assert "immediately before analysis" in review
-    assert "after its final repository search" in review
-    assert "--no-freshness" in review
-    assert "protocol implementors" in review
-    assert "rerun any lane in place" in review
+    assert "verify_plan_review_index_token" not in plan
+    assert "verify_plan_review_index_token" not in review
+    assert "index_mismatch" not in review
+    assert "is never a reason to stop" in review
+    assert "is a finding" in review
 
     for filename in ("plan-adversary-taskless.yaml", "plan-adversary.yaml"):
         definition = yaml.safe_load((ADVERSARY_DIR / filename).read_text(encoding="utf-8"))
@@ -49,15 +54,11 @@ def test_lane_verifier_invocation_and_allowlist() -> None:
         review_step = next(step for step in definition["steps"] if step["name"] == "review")
         allowed = set(review_step["allowed_mcp_tools"])
 
-        assert "gobby-plans:verify_plan_review_index_token" in allowed
+        assert "gobby-plans:verify_plan_review_index_token" not in allowed
         assert all(not tool.endswith(":*") for tool in allowed)
-        assert instructions.count("verify_plan_review_index_token(index_token)") >= 2
-        assert "--no-freshness" in instructions
-        assert "immediately before analysis" in instructions
-        assert "after its final repository search" in instructions
-        assert "inconclusive" in instructions
-        assert "index_mismatch" in instructions
-        assert "terminate" in instructions
+        assert "verify_plan_review_index_token" not in instructions
+        assert "index_mismatch" not in instructions
+        assert "never end a run because the repository moved" in instructions
 
 
 pytestmark = pytest.mark.unit

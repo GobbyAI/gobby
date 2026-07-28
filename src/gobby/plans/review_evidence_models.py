@@ -271,14 +271,12 @@ def _validate_non_attested_result(
         return payload
     if reason_code == "source_drift":
         _validate_string_list_reason(reason, reason_code="source_drift", field="paths")
-    elif reason_code == "index_mismatch":
-        _validate_index_mismatch_reason(reason)
     elif reason_code == "timeout":
         _validate_timeout_reason(reason)
     else:
         raise ReviewEvidenceError(
             "invalid_round_result",
-            "inconclusive reason_code must be source_drift, index_mismatch, or timeout",
+            "inconclusive reason_code must be source_drift or timeout",
         )
     return payload
 
@@ -304,22 +302,6 @@ def _validate_string_list_reason(
             "invalid_round_result",
             f"{reason_code} reason.{field} must be a non-empty string array",
         )
-
-
-def _validate_index_mismatch_reason(reason: dict[str, object]) -> None:
-    expected_keys = {"reason_code", "expected_token", "actual_token"}
-    if set(reason) != expected_keys:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            "index_mismatch reason must contain reason_code, expected_token, and actual_token",
-        )
-    for field in ("expected_token", "actual_token"):
-        value = reason.get(field)
-        if not isinstance(value, str) or not value:
-            raise ReviewEvidenceError(
-                "invalid_round_result",
-                f"index_mismatch reason.{field} must be a non-empty string",
-            )
 
 
 def _validate_timeout_reason(reason: dict[str, object]) -> None:

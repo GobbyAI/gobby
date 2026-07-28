@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.agents.code_index import IndexToken
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.mcp_proxy.tools.plans import review_evidence as review_evidence_tools
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
@@ -274,7 +273,7 @@ def _settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     repair_finding_ids: Sequence[str],
     **_kwargs: object,
-) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, RepairUniverse]:
     assert prior_evidence.round_result is not None
     raw_findings = prior_evidence.round_result.get("findings")
     assert isinstance(raw_findings, list)
@@ -306,12 +305,7 @@ def _settled_repair_inputs(
         ),
         interaction_edges=(),
     )
-    token = IndexToken(
-        repository_digest="a" * 64,
-        last_indexed_at="2026-07-27T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
-    return token, inventory, universe
+    return inventory, universe
 
 
 def _universe_attestation(
@@ -533,7 +527,6 @@ def test_mixed_repair_carry_preparation(
         "changed_section_targets": [],
         "dismissed_ledger_entries": [],
         "consumer_site_inventory": context["consumer_site_inventory"],
-        "index_token": context["index_token"],
         "repair_universe": context["repair_universe"],
         "repair_universe_digest": context["repair_universe_digest"],
     }
@@ -581,7 +574,6 @@ def test_prior_round_context_structure(
         "changed_section_targets": ["src/example.py", "src/repaired.py"],
         "dismissed_ledger_entries": [],
         "consumer_site_inventory": context["consumer_site_inventory"],
-        "index_token": context["index_token"],
         "repair_universe": context["repair_universe"],
         "repair_universe_digest": context["repair_universe_digest"],
     }
@@ -1014,15 +1006,10 @@ async def test_universe_visible_before_attestation(
         prior_findings=[finding],
         inventory=_candidate_inventory("consumer-a"),
     )
-    token = IndexToken(
-        repository_digest="a" * 64,
-        last_indexed_at="2026-07-27T00:00:00+00:00",
-        source_files=("src/example.py",),
-    )
     monkeypatch.setattr(
         review_evidence_tools,
         "_derive_settled_repair_universe",
-        lambda **_kwargs: (token, universe),
+        lambda **_kwargs: universe,
     )
     registry = create_plan_registry(temp_db, default_project_id=project.id)
 
@@ -1038,7 +1025,7 @@ async def test_universe_visible_before_attestation(
     assert result["ok"] is True
     assert result["repair_universe"] == universe.to_dict()
     assert result["repair_universe_digest"] == universe.digest
-    assert result["index_token"] == token.to_dict()
+    assert "index_token" not in result
     skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
     planner = Path("src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
         encoding="utf-8"
