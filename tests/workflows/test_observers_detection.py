@@ -333,8 +333,13 @@ class TestDetectPlanModeFromContext:
 
 class TestDetectTaskClaimCloseTaskBehavior:
     def test_successful_conditional_close_removes_from_claimed_tasks(
-        self, variables, make_after_tool_event, mock_task_manager
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        caplog.set_level(logging.DEBUG, logger="gobby.workflows.observers")
         mock_task = MagicMock()
         mock_task.id = "task-uuid-123"
         mock_task_manager.get_task.return_value = mock_task
@@ -364,6 +369,12 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
         assert variables.get("task_claimed") is True  # Still has task-uuid-456
         assert variables.get("claimed_tasks") == {"task-uuid-456": "#2"}
+        removal_record = next(
+            record
+            for record in caplog.records
+            if "removed task-uuid-123 from claimed_tasks" in record.getMessage()
+        )
+        assert removal_record.levelno == logging.DEBUG
 
     def test_successful_close_last_task_clears_task_claimed(
         self, variables, make_after_tool_event, mock_task_manager
@@ -564,7 +575,7 @@ class TestDetectTaskClaimClaimOperations:
     def test_sets_task_claimed_on_claim_task(
         self, variables, make_after_tool_event, mock_task_manager, caplog
     ) -> None:
-        caplog.set_level(logging.INFO, logger="gobby.workflows.observers")
+        caplog.set_level(logging.DEBUG, logger="gobby.workflows.observers")
         session_task_manager = MagicMock()
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -589,17 +600,15 @@ class TestDetectTaskClaimClaimOperations:
         session_task_manager.link_task.assert_called_once_with(
             SESSION_ID, "task-uuid-123", "worked_on"
         )
-        assert (
-            sum(
-                "added task-uuid-123 to claimed_tasks" in record.message
-                for record in caplog.records
-            )
-            == 1
-        )
-        assert (
-            sum("Auto-linked task task-uuid-123" in record.message for record in caplog.records)
-            == 1
-        )
+        bookkeeping_records = [
+            record
+            for record in caplog.records
+            if "added task-uuid-123 to claimed_tasks" in record.message
+            or "Auto-linked task task-uuid-123" in record.message
+        ]
+        assert len(bookkeeping_records) == 2
+        assert all(record.levelno == logging.DEBUG for record in bookkeeping_records)
+        assert not any(record.levelno == logging.INFO for record in bookkeeping_records)
 
     def test_sets_task_claimed_on_create_task_with_claim(
         self, variables, make_after_tool_event, mock_task_manager
@@ -917,7 +926,13 @@ class TestDetectTaskClaimClaimOperations:
 
         assert "task_claimed" not in variables
 
-    def test_task_not_found(self, variables, make_after_tool_event, mock_task_manager) -> None:
+    def test_task_not_found(
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         mock_task_manager.get_task.return_value = None
 
         event = make_after_tool_event(
@@ -930,12 +945,23 @@ class TestDetectTaskClaimClaimOperations:
             tool_output={"success": True, "result": {"id": "task-123", "status": "in_progress"}},
         )
 
-        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert "task_claimed" not in variables
+        resolution_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Cannot resolve task ref")
+        )
+        assert resolution_record.levelno == logging.WARNING
 
     def test_auto_link_failure_handled(
-        self, variables, make_after_tool_event, mock_task_manager
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_session_manager = MagicMock()
         mock_session_manager.link_task.side_effect = Exception("Link error")
@@ -950,15 +976,22 @@ class TestDetectTaskClaimClaimOperations:
             tool_output={"success": True, "result": {"id": "task-123", "status": "in_progress"}},
         )
 
-        detect_task_claim(
-            event,
-            variables,
-            SESSION_ID,
-            task_manager=mock_task_manager,
-            session_task_manager=mock_session_manager,
-        )
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_task_claim(
+                event,
+                variables,
+                SESSION_ID,
+                task_manager=mock_task_manager,
+                session_task_manager=mock_session_manager,
+            )
 
         assert variables.get("task_claimed") is True
+        failure_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Failed to auto-link task")
+        )
+        assert failure_record.levelno == logging.WARNING
 
 
 # =============================================================================

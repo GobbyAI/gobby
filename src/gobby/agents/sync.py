@@ -237,7 +237,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                 tags=["gobby"],
             )
             _refresh_step_workflow(body, db)
-            logger.info("Synced bundled agent definition: %s", name)
+            logger.debug("Synced bundled agent definition: %s", name)
             result["synced"] += 1
 
         except Exception as e:
@@ -258,11 +258,11 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
         existing = WorkflowDefinitionRow.from_row(row)
         if existing.name not in on_disk and _is_sync_managed_bundled_agent(existing):
             manager.delete(existing.id)
-            logger.info("Soft-deleted orphaned bundled agent: %s", existing.name)
+            logger.debug("Soft-deleted orphaned bundled agent: %s", existing.name)
             result["orphaned"] += 1
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Agent definition sync complete: %s synced, %s updated, %s skipped, %s orphaned, %s total",
         result["synced"],
         result["updated"],

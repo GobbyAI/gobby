@@ -145,7 +145,7 @@ def sync_bundled_variables(
         for row in orphan_rows:
             if row["name"] not in on_disk:
                 manager.delete(row["id"])
-                logger.info(
+                logger.debug(
                     "Soft-deleted orphaned bundled variable", extra={"variable": row["name"]}
                 )
                 result["orphaned"] += 1
@@ -153,7 +153,7 @@ def sync_bundled_variables(
     result["success"] = not result["errors"]
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Variable definition sync complete",
         extra={
             "synced": result["synced"],

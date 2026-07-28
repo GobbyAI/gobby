@@ -263,7 +263,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 source="installed",
                 tags=["gobby"],
             )
-            logger.info("Synced bundled workflow definition", extra={"workflow": name})
+            logger.debug("Synced bundled workflow definition", extra={"workflow": name})
             result["synced"] += 1
 
         except Exception as e:
@@ -289,7 +289,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
         for row in orphan_rows:
             if row["name"] not in on_disk:
                 manager.delete(row["id"])
-                logger.info(
+                logger.debug(
                     "Soft-deleted orphaned bundled workflow", extra={"workflow": row["name"]}
                 )
                 result["orphaned"] += 1
@@ -299,7 +299,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
         )
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Workflow definition sync complete",
         extra={
             "synced": result["synced"],

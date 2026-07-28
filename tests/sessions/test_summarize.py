@@ -517,6 +517,7 @@ class TestGenerateSessionSummaries:
             if record.getMessage().startswith("Session summary generated for")
         ]
         assert len(generated_logs) == 1
+        assert generated_logs[0].levelno == logging.DEBUG
         assert joined_count == 19
 
     @pytest.mark.asyncio
@@ -580,7 +581,10 @@ class TestGenerateSessionSummaries:
         assert len(second_manager.persist_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_request_after_completion_regenerates_when_digest_changes(self) -> None:
+    async def test_request_after_completion_regenerates_when_digest_changes(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         session = _make_session(
             session_id="sess-later-refresh",
             digest_markdown=_digest_turns(1),
@@ -612,6 +616,7 @@ class TestGenerateSessionSummaries:
                 "gobby.sessions.session_wiki_file.write_session_wiki_page",
                 return_value={"written": True},
             ),
+            caplog.at_level(logging.DEBUG, logger="gobby.sessions.summarize"),
         ):
             first = await generate_session_summaries(
                 session_id=session.id,
@@ -628,6 +633,15 @@ class TestGenerateSessionSummaries:
         assert mock_full.await_count == 1
         assert mock_delta.await_count == 1
         assert len(manager.persist_calls) == 2
+        generated_logs = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Session summary generated for")
+        ]
+        assert len(generated_logs) == 2
+        assert all(record.levelno == logging.DEBUG for record in generated_logs)
+        assert "mode=full" in generated_logs[0].getMessage()
+        assert "mode=delta" in generated_logs[1].getMessage()
 
     @pytest.mark.asyncio
     async def test_cancelled_waiter_does_not_cancel_shared_generation(self) -> None:
@@ -869,7 +883,10 @@ class TestGenerateSessionSummaries:
         assert mock_write_files.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_all_invalid_candidate_reasons_persist_with_digest_fallback(self) -> None:
+    async def test_all_invalid_candidate_reasons_persist_with_digest_fallback(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         session = _make_session(
             session_id="sess-invalid-candidates",
             digest_markdown="### Turn 1\nInitial digest.",
@@ -898,6 +915,7 @@ class TestGenerateSessionSummaries:
                 "gobby.sessions.summarize._format_deterministic_summary",
                 return_value=VALID_SUMMARY,
             ),
+            caplog.at_level(logging.WARNING, logger="gobby.sessions.summarize"),
         ):
             result = await generate_session_summaries(
                 session_id=session.id,
@@ -912,6 +930,12 @@ class TestGenerateSessionSummaries:
         metadata = manager.persist_calls[0]["metadata_json"]
         assert isinstance(metadata, dict)
         assert metadata["full_error"] == candidate_error
+        failure_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Full LLM summary failed for")
+        )
+        assert failure_record.levelno == logging.WARNING
 
     @pytest.mark.asyncio
     async def test_source_hash_match_returns_existing_summary_without_regeneration(
@@ -967,7 +991,7 @@ class TestGenerateSessionSummaries:
             and record.getMessage().startswith("Session summary ")
         ]
         assert [record.levelno for record in summary_records] == [
-            logging.INFO,
+            logging.DEBUG,
             logging.DEBUG,
         ]
         assert "mode=full" in summary_records[0].getMessage()

@@ -101,7 +101,7 @@ def _parse_models_payload(data: object) -> list[ModelInfo]:
             )
         )
 
-    logger.info("Fetched %s models from OpenRouter", len(models))
+    logger.debug("Fetched %s models from OpenRouter", len(models))
     return models
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import psycopg
@@ -16,6 +17,7 @@ from gobby.runner_model_metadata_refresh import (
     replace_model_metadata_async,
 )
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -126,6 +128,31 @@ async def test_empty_refresh_retains_cache(caplog: pytest.LogCaptureFixture) -> 
     fetch.assert_awaited_once_with()
     replace.assert_not_awaited()
     assert "returned no models; retaining cached metadata" in caplog.text
+
+
+async def test_successful_refresh_logs_population_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    database = cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata"))
+    with (
+        patch(
+            "gobby.runner_model_metadata_refresh.fetch_models_async",
+            new=AsyncMock(return_value=[_model()]),
+        ),
+        patch(
+            "gobby.runner_model_metadata_refresh.replace_model_metadata_async",
+            new=AsyncMock(return_value=1),
+        ),
+        caplog.at_level(logging.DEBUG, logger="gobby.runner_model_metadata_refresh"),
+    ):
+        assert await refresh_model_metadata_once(database) is True
+
+    refresh_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Refreshed model metadata cache with 1 models"
+    )
+    assert refresh_record.levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio

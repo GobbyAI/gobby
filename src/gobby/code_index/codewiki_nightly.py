@@ -215,7 +215,7 @@ def register_codewiki_nightly_cron(
     )
     if repaired is not None:
         _reconcile_enabled_state(cron_storage, repaired, enabled)
-        logger.info(
+        logger.debug(
             "Reconciled codewiki nightly system cron job",
             extra={
                 "job_name": job_name,

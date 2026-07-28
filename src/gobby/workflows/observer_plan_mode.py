@@ -175,18 +175,35 @@ def _apply_resolved_mode(
     persist_plan_mode: bool,
 ) -> None:
     level = compute_mode_level(mode)
-    if mode != "plan" or persist_plan_mode:
-        variables["chat_mode"] = mode
-    if variables.get("mode_level") != level:
-        variables["mode_level"] = level
-        logger.info("Session %s: mode_level=%s (%s)", session_id, level, reason)
-
+    persist_mode = mode != "plan" or persist_plan_mode
+    mode_changed = persist_mode and variables.get("chat_mode") != mode
+    level_changed = variables.get("mode_level") != level
     is_plan = level == 0
-    if bool(variables.get("plan_mode")) != is_plan:
+    plan_changed = bool(variables.get("plan_mode")) != is_plan
+
+    if persist_mode:
+        variables["chat_mode"] = mode
+    if level_changed:
+        variables["mode_level"] = level
+    if plan_changed:
         variables["plan_mode"] = is_plan
-        logger.info("Session %s: plan_mode=%s (%s)", session_id, is_plan, reason)
     if not is_plan and variables.get("plan_skill_loaded"):
         variables["plan_skill_loaded"] = False
+    if mode_changed or level_changed or plan_changed:
+        logger.debug(
+            "Session %s: effective mode changed (mode=%s, level=%s, plan_mode=%s, reason=%s)",
+            session_id,
+            mode,
+            level,
+            is_plan,
+            reason,
+            extra={
+                "mode": mode,
+                "mode_level": level,
+                "plan_mode": is_plan,
+                "resolution_reason": reason,
+            },
+        )
 
 
 def _latest_codex_collaboration_mode(transcript_path: object) -> str | None:
@@ -247,16 +264,19 @@ def detect_plan_mode_from_context(
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
 
-    def set_mode(chat_mode: str, reason: str) -> None:
-        variables["chat_mode"] = chat_mode
-        level = compute_mode_level(chat_mode)
-        if variables.get("mode_level") != level:
-            variables["mode_level"] = level
-            logger.info("Session %s: mode_level=%s (%s)", session_id, level, reason)
-        if level != 0 and (variables.get("plan_mode") or variables.get("plan_skill_loaded")):
-            variables["plan_mode"] = False
-            variables["plan_skill_loaded"] = False
-            logger.info("Session %s: plan_mode=False", session_id)
+    def set_mode(
+        chat_mode: str,
+        reason: str,
+        *,
+        persist_plan_mode: bool = True,
+    ) -> None:
+        _apply_resolved_mode(
+            variables,
+            session_id,
+            chat_mode,
+            reason,
+            persist_plan_mode=persist_plan_mode,
+        )
 
     plan_mode_indicators = [
         "Plan mode is active",
@@ -266,16 +286,11 @@ def detect_plan_mode_from_context(
 
     indicator = _first_marker(reminder_text, plan_mode_indicators)
     if indicator:
-        if variables.get("mode_level") != 0:
-            variables["mode_level"] = 0
-            logger.info(
-                "Session %s: mode_level=0 (plan) (detected from system reminder: %r)",
-                session_id,
-                indicator,
-            )
-        if not variables.get("plan_mode"):
-            variables["plan_mode"] = True
-            logger.info("Session %s: plan_mode=True", session_id)
+        set_mode(
+            "plan",
+            f"detected from system reminder: {indicator!r}",
+            persist_plan_mode=False,
+        )
         return
 
     reminder_lower = reminder_text.lower()
@@ -316,19 +331,8 @@ def detect_plan_mode_from_context(
 
     indicator = _first_marker(reminder_text, exit_indicators)
     if indicator:
-        if variables.get("mode_level") == 0:
-            chat_mode = variables.get("chat_mode", "bypass")
-            variables["mode_level"] = compute_mode_level(chat_mode)
-            logger.info(
-                "Session %s: mode_level=%s (detected from system reminder: %r)",
-                session_id,
-                variables["mode_level"],
-                indicator,
-            )
-        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
-            variables["plan_mode"] = False
-            variables["plan_skill_loaded"] = False
-            logger.info("Session %s: plan_mode=False", session_id)
+        chat_mode = _normalize_mode(variables.get("chat_mode")) or "bypass"
+        set_mode(chat_mode, f"detected from system reminder: {indicator!r}")
         return
 
     acp_plan_indicators = [
@@ -338,16 +342,11 @@ def detect_plan_mode_from_context(
 
     indicator = _first_marker(cleaned, acp_plan_indicators)
     if indicator:
-        if variables.get("mode_level") != 0:
-            variables["mode_level"] = 0
-            logger.info(
-                "Session %s: mode_level=0 (plan) (detected from ACP marker: %r)",
-                session_id,
-                indicator,
-            )
-        if not variables.get("plan_mode"):
-            variables["plan_mode"] = True
-            logger.info("Session %s: plan_mode=True", session_id)
+        set_mode(
+            "plan",
+            f"detected from ACP marker: {indicator!r}",
+            persist_plan_mode=False,
+        )
         return
 
     acp_exit_indicators = [
@@ -357,55 +356,29 @@ def detect_plan_mode_from_context(
 
     indicator = _first_marker(cleaned, acp_exit_indicators)
     if indicator:
-        if variables.get("mode_level") == 0:
-            chat_mode = variables.get("chat_mode", "bypass")
-            variables["mode_level"] = compute_mode_level(chat_mode)
-            logger.info(
-                "Session %s: mode_level=%s (detected from ACP marker: %r)",
-                session_id,
-                variables["mode_level"],
-                indicator,
-            )
-        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
-            variables["plan_mode"] = False
-            variables["plan_skill_loaded"] = False
-            logger.info("Session %s: plan_mode=False", session_id)
+        chat_mode = _normalize_mode(variables.get("chat_mode")) or "bypass"
+        set_mode(chat_mode, f"detected from ACP marker: {indicator!r}")
         return
 
     if '<plan-mode status="active">' in cleaned:
-        if variables.get("mode_level") != 0:
-            variables["mode_level"] = 0
-            logger.info(
-                'Session %s: mode_level=0 (plan) (detected from <plan-mode status="active">)',
-                session_id,
-            )
-        if not variables.get("plan_mode"):
-            variables["plan_mode"] = True
-            logger.info("Session %s: plan_mode=True", session_id)
+        set_mode(
+            "plan",
+            'detected from <plan-mode status="active">',
+            persist_plan_mode=False,
+        )
         return
 
     if '<plan-mode status="approved">' in cleaned:
-        if variables.get("mode_level") == 0:
-            chat_mode = variables.get("chat_mode", "bypass")
-            variables["mode_level"] = compute_mode_level(chat_mode)
-            logger.info(
-                'Session %s: mode_level=%s (detected from <plan-mode status="approved">)',
-                session_id,
-                variables["mode_level"],
-            )
-        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
-            variables["plan_mode"] = False
-            variables["plan_skill_loaded"] = False
-            logger.info("Session %s: plan_mode=False", session_id)
+        chat_mode = _normalize_mode(variables.get("chat_mode")) or "bypass"
+        set_mode(chat_mode, 'detected from <plan-mode status="approved">')
         return
 
     if re.search(r"<plan-mode(?:\s[^>]*)?>", cleaned, re.IGNORECASE):
-        if variables.get("mode_level") != 0:
-            variables["mode_level"] = 0
-            logger.info("Session %s: mode_level=0 (detected from <plan-mode>)", session_id)
-        if not variables.get("plan_mode"):
-            variables["plan_mode"] = True
-            logger.info("Session %s: plan_mode=True", session_id)
+        set_mode(
+            "plan",
+            "detected from <plan-mode>",
+            persist_plan_mode=False,
+        )
         return
 
     if '<chat-mode status="yolo">' in cleaned:
@@ -421,16 +394,10 @@ def detect_plan_mode_from_context(
         return
 
     if variables.get("mode_level") == 0:
-        chat_mode = variables.get("chat_mode", "bypass")
+        chat_mode = _normalize_mode(variables.get("chat_mode")) or "bypass"
         new_level = compute_mode_level(chat_mode)
         if new_level != 0:
-            variables["mode_level"] = new_level
-            variables["plan_mode"] = False
-            variables["plan_skill_loaded"] = False
-            logger.info(
-                "Session %s: mode_level=%s "
-                "(healed stale plan mode - no markers found, chat_mode=%r)",
-                session_id,
-                new_level,
+            set_mode(
                 chat_mode,
+                f"healed stale plan mode - no markers found, chat_mode={chat_mode!r}",
             )

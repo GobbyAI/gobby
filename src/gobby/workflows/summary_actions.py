@@ -843,7 +843,7 @@ async def generate_summary(
             mode=mode,
         )
 
-    logger.info(
+    logger.debug(
         "Generated summary for session %s (mode=%s, reason=workflow_action, output_chars=%s)",
         session_id,
         mode,

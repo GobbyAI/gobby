@@ -161,7 +161,7 @@ def detect_task_claim(
             merge = remove_claimed_task(variables, closed_task_id)
             variables.update(merge)
             refresh_claimed_task_skill_metadata(variables, task_manager)
-            logger.info(
+            logger.debug(
                 "Session %s: removed %s from claimed_tasks (task_claimed=%s)",
                 session_id,
                 closed_task_id,
@@ -259,14 +259,14 @@ def detect_task_claim(
     variables.update(merge)
     refresh_claimed_task_skill_metadata(variables, task_manager)
     variables["session_had_task"] = True
-    logger.info(
+    logger.debug(
         "Session %s: added %s to claimed_tasks (via %s)", session_id, task_id, inner_tool_name
     )
 
     if inner_tool_name == "claim_task" and task_id and session_task_manager:
         try:
             session_task_manager.link_task(session_id, task_id, "worked_on")
-            logger.info("Auto-linked task %s to session %s", task_id, session_id)
+            logger.debug("Auto-linked task %s to session %s", task_id, session_id)
         except Exception as e:
             logger.warning("Failed to auto-link task %s: %s", task_id, e)
 
@@ -324,7 +324,7 @@ def reconcile_claimed_tasks(
                 del claimed_tasks[task_uuid]
 
         if pruned:
-            logger.info(
+            logger.debug(
                 "Session %s: reconcile - pruned stale claims: %s",
                 session_id,
                 ", ".join(pruned),
@@ -342,7 +342,7 @@ def reconcile_claimed_tasks(
         if db_tasks:
             for task in db_tasks:
                 claimed_tasks[task.id] = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-            logger.info(
+            logger.debug(
                 "Session %s: reconcile - rebuilt claimed_tasks from DB: %s",
                 session_id,
                 claimed_tasks,
@@ -385,7 +385,7 @@ def _preserve_lineage_claim(
             exc_info=True,
         )
     else:
-        logger.info(
+        logger.debug(
             "Session %s: reconcile - repaired lineage claim %s(%s) from %s",
             session_id,
             ref,
@@ -397,7 +397,7 @@ def _preserve_lineage_claim(
         try:
             session_task_manager.link_task(session_id, task_uuid, "claimed")
         except Exception as e:
-            logger.debug(
+            logger.warning(
                 "Session %s: failed to link preserved claim %s(%s): %s",
                 session_id,
                 ref,

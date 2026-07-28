@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -19,10 +21,10 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class _SessionManager:
-    def __init__(self, session: object | None) -> None:
+    def __init__(self, session: Any | None) -> None:
         self.session = session
 
-    def get(self, _session_id: str) -> object | None:
+    def get(self, _session_id: str) -> Any | None:
         return self.session
 
 
@@ -68,6 +70,35 @@ def test_managed_web_chat_runtime_mode_is_authoritative_without_prompt_tags(
     assert variables["chat_mode"] == "plan"
     assert variables["mode_level"] == 0
     assert variables["plan_mode"] is True
+
+
+def test_mode_transition_emits_one_debug_record_and_unchanged_mode_emits_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    variables = {"chat_mode": "normal", "mode_level": 1, "plan_mode": False}
+    persisted = SimpleNamespace(session_type="web_chat", chat_mode="normal")
+    event = _event(
+        SessionSource.CLAUDE,
+        data={"prompt": "inspect the repository"},
+        metadata={"session_type": "web_chat", "chat_mode": "plan"},
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
+        resolve_plan_mode(event, variables, SESSION_ID, _SessionManager(persisted))
+        resolve_plan_mode(event, variables, SESSION_ID, _SessionManager(persisted))
+
+    records = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith(f"Session {SESSION_ID}: effective mode changed")
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.levelno == logging.DEBUG
+    assert record.__dict__["mode"] == "plan"
+    assert record.__dict__["mode_level"] == 0
+    assert record.__dict__["plan_mode"] is True
+    assert record.__dict__["resolution_reason"] == "managed web-chat runtime metadata"
 
 
 def test_managed_web_chat_uses_persisted_mode_when_runtime_mode_is_missing() -> None:

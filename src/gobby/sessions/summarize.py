@@ -382,7 +382,7 @@ async def _generate_session_summary_core(
             summary_length,
         )
     else:
-        logger.info(
+        logger.debug(
             "Session summary generated for %s (mode=%s, reason=%s, output_chars=%s)",
             session_id,
             generation_mode,

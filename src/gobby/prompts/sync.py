@@ -99,7 +99,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
                         variables=variables,
                         source_path=source_path,
                     )
-                    logger.info("Updated bundled prompt: %s", name)
+                    logger.debug("Updated bundled prompt: %s", name)
                     result["updated"] += 1
                 else:
                     logger.debug("Prompt '%s' already up to date, skipping", name)
@@ -117,7 +117,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
                 source_path=source_path,
                 project_id=None,
             )
-            logger.info("Synced bundled prompt: %s", name)
+            logger.debug("Synced bundled prompt: %s", name)
             result["synced"] += 1
 
         except Exception as e:
@@ -126,7 +126,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
             result["errors"].append(error_msg)
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Prompt sync complete: %s synced, %s updated, %s skipped, %s total",
         result["synced"],
         result["updated"],

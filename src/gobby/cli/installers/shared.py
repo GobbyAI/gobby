@@ -260,6 +260,7 @@ def sync_bundled_content_to_db(
         "errors": [],
         "details": {},
     }
+    bundled_changes: dict[str, int] = {}
 
     # (content_type, module_path, function_name)
     sync_targets: list[tuple[str, str, str]] = [
@@ -289,8 +290,14 @@ def sync_bundled_content_to_db(
             synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
             result["total_synced"] += synced
             result["details"][content_type] = sync_result
-            if synced > 0:
-                logger.info("Synced %s bundled %s to database", synced, content_type)
+            changed = sum(
+                value
+                for key in ("synced", "updated", "orphaned", "purged_project_overrides")
+                if isinstance((value := sync_result.get(key)), int)
+            )
+            if changed > 0:
+                bundled_changes[content_type] = changed
+                logger.debug("Synced %s bundled %s changes to database", changed, content_type)
         except Exception as e:
             msg = f"Failed to sync bundled {content_type}: {e}"
             logger.warning(msg)
@@ -298,6 +305,19 @@ def sync_bundled_content_to_db(
 
     # Skills and workflow definitions are created as installed rows directly
     # by the sync functions above — no separate install step needed.
+    if bundled_changes:
+        logger.info(
+            "Bundled content sync changed database state",
+            extra={
+                "changed": sum(bundled_changes.values()),
+                "content_types": bundled_changes,
+            },
+        )
+    else:
+        logger.debug(
+            "Bundled content sync made no database changes",
+            extra={"content_types": list(result["details"])},
+        )
 
     # Sync user templates from .gobby/workflows/ and ~/.gobby/workflows/ back to DB.
     # Skip in dev mode — bundled templates are managed directly in source tree.

@@ -204,18 +204,29 @@ class TestProviderForModel:
 
 class TestFetchModelsSync:
     @patch("gobby.llm.model_registry.httpx.get")
-    def test_fetches_and_filters(self, mock_get: MagicMock) -> None:
+    def test_fetches_and_filters(
+        self,
+        mock_get: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = SAMPLE_OPENROUTER_RESPONSE
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        models = fetch_models_sync()
+        with caplog.at_level(logging.DEBUG, logger="gobby.llm.model_registry"):
+            models = fetch_models_sync()
 
         # 7 valid models (Google/Mistral filtered by provider, free Claude passes through)
         assert len(models) == 7
         providers = {m.provider for m in models}
         assert providers == {"claude", "codex", "qwen", "droid"}
+        fetch_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Fetched 7 models from OpenRouter"
+        )
+        assert fetch_record.levelno == logging.DEBUG
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_parses_model_fields(self, mock_get: MagicMock) -> None:

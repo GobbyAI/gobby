@@ -1192,7 +1192,12 @@ class TestGenerateSummary:
             for record in caplog.records
             if record.getMessage().startswith("Generated summary for session ")
         )
-        assert generation_record.levelno == logging.INFO
+        assert generation_record.levelno == logging.DEBUG
+        assert not any(
+            record.levelno == logging.INFO
+            and record.getMessage().startswith("Generated summary for session ")
+            for record in caplog.records
+        )
         assert "mode=clear" in generation_record.getMessage()
         assert "reason=workflow_action" in generation_record.getMessage()
         assert f"output_chars={len(VALID_SUMMARY_CONTENT)}" in generation_record.getMessage()

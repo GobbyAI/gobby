@@ -124,7 +124,7 @@ def sync_bundled_rules(
         f"       OR {effects_expr} IS NOT NULL)",
     ).rowcount
     if repaired:
-        logger.info("Repaired %s rows with incorrect workflow_type (should be 'rule')", repaired)
+        logger.debug("Repaired %s rows with incorrect workflow_type (should be 'rule')", repaired)
 
     result = _new_rules_sync_result()
 
@@ -160,13 +160,13 @@ def sync_bundled_rules(
         for row in orphan_rows:
             if row["name"] not in on_disk:
                 manager.delete(row["id"])
-                logger.info("Soft-deleted orphaned rule", extra={"rule": row["name"], "tag": tag})
+                logger.debug("Soft-deleted orphaned rule", extra={"rule": row["name"], "tag": tag})
                 result["orphaned"] += 1
 
     result["success"] = not result["errors"]
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Rule definition sync complete",
         extra={
             "synced": result["synced"],

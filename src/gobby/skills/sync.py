@@ -151,7 +151,7 @@ def _handle_existing_gobby_skill(
             always_apply=parsed.always_apply,
             injection_format=parsed.injection_format,
         )
-        logger.info(
+        logger.debug(
             "Restored soft-deleted bundled skill",
             extra={"skill_name": parsed.name, "path": str(parsed.source_path)},
         )
@@ -301,7 +301,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         for skill in all_installed:
             if _is_gobby_owned(skill) and skill.name not in on_disk:
                 storage.delete_skill(skill.id)
-                logger.info(
+                logger.debug(
                     "Soft-deleted orphaned bundled skill",
                     extra={"skill_name": skill.name, "path": str(skill.source_path)},
                 )
@@ -323,7 +323,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         result["errors"].append(error_msg)
 
     total = result["synced"] + result["updated"] + result["skipped"]
-    logger.info(
+    logger.debug(
         "Bundled skill sync complete",
         extra={
             "synced": result["synced"],

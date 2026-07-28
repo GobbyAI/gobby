@@ -118,9 +118,11 @@ def test_wiki_config_nightly_defaults_to_enabled_local_schedule() -> None:
 def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     temp_db: HubDatabase,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     storage = CronJobStorage(temp_db)
     executor = FakeCronExecutor()
+    caplog.set_level(logging.DEBUG, logger="gobby.code_index.codewiki_nightly")
 
     registered = register_codewiki_nightly_cron(
         cron_storage=storage,
@@ -134,6 +136,13 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
             codewiki_project_scopes_by_name={PROJECT_NAME: ["crates", "web", "src"]},
         ),
     )
+    creation_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Created codewiki nightly system cron job"
+    )
+    assert creation_record.levelno == logging.INFO
+    caplog.clear()
 
     assert registered == 1
     handler_name = codewiki_nightly_handler_name(PROJECT_ID)
@@ -172,6 +181,13 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
             codewiki_project_scopes_by_name={PROJECT_NAME: ["src"]},
         ),
     )
+    reconciliation_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Reconciled codewiki nightly system cron job"
+    )
+    assert reconciliation_record.levelno == logging.DEBUG
+    assert not any(record.levelno == logging.INFO for record in caplog.records)
 
     jobs = [
         item

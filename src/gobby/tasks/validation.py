@@ -92,7 +92,7 @@ class TaskValidator:
                 "smaller tasks and preserve every validation criterion."
             )
 
-        logger.info(
+        logger.debug(
             "Running bounded close criteria review for task %s "
             "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
             task_id,

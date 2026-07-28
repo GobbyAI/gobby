@@ -101,7 +101,7 @@ async def refresh_model_metadata_once(database: HubDatabase) -> bool:
     except Exception:
         logger.exception("Model metadata refresh write failed; retaining cached metadata")
         return False
-    logger.info("Refreshed model metadata cache with %s models", inserted)
+    logger.debug("Refreshed model metadata cache with %s models", inserted)
     return True
 
 
