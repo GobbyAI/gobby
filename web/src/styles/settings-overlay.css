@@ -436,8 +436,8 @@
 }
 
 /* Touch targets: inputs and the section nav clear the 44px floor on coarse
-   pointers. Buttons inherit the same bump from .btn-sm/.btn-icon in
-   buttons.css, so they are intentionally not listed here. */
+   pointers. Buttons carry their own pointer-coarse floor via the shared
+   Button primitive, so they are intentionally not listed here. */
 @media (pointer: coarse) {
   .settings-field__input,
   .appearance-font-size__range,

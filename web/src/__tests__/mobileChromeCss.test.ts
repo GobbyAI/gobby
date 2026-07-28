@@ -262,17 +262,14 @@ describe('mobile chrome CSS', () => {
     ])
   })
 
-  it('loads the app shell stylesheet after base button styles', () => {
+  it('loads the app shell stylesheet after the segmented control styles', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
-    const buttonsIndex = imports.indexOf('./styles/buttons.css')
     const segmentedControlIndex = imports.indexOf('./styles/segmented-control.css')
     const appShellIndex = imports.indexOf('./styles/app-shell.css')
 
-    expect(buttonsIndex).toBeGreaterThanOrEqual(0)
     expect(segmentedControlIndex).toBeGreaterThanOrEqual(0)
     expect(appShellIndex).toBeGreaterThanOrEqual(0)
-    expect(buttonsIndex).toBeLessThan(segmentedControlIndex)
     expect(segmentedControlIndex).toBeLessThan(appShellIndex)
   })
 
@@ -364,9 +361,6 @@ describe('mobile chrome CSS', () => {
       'min-width': '0',
       'min-height': 'var(--control-row-height-sm)',
     })
-    expectDeclarations(activityCss, '.activity-panel-toolbar .btn-sm', {
-      'min-height': 'var(--status-bar-control-height)',
-    })
     expectDeclarations(
       activityCss,
       '.activity-panel-search',
@@ -377,12 +371,6 @@ describe('mobile chrome CSS', () => {
       activityCss,
       '.activity-panel-mobile-trigger',
       { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-toolbar .btn-sm',
-      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
       '(pointer: coarse)',
     )
     expectDeclarations(

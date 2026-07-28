@@ -14,7 +14,8 @@ export const inputFocusCls =
   'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
   'focus-visible:outline-offset-[1px] focus:outline-none'
 
-/** Buttons: mirrors the `buttons.css` `:focus-visible` ring pattern. */
+/** Buttons: mirrors the retired `.btn` `:focus-visible` outline pattern for
+ * raw buttons not yet on the shared Button primitive. */
 export const buttonFocusCls =
   'focus-visible:outline-2 focus-visible:outline-[var(--accent)] ' +
   'focus-visible:outline-offset-[2px] focus:outline-none'

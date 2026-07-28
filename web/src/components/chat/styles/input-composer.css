@@ -242,10 +242,6 @@
   flex-shrink: 0;
 }
 
-.agent-status-bar__actions .btn-sm {
-  min-height: var(--status-bar-control-height);
-}
-
 /* Pending-plan affordance (#15634): the approval strip wraps onto its own row
    inside the bar. The bar's primary row keeps parity with .command-bar /
    .activity-panel-tabs (both key off --activity-panel-bar-height); the strip

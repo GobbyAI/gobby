@@ -378,11 +378,10 @@
   color: var(--text-primary);
 }
 
-/* The mobile-overlay close affordance now wears the shared
-   .btn .btn-accent .btn-sm .activity-panel-action-btn family (see
-   ActivityPanel.tsx). The "Close" label collapses to icon-only below 480px
-   via the @container rule above. The slot wrapper pins it to the right
-   edge of the .activity-panel-tabs row. */
+/* The mobile-overlay close affordance wears the shared accent sm Button +
+   .activity-panel-action-btn hook (see ActivityPanel.tsx). The "Close" label
+   collapses to icon-only below 480px via the @container rule above. The slot
+   wrapper pins it to the right edge of the .activity-panel-tabs row. */
 .activity-panel-close-slot {
   margin-left: auto;
   display: flex;
@@ -399,12 +398,6 @@
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
-}
-
-.activity-panel-actions-slot .btn-sm,
-.activity-panel-close-slot .btn-sm,
-.activity-panel-status-bar__actions .btn-sm {
-  min-height: var(--status-bar-control-height);
 }
 
 /* ============================================
@@ -502,10 +495,6 @@
   margin-left: auto;
 }
 
-.activity-panel-toolbar .btn-sm {
-  min-height: var(--status-bar-control-height);
-}
-
 .activity-panel-status-bar {
   display: flex;
   align-items: center;
@@ -549,14 +538,6 @@
 @media (pointer: coarse) {
   .activity-panel-mobile-trigger,
   .activity-panel-mobile-menu__item {
-    min-height: 2.75rem;
-  }
-
-  .activity-panel-actions-slot .btn-sm,
-  .activity-panel-close-slot .btn-sm,
-  .activity-panel-status-bar__actions .btn-sm,
-  .activity-panel-toolbar .btn-sm {
-    min-width: 2.75rem;
     min-height: 2.75rem;
   }
 

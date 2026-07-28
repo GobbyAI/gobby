@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const cwd = process.cwd()
@@ -9,18 +9,6 @@ const SANCTIONED_TOKEN_FILES = new Set(['src/styles/tokens.css'])
 
 function readSource(rel: string): string {
   return readFileSync(join(cwd, rel), 'utf8')
-}
-
-function readCssSource(rel: string, seen = new Set<string>()): string {
-  if (seen.has(rel)) return ''
-  seen.add(rel)
-
-  const source = readSource(rel)
-  const baseDir = dirname(rel)
-  return source.replace(
-    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
-    (_statement: string, specifier: string) => readCssSource(join(baseDir, specifier), seen),
-  )
 }
 
 function readSessionsSurfaceSource(): string {
@@ -109,16 +97,13 @@ describe('activity-panel typography ladder (#14245)', () => {
   it('keeps status-bar controls at desktop visual height on touch devices', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/chat/styles/activity-panel.css')
-    const inputSource = readCssSource('src/components/chat/styles/input.css')
     const layoutSource = readSource('src/components/chat/styles/layout.css')
+    const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
     expect(rootSource).toContain('--status-bar-control-height: 1.75rem')
-    expect(inputSource).toMatch(
-      /\.agent-status-bar__actions \.btn-sm\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
-    )
-    expect(activitySource).toMatch(
-      /\.activity-panel-close-slot \.btn-sm,\s*\.activity-panel-status-bar__actions \.btn-sm\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
-    )
+    // Status-bar session actions encode the desktop-height-on-touch contract
+    // via the Button `dense` prop (min-h-7 with no pointer-coarse promotion).
+    expect(statusBarSource).toMatch(/variant="accent"\s+size="sm"\s+dense/)
     expect(layoutSource).toMatch(
       /\.command-bar-btn\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
     )

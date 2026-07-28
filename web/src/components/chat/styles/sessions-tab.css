@@ -592,5 +592,5 @@
   word-break: break-all;
 }
 
-/* .session-pane-action* removed — replaced by the .btn system in
-   web/src/styles/buttons.css. See SessionsTab.tsx, AgentStatusBar.tsx. */
+/* .session-pane-action* removed — replaced by the shared Button primitive
+   (components/ui/Button). See SessionsTab.tsx, AgentStatusBar.tsx. */
