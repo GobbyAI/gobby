@@ -186,9 +186,10 @@ def _ensure_contract_phase(
         return phase
 
     phase_number = _contract_phase_number(phase_source_id)
+    phase_title = phase_section.title if phase_section is not None else task.title
     phase = {
         "id": phase_id,
-        "title": phase_section.title if phase_section is not None else task.title,
+        "title": f"P{phase_number}: {phase_title}",
         "summary": phase_section.title if phase_section is not None else task.description or "",
         "test_intent": {
             "summary": f"Validate Phase {phase_number} leaves with focused evidence.",

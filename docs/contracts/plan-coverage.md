@@ -169,6 +169,15 @@ Entry schema (one entry per `kind: deliverable` section):
 `source_section` ID. They must resolve to another manifest entry. Phase IDs
 such as `P0` are invalid because phases are not implementation leaves.
 
+### Phase Sub-Epic Titles
+
+For multi-phase Plan-Coverage expansion, compiled `phases[].title` values and
+created phase sub-epic titles preserve the canonical marker in the exact format
+`P<N>: <parsed title>`. The stable phase ID remains `phase-p<N>`. The visible
+marker does not add a task label; generated phase sub-epics retain only their
+existing expansion provenance label. This applies to future compilation and
+apply runs without backfilling existing task trees.
+
 ### Category/TDD Policy
 
 The single category policy is:

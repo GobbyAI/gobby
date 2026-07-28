@@ -81,6 +81,9 @@ def test_apply_copies_parent_target_branch_onto_generated_leaves(temp_db, sample
     applied = _apply.apply_run(service, run.id, session_id=None)
 
     child_id = applied.task_id_map["leaf"]
+    child = task_manager.get_task(child_id)
+    assert child is not None
+    assert child.title == "Implement leaf"
     assert artifact_manager.get_artifacts(child_id).target_branch == "release/0.4"
 
 

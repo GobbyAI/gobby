@@ -221,6 +221,10 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
         "phase-p1": 1,
         "phase-p2": 1,
     }
+    assert [phase["title"] for phase in spec["phases"]] == [
+        "P1: Phase 1",
+        "P2: Phase 2",
+    ]
     assert all(not any(key.startswith("tdd_") for key in phase) for phase in spec["phases"])
     assert spec["tdd_mode"] == "skill_backed"
     # Cross-deliverable manifest depends_on: 2.1 -> 1.1 wires single leaf to single leaf.
@@ -335,6 +339,12 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
     created = [service.task_manager.get_task(task_id) for task_id in created_task_ids]
     assert all(task is not None for task in created)
     titles = [task.title for task in created if task is not None]
+    phase_tasks = [task for task in created if task is not None and task.task_type == "epic"]
+    assert [task.title for task in phase_tasks] == ["P1: Phase 1", "P2: Phase 2"]
+    assert [task.labels for task in phase_tasks] == [
+        [f"expansion-run:{run.id}"],
+        [f"expansion-run:{run.id}"],
+    ]
     assert not any(title.startswith("[TEST] Phase") for title in titles)
     assert not any(title.startswith("[REF] Phase") for title in titles)
     assert any(
