@@ -113,6 +113,14 @@ def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
         assert "candidate" in instructions
         assert "emitted_finding" in instructions
         assert "dismissed" in instructions
+        for field in (
+            "cross_lane_interactions",
+            "adjacent_variant_sweeps",
+            "causal_repair_sweeps",
+            "candidate_dispositions",
+            "record_bundle",
+        ):
+            assert field in instructions
         assert "cross-lane interaction" in instructions
         assert "adjacent-variant" in instructions
         assert "source drift" in instructions

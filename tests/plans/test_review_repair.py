@@ -174,11 +174,23 @@ def _finalize_prior_round(
                 record["disposition"] == "dismissed" for record in candidate_dispositions
             ),
         }
+        record_bundle = attestation["record_bundle"]
+        assert isinstance(record_bundle, dict)
+        record_bundle["candidate_dispositions"] = candidate_dispositions
+        record_bundle["adjacent_variant_sweeps"] = [
+            {
+                "check_key": record["check_key"],
+                "seed_candidate_id": record["candidate_id"],
+                "query_evidence": [f"test query for {record['candidate_id']}"],
+                "sites_checked": [],
+                "resulting_candidate_ids": [],
+            }
+            for record in candidate_dispositions
+        ]
         unsigned = {key: value for key, value in attestation.items() if key != "attestation_digest"}
         attestation["attestation_digest"] = hashlib.sha256(
             json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        result["candidate_dispositions"] = candidate_dispositions
     return service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
 

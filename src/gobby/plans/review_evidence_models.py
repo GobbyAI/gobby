@@ -201,9 +201,7 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
         payload.get("coverage_attestation"),
         verdict=str(verdict),
     )
-    dispositions = validate_candidate_dispositions(payload)
-    if "candidate_dispositions" in payload or dispositions:
-        payload["candidate_dispositions"] = dispositions
+    validate_candidate_dispositions(payload)
     if verdict == "approved":
         entries = payload.get("manifest_entries")
         if not isinstance(entries, list) or not entries:

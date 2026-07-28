@@ -110,7 +110,9 @@ instructions: |
   Verify and deduplicate every candidate, record exactly one
   `emitted_finding` or `dismissed` disposition with a reason, run the
   cross-lane interaction pass, and finish the class-wide adjacent-variant
-  sweep.
+  sweep. Send `cross_lane_interactions`, `adjacent_variant_sweeps`,
+  `causal_repair_sweeps`, and `candidate_dispositions` as structured record
+  arrays. Zero-result sweeps require query evidence.
   Forbid file edits, task/service mutation, findings, manifests, evidence
   finalization, and verdicts. Never use `gobby-agents:spawn_agent` for lane
   research. When the native facility exposes a deadline, cap each lane at
@@ -121,9 +123,10 @@ instructions: |
 
   Call `derive_plan_review_manifest` during every round. Call
   `validate_plan_review_coverage` before approve/reject and pass its
-  `coverage_attestation` to the lifecycle tool. Approval also passes the exact
-  server-derived routing_decisions and manifest_entries. On first source drift,
-  rerun affected lanes once.
+  complete `coverage_attestation`, including its canonical `record_bundle`, to
+  the lifecycle tool. Approval also passes the exact server-derived
+  routing_decisions and manifest_entries. On first source drift, rerun affected
+  lanes once.
 
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:

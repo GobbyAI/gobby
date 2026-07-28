@@ -328,16 +328,23 @@ adjacent sites checked, confidence, and citations. The parent must:
 1. Verify and deduplicate every candidate.
 2. Record exactly one `emitted_finding` or `dismissed` entry in
    `candidate_dispositions`, with a reason.
-3. Perform a cross-lane interaction pass.
-4. Complete a class-wide adjacent-variant sweep, including the causal sweep for
-   any prior finding touched by this round's changes.
+3. Complete the cross-lane interaction pass by recording each required
+   candidate pair in `cross_lane_interactions`, with participating candidate
+   ids, affected sections, the interaction checked, and its disposition.
+4. Record one `adjacent_variant_sweeps` entry per candidate/check key with the
+   seed candidate, query evidence, sites checked, and resulting candidate ids.
+5. Record `causal_repair_sweeps` for every repaired prior finding in
+   `prior_round_context`, including the changed sections/contracts, consumer
+   site ids, query evidence for zero-result sweeps, and disposition.
 
 Call `derive_plan_review_manifest` during every round, including rejection.
 Then call `validate_plan_review_coverage` with the three lanes, all
-dispositions, and the exact shadow-manifest result. The returned
-`coverage_attestation` is mandatory in `round_result`; it contains exactly
-three completed lanes, source digest, disposition counts, cross-lane and
-adjacent-variant completion, and shadow-manifest status.
+four structured record arrays, and the exact shadow-manifest result. The
+returned `coverage_attestation` is mandatory in `round_result`; it contains
+the canonical `record_bundle`, exactly three completed lanes, source digest,
+server-derived disposition counts, server-derived cross-lane and
+adjacent-variant completion, and shadow-manifest status. Copy the returned
+attestation whole so its validated records remain digest-bound to the result.
 
 TERMINAL_RESULT_UNION_V1_START
 Every parent delivery is one JSON object matching one branch:

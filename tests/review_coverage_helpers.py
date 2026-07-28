@@ -51,6 +51,12 @@ def coverage_attestation(
         },
         "cross_lane_interaction_complete": True,
         "adjacent_variant_complete": True,
+        "record_bundle": {
+            "cross_lane_interactions": [],
+            "adjacent_variant_sweeps": [],
+            "causal_repair_sweeps": [],
+            "candidate_dispositions": [],
+        },
         "shadow_manifest_status": shadow,
     }
     payload["attestation_digest"] = hashlib.sha256(

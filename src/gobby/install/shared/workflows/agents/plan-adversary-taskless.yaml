@@ -80,16 +80,19 @@ instructions: |
   You are the sole verdict and evidence owner. Verify and deduplicate every
   candidate, record one `emitted_finding` or `dismissed` disposition with a
   reason, run the cross-lane interaction pass, and finish the class-wide
-  adjacent-variant sweep. An internal subagent never creates a finding or
-  verdict.
+  adjacent-variant sweep. Send `cross_lane_interactions`,
+  `adjacent_variant_sweeps`, `causal_repair_sweeps`, and
+  `candidate_dispositions` as structured record arrays. Zero-result sweeps
+  require query evidence. An internal subagent never creates a finding or verdict.
 
   SHADOW MANIFEST AND COVERAGE GATE:
   During every round, including rejection, call
   `derive_plan_review_manifest(evidence_id, routing_decisions)`. Then call
   `validate_plan_review_coverage` with the three lane results, all candidate
-  dispositions, and the exact shadow result. Put its
-  `coverage_attestation` in `round_result`. Approval also returns the exact
-  server-derived `routing_decisions` and `manifest_entries`.
+  and sweep records, and the exact shadow result. Put its complete
+  `coverage_attestation`, including the canonical `record_bundle`, in
+  `round_result`. Approval also returns the exact server-derived
+  `routing_decisions` and `manifest_entries`.
 
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:

@@ -202,7 +202,14 @@ class TestPlanReviewContent:
         assert "15 minutes" in body
 
     def test_parent_dispositions_and_adjacent_variant_closure(self, body: str) -> None:
-        assert "candidate_dispositions" in body
+        for field in (
+            "cross_lane_interactions",
+            "adjacent_variant_sweeps",
+            "causal_repair_sweeps",
+            "candidate_dispositions",
+            "record_bundle",
+        ):
+            assert field in body
         assert "emitted_finding" in body
         assert "dismissed" in body
         assert "cross-lane interaction" in body.lower()

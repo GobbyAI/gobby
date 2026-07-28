@@ -233,9 +233,12 @@ def validate_candidate_dispositions(
     counts = coverage.get("disposition_counts")
     if not isinstance(counts, Mapping):
         raise _invalid("coverage_attestation.disposition_counts must be an object")
-    records_raw = round_result.get("candidate_dispositions", [])
+    bundle = coverage.get("record_bundle")
+    if not isinstance(bundle, Mapping):
+        raise _invalid("coverage_attestation.record_bundle must be an object")
+    records_raw = bundle.get("candidate_dispositions")
     if not isinstance(records_raw, list):
-        raise _invalid("round_result.candidate_dispositions must be an array")
+        raise _invalid("coverage_attestation.record_bundle.candidate_dispositions must be an array")
 
     records: list[dict[str, object]] = []
     candidate_ids: set[str] = set()

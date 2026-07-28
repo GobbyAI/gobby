@@ -410,7 +410,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="validate_plan_review_coverage",
-        description="Read-only validation of all review lanes, dispositions, and source hashes.",
+        description=(
+            "Read-only validation of review lanes, structured sweep records, "
+            "dispositions, and source hashes."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -419,7 +422,34 @@ def register_review_evidence_tools(
                     "type": "array",
                     "items": {"type": "object"},
                 },
-                "candidate_dispositions": {"type": "object"},
+                "candidate_dispositions": {
+                    "type": "object",
+                    "properties": {
+                        "cross_lane_interactions": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
+                        "adjacent_variant_sweeps": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
+                        "causal_repair_sweeps": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
+                        "candidate_dispositions": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
+                    },
+                    "required": [
+                        "cross_lane_interactions",
+                        "adjacent_variant_sweeps",
+                        "causal_repair_sweeps",
+                        "candidate_dispositions",
+                    ],
+                    "additionalProperties": False,
+                },
                 "shadow_manifest_status": {"type": "object"},
             },
             "required": [

@@ -12,11 +12,11 @@ from typing import cast
 from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
-from gobby.plans.review_findings import CHECK_KEY_RE
 from gobby.plans.review_ledger import (
     dismissed_ledger_entries_from_context,
     validate_quality_ledger,
 )
+from gobby.plans.review_sweeps import validate_record_bundle, validate_sweep_records
 from gobby.plans.semantic_lint import collect_target_inventory
 
 REVIEW_LANES = (
@@ -98,7 +98,11 @@ def validate_review_coverage(
 ) -> dict[str, object]:
     """Validate exhaustive lane output and return a canonical attestation."""
     lanes = _validate_lanes(document, lane_results)
-    disposition_counts, dispositions = _validate_dispositions(lanes, candidate_dispositions)
+    sweep_validation = validate_sweep_records(
+        lanes=lanes,
+        raw=candidate_dispositions,
+        prior_round_context=prior_round_context,
+    )
     canonical_shadow = canonical_json_object(shadow_manifest_status)
     expected_shadow = canonical_json_object(expected_shadow_manifest_status)
     if canonical_shadow != expected_shadow:
@@ -118,7 +122,7 @@ def validate_review_coverage(
         for section in build_section_manifest(document.source_path.read_bytes())
     }
     _reject_unchanged_dismissal_reopens(
-        dispositions=dispositions,
+        dispositions=sweep_validation.dispositions,
         prior_round_context=prior_round_context,
         current_section_hashes=current_section_hashes,
     )
@@ -141,9 +145,10 @@ def validate_review_coverage(
             for lane in lanes
         ],
         "source_digest": source_digest,
-        "disposition_counts": disposition_counts,
-        "cross_lane_interaction_complete": True,
-        "adjacent_variant_complete": True,
+        "disposition_counts": sweep_validation.disposition_counts,
+        "cross_lane_interaction_complete": sweep_validation.cross_lane_interaction_complete,
+        "adjacent_variant_complete": sweep_validation.adjacent_variant_complete,
+        "record_bundle": sweep_validation.record_bundle,
         "shadow_manifest_status": shadow_summary,
     }
     attestation["attestation_digest"] = hashlib.sha256(
@@ -172,9 +177,15 @@ def validate_coverage_attestation(
         "disposition_counts",
         "cross_lane_interaction_complete",
         "adjacent_variant_complete",
+        "record_bundle",
         "shadow_manifest_status",
         "attestation_digest",
     }
+    if "record_bundle" not in attestation:
+        raise ReviewEvidenceError(
+            "invalid_coverage_attestation",
+            "coverage attestation requires record_bundle",
+        )
     if set(attestation) != expected_keys or attestation.get("version") != 1:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
@@ -301,8 +312,15 @@ def validate_coverage_attestation(
     if counts["total"] != sum(int(lane["candidate_count"]) for lane in lanes):
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
-            "coverage attestation candidate and disposition counts differ",
+            "coverage attestation disposition_counts differ from lane candidate counts",
         )
+    record_bundle, bundle_counts = validate_record_bundle(attestation.get("record_bundle"))
+    if counts != bundle_counts:
+        raise ReviewEvidenceError(
+            "invalid_coverage_attestation",
+            "coverage attestation disposition_counts disagree with record_bundle",
+        )
+    attestation["record_bundle"] = record_bundle
     digest = attestation.pop("attestation_digest", None)
     expected_digest = hashlib.sha256(
         json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()
@@ -429,138 +447,6 @@ def _validate_candidate(
     )
     candidate["section_ids"] = section_ids
     return candidate
-
-
-def _validate_dispositions(
-    lanes: Sequence[Mapping[str, object]],
-    raw: Mapping[str, object],
-) -> tuple[dict[str, int], list[dict[str, object]]]:
-    payload = canonical_json_object(raw)
-    if payload.get("cross_lane_interaction_complete") is not True:
-        raise ReviewEvidenceError(
-            "incomplete_dispositions",
-            "cross-lane interaction pass must be complete",
-        )
-    if payload.get("adjacent_variant_complete") is not True:
-        raise ReviewEvidenceError(
-            "incomplete_dispositions",
-            "class-wide adjacent-variant sweep must be complete",
-        )
-    items = payload.get("items")
-    if not isinstance(items, list):
-        raise ReviewEvidenceError(
-            "invalid_dispositions",
-            "candidate_dispositions.items must be an array",
-        )
-    candidates_by_id: dict[str, dict[str, object]] = {}
-    for lane in lanes:
-        candidates = lane.get("candidate_issues")
-        if not isinstance(candidates, list):
-            raise ReviewEvidenceError(
-                "invalid_lane_results",
-                "validated lane candidate_issues must be an array",
-            )
-        for candidate in candidates:
-            candidate_id = str(candidate["candidate_id"])
-            candidates_by_id[candidate_id] = candidate
-    seen: set[str] = set()
-    finding_ids: set[str] = set()
-    dispositions: list[dict[str, object]] = []
-    emitted = 0
-    dismissed = 0
-    for raw_item in items:
-        if not isinstance(raw_item, Mapping):
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition must be an object",
-            )
-        item = canonical_json_object(raw_item)
-        candidate_id = _required_string(item, "candidate_id", "candidate disposition")
-        if candidate_id not in candidates_by_id or candidate_id in seen:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                f"unknown or duplicate candidate disposition: {candidate_id}",
-            )
-        seen.add(candidate_id)
-        candidate = candidates_by_id[candidate_id]
-        check_key = _required_string(item, "check_key", "candidate disposition")
-        if not CHECK_KEY_RE.fullmatch(check_key):
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition check_key is invalid",
-            )
-        source_section_ids = _string_list(
-            item.get("source_section_ids"),
-            "candidate disposition source_section_ids",
-        )
-        candidate_section_ids = cast(list[str], candidate["section_ids"])
-        if source_section_ids != sorted(candidate_section_ids):
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition source_section_ids differ from the candidate",
-            )
-        item["source_section_ids"] = source_section_ids
-        source_hash = _required_string(item, "source_hash", "candidate disposition")
-        if not _SHA256_RE.fullmatch(source_hash):
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition source_hash must be SHA-256",
-            )
-        citation_hashes = {
-            str(citation["sha256"])
-            for citation in cast(list[dict[str, object]], candidate["source_citations"])
-        }
-        if source_hash not in citation_hashes:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition source_hash is absent from candidate citations",
-            )
-        _required_string(item, "rationale", "candidate disposition")
-        disposition = item.get("disposition")
-        if disposition == "emitted_finding":
-            finding_id = _required_string(item, "finding_id", "emitted candidate disposition")
-            if finding_id in finding_ids:
-                raise ReviewEvidenceError(
-                    "duplicate_finding",
-                    f"finding_id is duplicated: {finding_id}",
-                )
-            finding_ids.add(finding_id)
-            emitted += 1
-        elif disposition == "dismissed":
-            dismissed += 1
-        else:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                "candidate disposition must be emitted_finding or dismissed",
-            )
-        allowed_fields = {
-            "candidate_id",
-            "check_key",
-            "source_section_ids",
-            "source_hash",
-            "rationale",
-            "disposition",
-        }
-        if disposition == "emitted_finding":
-            allowed_fields.add("finding_id")
-        unknown = sorted(set(item) - allowed_fields)
-        if unknown:
-            raise ReviewEvidenceError(
-                "invalid_dispositions",
-                f"candidate disposition has unknown fields: {', '.join(unknown)}",
-            )
-        dispositions.append(item)
-    candidate_ids = set(candidates_by_id)
-    if seen != candidate_ids:
-        missing = sorted(candidate_ids - seen)
-        raise ReviewEvidenceError(
-            "undisposed_candidates",
-            "every candidate requires a disposition: " + ", ".join(missing),
-        )
-    return (
-        {"total": len(candidate_ids), "emitted_findings": emitted, "dismissed": dismissed},
-        dispositions,
-    )
 
 
 def _reject_unchanged_dismissal_reopens(

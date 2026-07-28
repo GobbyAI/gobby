@@ -16,7 +16,7 @@ from gobby.plans.review_coverage import (
     validate_review_coverage,
 )
 from gobby.plans.review_evidence_io import build_section_manifest
-from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
 from gobby.plans.review_ledger import inject_dismissed_ledger_context
 from tests.review_coverage_helpers import coverage_attestation, manifest_digest
 
@@ -119,7 +119,7 @@ def _coverage_case(
 ]:
     document = _document(tmp_path, deliverable_count=2)
     source = tmp_path / "src" / "example.py"
-    source.parent.mkdir()
+    source.parent.mkdir(exist_ok=True)
     source.write_text("VALUE = 1\n", encoding="utf-8")
     citation: dict[str, object] = {
         "path": "src/example.py",
@@ -153,9 +153,19 @@ def _coverage_case(
         for lane_id in REVIEW_LANES
     ]
     dispositions: dict[str, object] = {
-        "cross_lane_interaction_complete": True,
-        "adjacent_variant_complete": True,
-        "items": [
+        "cross_lane_interactions": [],
+        "adjacent_variant_sweeps": [
+            {
+                "check_key": "candidate-parity",
+                "seed_candidate_id": f"candidate-{index}",
+                "query_evidence": [f"gcode search candidate-{index}"],
+                "sites_checked": ["src/adjacent.py"],
+                "resulting_candidate_ids": [],
+            }
+            for index in range(1, candidate_count + 1)
+        ],
+        "causal_repair_sweeps": [],
+        "candidate_dispositions": [
             {
                 "candidate_id": f"candidate-{index}",
                 "check_key": "candidate-parity",
@@ -216,6 +226,179 @@ def test_valid_coverage_returns_canonical_attestation(tmp_path: Path) -> None:
     assert validate_coverage_attestation(attestation, verdict="approved") == attestation
 
 
+def test_derived_sweep_booleans(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path, candidate_count=2)
+    first_lane = lanes[0]
+    second_lane = lanes[1]
+    assert isinstance(first_lane, dict)
+    assert isinstance(second_lane, dict)
+    candidates = first_lane["candidate_issues"]
+    assert isinstance(candidates, list)
+    first_lane["candidate_issues"] = candidates[:1]
+    second_lane["candidate_issues"] = candidates[1:]
+    records["cross_lane_interactions"] = [
+        {
+            "candidate_ids": ["candidate-1", "candidate-2"],
+            "affected_section_ids": ["1.1"],
+            "interaction_checked": "Conflicting parity repairs",
+            "disposition": "independent",
+        }
+    ]
+
+    complete = _validate(tmp_path, document, lanes, records, shadow)
+    assert complete["cross_lane_interaction_complete"] is True
+    assert complete["adjacent_variant_complete"] is True
+
+    records["cross_lane_interactions"] = []
+    partial = _validate(tmp_path, document, lanes, records, shadow)
+    assert partial["cross_lane_interaction_complete"] is False
+    assert partial["adjacent_variant_complete"] is True
+
+
+def test_unreferenced_candidate_rejected(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    records["adjacent_variant_sweeps"] = []
+
+    with pytest.raises(ReviewEvidenceError, match="candidate-1") as error:
+        _validate(tmp_path, document, lanes, records, shadow)
+
+    assert error.value.code == "unreferenced_candidate"
+
+
+def test_sweep_universe_fixtures(tmp_path: Path) -> None:
+    empty_document, empty_lanes, empty_records, empty_shadow = _coverage_case(
+        tmp_path,
+        candidate_count=0,
+    )
+    empty = _validate(
+        tmp_path,
+        empty_document,
+        empty_lanes,
+        empty_records,
+        empty_shadow,
+    )
+    assert empty["cross_lane_interaction_complete"] is True
+    assert empty["adjacent_variant_complete"] is True
+
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    assert _validate(tmp_path, document, lanes, records, shadow)
+    adjacent = records["adjacent_variant_sweeps"]
+    assert isinstance(adjacent, list)
+    assert isinstance(adjacent[0], dict)
+    adjacent[0]["query_evidence"] = []
+    with pytest.raises(ReviewEvidenceError, match="query evidence"):
+        _validate(tmp_path, document, lanes, records, shadow)
+
+    adjacent[0]["query_evidence"] = ["gcode search candidate-1"]
+    adjacent.append(
+        {
+            "check_key": "extra-check",
+            "seed_candidate_id": "candidate-1",
+            "query_evidence": ["gcode search extra-check"],
+            "sites_checked": [],
+            "resulting_candidate_ids": [],
+        }
+    )
+    with pytest.raises(ReviewEvidenceError, match="outside the required universe"):
+        _validate(tmp_path, document, lanes, records, shadow)
+
+    adjacent.pop()
+    prior_context = {
+        "prior_finding_resolutions": [{"prior_finding_id": "finding-prior", "decision": "repair"}],
+        "repair_attestations": [
+            {
+                "prior_finding_id": "finding-prior",
+                "changed_section_ids": ["1.1"],
+            }
+        ],
+        "consumer_site_inventory": {
+            "changed_contracts": ["contracts/review.json"],
+            "sites": [{"site_id": "consumer-1"}],
+        },
+        "dismissed_ledger_entries": [],
+    }
+    with pytest.raises(ReviewEvidenceError, match="finding-prior"):
+        _validate(
+            tmp_path,
+            document,
+            lanes,
+            records,
+            shadow,
+            prior_context,
+        )
+    records["causal_repair_sweeps"] = [
+        {
+            "prior_finding_id": "finding-prior",
+            "changed_section_ids": ["1.1"],
+            "changed_contracts": ["contracts/review.json"],
+            "sites_checked": ["consumer-1"],
+            "query_evidence": [],
+            "disposition": "validated",
+        }
+    ]
+    assert _validate(
+        tmp_path,
+        document,
+        lanes,
+        records,
+        shadow,
+        prior_context,
+    )
+
+
+def test_dispositions_reconcile_with_counts(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    attestation = _validate(tmp_path, document, lanes, records, shadow)
+    attestation["disposition_counts"] = {
+        "total": 0,
+        "emitted_findings": 0,
+        "dismissed": 0,
+    }
+
+    with pytest.raises(ReviewEvidenceError, match="disposition_counts"):
+        validate_coverage_attestation(attestation, verdict="needs_review")
+
+
+def test_validator_returns_canonical_record_bundle(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    disposition_items = records["candidate_dispositions"]
+    assert isinstance(disposition_items, list)
+    assert isinstance(disposition_items[0], dict)
+    disposition_items[0]["disposition"] = "dismissed"
+    disposition_items[0].pop("finding_id")
+
+    attestation = _validate(tmp_path, document, lanes, records, shadow)
+    expected_bundle = {
+        "cross_lane_interactions": records["cross_lane_interactions"],
+        "adjacent_variant_sweeps": records["adjacent_variant_sweeps"],
+        "causal_repair_sweeps": records["causal_repair_sweeps"],
+        "candidate_dispositions": records["candidate_dispositions"],
+    }
+    assert attestation["record_bundle"] == expected_bundle
+
+    round_result = validate_round_result(
+        {
+            "verdict": "needs_review",
+            "findings": [],
+            "coverage_attestation": attestation,
+        }
+    )
+    round_attestation = round_result["coverage_attestation"]
+    assert isinstance(round_attestation, dict)
+    assert round_attestation["record_bundle"] == expected_bundle
+
+    dropped = copy.deepcopy(attestation)
+    dropped.pop("record_bundle")
+    with pytest.raises(ReviewEvidenceError, match="record_bundle"):
+        validate_round_result(
+            {
+                "verdict": "needs_review",
+                "findings": [],
+                "coverage_attestation": dropped,
+            }
+        )
+
+
 @pytest.mark.parametrize("mutation", ["missing", "duplicate", "incomplete"])
 def test_coverage_rejects_missing_duplicate_or_incomplete_lanes(
     tmp_path: Path,
@@ -251,7 +434,7 @@ def test_lanes_still_cover_all_sections(tmp_path: Path) -> None:
 
 def test_coverage_rejects_undisposed_candidates(tmp_path: Path) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path)
-    dispositions["items"] = []
+    dispositions["candidate_dispositions"] = []
 
     with pytest.raises(ReviewEvidenceError) as error:
         _validate(tmp_path, document, lanes, dispositions, shadow)
@@ -261,7 +444,7 @@ def test_coverage_rejects_undisposed_candidates(tmp_path: Path) -> None:
 
 def test_unchanged_dismissal_reopen_rejected(tmp_path: Path) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path)
-    items = dispositions["items"]
+    items = dispositions["candidate_dispositions"]
     assert isinstance(items, list)
     item = items[0]
     assert isinstance(item, dict)
@@ -325,7 +508,7 @@ def test_unchanged_dismissal_reopen_rejected(tmp_path: Path) -> None:
 
 def test_coverage_rejects_duplicate_finding_ids(tmp_path: Path) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path, candidate_count=2)
-    items = dispositions["items"]
+    items = dispositions["candidate_dispositions"]
     assert isinstance(items, list)
     assert isinstance(items[1], dict)
     items[1]["finding_id"] = "finding-1"
