@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
 import type { DetailPaneHeaderProps } from "./types";
 
 export function DetailPaneHeader({
@@ -53,16 +53,6 @@ interface DetailActionButtonProps {
   icon?: ReactNode;
 }
 
-const DETAIL_ACTION_VARIANT_CLASS: Record<
-  NonNullable<DetailActionButtonProps["variant"]>,
-  string
-> = {
-  ghost: "btn-ghost",
-  accent: "btn-primary",
-  secondary: "btn-secondary",
-  destructive: "btn-destructive",
-};
-
 export function DetailActionButton({
   label,
   onClick,
@@ -76,14 +66,16 @@ export function DetailActionButton({
     });
   };
   return (
-    <button
+    <Button
       type="button"
-      className={cn("btn btn-sm", DETAIL_ACTION_VARIANT_CLASS[variant])}
+      size="sm"
+      dense
+      variant={variant}
       disabled={disabled}
       onClick={handleClick}
     >
       {icon}
       <span>{label}</span>
-    </button>
+    </Button>
   );
 }
