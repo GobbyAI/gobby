@@ -146,6 +146,7 @@ class PlanReviewEvidenceService:
                             ),
                             round_number=round_number,
                             current_sections=active.section_manifest,
+                            current_snapshot=active.snapshot,
                             prior_finding_resolutions=prior_finding_resolutions,
                             repair_attestations=repair_attestations,
                         )
@@ -181,6 +182,7 @@ class PlanReviewEvidenceService:
                         ),
                         round_number=round_number,
                         current_sections=sections,
+                        current_snapshot=snapshot,
                         prior_finding_resolutions=prior_finding_resolutions,
                         repair_attestations=repair_attestations,
                     )
@@ -231,6 +233,7 @@ class PlanReviewEvidenceService:
             "sections": [section.to_dict() for section in evidence.section_manifest],
             "snapshot": evidence.snapshot,
             "changed_section_ids": changed_sections,
+            "prior_round_context": evidence.prior_round_context,
             "review_complexity": review_complexity(
                 document,
                 changed_section_count=len(changed_sections),

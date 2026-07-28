@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from gobby.plans.review_evidence_io import reviewed_section_hashes
+from gobby.plans.review_evidence_io import build_inter_round_diff, reviewed_section_hashes
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     ReviewEvidenceError,
@@ -263,6 +263,7 @@ def validate_repair_preparation(
     *,
     prior_evidence: PlanReviewEvidence,
     current_sections: Sequence[SectionHash],
+    current_snapshot: bytes,
     prior_finding_resolutions: Sequence[Mapping[str, object]] | None,
     repair_attestations: Sequence[Mapping[str, object]] | None,
 ) -> RepairPreparation:
@@ -341,11 +342,40 @@ def validate_repair_preparation(
 
     return RepairPreparation(
         repair_attestations=tuple(attestations),
-        prior_round_context={
-            "prior_evidence_id": prior_evidence.evidence_id,
-            "prior_finding_resolutions": resolutions,
-        },
+        prior_round_context=build_prior_round_context(
+            prior_evidence=prior_evidence,
+            findings=findings,
+            resolutions=resolutions,
+            attestations=attestations,
+            current_snapshot=current_snapshot,
+        ),
     )
+
+
+def build_prior_round_context(
+    *,
+    prior_evidence: PlanReviewEvidence,
+    findings: Sequence[Mapping[str, object]],
+    resolutions: Sequence[Mapping[str, object]],
+    attestations: Sequence[Mapping[str, object]],
+    current_snapshot: bytes,
+) -> dict[str, object]:
+    """Assemble durable causal routing context from consecutive round inputs."""
+    round_diff = build_inter_round_diff(prior_evidence.snapshot, current_snapshot)
+    return {
+        "prior_evidence_id": prior_evidence.evidence_id,
+        "prior_findings": [
+            {
+                "finding_id": finding["finding_id"],
+                "check_key": finding["check_key"],
+            }
+            for finding in findings
+        ],
+        "prior_finding_resolutions": [dict(resolution) for resolution in resolutions],
+        "repair_attestations": [dict(attestation) for attestation in attestations],
+        "changed_acceptance_item_ids": list(round_diff.acceptance_item_ids),
+        "changed_section_targets": list(round_diff.section_targets),
+    }
 
 
 def repair_preparation_for_round(
@@ -353,6 +383,7 @@ def repair_preparation_for_round(
     evidence_rows: Sequence[PlanReviewEvidence],
     round_number: int,
     current_sections: Sequence[SectionHash],
+    current_snapshot: bytes,
     prior_finding_resolutions: Sequence[Mapping[str, object]] | None,
     repair_attestations: Sequence[Mapping[str, object]] | None,
 ) -> RepairPreparation | None:
@@ -374,6 +405,7 @@ def repair_preparation_for_round(
     return validate_repair_preparation(
         prior_evidence=prior_rows[-1],
         current_sections=current_sections,
+        current_snapshot=current_snapshot,
         prior_finding_resolutions=prior_finding_resolutions,
         repair_attestations=repair_attestations,
     )

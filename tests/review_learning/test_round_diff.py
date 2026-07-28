@@ -397,6 +397,8 @@ def _persist_round(
     round_number: int,
     findings: list[dict[str, object]],
     verdict: str = "needs_review",
+    prior_finding_resolutions: list[dict[str, object]] | None = None,
+    repair_attestations: list[dict[str, object]] | None = None,
 ) -> str:
     prepared = lineage.service.prepare_plan_review_round(
         project_id=lineage.manager.get_task(lineage.task_id).project_id,
@@ -404,6 +406,8 @@ def _persist_round(
         round_number=round_number,
         task_id=lineage.task_id,
         stage=lineage.stage,
+        prior_finding_resolutions=prior_finding_resolutions,
+        repair_attestations=repair_attestations,
     )
     run = LocalAgentRunManager(lineage.db).create(
         parent_session_id=lineage.session_id,
@@ -427,6 +431,21 @@ def _persist_round(
         )
     lineage.service.finalize_plan_review_evidence(prepared.evidence_id, result)
     return prepared.evidence_id
+
+
+def _repair_attestation(finding_id: str) -> dict[str, object]:
+    return {
+        "prior_finding_id": finding_id,
+        "check_key": f"check-{finding_id.lower()}",
+        "changed_section_ids": ["1.1"],
+        "accepted_resolution": f"Fix {finding_id}",
+        "deviation_from_minimal_repair": None,
+        "changed_symbols": ["gobby.review_learning.repaired"],
+        "consumer_sites_swept": ["src/gobby/review_learning/service.py"],
+        "adjacent_variants_swept": ["src/gobby/review_learning/lessons.py"],
+        "validation_evidence": ["pytest tests/review_learning/test_round_diff.py"],
+        "deferred_sites": [],
+    }
 
 
 def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLineage:
@@ -467,16 +486,34 @@ def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLine
         round_number=1,
         findings=[_finding("BASE", participating=["1.1"]) | {"section_id": "1.1"}],
     )
+    plan_path.write_text(_plan_text("Round two repairs BASE."), encoding="utf-8")
     _persist_round(
         lineage,
         round_number=2,
-        findings=[_finding("MISS", participating=["1.1"]) | {"section_id": "1.1"}],
+        findings=[
+            _finding(
+                "MISS",
+                causal=["1.1"],
+                causal_finding_id="BASE",
+                introduced_in_round=1,
+            )
+            | {"section_id": "1.1"}
+        ],
+        prior_finding_resolutions=[
+            {"prior_finding_id": "BASE", "decision": "repair"},
+        ],
+        repair_attestations=[_repair_attestation("BASE")],
     )
+    plan_path.write_text(_plan_text("Round three repairs MISS."), encoding="utf-8")
     lineage.approval_evidence_id = _persist_round(
         lineage,
         round_number=3,
         findings=[],
         verdict="approved",
+        prior_finding_resolutions=[
+            {"prior_finding_id": "MISS", "decision": "repair"},
+        ],
+        repair_attestations=[_repair_attestation("MISS")],
     )
     return lineage
 

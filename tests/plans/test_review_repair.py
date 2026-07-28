@@ -353,8 +353,69 @@ def test_mixed_repair_carry_preparation(
     assert context is not None
     assert context == {
         "prior_evidence_id": context["prior_evidence_id"],
+        "prior_findings": [
+            {
+                "finding_id": repaired["finding_id"],
+                "check_key": repaired["check_key"],
+            },
+            {
+                "finding_id": carried["finding_id"],
+                "check_key": carried["check_key"],
+            },
+            {
+                "finding_id": blocking["finding_id"],
+                "check_key": blocking["check_key"],
+            },
+        ],
         "prior_finding_resolutions": resolutions,
+        "repair_attestations": attestations,
+        "changed_acceptance_item_ids": ["1.1.1"],
+        "changed_section_targets": [],
     }
+
+
+def test_prior_round_context_structure(
+    repair_setup: tuple[PlanReviewEvidenceService, str, Path],
+) -> None:
+    service, project_id, plan_path = repair_setup
+    finding = _finding("finding-1", check_key="behavior.repaired")
+    _finalize_prior_round(service, project_id, plan_path, [finding])
+    _mark_plan_repaired(plan_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "Target: `src/example.py`",
+            "Target: `src/repaired.py`",
+        ),
+        encoding="utf-8",
+    )
+    resolutions = [_resolution("finding-1", "repair")]
+    attestations = [_attestation(finding)]
+
+    current = _prepare_round_two(
+        service,
+        project_id,
+        plan_path,
+        resolutions=resolutions,
+        attestations=attestations,
+    )
+
+    context = current.prior_round_context
+    assert context is not None
+    expected = {
+        "prior_evidence_id": context["prior_evidence_id"],
+        "prior_findings": [
+            {
+                "finding_id": "finding-1",
+                "check_key": "behavior.repaired",
+            },
+        ],
+        "prior_finding_resolutions": resolutions,
+        "repair_attestations": attestations,
+        "changed_acceptance_item_ids": ["1.1.1"],
+        "changed_section_targets": ["src/example.py", "src/repaired.py"],
+    }
+    assert context == expected
+    assert service.snapshot_payload(current.evidence_id)["prior_round_context"] == expected
 
 
 def test_omitted_resolution_record_refuses(

@@ -228,10 +228,12 @@ def test_coverage_rejects_missing_duplicate_or_incomplete_lanes(
     assert error.value.code == "invalid_lane_results"
 
 
-def test_coverage_rejects_invalid_section_ids(tmp_path: Path) -> None:
+def test_lanes_still_cover_all_sections(tmp_path: Path) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path)
     assert isinstance(lanes[0], dict)
-    lanes[0]["section_ids_checked"] = ["missing"]
+    section_ids = lanes[0]["section_ids_checked"]
+    assert isinstance(section_ids, list)
+    lanes[0]["section_ids_checked"] = section_ids[:-1]
 
     with pytest.raises(ReviewEvidenceError) as error:
         _validate(tmp_path, document, lanes, dispositions, shadow)

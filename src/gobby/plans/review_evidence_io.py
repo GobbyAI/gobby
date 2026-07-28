@@ -7,24 +7,68 @@ import json
 import os
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import cast
 
 import yaml
 
-from gobby.plans.parser import PLAN_HEADING_REGEX, PlanKind, compute_fence_mask, parse_plan
+from gobby.plans.parser import (
+    PLAN_HEADING_REGEX,
+    PlanDocument,
+    PlanKind,
+    compute_fence_mask,
+    parse_plan,
+)
 from gobby.plans.review_evidence_models import (
     ReviewEvidenceError,
     SectionHash,
     canonical_json_bytes,
     validate_round_result,
 )
+from gobby.plans.semantic_lint import collect_target_inventory
 
 PREAMBLE_SECTION_ID = "__preamble__"
 COORDINATOR_OWNED_SECTIONS = ("Task Mapping", "M1", "V1")
 CHECKPOINT_FENCE = "```json plan-review-round"
 _HEADING_RE = re.compile(r"^(?P<marks>#{2,6})[ \t]+(?P<title>.*?)(?:[ \t]+#+[ \t]*)?$")
+
+
+@dataclass(frozen=True)
+class InterRoundDiff:
+    """Causal plan surfaces changed between consecutive snapshots."""
+
+    acceptance_item_ids: tuple[str, ...]
+    section_targets: tuple[str, ...]
+
+
+def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> InterRoundDiff:
+    """Return changed acceptance identities and target files from two snapshots."""
+    prior = _parse_snapshot(prior_snapshot)
+    current = _parse_snapshot(current_snapshot)
+    prior_items = _acceptance_items(prior)
+    current_items = _acceptance_items(current)
+    changed_item_ids = tuple(
+        sorted(
+            item_id
+            for item_id in set(prior_items) | set(current_items)
+            if prior_items.get(item_id) != current_items.get(item_id)
+        )
+    )
+    prior_targets = _section_targets(prior)
+    current_targets = _section_targets(current)
+    changed_targets: set[str] = set()
+    for section_id in set(prior_targets) | set(current_targets):
+        before = prior_targets.get(section_id, frozenset())
+        after = current_targets.get(section_id, frozenset())
+        if before != after:
+            changed_targets.update(before)
+            changed_targets.update(after)
+    return InterRoundDiff(
+        acceptance_item_ids=changed_item_ids,
+        section_targets=tuple(sorted(changed_targets)),
+    )
 
 
 def normalize_plan_path(project_root: Path, plan_path: str | Path) -> Path:
@@ -314,6 +358,33 @@ def _parse_rendered_plan(plan_path: Path, content: bytes) -> None:
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+
+
+def _parse_snapshot(snapshot: bytes) -> PlanDocument:
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(mode="wb", suffix=".md", delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(snapshot)
+        return parse_plan(temp_path, parse_mode="draft")
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def _acceptance_items(document: PlanDocument) -> dict[str, tuple[str, str, str]]:
+    return {
+        item.item_id: (item.prose, item.artifact_kind.value, item.artifact_ref)
+        for section in document.sections
+        for item in section.acceptance_items
+    }
+
+
+def _section_targets(document: PlanDocument) -> dict[str, frozenset[str]]:
+    return {
+        section.section_id: collect_target_inventory(document, section)
+        for section in document.sections
+    }
 
 
 def _section_span(text: str, wanted_key: str) -> tuple[int, int]:
