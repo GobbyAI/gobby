@@ -191,7 +191,6 @@ def derive_repair_universe(
             key=lambda site: (site.site_id, site.path, site.source_kind, site.source_ref),
         )
     )
-    site_ids = tuple(site.site_id for site in sites)
     contracts = tuple(sorted(set(inventory.changed_contracts)))
     targets = tuple(sorted(set(inventory.changed_targets)))
     identities: dict[str, tuple[str, str]] = {}
@@ -228,24 +227,27 @@ def derive_repair_universe(
             )
         )
 
-    requirements = tuple(
-        RepairSweepRequirement(
-            prior_finding_id=finding_id,
-            check_key=check_key,
-            changed_section_ids=(section_id,),
-            changed_contracts=contracts,
-            changed_targets=targets,
-            required_consumer_site_ids=site_ids,
-            adjacent_variant_ids=tuple(
-                _canonical_digest({"check_key": check_key, "site_id": site_id})
-                for site_id in site_ids
-            ),
-            interaction_edge_ids=tuple(
-                edge.edge_id for edge in interaction_edges if finding_id in edge.repair_ids
+    requirements_list: list[RepairSweepRequirement] = []
+    for finding_id, (section_id, check_key) in sorted(identities.items()):
+        section_site_ids = tuple(site.site_id for site in sites if section_id in site.section_ids)
+        requirements_list.append(
+            RepairSweepRequirement(
+                prior_finding_id=finding_id,
+                check_key=check_key,
+                changed_section_ids=(section_id,),
+                changed_contracts=contracts,
+                changed_targets=targets,
+                required_consumer_site_ids=section_site_ids,
+                adjacent_variant_ids=tuple(
+                    _canonical_digest({"check_key": check_key, "site_id": site_id})
+                    for site_id in section_site_ids
+                ),
+                interaction_edge_ids=tuple(
+                    edge.edge_id for edge in interaction_edges if finding_id in edge.repair_ids
+                ),
             ),
         )
-        for finding_id, (section_id, check_key) in sorted(identities.items())
-    )
+    requirements = tuple(requirements_list)
     provisional = RepairUniverse(
         digest="",
         candidate_sites=sites,

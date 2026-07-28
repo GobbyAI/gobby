@@ -510,13 +510,6 @@ def _repair_requirements(
             allow_empty=True,
         )
     )
-    sites = _object_array(
-        inventory.get("sites", []),
-        owner="consumer_site_inventory.sites",
-    )
-    global_sites = tuple(
-        sorted(_required_string(site, "site_id", "consumer site") for site in sites)
-    )
     universe = payload.get("repair_universe")
     universe_requirements: dict[str, dict[str, object]] = {}
     if universe is not None:
@@ -538,6 +531,8 @@ def _repair_requirements(
         if requirement is None and attestation is None:
             raise _invalid(f"repair context is missing changed surfaces for {finding_id}")
         source = requirement or cast(dict[str, object], attestation)
+        if "required_consumer_site_ids" not in source:
+            raise _invalid(f"repair requirement {finding_id} is missing required_consumer_site_ids")
         result[finding_id] = _RepairRequirement(
             prior_finding_id=finding_id,
             changed_section_ids=tuple(
@@ -556,7 +551,7 @@ def _repair_requirements(
             ),
             site_ids=tuple(
                 _string_list(
-                    source.get("required_consumer_site_ids", list(global_sites)),
+                    source["required_consumer_site_ids"],
                     owner=f"repair requirement {finding_id}.required_consumer_site_ids",
                     allow_empty=True,
                 )

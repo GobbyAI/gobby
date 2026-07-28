@@ -458,18 +458,24 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
         _validate(tmp_path, document, lanes, records, shadow)
 
     adjacent.pop()
+    repair_attestation: dict[str, object] = {
+        "prior_finding_id": "finding-prior",
+        "changed_section_ids": ["1.1"],
+    }
+    repair_requirement: dict[str, object] = {
+        "prior_finding_id": "finding-prior",
+        "changed_section_ids": ["1.1"],
+        "changed_contracts": ["contracts/review.json"],
+        "required_consumer_site_ids": ["consumer-1"],
+    }
     prior_context = {
         "prior_finding_resolutions": [{"prior_finding_id": "finding-prior", "decision": "repair"}],
-        "repair_attestations": [
-            {
-                "prior_finding_id": "finding-prior",
-                "changed_section_ids": ["1.1"],
-            }
-        ],
+        "repair_attestations": [repair_attestation],
         "consumer_site_inventory": {
             "changed_contracts": ["contracts/review.json"],
             "sites": [{"site_id": "consumer-1"}],
         },
+        "repair_universe": {"requirements": [repair_requirement]},
         "dismissed_ledger_entries": [],
     }
     with pytest.raises(ReviewEvidenceError, match="finding-prior"):
@@ -491,6 +497,17 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
             "disposition": "validated",
         }
     ]
+    required_site_ids = repair_requirement.pop("required_consumer_site_ids")
+    with pytest.raises(ReviewEvidenceError, match="required_consumer_site_ids"):
+        _validate(
+            tmp_path,
+            document,
+            lanes,
+            records,
+            shadow,
+            prior_context,
+        )
+    repair_requirement["required_consumer_site_ids"] = required_site_ids
     assert _validate(
         tmp_path,
         document,

@@ -507,6 +507,7 @@ def _settled_repair_inputs(
             source_ref="gobby.review_learning.repaired",
             status="resolved",
             language="python",
+            section_ids=("1.1",),
         )
         for site_id in (consumer_site, adjacent_site)
     )

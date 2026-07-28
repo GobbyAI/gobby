@@ -1184,6 +1184,7 @@ def _integration_inventory_and_universe() -> tuple[
         source_ref="src/example.py",
         status="resolved",
         language="python",
+        section_ids=("1.1",),
     )
     inventory = CandidateSiteInventory(
         changed_acceptance_item_ids=("1.1.1",),

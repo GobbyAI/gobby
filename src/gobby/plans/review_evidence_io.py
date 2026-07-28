@@ -48,6 +48,8 @@ class InterRoundDiff:
     section_targets: tuple[str, ...]
     symbols: tuple[str, ...]
     contracts: tuple[str, ...]
+    targets_by_section: Mapping[str, tuple[str, ...]]
+    symbols_by_section: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -77,26 +79,35 @@ def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> In
     prior_targets = _section_targets(prior)
     current_targets = _section_targets(current)
     changed_targets: set[str] = set()
-    for section_id in set(prior_targets) | set(current_targets):
+    targets_by_section: dict[str, tuple[str, ...]] = {}
+    for section_id in sorted(set(prior_targets) | set(current_targets)):
         before = prior_targets.get(section_id, frozenset())
         after = current_targets.get(section_id, frozenset())
         if before != after:
-            changed_targets.update(before)
-            changed_targets.update(after)
+            section_targets = tuple(sorted(before | after))
+            targets_by_section[section_id] = section_targets
+            changed_targets.update(section_targets)
+    symbol_sets_by_section: dict[str, set[str]] = {}
+    for item_id in changed_item_ids:
+        for item in (prior_items.get(item_id), current_items.get(item_id)):
+            if item is None:
+                continue
+            section_id, _prose, artifact_kind, artifact_ref = item
+            if artifact_kind == "symbol":
+                symbol_sets_by_section.setdefault(section_id, set()).add(artifact_ref)
+    symbols_by_section = {
+        section_id: tuple(sorted(symbol_refs))
+        for section_id, symbol_refs in sorted(symbol_sets_by_section.items())
+    }
     symbols = {
-        artifact_ref
-        for item_id in changed_item_ids
-        for item in (prior_items.get(item_id), current_items.get(item_id))
-        if item is not None
-        for _prose, artifact_kind, artifact_ref in (item,)
-        if artifact_kind == "symbol"
+        symbol_ref for symbol_refs in symbols_by_section.values() for symbol_ref in symbol_refs
     }
     contracts = {
         artifact_ref
         for item_id in changed_item_ids
         for item in (prior_items.get(item_id), current_items.get(item_id))
         if item is not None
-        for _prose, artifact_kind, artifact_ref in (item,)
+        for _section_id, _prose, artifact_kind, artifact_ref in (item,)
         if artifact_kind == "behavior"
         or Path(artifact_ref).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
     }
@@ -110,6 +121,8 @@ def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> In
         section_targets=tuple(sorted(changed_targets)),
         symbols=tuple(sorted(symbols)),
         contracts=tuple(sorted(contracts)),
+        targets_by_section=targets_by_section,
+        symbols_by_section=symbols_by_section,
     )
 
 
@@ -787,9 +800,14 @@ def _parse_snapshot(snapshot: bytes) -> PlanDocument:
             temp_path.unlink(missing_ok=True)
 
 
-def _acceptance_items(document: PlanDocument) -> dict[str, tuple[str, str, str]]:
+def _acceptance_items(document: PlanDocument) -> dict[str, tuple[str, str, str, str]]:
     return {
-        item.item_id: (item.prose, item.artifact_kind.value, item.artifact_ref)
+        item.item_id: (
+            section.section_id,
+            item.prose,
+            item.artifact_kind.value,
+            item.artifact_ref,
+        )
         for section in document.sections
         for item in section.acceptance_items
     }

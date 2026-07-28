@@ -244,7 +244,9 @@ def _candidate_inventory(
     *site_ids: str,
     changed_targets: tuple[str, ...] = ("src/example.py",),
     changed_contracts: tuple[str, ...] = (),
+    section_ids_by_site: Mapping[str, tuple[str, ...]] | None = None,
 ) -> CandidateSiteInventory:
+    attribution = section_ids_by_site or {}
     return CandidateSiteInventory(
         changed_acceptance_item_ids=("1.1.1",),
         changed_targets=changed_targets,
@@ -260,6 +262,7 @@ def _candidate_inventory(
                 source_ref="gobby.example.repaired_behavior",
                 status="resolved",
                 language="python",
+                section_ids=attribution.get(site_id, ("1.1",)),
             )
             for site_id in site_ids
         ),
@@ -1068,6 +1071,61 @@ def test_zero_result_requires_query_evidence() -> None:
         validate_repair_universe_attestations(
             universe=universe,
             attestations=[attestation],
+        )
+
+
+def test_repair_universe_scopes_sites_by_finding_section() -> None:
+    first = _finding("finding-first", check_key="repair.first")
+    same_section = _finding("finding-same", check_key="repair.same")
+    second = _finding("finding-second", check_key="repair.second")
+    second["section_id"] = "1.2"
+    empty = _finding("finding-empty", check_key="repair.empty")
+    empty["section_id"] = "1.3"
+    inventory = _candidate_inventory(
+        "consumer-first",
+        "consumer-second",
+        "consumer-shared",
+        section_ids_by_site={
+            "consumer-first": ("1.1",),
+            "consumer-second": ("1.2",),
+            "consumer-shared": ("1.1", "1.2"),
+        },
+    )
+
+    universe = derive_repair_universe(
+        prior_findings=[first, same_section, second, empty],
+        inventory=inventory,
+    )
+
+    requirements = {
+        requirement.prior_finding_id: requirement for requirement in universe.requirements
+    }
+    first_sites = set(requirements["finding-first"].required_consumer_site_ids)
+    same_sites = set(requirements["finding-same"].required_consumer_site_ids)
+    second_sites = set(requirements["finding-second"].required_consumer_site_ids)
+    empty_requirement = requirements["finding-empty"]
+    inventory_sites = {site.site_id for site in inventory.sites}
+    assert first_sites == same_sites == {"consumer-first", "consumer-shared"}
+    assert second_sites == {"consumer-second", "consumer-shared"}
+    assert first_sites != second_sites
+    assert first_sites < inventory_sites
+    assert second_sites < inventory_sites
+    assert empty_requirement.required_consumer_site_ids == ()
+    assert empty_requirement.adjacent_variant_ids == ()
+    assert len(requirements["finding-first"].adjacent_variant_ids) == len(first_sites)
+    assert len(requirements["finding-second"].adjacent_variant_ids) == len(second_sites)
+
+    empty_attestation = _universe_attestation(empty, universe)
+    empty_attestation["sweep_query_evidence"] = []
+    with pytest.raises(ReviewEvidenceError, match="query evidence"):
+        validate_repair_universe_attestations(
+            universe=universe,
+            attestations=[
+                _universe_attestation(first, universe),
+                _universe_attestation(same_section, universe),
+                _universe_attestation(second, universe),
+                empty_attestation,
+            ],
         )
 
 

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from gobby.agents.code_index import IndexInventoryError
@@ -61,8 +61,9 @@ class CandidateSite:
     source_ref: str
     status: str
     language: str
+    section_ids: tuple[str, ...]
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "site_id": self.site_id,
             "path": self.path,
@@ -70,6 +71,7 @@ class CandidateSite:
             "source_ref": self.source_ref,
             "status": self.status,
             "language": self.language,
+            "section_ids": list(self.section_ids),
         }
 
 
@@ -224,43 +226,54 @@ def derive_candidate_site_inventory(
     sites: dict[tuple[str, str, str, str], CandidateSite] = {}
     resolved_languages: set[str] = set()
     unsupported_targets: set[str] = set()
-    for target in diff.section_targets:
-        language = _target_language(target)
-        if language not in _SUPPORTED_LANGUAGES:
-            unsupported_targets.add(target)
-            site = _candidate_site(
-                path=target,
-                source_kind="changed_target",
-                source_ref=target,
-                status="language_unsupported",
-                language=language,
-            )
-            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
-            continue
-        resolved_languages.add(language)
-        for consumer in _direct_file_consumers(storage, project_id, target):
-            site = _candidate_site(
-                path=consumer,
-                source_kind="file_consumer",
-                source_ref=target,
-                status="resolved",
-                language=_target_language(consumer) or "unknown",
-            )
-            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
+    for section_id, targets in diff.targets_by_section.items():
+        for target in targets:
+            language = _target_language(target)
+            if language not in _SUPPORTED_LANGUAGES:
+                unsupported_targets.add(target)
+                _merge_candidate_site(
+                    sites,
+                    _candidate_site(
+                        path=target,
+                        source_kind="changed_target",
+                        source_ref=target,
+                        status="language_unsupported",
+                        language=language,
+                        section_ids=(section_id,),
+                    ),
+                )
+                continue
+            resolved_languages.add(language)
+            for consumer in _direct_file_consumers(storage, project_id, target):
+                _merge_candidate_site(
+                    sites,
+                    _candidate_site(
+                        path=consumer,
+                        source_kind="file_consumer",
+                        source_ref=target,
+                        status="resolved",
+                        language=_target_language(consumer) or "unknown",
+                        section_ids=(section_id,),
+                    ),
+                )
 
-    for symbol_ref in diff.symbols:
-        symbols = _resolve_symbols(storage, project_id, symbol_ref)
-        symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
-        names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
-        for consumer in _direct_symbol_consumers(storage, project_id, symbol_ids, names):
-            site = _candidate_site(
-                path=consumer,
-                source_kind="symbol_call",
-                source_ref=symbol_ref,
-                status="resolved",
-                language=_target_language(consumer) or "unknown",
-            )
-            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
+    for section_id, symbol_refs in diff.symbols_by_section.items():
+        for symbol_ref in symbol_refs:
+            symbols = _resolve_symbols(storage, project_id, symbol_ref)
+            symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
+            names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
+            for consumer in _direct_symbol_consumers(storage, project_id, symbol_ids, names):
+                _merge_candidate_site(
+                    sites,
+                    _candidate_site(
+                        path=consumer,
+                        source_kind="symbol_call",
+                        source_ref=symbol_ref,
+                        status="resolved",
+                        language=_target_language(consumer) or "unknown",
+                        section_ids=(section_id,),
+                    ),
+                )
 
     return CandidateSiteInventory(
         changed_acceptance_item_ids=diff.acceptance_item_ids,
@@ -574,6 +587,7 @@ def _candidate_site(
     source_ref: str,
     status: str,
     language: str,
+    section_ids: tuple[str, ...],
 ) -> CandidateSite:
     identity: Mapping[str, str] = {
         "path": path,
@@ -591,4 +605,20 @@ def _candidate_site(
         source_ref=source_ref,
         status=status,
         language=language,
+        section_ids=tuple(sorted(set(section_ids))),
+    )
+
+
+def _merge_candidate_site(
+    sites: dict[tuple[str, str, str, str], CandidateSite],
+    site: CandidateSite,
+) -> None:
+    key = (site.path, site.source_kind, site.source_ref, site.status)
+    existing = sites.get(key)
+    if existing is None:
+        sites[key] = site
+        return
+    sites[key] = replace(
+        existing,
+        section_ids=tuple(sorted(set(existing.section_ids) | set(site.section_ids))),
     )

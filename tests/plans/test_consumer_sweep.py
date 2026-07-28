@@ -208,6 +208,72 @@ def _write_plan(
     return path
 
 
+def _write_two_section_plan(
+    tmp_path: Path,
+    *,
+    first_targets: tuple[str, ...],
+    first_symbol: str,
+    second_targets: tuple[str, ...],
+    second_symbol: str,
+) -> Path:
+    path = tmp_path / "sectioned-plan.md"
+    header = textwrap.dedent(
+        """
+        > **Plan ID:** sectioned-consumer-sweep
+
+        # Sectioned Consumer Sweep
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 First Change [category: code]
+        `kind: deliverable`
+
+        Targets:
+        """
+    ).lstrip()
+    middle = textwrap.dedent(
+        f"""
+
+        Update symbol: `{first_symbol}`.
+
+        **Acceptance:**
+        - 1.1.1 - First symbol changes. symbol: `{first_symbol}`.
+        - 1.1.2 - First file changes. file: `{first_targets[0]}`.
+
+        ### 1.2 Second Change [category: code]
+        `kind: deliverable`
+
+        Targets:
+        """
+    )
+    footer = textwrap.dedent(
+        f"""
+
+        Update symbol: `{second_symbol}`.
+
+        **Acceptance:**
+        - 1.2.1 - Second symbol changes. symbol: `{second_symbol}`.
+        - 1.2.2 - Second file changes. file: `{second_targets[0]}`.
+        """
+    )
+    path.write_text(
+        header
+        + textwrap.indent(
+            "\n".join(f"- `{target}`" for target in first_targets),
+            "        ",
+        )
+        + middle
+        + textwrap.indent(
+            "\n".join(f"- `{target}`" for target in second_targets),
+            "        ",
+        )
+        + footer,
+        encoding="utf-8",
+    )
+    return path
+
+
 def _run_leaf_symbol_sweep(
     tmp_path: Path,
     storage: _Storage,
@@ -666,8 +732,97 @@ def test_inter_round_site_inventory(tmp_path: Path) -> None:
     )
     assert inventory.changed_contracts == ("contracts/review-result.json",)
     assert any(site.path == "src/api.py" for site in inventory.sites)
+    assert all(site.section_ids == ("1.1",) for site in inventory.sites)
     assert context["consumer_site_inventory"] == inventory.to_dict()
     assert context["index_token"] == token.to_dict()
+
+
+def test_inter_round_inventory_preserves_section_attribution(tmp_path: Path) -> None:
+    plan_path = _write_two_section_plan(
+        tmp_path,
+        first_targets=("src/old_first.py",),
+        first_symbol="app.first.old",
+        second_targets=("src/old_second.py",),
+        second_symbol="app.second.old",
+    )
+    prior_snapshot = plan_path.read_bytes()
+    _write_two_section_plan(
+        tmp_path,
+        first_targets=("src/new_first.py", "src/shared.py"),
+        first_symbol="app.first.new",
+        second_targets=("src/new_second.py", "src/shared.py"),
+        second_symbol="app.second.new",
+    )
+    current_snapshot = plan_path.read_bytes()
+    storage = _Storage()
+    storage.file_consumers = {
+        "src/new_first.py": ("src/first_file_consumer.py",),
+        "src/new_second.py": ("src/second_file_consumer.py",),
+        "src/shared.py": ("src/shared_consumer.py",),
+    }
+    storage.symbols.update(
+        {
+            "app.first.new": (
+                _Symbol(
+                    id="sym-first-new",
+                    name="new",
+                    qualified_name="app.first.new",
+                    file_path="src/new_first.py",
+                ),
+            ),
+            "app.second.new": (
+                _Symbol(
+                    id="sym-second-new",
+                    name="new",
+                    qualified_name="app.second.new",
+                    file_path="src/new_second.py",
+                ),
+            ),
+        }
+    )
+    storage.callers.update(
+        {
+            "sym-first-new": ("src/first_symbol_consumer.py",),
+            "sym-second-new": ("src/second_symbol_consumer.py",),
+        }
+    )
+
+    diff = build_inter_round_diff(prior_snapshot, current_snapshot)
+    inventory = derive_candidate_site_inventory(
+        diff=diff,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert diff.targets_by_section == {
+        "1.1": ("src/new_first.py", "src/old_first.py", "src/shared.py"),
+        "1.2": ("src/new_second.py", "src/old_second.py", "src/shared.py"),
+    }
+    assert diff.symbols_by_section == {
+        "1.1": ("app.first.new", "app.first.old"),
+        "1.2": ("app.second.new", "app.second.old"),
+    }
+    sites = {(site.path, site.source_kind, site.source_ref): site for site in inventory.sites}
+    assert sites[
+        ("src/first_file_consumer.py", "file_consumer", "src/new_first.py")
+    ].section_ids == ("1.1",)
+    assert sites[("src/first_symbol_consumer.py", "symbol_call", "app.first.new")].section_ids == (
+        "1.1",
+    )
+    assert sites[
+        ("src/second_file_consumer.py", "file_consumer", "src/new_second.py")
+    ].section_ids == ("1.2",)
+    assert sites[
+        ("src/second_symbol_consumer.py", "symbol_call", "app.second.new")
+    ].section_ids == ("1.2",)
+    shared_sites = [
+        site
+        for site in inventory.sites
+        if site.path == "src/shared_consumer.py" and site.source_ref == "src/shared.py"
+    ]
+    assert len(shared_sites) == 1
+    assert shared_sites[0].section_ids == ("1.1", "1.2")
+    assert shared_sites[0].to_dict()["section_ids"] == ["1.1", "1.2"]
 
 
 def test_index_token_brackets_index_operation(tmp_path: Path) -> None:

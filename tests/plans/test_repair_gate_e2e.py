@@ -177,6 +177,7 @@ def _settled_repair_inputs(
                 source_ref="gobby.example.repaired_behavior",
                 status="resolved",
                 language="python",
+                section_ids=("1.1",),
             )
             for site_id in site_ids
         ),
