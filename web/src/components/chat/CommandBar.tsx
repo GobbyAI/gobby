@@ -1,6 +1,7 @@
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
 import { SourceIcon } from '../shared/SourceIcon'
+import { Button } from '../ui/Button'
 import { DropdownCaret } from '../ui/DropdownCaret'
 import { PanelIcon } from './icons/PanelIcon'
 
@@ -62,9 +63,12 @@ export function CommandBar({
       {/* Right cluster — Actions */}
       <div className="command-bar-right">
         {onTogglePanel && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm command-bar-btn"
+            variant="accent"
+            size="sm"
+            dense
+            className="command-bar-btn"
             onClick={onTogglePanel}
             aria-label={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
             title={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
@@ -73,7 +77,7 @@ export function CommandBar({
             <span className="command-bar-btn__label">
               {panelVisible ? 'Hide Panel' : 'Show Panel'}
             </span>
-          </button>
+          </Button>
         )}
       </div>
     </div>

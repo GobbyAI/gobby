@@ -7,13 +7,9 @@
 // check in styleRatchet.test.ts forces you to shrink its entry here so the
 // ratchet can never loosen.
 
-// `btn`/`btn-*` class tokens per file (string literals in ts/tsx). Zeroed by
-// the C6 migration; once empty this becomes a pure ban.
-export const BTN_CLASS_ALLOWLIST: Record<string, number> = {
-  'src/components/FilesPage.tsx': 10,
-  'src/components/chat/AgentStatusBar.tsx': 15,
-  'src/components/chat/CommandBar.tsx': 3,
-}
+// `btn`/`btn-*` class tokens per file (string literals in ts/tsx). Empty:
+// the .btn system is retired — this is a pure ban.
+export const BTN_CLASS_ALLOWLIST: Record<string, number> = {}
 
 export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 
@@ -22,7 +18,7 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
     'src/App.tsx': 1,
-    'src/components/FilesPage.tsx': 11,
+    'src/components/FilesPage.tsx': 4,
     'src/components/ProjectSelector.tsx': 2,
     'src/components/Settings.tsx': 4,
     'src/components/ValidationDetectionEditor.tsx': 1,
@@ -92,7 +88,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/auth/LoginPage.tsx': 1,
     'src/components/chat/ActiveAgentIndicator.tsx': 1,
     'src/components/chat/AgentPickerDropdown.tsx': 4,
-    'src/components/chat/AgentStatusBar.tsx': 5,
     'src/components/chat/BranchIndicator.tsx': 3,
     'src/components/chat/ChatCommandPalette.tsx': 1,
     'src/components/chat/ChatInput.tsx': 1,
@@ -100,7 +95,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/chat/ChatInputPrimaryButton.tsx': 1,
     'src/components/chat/ChatInputQueuedFiles.tsx': 2,
     'src/components/chat/CodeBlockRenderers.tsx': 1,
-    'src/components/chat/CommandBar.tsx': 2,
+    'src/components/chat/CommandBar.tsx': 1,
     'src/components/chat/ProviderPicker.tsx': 3,
     'src/components/chat/ResumeSessionModal.tsx': 1,
     'src/components/chat/ToolCallCard.tsx': 2,
@@ -203,7 +198,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
 
 // `const *_CLS =` style-constant declarations per file.
 export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/FilesPage.tsx': 53,
+  'src/components/FilesPage.tsx': 49,
   'src/components/ValidationDetectionEditor.tsx': 9,
   'src/components/activity/memory/KnowledgeGraph.tsx': 15,
   'src/components/activity/pipelines/PipelineEditor.styles.ts': 47,

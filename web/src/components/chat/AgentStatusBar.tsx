@@ -6,6 +6,7 @@ import type {
   SessionObservationMeta,
 } from '../../types/chat'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
@@ -149,56 +150,67 @@ export function AgentStatusBar({
       </div>
       <div className="agent-status-bar__actions">
         {canAttach && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm"
+            variant="accent"
+            size="sm"
+            dense
             onClick={onAttach}
             aria-label="Attach"
             title="Attach"
           >
             <LinkIcon />
             <span className="chat-action-btn__label">Attach</span>
-          </button>
+          </Button>
         )}
         {canDetach && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm"
+            variant="accent"
+            size="sm"
+            dense
             onClick={onDetach}
             aria-label="Detach"
             title="Detach"
           >
             <UnlinkIcon />
             <span className="chat-action-btn__label">Detach</span>
-          </button>
+          </Button>
         )}
         {onOpenTerminal && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm"
+            variant="accent"
+            size="sm"
+            dense
             onClick={onOpenTerminal}
             aria-label="Terminal"
             title="Terminal"
           >
             <PromptIcon />
             <span className="chat-action-btn__label">Terminal</span>
-          </button>
+          </Button>
         )}
         {canResume && (
-          <button
+          <Button
             type="button"
-            className="btn btn-accent btn-sm"
+            variant="accent"
+            size="sm"
+            dense
             onClick={onResume}
             aria-label="Resume"
             title="Resume"
           >
             <PlayIcon />
             <span className="chat-action-btn__label">Resume</span>
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className="btn btn-accent btn-sm chat-new-chat-btn"
+          variant="accent"
+          size="sm"
+          dense
+          className="chat-new-chat-btn"
           onClick={onNewChat}
           disabled={!onNewChat}
           aria-label="New Chat"
@@ -206,7 +218,7 @@ export function AgentStatusBar({
         >
           <PlusIcon />
           <span className="chat-new-chat-btn__label">New Chat</span>
-        </button>
+        </Button>
       </div>
       {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
         <div className="agent-status-bar__plan">

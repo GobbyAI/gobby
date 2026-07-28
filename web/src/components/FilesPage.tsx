@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { CodeBlock } from './shared/CodeBlock'
+import { Button } from './ui/Button'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
 import { MarkdownBody } from './shared/MarkdownBody'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
@@ -48,11 +49,6 @@ const TOOLBAR_CLS =
 const TOOLBAR_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]'
 const TOOLBAR_ACTIONS_CLS = 'flex shrink-0 items-center gap-1.5'
 const TOO_LARGE_NOTICE_CLS = 'text-[var(--color-warning-foreground)]'
-
-const TOOLBAR_BTN_BASE_CLS = 'btn btn-accent btn-sm file-viewer-btn'
-const ICON_BTN_CLS = 'btn btn-accent btn-sm btn-icon file-viewer-btn'
-const SAVE_BTN_CLS = 'btn btn-accent btn-sm file-viewer-btn'
-const DIFF_BTN_ACTIVE_CLS = ''
 
 const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
 const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
@@ -329,8 +325,10 @@ export function FilesPage({
                 </span>
               )}
               {activeFileGitStatus && (
-                <button
-                  className={cn(TOOLBAR_BTN_BASE_CLS, showDiff && DIFF_BTN_ACTIVE_CLS)}
+                <Button
+                  variant="accent"
+                  size="sm"
+                  className="file-viewer-btn"
                   onClick={handleShowDiff}
                   aria-pressed={showDiff}
                   aria-label="Diff"
@@ -338,27 +336,31 @@ export function FilesPage({
                 >
                   <DiffIcon />
                   <span className="file-viewer-btn__label">Diff</span>
-                </button>
+                </Button>
               )}
               {activeFile.editing ? (
                 <>
-                  <button className={ICON_BTN_CLS} onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
+                  <Button variant="accent" size="icon" className="file-viewer-btn" onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
                     <UndoIcon />
-                  </button>
-                  <button className={ICON_BTN_CLS} onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
+                  </Button>
+                  <Button variant="accent" size="icon" className="file-viewer-btn" onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
                     <RedoIcon />
-                  </button>
-                  <button
-                    className={TOOLBAR_BTN_BASE_CLS}
+                  </Button>
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    className="file-viewer-btn"
                     onClick={handleCancel}
                     aria-label="Cancel"
                     title="Cancel"
                   >
                     <XIcon />
                     <span className="file-viewer-btn__label">Cancel</span>
-                  </button>
-                  <button
-                    className={SAVE_BTN_CLS}
+                  </Button>
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    className="file-viewer-btn"
                     onClick={() => onSaveFile(activeFileIndex)}
                     disabled={activeFile.truncated || activeFile.saving || !activeFile.dirty}
                     aria-label={activeFile.saving ? 'Saving' : 'Save'}
@@ -366,11 +368,13 @@ export function FilesPage({
                   >
                     <CheckIcon />
                     <span className="file-viewer-btn__label">{activeFile.saving ? 'Saving...' : 'Save'}</span>
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  className={TOOLBAR_BTN_BASE_CLS}
+                <Button
+                  variant="accent"
+                  size="sm"
+                  className="file-viewer-btn"
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
                     hideDiff()
@@ -381,7 +385,7 @@ export function FilesPage({
                 >
                   <EditIcon />
                   <span className="file-viewer-btn__label">Edit</span>
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -666,14 +670,16 @@ function FileContent({
         {file.saveError && (
           <div className={SAVE_ERROR_CLS} role="alert">
             <span>Save failed: {file.saveError}</span>
-            <button
-              className={ICON_BTN_CLS}
+            <Button
+              variant="accent"
+              size="icon"
+              className="file-viewer-btn"
               onClick={onDismissSaveError}
               aria-label="Dismiss save error"
               title="Dismiss"
             >
               <XIcon />
-            </button>
+            </Button>
           </div>
         )}
         <div className={CODE_VIEWER_CLS}>

@@ -66,10 +66,11 @@ describe('AgentStatusBar', () => {
 
     const attachButton = screen.getByRole('button', { name: 'Attach' })
     const resumeButton = screen.getByRole('button', { name: 'Resume' })
-    expect(attachButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
-    expect(attachButton).not.toHaveClass('btn-primary')
-    expect(resumeButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
-    expect(resumeButton).not.toHaveClass('btn-primary')
+    // Tinted-accent Button, never the solid primary slab.
+    expect(attachButton).toHaveClass('bg-accent-tint')
+    expect(attachButton).not.toHaveClass('bg-accent')
+    expect(resumeButton).toHaveClass('bg-accent-tint')
+    expect(resumeButton).not.toHaveClass('bg-accent')
     expect(screen.queryByText('#88')).toBeNull()
     expect(screen.queryByText('Observed Session')).toBeNull()
 
@@ -118,7 +119,7 @@ describe('AgentStatusBar', () => {
     const newChatButton = screen.getByRole('button', { name: /new chat/i })
     expect(newChatButton).toBeInTheDocument()
     expect(newChatButton).toBeEnabled()
-    expect(newChatButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    expect(newChatButton).toHaveClass('bg-accent-tint', 'chat-new-chat-btn')
 
     await userEvent.click(newChatButton)
     expect(onNewChat).toHaveBeenCalledTimes(1)
@@ -145,7 +146,7 @@ describe('AgentStatusBar', () => {
     )
 
     const terminalButton = screen.getByRole('button', { name: 'Terminal' })
-    expect(terminalButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    expect(terminalButton).toHaveClass('bg-accent-tint')
     expect(terminalButton.querySelector('polyline')).toHaveAttribute(
       'points',
       '4 17 10 11 4 5',
