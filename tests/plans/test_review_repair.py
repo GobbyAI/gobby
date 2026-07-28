@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import textwrap
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -20,6 +21,7 @@ from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import (
     DEVIATION_PROOF_FIELDS,
     REPAIR_SUBMISSION_ARTIFACT_KEY,
+    RepairSweepRequirement,
     RepairUniverse,
     build_repair_submission,
     canonicalize_repair_submission,
@@ -42,12 +44,17 @@ pytestmark = pytest.mark.unit
 def repair_setup(
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[PlanReviewEvidenceService, str, Path]:
     project = LocalProjectManager(temp_db).create(
         name="review-repair",
         repo_path=str(tmp_path),
     )
     plan_path = _write_plan(tmp_path)
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        _settled_repair_inputs,
+    )
     return PlanReviewEvidenceService(temp_db), project.id, plan_path
 
 
@@ -227,6 +234,9 @@ def _attestation(
         "adjacent_variants_swept": ["src/example.py:adjacent"],
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
+        "repair_universe_digest": "a" * 64,
+        "sweep_query_evidence": ["gcode usages gobby.example.repaired_behavior"],
+        "repair_bundle_interactions": [],
     }
 
 
@@ -254,6 +264,51 @@ def _candidate_inventory(
             for site_id in site_ids
         ),
     )
+
+
+def _settled_repair_inputs(
+    *,
+    prior_evidence: PlanReviewEvidence,
+    repair_finding_ids: Sequence[str],
+    **_kwargs: object,
+) -> tuple[IndexToken, CandidateSiteInventory, RepairUniverse]:
+    assert prior_evidence.round_result is not None
+    raw_findings = prior_evidence.round_result.get("findings")
+    assert isinstance(raw_findings, list)
+    assert all(isinstance(finding, Mapping) for finding in raw_findings)
+    findings = validate_plan_review_findings(
+        cast(list[Mapping[str, object]], raw_findings),
+        evidence=prior_evidence,
+    )
+    finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
+    inventory = _candidate_inventory(
+        "src/example.py:consumer",
+        changed_targets=(),
+    )
+    universe = RepairUniverse(
+        digest="a" * 64,
+        candidate_sites=(),
+        requirements=tuple(
+            RepairSweepRequirement(
+                prior_finding_id=finding_id,
+                check_key=cast(str, finding_map[finding_id]["check_key"]),
+                changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
+                changed_contracts=(),
+                changed_targets=(),
+                required_consumer_site_ids=("src/example.py:consumer",),
+                adjacent_variant_ids=("src/example.py:adjacent",),
+                interaction_edge_ids=(),
+            )
+            for finding_id in repair_finding_ids
+        ),
+        interaction_edges=(),
+    )
+    token = IndexToken(
+        repository_digest="a" * 64,
+        last_indexed_at="2026-07-27T00:00:00+00:00",
+        source_files=("src/example.py",),
+    )
+    return token, inventory, universe
 
 
 def _universe_attestation(
@@ -474,6 +529,10 @@ def test_mixed_repair_carry_preparation(
         "changed_acceptance_item_ids": ["1.1.1"],
         "changed_section_targets": [],
         "dismissed_ledger_entries": [],
+        "consumer_site_inventory": context["consumer_site_inventory"],
+        "index_token": context["index_token"],
+        "repair_universe": context["repair_universe"],
+        "repair_universe_digest": context["repair_universe_digest"],
     }
 
 
@@ -518,6 +577,10 @@ def test_prior_round_context_structure(
         "changed_acceptance_item_ids": ["1.1.1"],
         "changed_section_targets": ["src/example.py", "src/repaired.py"],
         "dismissed_ledger_entries": [],
+        "consumer_site_inventory": context["consumer_site_inventory"],
+        "index_token": context["index_token"],
+        "repair_universe": context["repair_universe"],
+        "repair_universe_digest": context["repair_universe_digest"],
     }
     assert context == expected
     assert service.snapshot_payload(current.evidence_id)["prior_round_context"] == expected

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import subprocess  # nosec B404 - fixed local gcode argv.
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from gobby.agents.code_index import (
     IndexInventoryError,
     IndexToken,
-    settle_indexed_value,
     verify_index_token,
 )
 from gobby.code_index.storage import CodeIndexStorage
@@ -26,31 +23,23 @@ from gobby.mcp_proxy.tools.plans.review_evidence_schemas import (
     ROUND_RESULT_SCHEMA,
     ROUTING_DECISIONS_SCHEMA,
 )
-from gobby.plans.consumer_sweep import derive_candidate_site_inventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
     DEFAULT_SNAPSHOT_PAGE_BYTES,
     MAX_SNAPSHOT_PAGE_BYTES,
-    build_inter_round_diff,
     normalize_plan_path,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_findings import validate_plan_review_findings
-from gobby.plans.review_repair import RepairUniverse, derive_repair_universe
+from gobby.plans.review_evidence_preparation import derive_settled_repair_inputs
+from gobby.plans.review_repair import RepairUniverse
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.utils.native_bin import resolve_native_bin_or_default
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "session_id": {"type": "string"},
     "task_id": {"type": "string"},
     "stage": {"type": "string"},
 }
-
-
-@dataclass(frozen=True)
-class _RepairUniverseCodeIndex:
-    storage: CodeIndexStorage
 
 
 def _derive_settled_repair_universe(
@@ -74,63 +63,16 @@ def _derive_settled_repair_universe(
             "repair_universe_prior_unfinalized",
             "repair universe requires finalized prior evidence",
         )
-    raw_findings = prior_evidence.round_result.get("findings")
-    if not isinstance(raw_findings, list) or any(
-        not isinstance(finding, Mapping) for finding in raw_findings
-    ):
-        raise ReviewEvidenceError(
-            "invalid_repair_attestation",
-            "prior round_result.findings must be an array of objects",
-        )
-    findings = validate_plan_review_findings(
-        cast(list[Mapping[str, object]], raw_findings),
-        evidence=prior_evidence,
-    )
     resolved_plan_path = normalize_plan_path(project_root, plan_path)
-    storage = CodeIndexStorage(db)
-    code_index = _RepairUniverseCodeIndex(storage)
-
-    def read_last_indexed_at() -> str:
-        stats = storage.get_project_stats(project_id)
-        return stats.last_indexed_at.isoformat() if stats is not None else ""
-
-    def derive() -> RepairUniverse:
-        current_snapshot = resolved_plan_path.read_bytes()
-        inventory = derive_candidate_site_inventory(
-            diff=build_inter_round_diff(prior_evidence.snapshot, current_snapshot),
-            project_id=project_id,
-            code_index=code_index,
-        )
-        return derive_repair_universe(
-            prior_findings=findings,
-            inventory=inventory,
-            repair_finding_ids=repair_finding_ids,
-        )
-
-    return settle_indexed_value(
-        project_root,
-        index_operation=lambda: _index_repository(project_root),
-        read_last_indexed_at=read_last_indexed_at,
-        derive=derive,
+    token, _inventory, universe = derive_settled_repair_inputs(
+        db=db,
+        project_id=project_id,
+        project_root=project_root,
+        prior_evidence=prior_evidence,
+        current_snapshot=resolved_plan_path.read_bytes(),
+        repair_finding_ids=repair_finding_ids,
     )
-
-
-def _index_repository(project_root: Path) -> None:
-    binary = resolve_native_bin_or_default("gcode")
-    try:
-        completed = subprocess.run(  # nosec B603 - fixed argv plus trusted local path.
-            [binary, "index", "--quiet", "--project", str(project_root)],
-            cwd=project_root,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"gcode index failed: {exc}") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
-        raise RuntimeError(f"gcode index failed: {detail[:500]}")
+    return token, universe
 
 
 def register_review_evidence_tools(

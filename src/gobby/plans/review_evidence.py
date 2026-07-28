@@ -28,10 +28,10 @@ from gobby.plans.review_evidence_models import (
     PreparedReviewEvidence,
     ReviewEvidenceError,
 )
+from gobby.plans.review_evidence_preparation import prepare_review_round_context
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
-from gobby.plans.review_repair import repair_preparation_for_round
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     assemble_requirements_bundle,
@@ -160,7 +160,10 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     ):
-                        context = repair_preparation_for_round(
+                        context = prepare_review_round_context(
+                            db=self.db,
+                            project_id=project_id,
+                            project_root=root,
                             evidence_rows=self.store.list_for_path(
                                 project_id=project_id,
                                 plan_path=relative_path,
@@ -214,7 +217,10 @@ class PlanReviewEvidenceService:
                 if prepared is None:
                     plan_hash = hashlib.sha256(snapshot).hexdigest()
                     sections = build_section_manifest(snapshot)
-                    context = repair_preparation_for_round(
+                    context = prepare_review_round_context(
+                        db=self.db,
+                        project_id=project_id,
+                        project_root=root,
                         evidence_rows=self.store.list_for_path(
                             project_id=project_id,
                             plan_path=relative_path,

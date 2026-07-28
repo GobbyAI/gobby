@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -7,6 +9,8 @@ from typing import Never
 
 import pytest
 
+from gobby.agents.code_index import IndexToken, verify_index_token
+from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
     atomic_write_bytes,
@@ -15,10 +19,15 @@ from gobby.plans.review_evidence_io import (
     manifest_key,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_repair import RepairUniverse, derive_repair_universe
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     build_request_anchor,
+    requirements_bundle_from_context,
+    validate_source_citation,
 )
+from gobby.plans.review_telemetry import persist_delivered_round_result
+from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import LocalProjectManager
@@ -26,7 +35,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
-from tests.review_telemetry_helpers import enriched_telemetry
+from tests.review_telemetry_helpers import delivered_telemetry, enriched_telemetry
 
 
 @pytest.fixture
@@ -210,7 +219,7 @@ def test_toctou_snapshot_isolation(
     assert service.snapshot_payload(prepared.evidence_id)["snapshot"] == original
 
 
-def test_stale_write_guard_and_lifecycle(
+def test_full_round_lifecycle_integration(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
@@ -871,7 +880,7 @@ def test_interactive_mint_status_lifecycle(
     )
 
 
-def test_facade_delegates_manifest_and_checkpoint_workflows(
+def test_service_integration_call_sites(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -913,9 +922,40 @@ def test_facade_delegates_manifest_and_checkpoint_workflows(
         ("manifest", ("evidence-1", {"lane": "task"})),
         ("checkpoint", ("evidence-1", {"verdict": "needs_review"})),
     ]
+    source_path = Path(__file__).parents[2] / "src/gobby/plans/review_evidence.py"
+    source = source_path.read_text(encoding="utf-8")
+    assert len(source.splitlines()) < 1_000
+    assert source.count("prepare_review_round_context(") == 2
+    assert source.count("paginate_snapshot_envelope(") == 1
+    assert source.count("validate_review_coverage(") == 1
+    assert source.count("self.checkpoints.finalize_evidence(") == 1
 
 
-def test_finalize_persists_server_derived_quality_ledger(
+def test_upstream_leaves_close_independently() -> None:
+    plan_path = Path(__file__).parents[2] / ".gobby/plans/adversary-convergence-improvements.md"
+    plan = plan_path.read_text(encoding="utf-8")
+    upstream_ids = ("2.2", "2.4", "4.1", "4.3", "5.1", "5.2", "6.5", "7.2")
+    acceptance_blocks: list[str] = []
+    for section_id in upstream_ids:
+        marker = f"### {section_id} "
+        start = plan.index(marker)
+        next_section = plan.find("\n### ", start + len(marker))
+        section = plan[start : next_section if next_section >= 0 else len(plan)]
+        acceptance_blocks.append(section.partition("**Acceptance:**")[2])
+
+    combined = "\n".join(acceptance_blocks)
+    assert all("test:" in block for block in acceptance_blocks)
+    assert "preparation persists" not in combined.lower()
+    assert "snapshot assembly" not in combined.lower()
+    assert "finalization persists" not in combined.lower()
+    assert "evidence expiry" not in combined.lower()
+    assert all(
+        term in combined.lower()
+        for term in ("validation", "refus", "merge", "deriv", "classif", "pars")
+    )
+
+
+def test_ledger_round_trip_through_finalize(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
@@ -995,3 +1035,784 @@ def test_finalize_persists_server_derived_quality_ledger(
         == finalized.quality_ledger[0]["ledger_entry_id"]
     )
     assert carried.quality_ledger[0]["rounds_carried"] == 2
+
+
+def test_inventory_unavailable_aborts_preparation(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(prepared.evidence_id, result),
+    )
+    service.finalize_plan_review_evidence(prepared.evidence_id, result)
+
+    def unavailable(*args: object, **kwargs: object) -> Never:
+        raise ReviewEvidenceError(
+            "inventory_unavailable",
+            "code index is unavailable",
+        )
+
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence.prepare_review_round_context",
+        unavailable,
+        raising=False,
+    )
+
+    with pytest.raises(ReviewEvidenceError, match="code index is unavailable"):
+        service.prepare_plan_review_round(
+            project_id=project_id,
+            plan_path=plan_path,
+            round_number=2,
+            session_id=session_id,
+        )
+
+    rows = service.store.list_for_path(
+        project_id=project_id,
+        plan_path=".gobby/plans/review-evidence.md",
+    )
+    assert [row.round_number for row in rows] == [1]
+
+
+def _integration_finding() -> dict[str, object]:
+    return {
+        "finding_id": "integration-finding",
+        "section_id": "1.1",
+        "check_key": "consumer-parity",
+        "severity": "major",
+        "category": "unhandled-edge",
+        "location": "src/example.py:1",
+        "description": "A consumer misses the changed contract.",
+        "minimal_repair": "Update every consumer.",
+        "repair_scope": "existing_sections",
+        "principle": "Review every consumer of a changed contract.",
+        "prevention": "Audit every consumer.",
+    }
+
+
+def _finalize_integration_round(
+    service: PlanReviewEvidenceService,
+    plan_path: Path,
+    evidence_id: str,
+    *,
+    findings: list[dict[str, object]],
+) -> None:
+    result = {
+        "verdict": "needs_review",
+        "findings": findings,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(evidence_id, result),
+    )
+    service.finalize_plan_review_evidence(evidence_id, result)
+
+
+def _integration_inventory_and_universe() -> tuple[
+    CandidateSiteInventory,
+    RepairUniverse,
+]:
+    site = CandidateSite(
+        site_id="site-consumer",
+        path="src/consumer.py",
+        source_kind="file_consumer",
+        source_ref="src/example.py",
+        status="resolved",
+        language="python",
+    )
+    inventory = CandidateSiteInventory(
+        changed_acceptance_item_ids=("1.1.1",),
+        changed_targets=("src/example.py",),
+        changed_symbols=(),
+        changed_contracts=("example-contract",),
+        resolved_languages=("python",),
+        unsupported_targets=(),
+        sites=(site,),
+    )
+    universe = derive_repair_universe(
+        prior_findings=[_integration_finding()],
+        inventory=inventory,
+        repair_finding_ids=["integration-finding"],
+    )
+    return inventory, universe
+
+
+def _integration_attestation(universe: RepairUniverse) -> dict[str, object]:
+    requirement = universe.requirements[0]
+    return {
+        "prior_finding_id": "integration-finding",
+        "check_key": "consumer-parity",
+        "changed_section_ids": ["1.1"],
+        "accepted_resolution": "Update every consumer.",
+        "deviation_from_minimal_repair": None,
+        "changed_symbols": [],
+        "consumer_sites_swept": list(requirement.required_consumer_site_ids),
+        "adjacent_variants_swept": list(requirement.adjacent_variant_ids),
+        "validation_evidence": ["focused integration test passed"],
+        "deferred_sites": [],
+        "repair_universe_digest": universe.digest,
+        "sweep_query_evidence": ["gcode callers example-contract"],
+        "repair_bundle_interactions": [],
+    }
+
+
+def _prepare_integration_repair_round(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[
+    PlanReviewEvidenceService,
+    str,
+    Path,
+    CandidateSiteInventory,
+    RepairUniverse,
+    IndexToken,
+]:
+    service, project_id, session_id, plan_path = review_setup
+    round_one = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    _finalize_integration_round(
+        service,
+        plan_path,
+        round_one.evidence_id,
+        findings=[_integration_finding()],
+    )
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "Behavior exists.",
+            "Updated behavior exists.",
+        ),
+        encoding="utf-8",
+    )
+    inventory, universe = _integration_inventory_and_universe()
+    token = IndexToken(
+        repository_digest="a" * 64,
+        last_indexed_at="2026-07-28T00:00:00+00:00",
+        source_files=("src/example.py",),
+    )
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        lambda **_kwargs: (token, inventory, universe),
+        raising=False,
+    )
+    round_two = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+        prior_finding_resolutions=[
+            {"prior_finding_id": "integration-finding", "decision": "repair"}
+        ],
+        repair_attestations=[_integration_attestation(universe)],
+    )
+    return service, round_two.evidence_id, plan_path, inventory, universe, token
+
+
+def test_inventory_first_call_succeeds(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, evidence_id, _plan_path, inventory, universe, _token = (
+        _prepare_integration_repair_round(review_setup, monkeypatch)
+    )
+
+    context = service.get_evidence(evidence_id).prior_round_context
+    assert context is not None
+    assert context["consumer_site_inventory"] == inventory.to_dict()
+    assert context["repair_universe_digest"] == universe.digest
+
+
+def test_index_token_persistence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, evidence_id, plan_path, _inventory, _universe, token = (
+        _prepare_integration_repair_round(review_setup, monkeypatch)
+    )
+
+    restarted = PlanReviewEvidenceService(service.db)
+    context = restarted.get_evidence(evidence_id).prior_round_context
+
+    assert context is not None
+    assert context["index_token"] == token.to_dict()
+    index_token = context["index_token"]
+    assert isinstance(index_token, Mapping)
+    mismatch = verify_index_token(
+        plan_path.parents[2],
+        index_token,
+        read_last_indexed_at=lambda: token.last_indexed_at,
+    )
+    assert mismatch.matched is False
+    assert mismatch.mismatch_reasons == ("repository_digest",)
+
+
+def test_prior_round_context_atomic_and_source_independent(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    original_write = service.store.write_preparation_context
+
+    def fail_write(*args: object, **kwargs: object) -> Never:
+        raise RuntimeError("preparation context write failed")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(service.store, "write_preparation_context", fail_write)
+        with pytest.raises(RuntimeError, match="preparation context write failed"):
+            service.prepare_plan_review_round(
+                project_id=project_id,
+                plan_path=plan_path,
+                round_number=1,
+                session_id=session_id,
+            )
+    assert service.store.write_preparation_context == original_write
+    assert (
+        service.store.list_for_path(
+            project_id=project_id,
+            plan_path=".gobby/plans/review-evidence.md",
+        )
+        == []
+    )
+
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    persisted = service.get_evidence(prepared.evidence_id).prior_round_context
+    plan_path.write_text("live source changed after preparation", encoding="utf-8")
+
+    assert (
+        PlanReviewEvidenceService(service.db).get_evidence(prepared.evidence_id).prior_round_context
+        == persisted
+    )
+
+
+def test_requirements_bundle_persisted_and_sufficient(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    context = service.get_evidence(prepared.evidence_id).prior_round_context
+    bundle = requirements_bundle_from_context(context)
+    assert bundle is not None
+    sources = bundle["sources"]
+    assert isinstance(sources, list)
+    source = sources[0]
+    assert isinstance(source, dict)
+    citation = {
+        "requirement_id": source["requirement_id"],
+        "content_sha256": source["content_sha256"],
+    }
+    plan_path.unlink()
+
+    restarted_context = (
+        PlanReviewEvidenceService(service.db).get_evidence(prepared.evidence_id).prior_round_context
+    )
+    restarted_bundle = requirements_bundle_from_context(restarted_context)
+    assert restarted_bundle == bundle
+    assert (
+        validate_source_citation(
+            citation,
+            requirements_bundle=restarted_bundle,
+        )
+        == citation
+    )
+
+
+def test_finalize_validates_findings_and_blocks_approval(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, _plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=".gobby/plans/review-evidence.md",
+        round_number=1,
+        session_id=session_id,
+    )
+    invalid = {
+        "verdict": "needs_review",
+        "findings": [{"finding_id": "missing-fields"}],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    with pytest.raises(ReviewEvidenceError, match="section_id must be a non-empty string"):
+        service.finalize_plan_review_evidence(prepared.evidence_id, invalid)
+
+    evidence = service.get_evidence(prepared.evidence_id)
+    bundle = requirements_bundle_from_context(evidence.prior_round_context)
+    assert bundle is not None
+    sources = bundle["sources"]
+    assert isinstance(sources, list)
+    source = sources[0]
+    assert isinstance(source, dict)
+    blocking = {
+        **_integration_finding(),
+        "severity": "blocking",
+        "failure_trace": {
+            "preconditions": "The changed contract has a direct consumer.",
+            "action": "The consumer reads the old shape.",
+            "wrong_outcome": "The consumer rejects the new value.",
+            "violated_obligation": "Every consumer must accept the changed contract.",
+            "citation": [
+                {
+                    "requirement_id": source["requirement_id"],
+                    "content_sha256": source["content_sha256"],
+                }
+            ],
+        },
+    }
+    derived = service.derive_plan_review_manifest(
+        prepared.evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
+    approved = {
+        "verdict": "approved",
+        "findings": [blocking],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=manifest_entries,
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    with pytest.raises(ReviewEvidenceError) as blocked:
+        service.finalize_plan_review_evidence(prepared.evidence_id, approved)
+    assert blocked.value.code == "blocking_findings_remaining"
+
+
+def test_telemetry_persisted_at_finalize(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    telemetry = enriched_telemetry()
+    result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+        "convergence_telemetry": telemetry,
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(prepared.evidence_id, result),
+    )
+    service.finalize_plan_review_evidence(prepared.evidence_id, result)
+
+    persisted = (
+        PlanReviewEvidenceService(service.db).get_evidence(prepared.evidence_id).round_result
+    )
+    assert persisted is not None
+    assert persisted["convergence_telemetry"] == telemetry
+    reviewer = telemetry["reviewer"]
+    assert isinstance(reviewer, dict)
+    repeated = reviewer["repeated_check_keys"]
+    assert isinstance(repeated, dict)
+    assert repeated["count"] == 1
+
+
+def test_snapshot_carries_prior_round_context(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, evidence_id, _plan_path, _inventory, _universe, _token = (
+        _prepare_integration_repair_round(review_setup, monkeypatch)
+    )
+    expected = service.get_evidence(evidence_id).prior_round_context
+
+    assert expected is not None
+    assert (
+        PlanReviewEvidenceService(service.db).snapshot_payload(evidence_id)["prior_round_context"]
+        == expected
+    )
+
+
+def test_approval_surfaces_carried_ledger(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    derived_manifest = service.derive_plan_review_manifest(
+        prepared.evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived_manifest["manifest_entries"]
+    assert isinstance(manifest_entries, list)
+    major = _integration_finding()
+    minor = {
+        **_integration_finding(),
+        "finding_id": "integration-minor",
+        "check_key": "adjacent-variant",
+        "severity": "minor",
+        "description": "An adjacent variant needs the same update.",
+    }
+    coverage = coverage_attestation(
+        evidence_id=prepared.evidence_id,
+        manifest_entries=manifest_entries,
+    )
+    section_hash = next(
+        section.section_hash for section in prepared.sections if section.section_id == "1.1"
+    )
+    coverage["disposition_counts"] = {
+        "total": 1,
+        "emitted_findings": 0,
+        "dismissed": 1,
+    }
+    lanes = coverage["lanes"]
+    assert isinstance(lanes, list)
+    first_lane = lanes[0]
+    assert isinstance(first_lane, dict)
+    first_lane["candidate_count"] = 1
+    record_bundle = coverage["record_bundle"]
+    assert isinstance(record_bundle, dict)
+    record_bundle["candidate_dispositions"] = [
+        {
+            "candidate_id": "dismissed-integration-candidate",
+            "check_key": "dismissed-adjacent-variant",
+            "source_section_ids": ["1.1"],
+            "source_hash": section_hash,
+            "disposition": "dismissed",
+            "rationale": "The adjacent variant already consumes the new shape.",
+        }
+    ]
+    record_bundle["adjacent_variant_sweeps"] = [
+        {
+            "check_key": "dismissed-adjacent-variant",
+            "seed_candidate_id": "dismissed-integration-candidate",
+            "query_evidence": ["gcode search dismissed-integration-candidate"],
+            "sites_checked": ["src/example.py"],
+            "resulting_candidate_ids": [],
+        }
+    ]
+    coverage_without_digest = {
+        key: value for key, value in coverage.items() if key != "attestation_digest"
+    }
+    coverage["attestation_digest"] = hashlib.sha256(
+        json.dumps(
+            coverage_without_digest,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    approval = {
+        "verdict": "approved",
+        "findings": [major, minor],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage,
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    with service.db.transaction() as transaction:
+        derived_ledger = service.derive_quality_ledger_for_evidence(
+            prepared.evidence_id,
+            approval,
+            transaction=transaction,
+        )
+    checkpoint = service.render_v1_round_checkpoint(
+        prepared.evidence_id,
+        approval,
+    )
+    assert b'"manifest_entries"' in checkpoint
+    ensure_checkpoint(plan_path, checkpoint)
+
+    finalized = service.finalize_plan_review_evidence(
+        prepared.evidence_id,
+        approval,
+        _derived_quality_ledger=derived_ledger,
+    )
+
+    assert finalized.approval_result is not None
+    assert finalized.approval_result["manifest_entries"] == manifest_entries
+    assert finalized.approval_result["quality_ledger"] == derived_ledger
+    assert finalized.quality_ledger == derived_ledger
+    finding_entries = [entry for entry in derived_ledger if entry["kind"] == "finding"]
+    assert {entry["severity"] for entry in finding_entries} == {"major", "minor"}
+    assert any(entry["kind"] == "dismissed" for entry in derived_ledger)
+
+
+def test_repair_universe_production_sequence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, project_id, _session_id, plan_path = review_setup
+    staged_path = plan_path.with_name("staged-repair.md")
+    staged_path.write_bytes(plan_path.read_bytes())
+    task = LocalTaskManager(service.db).create_task(
+        project_id,
+        "Repair staged review findings",
+        validation_criteria="The staged repair universe is rederived before dispatch.",
+    )
+    round_one = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=staged_path,
+        round_number=1,
+        task_id=task.id,
+        stage="review",
+    )
+    round_one_result = {
+        "verdict": "needs_review",
+        "findings": [_integration_finding()],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=round_one.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    service.finalize_plan_review_evidence(round_one.evidence_id, round_one_result)
+    staged_path.write_text(
+        staged_path.read_text(encoding="utf-8").replace(
+            "Behavior exists.",
+            "Updated staged behavior exists.",
+        ),
+        encoding="utf-8",
+    )
+    inventory, universe = _integration_inventory_and_universe()
+    token = IndexToken(
+        repository_digest="c" * 64,
+        last_indexed_at="2026-07-28T00:00:00+00:00",
+        source_files=("src/example.py",),
+    )
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        lambda **_kwargs: (token, inventory, universe),
+    )
+    drifted_attestation = {
+        **_integration_attestation(universe),
+        "repair_universe_digest": "d" * 64,
+    }
+
+    with pytest.raises(ReviewEvidenceError) as drifted:
+        service.prepare_plan_review_round(
+            project_id=project_id,
+            plan_path=staged_path,
+            round_number=2,
+            task_id=task.id,
+            stage="review",
+            prior_finding_resolutions=[
+                {"prior_finding_id": "integration-finding", "decision": "repair"}
+            ],
+            repair_attestations=[drifted_attestation],
+        )
+    assert drifted.value.code == "repair_universe_drift"
+    assert [
+        row.round_number
+        for row in service.store.list_for_path(
+            project_id=project_id,
+            plan_path=".gobby/plans/staged-repair.md",
+        )
+    ] == [1]
+
+    staged_round_two = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=staged_path,
+        round_number=2,
+        task_id=task.id,
+        stage="review",
+        prior_finding_resolutions=[
+            {"prior_finding_id": "integration-finding", "decision": "repair"}
+        ],
+        repair_attestations=[_integration_attestation(universe)],
+    )
+    staged_context = service.get_evidence(staged_round_two.evidence_id).prior_round_context
+    assert staged_context is not None
+    assert staged_context["repair_universe_digest"] == universe.digest
+
+    taskless_service, taskless_evidence_id, *_rest = _prepare_integration_repair_round(
+        review_setup,
+        monkeypatch,
+    )
+    taskless_context = taskless_service.get_evidence(taskless_evidence_id).prior_round_context
+    assert taskless_context is not None
+    assert taskless_context["consumer_site_inventory"] == inventory.to_dict()
+
+
+def test_production_paths_end_to_end(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, project_id, _session_id, plan_path = review_setup
+    original = plan_path.read_bytes()
+    taskless_service, taskless_evidence_id, *_rest = _prepare_integration_repair_round(
+        review_setup,
+        monkeypatch,
+    )
+    restarted_taskless = PlanReviewEvidenceService(service.db).get_evidence(taskless_evidence_id)
+    assert restarted_taskless.round_number == 2
+    assert restarted_taskless.prior_round_context is not None
+
+    manager = LocalTaskManager(service.db)
+    staged_results: list[tuple[str, object]] = []
+    for verdict in ("needs_review", "approved"):
+        staged_path = plan_path.with_name(f"staged-{verdict}.md")
+        staged_path.write_bytes(original)
+        task = manager.create_task(
+            project_id,
+            f"Staged {verdict}",
+            validation_criteria=f"The staged {verdict} verdict is delivered before mutation.",
+        )
+        before = manager.get_task(task.id)
+        prepared = service.prepare_plan_review_round(
+            project_id=project_id,
+            plan_path=staged_path,
+            round_number=1,
+            task_id=task.id,
+            stage="review",
+        )
+        result: dict[str, object] = {
+            "verdict": verdict,
+            "findings": [],
+            "coverage_attestation": coverage_attestation(
+                evidence_id=prepared.evidence_id,
+                shadow_valid=verdict == "approved",
+                manifest_entries=[{"source_section": "1.1"}],
+            ),
+            "convergence_telemetry": enriched_telemetry(),
+        }
+        if verdict == "approved":
+            derived = service.derive_plan_review_manifest(
+                prepared.evidence_id,
+                routing_decisions={},
+            )
+            entries = derived["manifest_entries"]
+            assert isinstance(entries, list)
+            result["routing_decisions"] = {}
+            result["manifest_entries"] = entries
+            result["coverage_attestation"] = coverage_attestation(
+                evidence_id=prepared.evidence_id,
+                manifest_entries=entries,
+            )
+        finalized = service.finalize_plan_review_evidence(
+            prepared.evidence_id,
+            result,
+        )
+        after = manager.get_task(task.id)
+        assert after.to_dict()["state"] == before.to_dict()["state"]
+        staged_results.append((verdict, finalized.round_result))
+
+    assert [verdict for verdict, _result in staged_results] == [
+        "needs_review",
+        "approved",
+    ]
+    staged_contract = (
+        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+    ).read_text(encoding="utf-8")
+    assert '"gobby-agents:end_agent_run"' in staged_contract
+    assert '"gobby-agents:send_message"' not in staged_contract
+
+
+def test_index_token_mismatch_replaces_run(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    old = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    runs = LocalAgentRunManager(service.db)
+    old_run = runs.create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="Review the old evidence generation.",
+    )
+    service.bind_evidence_run(old.evidence_id, old_run.id)
+    persist_delivered_round_result(
+        service.db,
+        run_id=old_run.id,
+        round_result={
+            "verdict": "inconclusive",
+            "evidence_id": old.evidence_id,
+            "reason": {
+                "reason_code": "index_mismatch",
+                "expected_token": "repository:old-generation",
+                "actual_token": "repository:new-generation",
+            },
+            "convergence_telemetry": delivered_telemetry(),
+        },
+    )
+
+    outcome = terminalize_plan_review_run(
+        runs,
+        run_id=old_run.id,
+        action="complete",
+    )
+    assert outcome.expired is True
+    assert service.get_evidence(old.evidence_id).expired_at is not None
+
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "Behavior exists.",
+            "Replacement behavior exists.",
+        ),
+        encoding="utf-8",
+    )
+    replacement = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    replacement_run = runs.create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="Review the replacement evidence generation.",
+    )
+    service.bind_evidence_run(replacement.evidence_id, replacement_run.id)
+
+    assert replacement.evidence_id != old.evidence_id
+    assert replacement_run.id != old_run.id
+    assert (
+        service.get_evidence(replacement.evidence_id).snapshot
+        != service.get_evidence(old.evidence_id).snapshot
+    )
+    assert service.get_evidence(replacement.evidence_id).round_result is None
