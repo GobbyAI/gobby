@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from gobby.agents.code_index import IndexInventoryError
 from gobby.plans.parser import Kind, PlanDocument, PlanSection
+from gobby.plans.review_evidence_io import InterRoundDiff
 from gobby.plans.semantic_lint import (
     collect_target_inventory,
     find_file_paths_in_text,
@@ -29,6 +34,67 @@ _TARGET_DESTRUCTIVE_MARKER_RE = re.compile(
     r"DELETED ENTIRELY|REMOVED ENTIRELY)\b",
     re.IGNORECASE,
 )
+_LANGUAGE_BY_SUFFIX = {
+    ".json": "json",
+    ".md": "markdown",
+    ".py": "python",
+    ".sql": "sql",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+}
+_SUPPORTED_LANGUAGES = frozenset({"python"})
+
+
+class ConsumerInventoryError(IndexInventoryError):
+    """Typed refusal when a complete consumer inventory cannot be produced."""
+
+
+@dataclass(frozen=True)
+class CandidateSite:
+    """One deterministic consumer-site candidate derived from an inter-round diff."""
+
+    site_id: str
+    path: str
+    source_kind: str
+    source_ref: str
+    status: str
+    language: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "site_id": self.site_id,
+            "path": self.path,
+            "source_kind": self.source_kind,
+            "source_ref": self.source_ref,
+            "status": self.status,
+            "language": self.language,
+        }
+
+
+@dataclass(frozen=True)
+class CandidateSiteInventory:
+    """Typed inventory transported into the next round's prior context."""
+
+    changed_acceptance_item_ids: tuple[str, ...]
+    changed_targets: tuple[str, ...]
+    changed_symbols: tuple[str, ...]
+    changed_contracts: tuple[str, ...]
+    resolved_languages: tuple[str, ...]
+    unsupported_targets: tuple[str, ...]
+    sites: tuple[CandidateSite, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "changed_acceptance_item_ids": list(self.changed_acceptance_item_ids),
+            "changed_targets": list(self.changed_targets),
+            "changed_symbols": list(self.changed_symbols),
+            "changed_contracts": list(self.changed_contracts),
+            "resolved_languages": list(self.resolved_languages),
+            "unsupported_targets": list(self.unsupported_targets),
+            "sites": [site.to_dict() for site in self.sites],
+        }
 
 
 @dataclass(frozen=True)
@@ -65,6 +131,7 @@ class ConsumerSweepResult:
     issues: tuple[ConsumerSweepIssue, ...] = ()
     skipped: bool = False
     skip_reason: str | None = None
+    inventory: CandidateSiteInventory | None = None
 
     @property
     def valid(self) -> bool:
@@ -82,6 +149,8 @@ class ConsumerSweepResult:
         }
         if self.skip_reason:
             payload["skip_reason"] = self.skip_reason
+        if self.inventory is not None:
+            payload["candidate_site_inventory"] = self.inventory.to_dict()
         return payload
 
 
@@ -91,6 +160,7 @@ def run_consumer_sweep(
     project_id: str | None,
     code_index: Any | None,
     include_tests: bool = True,
+    diff: InterRoundDiff | None = None,
 ) -> ConsumerSweepResult:
     """Fail when direct code-index consumers are missing from section targets."""
     if not project_id:
@@ -98,9 +168,15 @@ def run_consumer_sweep(
 
     storage = _code_index_storage(code_index)
     if storage is None:
-        return ConsumerSweepResult(skipped=True, skip_reason="code index storage unavailable")
+        raise ConsumerInventoryError(
+            "inventory_unavailable",
+            "code index storage is unavailable",
+        )
     if not _project_is_indexed(storage, project_id):
-        return ConsumerSweepResult(skipped=True, skip_reason="project is not indexed")
+        raise ConsumerInventoryError(
+            "inventory_unavailable",
+            f"code index has no indexed project state for {project_id}",
+        )
 
     issues: list[ConsumerSweepIssue] = []
     for section in plan_doc.sections:
@@ -119,7 +195,92 @@ def run_consumer_sweep(
                 include_tests=include_tests,
             )
         )
-    return ConsumerSweepResult(tuple(issues))
+    inventory = (
+        derive_candidate_site_inventory(
+            diff=diff,
+            project_id=project_id,
+            code_index=code_index,
+        )
+        if diff is not None
+        else None
+    )
+    return ConsumerSweepResult(tuple(issues), inventory=inventory)
+
+
+def derive_candidate_site_inventory(
+    *,
+    diff: InterRoundDiff,
+    project_id: str,
+    code_index: Any,
+) -> CandidateSiteInventory:
+    """Derive deterministic consumer sites from server-owned inter-round surfaces."""
+    storage = _code_index_storage(code_index)
+    if storage is None or not _project_is_indexed(storage, project_id):
+        raise ConsumerInventoryError(
+            "inventory_unavailable",
+            f"code index cannot derive consumer sites for {project_id}",
+        )
+
+    sites: dict[tuple[str, str, str, str], CandidateSite] = {}
+    resolved_languages: set[str] = set()
+    unsupported_targets: set[str] = set()
+    for target in diff.section_targets:
+        language = _target_language(target)
+        if language not in _SUPPORTED_LANGUAGES:
+            unsupported_targets.add(target)
+            site = _candidate_site(
+                path=target,
+                source_kind="changed_target",
+                source_ref=target,
+                status="language_unsupported",
+                language=language,
+            )
+            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
+            continue
+        resolved_languages.add(language)
+        for consumer in _direct_file_consumers(storage, project_id, target):
+            site = _candidate_site(
+                path=consumer,
+                source_kind="file_consumer",
+                source_ref=target,
+                status="resolved",
+                language=_target_language(consumer) or "unknown",
+            )
+            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
+
+    for symbol_ref in diff.symbols:
+        symbols = _resolve_symbols(storage, project_id, symbol_ref)
+        symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
+        names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
+        for consumer in _direct_symbol_consumers(storage, project_id, symbol_ids, names):
+            site = _candidate_site(
+                path=consumer,
+                source_kind="symbol_call",
+                source_ref=symbol_ref,
+                status="resolved",
+                language=_target_language(consumer) or "unknown",
+            )
+            sites[(site.path, site.source_kind, site.source_ref, site.status)] = site
+
+    return CandidateSiteInventory(
+        changed_acceptance_item_ids=diff.acceptance_item_ids,
+        changed_targets=diff.section_targets,
+        changed_symbols=diff.symbols,
+        changed_contracts=diff.contracts,
+        resolved_languages=tuple(sorted(resolved_languages)),
+        unsupported_targets=tuple(sorted(unsupported_targets)),
+        sites=tuple(
+            sorted(
+                sites.values(),
+                key=lambda site: (
+                    site.path,
+                    site.source_kind,
+                    site.source_ref,
+                    site.status,
+                ),
+            )
+        ),
+    )
 
 
 def _sweep_section(
@@ -295,12 +456,16 @@ def _direct_file_consumers(storage: Any, project_id: str, file_path: str) -> set
     symbols = _symbols_for_file(storage, project_id, file_path)
     symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
     module_candidates = tuple(_module_candidates(file_path))
+    consumers: set[str] = set()
 
+    import_finder = getattr(storage, "find_files_importing_modules", None)
+    if callable(import_finder) and module_candidates:
+        consumers.update(_row_paths(import_finder(project_id, module_candidates)))
     fake = getattr(storage, "find_direct_file_consumers", None)
     if callable(fake):
-        return _row_paths(fake(project_id, file_path, module_candidates, symbol_ids))
-
-    consumers = _direct_symbol_consumers(storage, project_id, symbol_ids, ())
+        consumers.update(_row_paths(fake(project_id, file_path, module_candidates, symbol_ids)))
+    else:
+        consumers.update(_direct_symbol_consumers(storage, project_id, symbol_ids, ()))
     consumers.discard(file_path)
     return consumers
 
@@ -390,3 +555,40 @@ def _symbol_attr(symbol: Any, attr: str) -> str:
     if value is None and isinstance(symbol, dict):
         value = symbol.get(attr)
     return str(value or "")
+
+
+def _target_language(file_path: str) -> str:
+    normalized = normalize_file_path(file_path)
+    if normalized is None:
+        return "unknown"
+    for suffix, language in _LANGUAGE_BY_SUFFIX.items():
+        if normalized.endswith(suffix):
+            return language
+    return "unknown"
+
+
+def _candidate_site(
+    *,
+    path: str,
+    source_kind: str,
+    source_ref: str,
+    status: str,
+    language: str,
+) -> CandidateSite:
+    identity: Mapping[str, str] = {
+        "path": path,
+        "source_kind": source_kind,
+        "source_ref": source_ref,
+        "status": status,
+    }
+    site_id = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return CandidateSite(
+        site_id=site_id,
+        path=path,
+        source_kind=source_kind,
+        source_ref=source_ref,
+        status=status,
+        language=language,
+    )

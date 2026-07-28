@@ -218,8 +218,14 @@ def test_no_plan_artifact_passes_through() -> None:
 def test_planner_spawn_against_clean_plan_succeeds(tmp_path: Path) -> None:
     plan = _write_clean_plan(tmp_path / "clean.md")
     manager = _make_task_manager_with_artifact(str(plan))
+    code_index = SimpleNamespace(storage=_IndexedStorage(), graph=object())
 
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+    result = validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="t1",
+        task_manager=manager,
+        code_index=code_index,
+    )
 
     assert result is None
 

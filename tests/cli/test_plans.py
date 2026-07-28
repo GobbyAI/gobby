@@ -227,6 +227,7 @@ def test_register_command_writes_plan_row(
         project_id=project_id,
         title="Plan root",
         category="planning",
+        validation_criteria="The registered plan row references this planning root.",
     )
     root_task_ref = f"#{root_task.seq_num}"
     plan = _write_register_plan(tmp_path, root_task_ref=root_task_ref)

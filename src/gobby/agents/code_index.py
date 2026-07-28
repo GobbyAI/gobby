@@ -11,7 +11,8 @@ import re
 import shlex
 import shutil
 import subprocess  # nosec B404 # fixed git argv for local exclude updates.
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +34,269 @@ _RUNTIME_DIR_NAME = "gcode-runtime"
 _WRAPPER_RELATIVE_PATH = Path(".gobby") / "bin" / "gcode"
 _WRAPPER_EXCLUDE_PATTERN = ".gobby/bin/"
 _POSTGRES_URL_RE = re.compile(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+@", re.IGNORECASE)
+
+
+class IndexInventoryError(RuntimeError):
+    """Typed failure while producing or verifying a settled index snapshot."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = True,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.details = dict(details or {})
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ok": False,
+            "code": self.code,
+            "error": str(self),
+            "retryable": self.retryable,
+            "details": self.details,
+        }
+
+
+@dataclass(frozen=True)
+class RepositoryDigest:
+    """Digest and exact repository-relative inputs used to produce it."""
+
+    digest: str
+    source_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IndexToken:
+    """Repository/index generation pair captured around one index operation."""
+
+    repository_digest: str
+    last_indexed_at: str
+    source_files: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "repository_digest": self.repository_digest,
+            "last_indexed_at": self.last_indexed_at,
+            "source_files": list(self.source_files),
+        }
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, object]) -> IndexToken:
+        digest = raw.get("repository_digest")
+        indexed_at = raw.get("last_indexed_at")
+        source_files = raw.get("source_files")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise IndexInventoryError(
+                "invalid_index_token",
+                "index token repository_digest must be lowercase hexadecimal SHA-256",
+                retryable=False,
+            )
+        if not isinstance(indexed_at, str) or not indexed_at:
+            raise IndexInventoryError(
+                "invalid_index_token",
+                "index token last_indexed_at must be a non-empty string",
+                retryable=False,
+            )
+        if (
+            not isinstance(source_files, list)
+            or not source_files
+            or any(not isinstance(path, str) or not path for path in source_files)
+        ):
+            raise IndexInventoryError(
+                "invalid_index_token",
+                "index token source_files must be a non-empty string array",
+                retryable=False,
+            )
+        normalized = tuple(sorted(set(source_files)))
+        if list(normalized) != source_files:
+            raise IndexInventoryError(
+                "invalid_index_token",
+                "index token source_files must be sorted and unique",
+                retryable=False,
+            )
+        return cls(
+            repository_digest=digest,
+            last_indexed_at=indexed_at,
+            source_files=normalized,
+        )
+
+
+@dataclass(frozen=True)
+class IndexTokenVerification:
+    """Typed read-only comparison of a token with its exact digest inputs."""
+
+    matched: bool
+    expected_digest: str
+    actual_digest: str
+    source_files: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "matched": self.matched,
+            "expected_digest": self.expected_digest,
+            "actual_digest": self.actual_digest,
+            "source_files": list(self.source_files),
+        }
+
+
+def repository_source_digest(
+    repository_root: Path,
+    *,
+    source_files: Sequence[str] | None = None,
+) -> RepositoryDigest:
+    """Hash exact Git-visible repository inputs, including missing-file markers."""
+    root = repository_root.resolve(strict=True)
+    inputs = (
+        tuple(sorted(set(source_files)))
+        if source_files is not None
+        else _git_visible_source_files(root)
+    )
+    if not inputs:
+        raise IndexInventoryError(
+            "inventory_unavailable",
+            "repository source inventory is empty",
+        )
+    digest = hashlib.sha256()
+    for relative in inputs:
+        path = _repository_input_path(root, relative)
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_symlink():
+            digest.update(os.readlink(path).encode("utf-8"))
+        elif path.is_file():
+            digest.update(path.read_bytes())
+        else:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return RepositoryDigest(digest=digest.hexdigest(), source_files=inputs)
+
+
+def verify_index_token(
+    repository_root: Path,
+    token: IndexToken | Mapping[str, object],
+) -> IndexTokenVerification:
+    """Recompute the producer's exact digest inputs without mutating index state."""
+    canonical = token if isinstance(token, IndexToken) else IndexToken.from_mapping(token)
+    actual = repository_source_digest(
+        repository_root,
+        source_files=canonical.source_files,
+    )
+    return IndexTokenVerification(
+        matched=actual.digest == canonical.repository_digest,
+        expected_digest=canonical.repository_digest,
+        actual_digest=actual.digest,
+        source_files=canonical.source_files,
+    )
+
+
+def settle_indexed_value[T](
+    repository_root: Path,
+    *,
+    index_operation: Callable[[], None],
+    read_last_indexed_at: Callable[[], str],
+    derive: Callable[[], T],
+    source_files: Sequence[str] | None = None,
+    max_attempts: int = 3,
+    timeout_seconds: float = 120.0,
+    backoff_seconds: float = 0.05,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> tuple[IndexToken, T]:
+    """Bracket indexing and derivation with one bounded repository digest token."""
+    if max_attempts <= 0 or timeout_seconds <= 0:
+        raise ValueError("index settle bounds must be positive")
+    deadline = monotonic() + timeout_seconds
+    attempts = 0
+    while attempts < max_attempts and monotonic() <= deadline:
+        attempts += 1
+        before = repository_source_digest(repository_root, source_files=source_files)
+        try:
+            index_operation()
+            last_indexed_at = read_last_indexed_at()
+        except IndexInventoryError:
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise IndexInventoryError(
+                "inventory_unavailable",
+                f"code index operation failed: {exc}",
+            ) from exc
+        if not isinstance(last_indexed_at, str) or not last_indexed_at:
+            raise IndexInventoryError(
+                "inventory_unavailable",
+                "code index did not report last_indexed_at",
+            )
+        after = repository_source_digest(
+            repository_root,
+            source_files=before.source_files,
+        )
+        if monotonic() > deadline:
+            break
+        if before.digest == after.digest:
+            token = IndexToken(
+                repository_digest=after.digest,
+                last_indexed_at=last_indexed_at,
+                source_files=after.source_files,
+            )
+            value = derive()
+            if verify_index_token(repository_root, token).matched:
+                return token, value
+        remaining = deadline - monotonic()
+        if attempts < max_attempts and remaining > 0 and backoff_seconds > 0:
+            sleeper(min(backoff_seconds, remaining))
+    raise IndexInventoryError(
+        "index_unstable",
+        f"repository did not settle around index derivation after {attempts} attempts",
+        details={"attempts": attempts},
+    )
+
+
+def _git_visible_source_files(repository_root: Path) -> tuple[str, ...]:
+    try:
+        completed = subprocess.run(  # nosec B603 B607 - fixed local Git argv.
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise IndexInventoryError(
+            "inventory_unavailable",
+            f"repository source inventory failed: {exc}",
+        ) from exc
+    files = tuple(sorted(os.fsdecode(raw) for raw in completed.stdout.split(b"\0") if raw))
+    return files
+
+
+def _repository_input_path(repository_root: Path, relative: str) -> Path:
+    candidate = repository_root / relative
+    try:
+        candidate.relative_to(repository_root)
+    except ValueError as exc:
+        raise IndexInventoryError(
+            "invalid_index_token",
+            f"index token source path escapes repository: {relative}",
+            retryable=False,
+        ) from exc
+    if Path(relative).is_absolute() or ".." in Path(relative).parts:
+        raise IndexInventoryError(
+            "invalid_index_token",
+            f"index token source path escapes repository: {relative}",
+            retryable=False,
+        )
+    return candidate
 
 
 @dataclass(frozen=True)

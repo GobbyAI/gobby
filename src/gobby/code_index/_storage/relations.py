@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from gobby.code_index.models import CallRelation, ImportRelation
@@ -89,6 +90,22 @@ class CodeIndexRelationStorageMixin:
         return [
             {"source_file": r["source_file"], "target_module": r["target_module"]} for r in rows
         ]
+
+    def find_files_importing_modules(
+        self,
+        project_id: str,
+        module_candidates: Sequence[str],
+    ) -> list[dict[str, Any]]:
+        """Return source files with import edges to any canonical module candidate."""
+        if not module_candidates:
+            return []
+        rows = self.db.fetchall(
+            """SELECT DISTINCT source_file FROM code_imports
+               WHERE project_id = %s AND target_module = ANY(%s)
+               ORDER BY source_file""",
+            (project_id, list(module_candidates)),
+        )
+        return [{"file_path": row["source_file"]} for row in rows]
 
     def get_calls_for_file(self, project_id: str, file_path: str) -> list[dict[str, Any]]:
         """Get call relations for a file (for graph sync)."""

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
+from gobby.agents.code_index import IndexInventoryError, verify_index_token
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "session_id": {"type": "string"},
@@ -25,6 +28,43 @@ def register_review_evidence_tools(
 ) -> None:
     """Register the trusted evidence producer and its lifecycle operations."""
     service = PlanReviewEvidenceService(db)
+    projects = LocalProjectManager(db)
+
+    def verify_plan_review_index_token(
+        index_token: Mapping[str, object],
+        project: str | None = None,
+    ) -> dict[str, object]:
+        project_id = resolve_project_id(project)
+        record = projects.get(project_id)
+        if record is None or record.repo_path is None:
+            return IndexInventoryError(
+                "inventory_unavailable",
+                f"project has no local repository: {project_id}",
+            ).to_dict()
+        try:
+            verification = verify_index_token(Path(record.repo_path), index_token)
+        except (IndexInventoryError, OSError) as exc:
+            if isinstance(exc, IndexInventoryError):
+                return exc.to_dict()
+            return IndexInventoryError(
+                "inventory_unavailable",
+                f"index token verification failed: {exc}",
+            ).to_dict()
+        return {"ok": True, "verification": verification.to_dict()}
+
+    registry.register(
+        name="verify_plan_review_index_token",
+        description="Read-only verification of a settled plan-review index token.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "index_token": {"type": "object"},
+                "project": {"type": "string"},
+            },
+            "required": ["index_token"],
+        },
+        func=verify_plan_review_index_token,
+    )
 
     def prepare_plan_review_round(
         plan_path: str,

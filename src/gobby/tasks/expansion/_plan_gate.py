@@ -20,6 +20,8 @@ from typing import Any
 
 import psycopg
 
+from gobby.plans.consumer_sweep import ConsumerInventoryError
+
 logger = logging.getLogger(__name__)
 
 # Agent names whose spawn must be gated by plan validation. Centralized so the
@@ -41,6 +43,20 @@ def validate_plan_for_agent_spawn(
             task_manager,
             code_index,
         )
+    except ConsumerInventoryError as exc:
+        message = f"{exc.code}: {exc}"
+        logger.warning(
+            "Refusing %s spawn for task %s: PlanValidationError: %s",
+            agent_name,
+            task_id,
+            message,
+        )
+        return {
+            "success": False,
+            "error": f"PlanValidationError: {message}",
+            "validator_errors": [message],
+            "consumer_sweep_error": exc.to_dict(),
+        }
     except psycopg.Error as exc:
         logger.warning(
             "Skipping plan validation gate for %s spawn on task %s because database "

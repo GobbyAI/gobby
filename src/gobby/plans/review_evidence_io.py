@@ -41,6 +41,8 @@ class InterRoundDiff:
 
     acceptance_item_ids: tuple[str, ...]
     section_targets: tuple[str, ...]
+    symbols: tuple[str, ...]
+    contracts: tuple[str, ...]
 
 
 def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> InterRoundDiff:
@@ -65,10 +67,47 @@ def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> In
         if before != after:
             changed_targets.update(before)
             changed_targets.update(after)
+    symbols = {
+        artifact_ref
+        for item_id in changed_item_ids
+        for item in (prior_items.get(item_id), current_items.get(item_id))
+        if item is not None
+        for _prose, artifact_kind, artifact_ref in (item,)
+        if artifact_kind == "symbol"
+    }
+    contracts = {
+        artifact_ref
+        for item_id in changed_item_ids
+        for item in (prior_items.get(item_id), current_items.get(item_id))
+        if item is not None
+        for _prose, artifact_kind, artifact_ref in (item,)
+        if artifact_kind == "behavior"
+        or Path(artifact_ref).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
+    }
+    contracts.update(
+        target
+        for target in changed_targets
+        if Path(target).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
+    )
     return InterRoundDiff(
         acceptance_item_ids=changed_item_ids,
         section_targets=tuple(sorted(changed_targets)),
+        symbols=tuple(sorted(symbols)),
+        contracts=tuple(sorted(contracts)),
     )
+
+
+def with_consumer_inventory_context(
+    prior_round_context: Mapping[str, object],
+    *,
+    inventory: Mapping[str, object],
+    index_token: Mapping[str, object],
+) -> dict[str, object]:
+    """Transport one canonical inventory/token pair into durable round context."""
+    context = dict(prior_round_context)
+    context["consumer_site_inventory"] = dict(inventory)
+    context["index_token"] = dict(index_token)
+    return context
 
 
 def normalize_plan_path(project_root: Path, plan_path: str | Path) -> Path:

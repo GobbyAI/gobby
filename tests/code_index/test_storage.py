@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -217,6 +218,26 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
     ]
 
 
+def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
+    code_storage.upsert_imports(
+        PROJECT_ID,
+        "src/api.py",
+        [ImportRelation(source_file="src/api.py", target_module="app.service")],
+    )
+    code_storage.upsert_imports(
+        PROJECT_ID,
+        "src/worker.py",
+        [ImportRelation(source_file="src/worker.py", target_module="app.worker")],
+    )
+
+    results = code_storage.find_files_importing_modules(
+        PROJECT_ID,
+        ("app.service", "app.missing"),
+    )
+
+    assert results == [{"file_path": "src/api.py"}]
+
+
 def test_delete_symbols_for_file(
     code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
 ) -> None:
@@ -407,7 +428,7 @@ def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
         root_path="/home/user/project",
         total_files=20,
         total_symbols=150,
-        last_indexed_at="2025-01-01T00:00:00",
+        last_indexed_at=datetime(2025, 1, 1, tzinfo=UTC),
         index_duration_ms=1200,
     )
     code_storage.upsert_project_stats(project)

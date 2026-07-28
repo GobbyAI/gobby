@@ -11,7 +11,7 @@ import click
 import psycopg
 
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.plans.consumer_sweep import run_consumer_sweep
+from gobby.plans.consumer_sweep import ConsumerInventoryError, run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
@@ -233,6 +233,16 @@ def _validate_plan_for_cli(
             code_index=code_index,
             include_tests=include_tests,
         )
+    except ConsumerInventoryError as exc:
+        return {
+            **result,
+            "valid": False,
+            "errors": [
+                *result.get("errors", []),
+                f"Consumer sweep failed [{exc.code}]: {exc}",
+            ],
+            "consumer_sweep_error": exc.to_dict(),
+        }
     except (OSError, psycopg.Error, ValueError) as exc:
         return {
             **result,

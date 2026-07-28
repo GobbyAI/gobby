@@ -2,22 +2,43 @@
 
 from __future__ import annotations
 
+import importlib
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from gobby.agents.code_index import (
+    IndexInventoryError,
+    IndexToken,
+    repository_source_digest,
+    settle_indexed_value,
+    verify_index_token,
+)
+from gobby.mcp_proxy.tools.plans import create_plan_registry
+from gobby.plans import consumer_sweep as consumer_sweep_module
 from gobby.plans.consumer_sweep import (
+    ConsumerInventoryError,
     ConsumerSweepResult,
     _destructive_target_paths,
+    derive_candidate_site_inventory,
     run_consumer_sweep,
 )
 from gobby.plans.parser import parse_plan
+from gobby.plans.review_evidence_io import (
+    build_inter_round_diff,
+    with_consumer_inventory_context,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.tasks.expansion import _plan_gate as plan_gate
 
 pytestmark = pytest.mark.unit
 
+cli_plans = importlib.import_module("gobby.cli.plans")
 _DEFERRAL_SYMBOL_REF = "gobby.plans.deferral.validate_deferral"
 _DEFERRAL_TARGET = "src/gobby/plans/deferral.py"
 
@@ -45,6 +66,7 @@ class _Storage:
         }
         self.callers: dict[str, tuple[str, ...]] = {"sym-do-work": ("src/api.py",)}
         self.file_consumers: dict[str, tuple[str, ...]] = {}
+        self.import_consumers: dict[str, tuple[str, ...]] = {}
         self.depth_two_callers: dict[str, tuple[str, ...]] = {
             "sym-do-work": ("src/cli.py",),
         }
@@ -105,6 +127,19 @@ class _Storage:
         if project_id != "project-1":
             return []
         return [{"file_path": caller} for caller in self.file_consumers.get(file_path, ())]
+
+    def find_files_importing_modules(
+        self,
+        project_id: str,
+        module_candidates: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        if project_id != "project-1":
+            return []
+        return [
+            {"file_path": caller}
+            for module in module_candidates
+            for caller in self.import_consumers.get(module, ())
+        ]
 
 
 @dataclass(frozen=True)
@@ -478,23 +513,23 @@ def test_pathless_target_bullet_does_not_hide_later_file_deletion(tmp_path: Path
 def test_missing_index_skips_without_failing(tmp_path: Path) -> None:
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
 
-    result = run_consumer_sweep(plan, project_id="project-1", code_index=None)
+    result = run_consumer_sweep(plan, project_id=None, code_index=None)
 
     assert result.valid is True
     assert result.skipped is True
 
 
-def test_unavailable_index_skips_without_failing(tmp_path: Path) -> None:
+def test_inventory_unavailable_raises_typed_error(tmp_path: Path) -> None:
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
 
-    result = run_consumer_sweep(
-        plan,
-        project_id="project-1",
-        code_index=_CodeIndex(_Storage(indexed=False)),
-    )
+    with pytest.raises(ConsumerInventoryError, match="code index") as raised:
+        run_consumer_sweep(
+            plan,
+            project_id="project-1",
+            code_index=_CodeIndex(_Storage(indexed=False)),
+        )
 
-    assert result.valid is True
-    assert result.skipped is True
+    assert raised.value.code == "inventory_unavailable"
 
 
 def test_depth_two_only_consumer_does_not_fail_v1(tmp_path: Path) -> None:
@@ -515,18 +550,17 @@ class _StorageWithoutStats:
     pass
 
 
-def test_storage_without_supported_stats_api_skips(tmp_path: Path) -> None:
+def test_storage_without_supported_stats_api_is_unavailable(tmp_path: Path) -> None:
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
 
-    result = run_consumer_sweep(
-        plan,
-        project_id="project-1",
-        code_index=_CodeIndex(_StorageWithoutStats()),
-    )
+    with pytest.raises(ConsumerInventoryError) as raised:
+        run_consumer_sweep(
+            plan,
+            project_id="project-1",
+            code_index=_CodeIndex(_StorageWithoutStats()),
+        )
 
-    assert result.valid is True
-    assert result.skipped is True
-    assert result.skip_reason == "project is not indexed"
+    assert raised.value.code == "inventory_unavailable"
 
 
 def test_repeated_target_path_does_not_bleed_destructive_annotation(
@@ -552,3 +586,257 @@ def test_repeated_target_path_does_not_bleed_destructive_annotation(
     )
 
     assert result.valid is True
+
+
+def test_import_edge_file_consumers(tmp_path: Path) -> None:
+    storage = _Storage()
+    storage.import_consumers = {"app.service": ("src/importer.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Rename file `src/app/service.py`.",
+            target_line="Target: `src/app/service.py` (RENAMED FILE)",
+        ),
+        parse_mode="draft",
+    )
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is False
+    assert result.issues[0].missing_consumers == ("src/importer.py",)
+
+
+def test_inter_round_site_inventory(tmp_path: Path) -> None:
+    plan_path = _write_plan(
+        tmp_path,
+        "- `src/service.py`",
+        symbol_ref="app.service.do_work",
+    )
+    prior_snapshot = plan_path.read_bytes()
+    _write_plan(
+        tmp_path,
+        "- `src/service.py`\n- `contracts/review-result.json`",
+        symbol_ref="app.service.new_work",
+    )
+    current_snapshot = plan_path.read_bytes()
+    current = parse_plan(plan_path, parse_mode="draft")
+    storage = _Storage()
+    storage.symbols["app.service.new_work"] = (
+        _Symbol(
+            id="sym-new-work",
+            name="new_work",
+            qualified_name="app.service.new_work",
+            file_path="src/service.py",
+        ),
+    )
+    storage.callers["sym-new-work"] = ("src/api.py",)
+
+    diff = build_inter_round_diff(prior_snapshot, current_snapshot)
+    sweep = run_consumer_sweep(
+        current,
+        diff=diff,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+    assert sweep.inventory is not None
+    inventory = sweep.inventory
+    token = IndexToken(
+        repository_digest="a" * 64,
+        last_indexed_at="2026-07-27T00:00:00+00:00",
+        source_files=("src/service.py",),
+    )
+    context = with_consumer_inventory_context(
+        {"prior_evidence_id": "prior-1"},
+        inventory=inventory.to_dict(),
+        index_token=token.to_dict(),
+    )
+
+    assert inventory.changed_acceptance_item_ids == ("1.1.1",)
+    assert inventory.changed_symbols == (
+        "app.service.do_work",
+        "app.service.new_work",
+    )
+    assert inventory.changed_contracts == ("contracts/review-result.json",)
+    assert any(site.path == "src/api.py" for site in inventory.sites)
+    assert context["consumer_site_inventory"] == inventory.to_dict()
+    assert context["index_token"] == token.to_dict()
+
+
+def test_index_token_brackets_index_operation(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("version = 1\n", encoding="utf-8")
+    index_calls = 0
+    derive_calls = 0
+
+    def index_operation() -> None:
+        nonlocal index_calls
+        index_calls += 1
+        if index_calls == 1:
+            source.write_text("version = 2\n", encoding="utf-8")
+
+    def derive_inventory() -> str:
+        nonlocal derive_calls
+        derive_calls += 1
+        return "inventory"
+
+    token, value = settle_indexed_value(
+        tmp_path,
+        index_operation=index_operation,
+        read_last_indexed_at=lambda: "2026-07-27T00:00:00+00:00",
+        derive=derive_inventory,
+        source_files=("src/service.py",),
+        backoff_seconds=0,
+    )
+
+    assert value == "inventory"
+    assert index_calls == 2
+    assert derive_calls == 1
+    assert verify_index_token(tmp_path, token).matched is True
+
+
+async def test_index_verifier_wrapper_registered(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("version = 1\n", encoding="utf-8")
+    project_id = (
+        LocalProjectManager(temp_db).create(name="index-token-verifier", repo_path=str(tmp_path)).id
+    )
+    digest = repository_source_digest(tmp_path, source_files=("src/service.py",))
+    token = IndexToken(
+        repository_digest=digest.digest,
+        last_indexed_at="2026-07-27T00:00:00+00:00",
+        source_files=digest.source_files,
+    )
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
+
+    result = await registry.call(
+        "verify_plan_review_index_token",
+        {"index_token": token.to_dict()},
+    )
+
+    assert result["ok"] is True
+    assert result["verification"]["matched"] is True
+    source.write_text("version = 2\n", encoding="utf-8")
+    mismatch = await registry.call(
+        "verify_plan_review_index_token",
+        {"index_token": token.to_dict()},
+    )
+    assert mismatch["verification"]["matched"] is False
+
+
+def test_unsupported_language_marked_not_omitted(tmp_path: Path) -> None:
+    plan_path = _write_plan(tmp_path, "- `src/service.py`")
+    prior_snapshot = plan_path.read_bytes()
+    _write_plan(tmp_path, "- `src/service.py`\n- `web/review.ts`")
+    current_snapshot = plan_path.read_bytes()
+
+    inventory = derive_candidate_site_inventory(
+        diff=build_inter_round_diff(prior_snapshot, current_snapshot),
+        project_id="project-1",
+        code_index=_CodeIndex(_Storage()),
+    )
+
+    assert inventory.unsupported_targets == ("web/review.ts",)
+    assert any(
+        site.path == "web/review.ts"
+        and site.status == "language_unsupported"
+        and site.language == "typescript"
+        for site in inventory.sites
+    )
+
+
+def test_index_settle_retry_is_bounded(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("version = 0\n", encoding="utf-8")
+    index_calls = 0
+
+    def mutate_during_index() -> None:
+        nonlocal index_calls
+        index_calls += 1
+        source.write_text(f"version = {index_calls}\n", encoding="utf-8")
+
+    with pytest.raises(IndexInventoryError) as raised:
+        settle_indexed_value(
+            tmp_path,
+            index_operation=mutate_during_index,
+            read_last_indexed_at=lambda: "2026-07-27T00:00:00+00:00",
+            derive=lambda: "unreachable",
+            source_files=("src/service.py",),
+            max_attempts=3,
+            timeout_seconds=60,
+            backoff_seconds=0,
+        )
+
+    assert raised.value.code == "index_unstable"
+    assert index_calls == 3
+
+    deadline_calls = 0
+    clock = iter((0.0, 0.0, 61.0))
+
+    def indexed_once() -> None:
+        nonlocal deadline_calls
+        deadline_calls += 1
+
+    with pytest.raises(IndexInventoryError) as deadline:
+        settle_indexed_value(
+            tmp_path,
+            index_operation=indexed_once,
+            read_last_indexed_at=lambda: "2026-07-27T00:00:00+00:00",
+            derive=lambda: "unreachable",
+            source_files=("src/service.py",),
+            max_attempts=3,
+            timeout_seconds=60,
+            backoff_seconds=0,
+            monotonic=lambda: next(clock),
+        )
+
+    assert deadline.value.code == "index_unstable"
+    assert deadline_calls == 1
+
+
+def test_typed_sweep_error_handled_by_both_callers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_path = _write_plan(tmp_path, "- `src/service.py`")
+
+    def unavailable(*args: object, **kwargs: object) -> ConsumerSweepResult:
+        del args, kwargs
+        raise ConsumerInventoryError(
+            "inventory_unavailable",
+            "code index is unavailable",
+        )
+
+    monkeypatch.setattr(cli_plans, "run_consumer_sweep", unavailable)
+    monkeypatch.setattr(consumer_sweep_module, "run_consumer_sweep", unavailable)
+    monkeypatch.setattr(cli_plans, "resolve_project_ref", lambda _project: None)
+
+    cli_result = cli_plans._validate_plan_for_cli(
+        plan_path,
+        None,
+        include_tests=True,
+    )
+    manager = SimpleNamespace(
+        get_artifacts=lambda _task_id: SimpleNamespace(plan_file_path=str(plan_path)),
+        get_task=lambda _task_id: {"project_id": "project-1"},
+    )
+    spawn_result = plan_gate.validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="task-1",
+        task_manager=manager,
+    )
+
+    assert cli_result["valid"] is False
+    assert "inventory_unavailable" in cli_result["errors"][0]
+    assert spawn_result is not None
+    assert spawn_result["success"] is False
+    assert "inventory_unavailable" in spawn_result["error"]
