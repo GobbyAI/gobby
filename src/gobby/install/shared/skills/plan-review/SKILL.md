@@ -397,6 +397,8 @@ coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 Findings carry a **severity**:
 
 - `blocking` — the plan should not be expanded until this is fixed.
+- `major` — substantive and worth repairing, but not an expansion blocker.
+- `minor` — bounded improvement that does not threaten the plan's obligations.
 - `nit` — worth noting, but not a blocker on its own.
 
 Escalate **only when context is insufficient or a true human-intervention blocker exists**.
@@ -404,8 +406,8 @@ For routine revision rounds, return a non-approval verdict instead:
 
 - If ≥1 `blocking` finding after the second pass → return
   `verdict: needs_review` with formatted findings.
-- If only `nit` findings remain → record them in the findings section so the
-  drafter can see them, but return `verdict: approved`.
+- If only `major`, `minor`, or `nit` findings remain → record them in the
+  findings section so the drafter can see them, but return `verdict: approved`.
 - If zero findings after the second pass → approve cleanly.
 
 Non-blocking nits never trigger escalation on their own.
@@ -439,7 +441,7 @@ Each finding is one typed attestation with these fields:
   evidence manifest.
 - **check_key** — stable review check identity. Reuse keys returned by
   `list_check_keys`.
-- **severity** — `blocking` or `nit`.
+- **severity** — `blocking`, `major`, `minor`, or `nit`.
 - **category** — one of:
 - `missing-requirement`
 - `bad-sequencing`
@@ -453,7 +455,12 @@ Each finding is one typed attestation with these fields:
 - **prevention** — concrete checklist action that would catch recurrence.
 - **location** — human-readable phase/task reference.
 - **description** — one short paragraph; what is wrong or missing.
-- **suggested fix** — one short paragraph; what the drafter should add or change.
+- **minimal_repair** — the smallest change that removes the demonstrated failure.
+- **failure_trace** — required for `blocking` findings and optional but
+all-or-nothing for other severities. It contains non-empty `preconditions`,
+`action`, `wrong_outcome`, and `violated_obligation` strings plus a non-empty
+`citation` list. Each citation has a repository-relative `path`, lowercase
+SHA-256, and optional positive `line_start` / `line_end`.
 
 When claiming `reviewer-miss`, add non-empty
 `participating_section_ids` containing every section that participates in the
@@ -486,7 +493,17 @@ root_cause: The task specified only the successful acquisition path.
 prevention: Check success, contention, timeout, and dependency-failure paths.
 location: Phase 2 / § 2.4
 description: The lock-held and timeout branches are unspecified.
-suggested_fix: Add retry, bail-out, and caller-visible failure behavior.
+minimal_repair: Add retry, bail-out, and caller-visible failure behavior.
+failure_trace:
+  preconditions: The lock is already held by another worker.
+  action: The planned operation attempts to acquire the lock.
+  wrong_outcome: The plan specifies neither a bounded retry nor a caller-visible failure.
+  violated_obligation: Every reachable lock outcome needs an explicit policy.
+  citation:
+  - path: src/gobby/worker.py
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    line_start: 40
+    line_end: 58
 ```
 ````
 

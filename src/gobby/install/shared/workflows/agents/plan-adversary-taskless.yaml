@@ -105,7 +105,7 @@ instructions: |
   coverage_attestation: <canonical coverage attestation>
   findings:
     - finding_id: <stable-id>
-      severity: blocking
+      severity: <blocking | major | minor | nit>
       category: <adversary-category>
       section_id: <manifest-section-id>
       check_key: <stable-check-key>
@@ -113,7 +113,17 @@ instructions: |
       root_cause: <cause, optional when principle is present>
       prevention: <checklist action>
       description: <issue>
-      suggested_fix: <fix>
+      minimal_repair: <smallest change that removes the failure>
+      failure_trace:  # required for blocking; optional but all-or-nothing otherwise
+        preconditions: <state required to reproduce the failure>
+        action: <operation that triggers the failure>
+        wrong_outcome: <observable incorrect result>
+        violated_obligation: <requirement or invariant violated>
+        citation:
+          - path: <repository-relative-path>
+            sha256: <lowercase-sha256>
+            line_start: <optional-positive-line>
+            line_end: <optional-positive-line>
   ```
 
   If requirements are insufficient, use `verdict: needs_requirements` and list

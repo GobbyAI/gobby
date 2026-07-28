@@ -24,6 +24,7 @@ from gobby.mcp_proxy.tools.tasks._plan_review_approval import complete_plan_revi
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_findings import FINDING_SEVERITIES
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -606,7 +607,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                             "check_key": {"type": "string"},
                             "severity": {
                                 "type": "string",
-                                "enum": ["blocking", "nit"],
+                                "enum": sorted(FINDING_SEVERITIES),
                             },
                             "category": {
                                 "type": "string",
@@ -622,10 +623,54 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                             },
                             "location": {"type": "string"},
                             "description": {"type": "string"},
-                            "fix": {"type": "string"},
+                            "minimal_repair": {"type": "string"},
                             "prevention": {"type": "string"},
                             "principle": {"type": "string"},
                             "root_cause": {"type": "string"},
+                            "failure_trace": {
+                                "type": "object",
+                                "properties": {
+                                    "preconditions": {"type": "string", "minLength": 1},
+                                    "action": {"type": "string", "minLength": 1},
+                                    "wrong_outcome": {"type": "string", "minLength": 1},
+                                    "violated_obligation": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                    },
+                                    "citation": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "path": {"type": "string", "minLength": 1},
+                                                "sha256": {
+                                                    "type": "string",
+                                                    "pattern": "^[0-9a-f]{64}$",
+                                                },
+                                                "line_start": {
+                                                    "type": "integer",
+                                                    "minimum": 1,
+                                                },
+                                                "line_end": {
+                                                    "type": "integer",
+                                                    "minimum": 1,
+                                                },
+                                            },
+                                            "required": ["path", "sha256"],
+                                            "additionalProperties": False,
+                                        },
+                                    },
+                                },
+                                "required": [
+                                    "preconditions",
+                                    "action",
+                                    "wrong_outcome",
+                                    "violated_obligation",
+                                    "citation",
+                                ],
+                                "additionalProperties": False,
+                            },
                             "introduced_in_round": {"type": "integer", "minimum": 1},
                             "causal_finding_id": {"type": "string"},
                             "participating_section_ids": {
@@ -647,8 +692,17 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                             "category",
                             "location",
                             "description",
-                            "fix",
+                            "minimal_repair",
                             "prevention",
+                        ],
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {"severity": {"const": "blocking"}},
+                                    "required": ["severity"],
+                                },
+                                "then": {"required": ["failure_trace"]},
+                            }
                         ],
                         "additionalProperties": False,
                     },

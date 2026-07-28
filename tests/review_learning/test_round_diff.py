@@ -48,9 +48,17 @@ def _finding(
         "category": "unhandled-edge",
         "location": "§ A",
         "description": f"Finding {finding_id}",
-        "fix": f"Fix {finding_id}",
+        "minimal_repair": f"Fix {finding_id}",
         "prevention": f"Prevent {finding_id}",
     }
+    if severity == "blocking":
+        finding["failure_trace"] = {
+            "preconditions": "The original plan is otherwise unchanged.",
+            "action": f"The reviewer exercises {finding_id}.",
+            "wrong_outcome": f"Finding {finding_id} remains reachable.",
+            "violated_obligation": "The reviewed plan must close blocking failure paths.",
+            "citation": [{"path": "plan.md", "sha256": "0" * 64}],
+        }
     if principle is not None:
         finding["principle"] = principle
     if participating is not None:
@@ -62,6 +70,14 @@ def _finding(
     if introduced_in_round is not None:
         finding["introduced_in_round"] = introduced_in_round
     return finding
+
+
+def test_findings_use_canonical_remedy_field() -> None:
+    finding = _finding("F1")
+
+    assert finding["minimal_repair"] == "Fix F1"
+    assert "fix" not in finding
+    assert "failure_trace" in finding
 
 
 def _row(
