@@ -391,6 +391,113 @@ class TestCheckSessions:
         assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
+    async def test_expired_missing_tmux_panes_are_silent_and_not_reprocessed(
+        self,
+        monitor: SessionLivenessMonitor,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        records = [
+            SimpleNamespace(
+                session_id=f"expired-{index}",
+                source="codex",
+                status="expired",
+                machine_id="machine",
+                parent_pid=100 + index,
+                tmux_pane=f"%{index}",
+                tmux_socket_path="/tmp/tmux",
+                terminal_context={
+                    "parent_pid": 100 + index,
+                    "tmux_pane": f"%{index}",
+                    "tmux_socket_path": "/tmp/tmux",
+                },
+            )
+            for index in range(3)
+        ]
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
+        monkeypatch.setattr(
+            monitor,
+            "_get_live_tmux_panes_by_socket",
+            lambda _records: {"/tmp/tmux": set()},
+        )
+
+        with (
+            caplog.at_level("INFO", logger="gobby.sessions.liveness_monitor"),
+            patch.object(monitor, "_expire_session", new=AsyncMock()) as expire,
+        ):
+            await monitor._check_sessions()
+            await monitor._check_sessions()
+
+        expire.assert_not_awaited()
+        assert monitor._recently_handled == {}
+        assert not [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Detected missing tmux pane")
+        ]
+        assert not [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "session_liveness_missing_panes_expired"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_active_missing_tmux_panes_emit_one_aggregate_event(
+        self,
+        monitor: SessionLivenessMonitor,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        records = [
+            SimpleNamespace(
+                session_id=f"active-{index}",
+                source="codex",
+                status="active",
+                machine_id="machine",
+                parent_pid=100 + index,
+                tmux_pane=f"%{index}",
+                tmux_socket_path="/tmp/tmux",
+                terminal_context={
+                    "parent_pid": 100 + index,
+                    "tmux_pane": f"%{index}",
+                    "tmux_socket_path": "/tmp/tmux",
+                },
+            )
+            for index in range(3)
+        ]
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
+        monkeypatch.setattr(
+            monitor,
+            "_get_live_tmux_panes_by_socket",
+            lambda _records: {"/tmp/tmux": set()},
+        )
+
+        with (
+            caplog.at_level("INFO", logger="gobby.sessions.liveness_monitor"),
+            patch.object(monitor, "_expire_session", new=AsyncMock()) as expire,
+        ):
+            await monitor._check_sessions()
+
+        assert [call.args[0] for call in expire.await_args_list] == [
+            "active-0",
+            "active-1",
+            "active-2",
+        ]
+        events = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "session_liveness_missing_panes_expired"
+        ]
+        assert len(events) == 1
+        assert getattr(events[0], "session_count", None) == 3
+        assert getattr(events[0], "sample_session_ids", None) == (
+            "active-0",
+            "active-1",
+            "active-2",
+        )
+        assert getattr(events[0], "sample_tmux_panes", None) == ("%0", "%1", "%2")
+
+    @pytest.mark.asyncio
     async def test_tmux_command_failure_falls_back_to_live_pid(
         self, monitor, mock_session_storage, mock_dispatch_fn
     ):
@@ -559,12 +666,17 @@ class TestCheckSessions:
             patch(
                 "gobby.sessions.liveness_monitor.resolve_pane_ownership",
                 return_value=decision,
-            ),
+            ) as resolve_ownership,
             patch.object(monitor, "_expire_session", new=AsyncMock()) as expire,
         ):
             await monitor._check_sessions()
 
-        expire.assert_awaited_once_with("grok-child")
+        assert resolve_ownership.call_args == call(
+            [child, parent], requested_session_id="grok-child"
+        )
+        assert resolve_ownership.call_count == 1
+        assert expire.await_args == call("grok-child")
+        assert expire.await_count == 1
         assert set(monitor._recently_handled) == {"grok-child"}
 
 

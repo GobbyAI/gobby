@@ -40,6 +40,7 @@ _RECENTLY_HANDLED_TTL = 120.0
 
 # Default polling interval (seconds)
 _DEFAULT_POLL_INTERVAL = 30.0
+_LOG_SAMPLE_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,9 @@ class SessionLivenessMonitor:
             if identity is not None:
                 pane_groups.setdefault(identity, []).append(record)
         processed_panes: set[tuple[str, str, str]] = set()
+        missing_pane_expired_count = 0
+        missing_pane_session_samples: list[str] = []
+        missing_pane_samples: list[str] = []
 
         # 3. A live tmux pane is authoritative, but only its canonical process owner
         # may retain the pane when multiple nested provider records share it.
@@ -177,12 +181,12 @@ class SessionLivenessMonitor:
                     if record.parent_pid is not None and self._is_pid_alive(record.parent_pid):
                         continue
                 elif record.tmux_pane not in live_panes:
-                    logger.info(
-                        "Detected missing tmux pane %s for session %s - expiring",
-                        record.tmux_pane,
-                        record.session_id,
-                    )
-                    await self._expire_record_for_missing_pane(record, now)
+                    expired_missing_pane = await self._expire_record_for_missing_pane(record, now)
+                    if expired_missing_pane:
+                        missing_pane_expired_count += 1
+                        if len(missing_pane_session_samples) < _LOG_SAMPLE_LIMIT:
+                            missing_pane_session_samples.append(record.session_id)
+                            missing_pane_samples.append(record.tmux_pane)
                     continue
 
                 if live_panes is not None:
@@ -220,6 +224,18 @@ class SessionLivenessMonitor:
 
             await self._expire_session(record.session_id)
             self._recently_handled[record.session_id] = now
+
+        if missing_pane_expired_count:
+            logger.info(
+                "Expired %d session(s) whose tmux panes are missing",
+                missing_pane_expired_count,
+                extra={
+                    "event": "session_liveness_missing_panes_expired",
+                    "session_count": missing_pane_expired_count,
+                    "sample_session_ids": tuple(missing_pane_session_samples),
+                    "sample_tmux_panes": tuple(missing_pane_samples),
+                },
+            )
 
     async def _handle_live_pane_group(
         self,
@@ -260,11 +276,12 @@ class SessionLivenessMonitor:
         self,
         record: _TerminalLivenessRecord,
         now: float,
-    ) -> None:
+    ) -> bool:
         if getattr(record, "status", "active") not in {"active", "paused"}:
-            return
+            return False
         await self._expire_session(record.session_id)
         self._recently_handled[record.session_id] = now
+        return True
 
     async def _refresh_for_tmux_pid_churn(
         self,
