@@ -540,9 +540,18 @@ manifest_state TEXT,
 manifest_result JSONB,
 manifest_applied_at TIMESTAMPTZ,
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+quality_ledger JSONB,
+repair_attestations JSONB,
+prior_round_context JSONB,
 CONSTRAINT plan_review_evidence_round_positive CHECK (round_number > 0),
 CONSTRAINT plan_review_evidence_manifest_array
 CHECK (jsonb_typeof(section_manifest) = 'array'),
+CONSTRAINT plan_review_evidence_quality_ledger_type
+CHECK (jsonb_typeof(quality_ledger) = 'array'),
+CONSTRAINT plan_review_evidence_repair_attestations_type
+CHECK (jsonb_typeof(repair_attestations) = 'array'),
+CONSTRAINT plan_review_evidence_prior_round_context_type
+CHECK (jsonb_typeof(prior_round_context) = 'object'),
 CONSTRAINT plan_review_evidence_lifecycle_exclusive
 CHECK (NOT (finalized_at IS NOT NULL AND expired_at IS NOT NULL)),
 CONSTRAINT plan_review_evidence_attempt_binding CHECK (

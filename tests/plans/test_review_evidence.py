@@ -301,21 +301,12 @@ def test_stale_write_guard_and_lifecycle(
 
 def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    baseline = (repo_root / "src/gobby/storage/postgres_baseline_schema.sql").read_text()
     migration = (
         repo_root / "src/gobby/storage/migrations/338_plan_review_evidence.sql"
     ).read_text()
-
-    def table_definition(sql: str) -> str:
-        match = re.search(
-            r"CREATE TABLE(?: IF NOT EXISTS)? plan_review_evidence \((.*?)\n\);",
-            sql,
-            flags=re.DOTALL,
-        )
-        assert match is not None
-        return " ".join(match.group(1).split())
-
-    assert table_definition(baseline) == table_definition(migration)
+    quality_ledger_migration = (
+        repo_root / "src/gobby/storage/migrations/345_plan_review_quality_ledger.sql"
+    ).read_text()
 
     def catalog() -> dict[str, list[tuple[object, ...]]]:
         columns = temp_db.execute(
@@ -378,9 +369,10 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
 
     baseline_catalog = catalog()
     temp_db.execute("DROP TABLE plan_review_evidence")
-    for statement in migration.split(";"):
-        if statement.strip():
-            temp_db.execute(statement)
+    for migration_sql in (migration, quality_ledger_migration):
+        for statement in migration_sql.split(";"):
+            if statement.strip():
+                temp_db.execute(statement)
     assert catalog() == baseline_catalog
 
 
@@ -408,7 +400,11 @@ def test_path_boundary_and_binding_validation(
             session_id=session_id,
         )
 
-    task = LocalTaskManager(service.db).create_task(project_id, "Review stage evidence")
+    task = LocalTaskManager(service.db).create_task(
+        project_id,
+        "Review stage evidence",
+        validation_criteria="Stage review evidence round-trips through the bound task.",
+    )
     prepared = service.prepare_plan_review_round(
         project_id=project_id,
         plan_path=plan_path,

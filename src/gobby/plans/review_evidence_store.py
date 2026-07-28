@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError, SectionHash
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -258,6 +258,88 @@ class PlanReviewEvidenceStore:
                 f"round result conflicts with durable evidence intent: {evidence_id}",
             )
         return current
+
+    def write_preparation_context(
+        self,
+        *,
+        transaction: Transaction,
+        evidence_id: str,
+        repair_attestations: Sequence[Mapping[str, object]],
+        prior_round_context: Mapping[str, object],
+    ) -> PlanReviewEvidence:
+        attestations = [dict(attestation) for attestation in repair_attestations]
+        context = dict(prior_round_context)
+        encoded_attestations = json.dumps(
+            attestations,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        encoded_context = json.dumps(context, sort_keys=True, separators=(",", ":"))
+        row = transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET repair_attestations = %s::jsonb,
+                prior_round_context = %s::jsonb
+            WHERE evidence_id = %s
+              AND finalized_at IS NULL
+              AND expired_at IS NULL
+              AND (
+                  (repair_attestations IS NULL AND prior_round_context IS NULL)
+                  OR (
+                      repair_attestations = %s::jsonb
+                      AND prior_round_context = %s::jsonb
+                  )
+              )
+            RETURNING *
+            """,
+            (
+                encoded_attestations,
+                encoded_context,
+                evidence_id,
+                encoded_attestations,
+                encoded_context,
+            ),
+        ).fetchone()
+        if row is not None:
+            return PlanReviewEvidence.from_row(row)
+        current = self.require(evidence_id, transaction=transaction, for_update=True)
+        if current.repair_attestations == attestations and current.prior_round_context == context:
+            return current
+        raise ReviewEvidenceError(
+            "preparation_context_conflict",
+            f"preparation context conflicts with durable evidence intent: {evidence_id}",
+        )
+
+    def write_quality_ledger(
+        self,
+        *,
+        transaction: Transaction,
+        evidence_id: str,
+        quality_ledger: Sequence[Mapping[str, object]],
+    ) -> PlanReviewEvidence:
+        ledger = [dict(entry) for entry in quality_ledger]
+        encoded = json.dumps(ledger, sort_keys=True, separators=(",", ":"))
+        row = transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET quality_ledger = %s::jsonb
+            WHERE evidence_id = %s
+              AND finalized_at IS NULL
+              AND expired_at IS NULL
+              AND (quality_ledger IS NULL OR quality_ledger = %s::jsonb)
+            RETURNING *
+            """,
+            (encoded, evidence_id, encoded),
+        ).fetchone()
+        if row is not None:
+            return PlanReviewEvidence.from_row(row)
+        current = self.require(evidence_id, transaction=transaction, for_update=True)
+        if current.quality_ledger == ledger:
+            return current
+        raise ReviewEvidenceError(
+            "quality_ledger_conflict",
+            f"quality ledger conflicts with durable evidence intent: {evidence_id}",
+        )
 
     def pending_interactive_mints(
         self,

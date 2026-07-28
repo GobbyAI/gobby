@@ -134,6 +134,9 @@ def _row(
         manifest_state=None,
         manifest_result=None,
         manifest_applied_at=None,
+        quality_ledger=None,
+        repair_attestations=None,
+        prior_round_context=None,
         created_at=created_at,
     )
 

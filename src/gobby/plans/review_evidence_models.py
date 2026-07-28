@@ -97,6 +97,9 @@ class PlanReviewEvidence:
     manifest_state: ManifestState | None
     manifest_result: dict[str, object] | None
     manifest_applied_at: datetime | None
+    quality_ledger: list[dict[str, object]] | None
+    repair_attestations: list[dict[str, object]] | None
+    prior_round_context: dict[str, object] | None
     created_at: datetime
 
     @classmethod
@@ -147,6 +150,9 @@ class PlanReviewEvidence:
             manifest_state=cast(ManifestState | None, row["manifest_state"]),
             manifest_result=_optional_json_object(row["manifest_result"]),
             manifest_applied_at=cast(datetime | None, row["manifest_applied_at"]),
+            quality_ledger=_optional_json_object_list(row["quality_ledger"]),
+            repair_attestations=_optional_json_object_list(row["repair_attestations"]),
+            prior_round_context=_optional_json_object(row["prior_round_context"]),
             created_at=cast(datetime, row["created_at"]),
         )
 
@@ -251,6 +257,18 @@ def _optional_json_object(raw: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         raise ReviewEvidenceError("invalid_evidence_row", "JSON column must contain an object")
     return cast(dict[str, object], value)
+
+
+def _optional_json_object_list(raw: object) -> list[dict[str, object]] | None:
+    if raw is None:
+        return None
+    value = _json_value(raw)
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ReviewEvidenceError(
+            "invalid_evidence_row",
+            "JSON column must contain an array of objects",
+        )
+    return cast(list[dict[str, object]], value)
 
 
 def _optional_string(raw: object) -> str | None:
