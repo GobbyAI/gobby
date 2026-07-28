@@ -152,11 +152,32 @@ impl ProvenanceGraph {
                 });
             }
         };
-        let mut graph: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
-            action: "parse provenance graph",
-            path: Some(path.clone()),
-            source: error,
-        })?;
+        let mut graph: Self = match serde_json::from_str(&json) {
+            Ok(graph) => graph,
+            Err(error) => {
+                // Provenance is derived data rebuilt by compile. A file that no
+                // longer parses under the current schema (e.g. a legacy vault
+                // written before `source_hash`/`content_hash` existed) must not
+                // take every gwiki surface offline: quarantine it for forensics
+                // and start empty so the next compile regenerates it.
+                let quarantine = path.with_extension("json.invalid");
+                match fs::rename(&path, &quarantine) {
+                    Ok(()) => log::warn!(
+                        "provenance graph at {} does not match the current schema ({error}); \
+                         moved to {} and starting with an empty graph",
+                        path.display(),
+                        quarantine.display(),
+                    ),
+                    Err(rename_error) => log::warn!(
+                        "provenance graph at {} does not match the current schema ({error}) \
+                         and could not be quarantined ({rename_error}); \
+                         starting with an empty graph",
+                        path.display(),
+                    ),
+                }
+                return Ok(Self::default());
+            }
+        };
         graph.rebuild_indexes();
         Ok(graph)
     }
@@ -387,10 +408,11 @@ mod tests {
     }
 
     #[test]
-    fn unversioned_provenance_json_is_rejected() {
+    fn legacy_provenance_json_is_quarantined_and_loads_empty() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("meta").join("provenance.json");
         std::fs::create_dir_all(path.parent().expect("meta parent")).expect("create meta");
+        // Legacy pre-source_hash schema: must not brick the gateway, only reset.
         std::fs::write(
             &path,
             r#"{
@@ -413,9 +435,19 @@ mod tests {
         )
         .expect("write old provenance");
 
-        let error = ProvenanceGraph::load_from_vault(temp.path())
-            .expect_err("unversioned provenance must fail");
+        let graph = ProvenanceGraph::load_from_vault(temp.path())
+            .expect("legacy provenance loads as empty graph");
 
-        assert!(matches!(error, WikiError::Json { .. }));
+        assert!(graph.links().is_empty());
+        assert!(!path.exists(), "unparseable file must be quarantined");
+        assert!(
+            path.with_extension("json.invalid").exists(),
+            "quarantined copy must be preserved for forensics"
+        );
+
+        // A subsequent load starts clean instead of re-tripping on the file.
+        let reloaded =
+            ProvenanceGraph::load_from_vault(temp.path()).expect("reload after quarantine");
+        assert!(reloaded.links().is_empty());
     }
 }

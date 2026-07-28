@@ -77,7 +77,7 @@ export function ContextUsageIndicator({
 
   return (
     <div
-      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      className="flex items-center gap-1.5 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)]"
       data-testid="context-usage-indicator"
       style={{ opacity: isStale ? 0.55 : 1 }}
       title={tooltipLines.join('\n')}

@@ -23,6 +23,26 @@ describe("SourceIcon", () => {
     expect(container.querySelector("circle")).toBeNull();
   });
 
+  it("renders the Ollama icon as an inline svg, not the fallback circle", () => {
+    const { container } = render(<SourceIcon source="ollama" size={16} />);
+
+    const icon = container.querySelector("svg.source-icon-ollama");
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector("path")).toBeTruthy();
+    expect(icon?.getAttribute("fill")).toBe("currentColor");
+    expect(container.querySelector("circle")).toBeNull();
+  });
+
+  it("renders the LM Studio icon as an inline svg, not the fallback circle", () => {
+    const { container } = render(<SourceIcon source="lmstudio" size={16} />);
+
+    const icon = container.querySelector("svg.source-icon-lmstudio");
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector("path")).toBeTruthy();
+    expect(icon?.getAttribute("fill")).toBe("currentColor");
+    expect(container.querySelector("circle")).toBeNull();
+  });
+
   it("renders provider assets as images when available", () => {
     const { container } = render(<SourceIcon source="claude" size={16} />);
 

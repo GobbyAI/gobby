@@ -80,7 +80,7 @@ export function ChatInputModelControls({
       <div className="chat-input-model-controls">
         <button
           type="button"
-          className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto"
+          className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto inline-flex h-9 items-center rounded-md border"
           disabled={selectionDisabled}
           aria-label="Select provider"
           title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}

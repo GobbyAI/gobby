@@ -141,7 +141,7 @@ describe("ProviderPicker", () => {
     expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Qwen"]);
   });
 
-  it("shows Grok and disables AGY", async () => {
+  it("shows Grok and hides AGY entirely", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -181,11 +181,9 @@ describe("ProviderPicker", () => {
     );
 
     expect(await screen.findByText("Grok Build")).toBeTruthy();
-    expect(screen.getByText("unavailable")).toBeTruthy();
-    expect(screen.getByText("No documented machine transport")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Default" }).some(
-      (button) => button.hasAttribute("disabled"),
-    )).toBe(true);
+    expect(screen.queryByText("AGY")).toBeNull();
+    expect(screen.queryByText("unavailable")).toBeNull();
+    expect(screen.queryByText("No documented machine transport")).toBeNull();
   });
 
   it("switches provider, model, and conversation when picking a new provider before first send", async () => {

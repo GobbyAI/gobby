@@ -106,6 +106,8 @@ export function ProviderPicker({
   const catalogByProvider = new Map(
     catalog.map((entry) => [entry.provider.toLowerCase(), entry]),
   );
+  // Providers without a web-chat transport (AGY today) are unpickable, so
+  // they are hidden from the modal rather than shown disabled (moat 7f76d568).
   const visibleProviders = getOrderedProviders(
     Array.from(
       new Set([
@@ -113,7 +115,10 @@ export function ProviderPicker({
         ...catalog.map((entry) => entry.provider),
       ]),
     ),
-  );
+  ).filter((provider) => {
+    if (provider.toLowerCase() === "agy") return false;
+    return catalogByProvider.get(provider.toLowerCase())?.supports_web_chat !== false;
+  });
 
   const applySelection = useCallback(
     (provider: string, model: string) => {
@@ -227,11 +232,6 @@ export function ProviderPicker({
                   provider,
                   currentModel,
                 );
-                const unavailableReason =
-                  entry?.supports_web_chat === false
-                    ? entry.unavailable_reason || "Unavailable for web chat"
-                    : null;
-                const isDisabled = Boolean(unavailableReason);
                 const isActive =
                   provider.toLowerCase() === activeCatalogProvider;
                 const executionProvider = getExecutionProvider(entry, provider);
@@ -252,22 +252,12 @@ export function ProviderPicker({
                           deprecated
                         </span>
                       )}
-                      {unavailableReason && (
-                        <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-muted text-muted-foreground">
-                          unavailable
-                        </span>
-                      )}
                       {isActive && (
                         <span className="text-[length:var(--text-2xs)] px-1 py-0.5 rounded bg-accent/20 text-accent">
                           active
                         </span>
                       )}
                     </div>
-                    {unavailableReason && (
-                      <div className="px-3 pb-1 text-[length:var(--text-2xs)] text-muted-foreground">
-                        {unavailableReason}
-                      </div>
-                    )}
                     {models.map((model) => {
                       const isSelected =
                         isActive && currentModel === model.value;
@@ -281,10 +271,8 @@ export function ProviderPicker({
                             isSelected
                               ? "bg-accent/10 text-accent font-medium"
                               : "text-muted-foreground",
-                            isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                           )}
                           style={{ width: "calc(100% - 8px)" }}
-                          disabled={isDisabled}
                           onClick={() => handleSelect(executionProvider, model.value)}
                         >
                           {model.label}
