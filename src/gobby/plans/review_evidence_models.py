@@ -175,6 +175,7 @@ class PlanReviewEvidence:
 def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
     """Validate and canonicalize the stable round-result envelope."""
     from gobby.plans.review_coverage import validate_coverage_attestation
+    from gobby.plans.review_ledger import validate_candidate_dispositions
 
     payload = canonical_json_object(raw)
     verdict = payload.get("verdict")
@@ -200,6 +201,9 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
         payload.get("coverage_attestation"),
         verdict=str(verdict),
     )
+    dispositions = validate_candidate_dispositions(payload)
+    if "candidate_dispositions" in payload or dispositions:
+        payload["candidate_dispositions"] = dispositions
     if verdict == "approved":
         entries = payload.get("manifest_entries")
         if not isinstance(entries, list) or not entries:

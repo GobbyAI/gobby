@@ -848,3 +848,82 @@ def test_interactive_mint_status_lifecycle(
         round_number=2,
         session_id=session_id,
     )
+
+
+def test_finalize_persists_server_derived_quality_ledger(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    finding = {
+        "finding_id": "ledger-finding",
+        "section_id": "1.1",
+        "check_key": "consumer-parity",
+        "severity": "major",
+        "category": "unhandled-edge",
+        "location": "src/example.py:1",
+        "description": "A consumer misses the new field.",
+        "minimal_repair": "Read the new field.",
+        "principle": "Review every consumer of a changed contract.",
+        "prevention": "Audit every consumer.",
+    }
+    result = {
+        "verdict": "needs_review",
+        "findings": [finding],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(prepared.evidence_id, result),
+    )
+
+    finalized = service.finalize_plan_review_evidence(prepared.evidence_id, result)
+
+    assert finalized.quality_ledger is not None
+    assert len(finalized.quality_ledger) == 1
+    assert finalized.quality_ledger[0]["aliases"] == ["ledger-finding"]
+    assert (
+        service.finalize_plan_review_evidence(
+            prepared.evidence_id,
+            result,
+        ).quality_ledger
+        == finalized.quality_ledger
+    )
+
+    round_two = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+        prior_finding_resolutions=[{"prior_finding_id": "ledger-finding", "decision": "carry"}],
+    )
+    round_two_result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=round_two.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        ),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(round_two.evidence_id, round_two_result),
+    )
+    carried = service.finalize_plan_review_evidence(
+        round_two.evidence_id,
+        round_two_result,
+    )
+    assert carried.quality_ledger is not None
+    assert (
+        carried.quality_ledger[0]["ledger_entry_id"]
+        == finalized.quality_ledger[0]["ledger_entry_id"]
+    )
+    assert carried.quality_ledger[0]["rounds_carried"] == 2

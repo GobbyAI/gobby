@@ -436,7 +436,11 @@ def test_interactive_approval_sequence(
                 "finding_id": "round-1-miss",
                 "section_id": "1.1",
                 "check_key": "cross-section-state",
+                "severity": "major",
                 "category": "unhandled-edge",
+                "location": "Sections 1.1 and 1.2",
+                "description": "The cross-section invariant is incomplete.",
+                "minimal_repair": "Cover both participating sections.",
                 "principle": "Review the whole invariant",
                 "prevention": "Check both participating sections",
                 "participating_section_ids": ["1.1", "1.2"],
@@ -455,6 +459,7 @@ def test_interactive_approval_sequence(
         plan_path=plan_path,
         round_number=2,
         session_id=session_id,
+        prior_finding_resolutions=[{"prior_finding_id": "round-1-miss", "decision": "carry"}],
     )
     run_id = _bind_run(service, session_id, prepared.evidence_id, "approve round")
     approval = _approval(service, prepared.evidence_id)

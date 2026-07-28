@@ -30,6 +30,7 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+from gobby.plans.review_ledger import merge_quality_ledger
 from gobby.plans.review_repair import repair_preparation_for_round
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation, Transaction
@@ -608,6 +609,30 @@ class PlanReviewEvidenceService:
             plan_path=evidence.plan_path,
         )
         with self.db.transaction_immediate(mutation) as transaction:
+            prior_rows = [
+                row
+                for row in self.store.list_for_path(
+                    project_id=evidence.project_id,
+                    plan_path=evidence.plan_path,
+                    transaction=transaction,
+                    for_update=True,
+                )
+                if row.finalized_at is not None
+                and row.expired_at is None
+                and row.round_number < evidence.round_number
+            ]
+            quality_ledger = merge_quality_ledger(
+                prior_ledger=(prior_rows[-1].quality_ledger or []) if prior_rows else [],
+                round_number=evidence.round_number,
+                current_section_hashes=reviewed_section_hashes(evidence.section_manifest),
+                round_result=payload,
+                prior_round_context=evidence.prior_round_context,
+            )
+            self.store.write_quality_ledger(
+                transaction=transaction,
+                evidence_id=evidence_id,
+                quality_ledger=quality_ledger,
+            )
             return self.store.finalize(
                 transaction=transaction,
                 evidence_id=evidence_id,

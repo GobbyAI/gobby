@@ -24,6 +24,7 @@ FINDING_CATEGORIES = frozenset(
         "gobby-format",
     }
 )
+CHECK_KEY_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _REQUIRED_STRING_FIELDS = (
     "finding_id",
@@ -144,6 +145,8 @@ def _validate_finding(
         raise _invalid(f"{prefix}.severity must be one of: {vocabulary}")
     if raw["category"] not in FINDING_CATEGORIES:
         raise _invalid(f"{prefix}.category is not a supported adversary category")
+    if CHECK_KEY_RE.fullmatch(str(raw["check_key"])) is None:
+        raise _invalid(f"{prefix}.check_key is invalid")
     if raw["section_id"] not in section_ids:
         raise _invalid(f"{prefix}.section_id is absent from the evidence manifest")
     if not raw.get("principle") and not raw.get("root_cause"):
