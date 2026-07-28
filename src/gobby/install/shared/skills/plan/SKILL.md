@@ -131,6 +131,8 @@ the run result as the canonical round result. It must contain the
 also contains exact server-derived `routing_decisions`, `manifest_entries`, and
 `approval_result.quality_ledger`. Render that full ledger beside the manifest;
 it records every explicit non-blocking quality decision shown to the user.
+Treat the ledger as approval output; approval inputs remain the canonical
+findings, routing decisions, manifest entries, and coverage attestation.
 For `inconclusive/source_drift`, expire evidence and respawn the same display
 round without appending a changelog entry, incrementing the round, finalizing
 evidence, or minting lessons. Otherwise append a `## V1 Plan Changelog` entry,
