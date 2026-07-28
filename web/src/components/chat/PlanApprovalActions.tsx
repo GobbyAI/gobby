@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ApprovalOption } from '../../types/chat'
-import { Button } from '../shared/Button'
+import { Button } from '../ui/Button'
 import { cn } from '../../lib/utils'
 
 interface PlanApprovalActionsProps {

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useRef, type TextareaHTMLAttributes } from 'react'
-import { cn } from '../../../lib/utils'
+import { cn } from '../../lib/utils'
 
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   autoResize?: boolean

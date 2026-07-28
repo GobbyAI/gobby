@@ -1,6 +1,6 @@
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
-import { Button } from '../shared/Button'
+import { Button } from '../ui/Button'
 import { MicIcon, SpeakerIcon } from './ChatInputIcons'
 
 interface ChatInputVoiceControlsProps {

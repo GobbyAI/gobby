@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/Dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../ui/Dialog";
 import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";

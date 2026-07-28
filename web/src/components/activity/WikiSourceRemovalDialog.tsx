@@ -7,7 +7,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogTitle,
-} from "../chat/ui/Dialog";
+} from "../ui/Dialog";
 
 interface WikiSourceRemovalDialogProps {
   source: WikiSourceRecord | null;

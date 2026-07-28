@@ -1,4 +1,4 @@
-import { Dialog, DialogContent } from '../chat/ui/Dialog'
+import { Dialog, DialogContent } from '../ui/Dialog'
 import { SkillBrowserModal } from './SkillBrowserModal'
 import { ToolBrowserModal } from './ToolBrowserModal'
 

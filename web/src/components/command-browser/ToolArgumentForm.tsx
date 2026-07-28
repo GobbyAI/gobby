@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { Input } from '../chat/ui/Input'
+import { Input } from '../ui/Input'
 import { cn } from '../../lib/utils'
 
 interface ToolArgumentFormProps {

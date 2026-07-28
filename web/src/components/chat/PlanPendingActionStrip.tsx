@@ -1,6 +1,6 @@
 import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
-import { Button } from '../shared/Button'
+import { Button } from '../ui/Button'
 import { PlanApprovalActions } from './PlanApprovalActions'
 import {
   getPlanPendingColors,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/Dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/Dialog'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { cn } from '../../lib/utils'
 

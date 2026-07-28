@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { ConfirmDialog } from '../components/chat/ui/ConfirmDialog'
+import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 
 interface ConfirmOptions {
   title: string

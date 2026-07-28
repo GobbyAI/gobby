@@ -25,7 +25,7 @@ import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { ThemeToggle } from "./components/ThemeToggle";
-import { Badge } from "./components/chat/ui/Badge";
+import { Badge } from "./components/ui/Badge";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";

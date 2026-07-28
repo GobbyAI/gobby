@@ -5,8 +5,8 @@ import {
   DialogContent,
   DialogDescription,
   DialogTitle,
-} from './ui/Dialog'
-import { Button } from '../shared/Button'
+} from '../ui/Dialog'
+import { Button } from '../ui/Button'
 
 interface ToolResultImageProps {
   src: string

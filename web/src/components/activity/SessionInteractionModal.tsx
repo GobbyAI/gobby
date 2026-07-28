@@ -4,7 +4,7 @@ import {
   DialogContent,
   DialogTitle,
   DialogDescription,
-} from "../chat/ui/Dialog";
+} from "../ui/Dialog";
 import { getToolCallError, isSuccessfulToolCall } from "./toolCallStatus";
 
 interface SessionEntry {

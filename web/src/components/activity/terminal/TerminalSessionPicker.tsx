@@ -5,7 +5,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../chat/ui/Select";
+} from "../../ui/Select";
 import {
   type JoinedTerminalSession,
   sessionKey,

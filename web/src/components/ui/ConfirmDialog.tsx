@@ -1,5 +1,5 @@
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './Dialog'
-import { Button } from '../../shared/Button'
+import { Button } from './Button'
 
 interface ConfirmDialogProps {
   open: boolean

@@ -1,6 +1,6 @@
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
-import { cn } from '../../../lib/utils'
+import { cn } from '../../lib/utils'
 export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPortal } from './tooltipPrimitives'
 
 export const TooltipContent = forwardRef<

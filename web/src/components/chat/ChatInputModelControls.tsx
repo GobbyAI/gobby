@@ -17,7 +17,7 @@ import {
   SelectItem,
   SelectLabel,
   SelectTrigger,
-} from './ui/Select'
+} from '../ui/Select'
 
 interface ChatInputModelControlsProps {
   availableProviders: string[]

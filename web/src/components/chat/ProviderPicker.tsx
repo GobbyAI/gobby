@@ -4,7 +4,7 @@ import {
   DialogContent,
   DialogTitle,
   DialogDescription,
-} from "./ui/Dialog";
+} from "../ui/Dialog";
 import { SourceIcon } from "../shared/SourceIcon";
 import { cn } from "../../lib/utils";
 import {
