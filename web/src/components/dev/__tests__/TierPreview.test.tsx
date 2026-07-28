@@ -26,6 +26,17 @@ describe('TierPreview', () => {
     expect(screen.getByTestId('tier-size')).toHaveTextContent('440×956')
   })
 
+  it('wraps fixed tiers in a scale wrapper sized at scale 1 without layout measurements', () => {
+    render(<TierPreview />)
+    const wrap = screen.getByTestId('tier-frame-wrap')
+    expect(wrap.style.width).toBe('440px')
+    expect(wrap.style.height).toBe('956px')
+    const frame = screen.getByTestId<HTMLIFrameElement>('tier-frame')
+    expect(frame.style.transform).toBe('scale(1)')
+    expect(frame.style.transformOrigin).toBe('top left')
+    expect(screen.getByTestId('tier-size')).not.toHaveTextContent('@')
+  })
+
   it('switches to landscape dimensions', () => {
     render(<TierPreview />)
     fireEvent.click(screen.getByRole('radio', { name: 'Landscape' }))
@@ -35,12 +46,13 @@ describe('TierPreview', () => {
     expect(screen.getByTestId('tier-size')).toHaveTextContent('932×430')
   })
 
-  it('fills the stage on the desktop tier', () => {
+  it('fills the stage on the desktop tier without a scale wrapper', () => {
     render(<TierPreview />)
     fireEvent.click(screen.getByRole('radio', { name: 'Desktop' }))
     const frame = screen.getByTestId<HTMLIFrameElement>('tier-frame')
-    expect(frame.style.width).toBe('100%')
-    expect(frame.style.height).toBe('100%')
+    expect(frame.className).toContain('h-full')
+    expect(frame.className).toContain('w-full')
+    expect(screen.queryByTestId('tier-frame-wrap')).toBeNull()
     expect(screen.getByTestId('tier-size')).toHaveTextContent('fill')
   })
 })
