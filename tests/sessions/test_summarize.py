@@ -1569,8 +1569,14 @@ class TestGenerateSessionSummaries:
         session.terminal_context = {"cwd": "/workspace/project"}
         manager = _RevisionAwareSummaryManager(session)
 
+        async def record_session_edit(handoff_ctx: HandoffContext, _cwd: Path) -> None:
+            handoff_ctx.files_modified.append("src/gobby/sessions/summary_context.py")
+
         with (
-            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock) as enrich,
+            patch(
+                "gobby.sessions.summarize._enrich_git_context",
+                new=AsyncMock(side_effect=record_session_edit),
+            ) as enrich,
             patch(
                 "gobby.workflows.git_utils.get_file_changes", return_value="file changes"
             ) as files,

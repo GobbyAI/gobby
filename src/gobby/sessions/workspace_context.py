@@ -48,6 +48,9 @@ def resolve_session_workspace(session: Session, transcript_path: str | None = No
 
 async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     """Enrich HandoffContext with real-time git status and commits."""
+    if not handoff_ctx.files_modified:
+        return
+
     if not handoff_ctx.git_status:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -62,6 +65,9 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
             handoff_ctx.git_status = stdout.decode().strip() if proc.returncode == 0 else ""
         except Exception as e:
             logger.debug("Failed to get git status for %s: %s", cwd, e)
+
+    if handoff_ctx.git_commits:
+        return
 
     try:
         proc = await asyncio.create_subprocess_exec(

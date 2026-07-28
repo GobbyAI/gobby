@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.tool_error_tracker import load_open_tool_errors
@@ -157,14 +158,22 @@ async def _build_summary_prompt_context(
         if resolved_db
         else ""
     )
+    has_session_edits = bool(handoff_ctx.files_modified)
+    structured_handoff_ctx = handoff_ctx
+    if not has_session_edits:
+        structured_handoff_ctx = copy(handoff_ctx)
+        structured_handoff_ctx.git_status = ""
+        structured_handoff_ctx.git_commits = []
 
     return {
         "transcript_summary": transcript_summary,
         "last_messages": last_messages_str,
-        "git_status": handoff_ctx.git_status or "",
-        "file_changes": get_file_changes(project_path=project_path),
-        "git_diff_summary": get_git_diff_summary(project_path=project_path),
-        "structured_context": _format_structured_context(handoff_ctx),
+        "git_status": handoff_ctx.git_status if has_session_edits else "",
+        "file_changes": get_file_changes(project_path=project_path) if has_session_edits else "",
+        "git_diff_summary": (
+            get_git_diff_summary(project_path=project_path) if has_session_edits else ""
+        ),
+        "structured_context": _format_structured_context(structured_handoff_ctx),
         "claimed_tasks": claimed_tasks,
         "session_memories": session_memories,
         "first_digest_turn": first_digest_turn,
