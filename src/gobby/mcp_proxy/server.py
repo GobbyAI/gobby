@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
@@ -98,7 +98,7 @@ class GobbyDaemonTools:
         self.recommendation = RecommendationService(
             llm_service,
             mcp_manager,
-            db=cast(HubDatabase, db),
+            db=db,
             semantic_search=semantic_search,
             project_id=None,  # Resolved per-call via get_project_context()
             config=config.recommend_tools if config else None,

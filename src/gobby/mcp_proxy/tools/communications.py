@@ -9,6 +9,8 @@ from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.datetime import utc_now
+from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 def create_communications_registry(
     communications_manager: CommunicationsManager,
     db: HubDatabase | None = None,
+    workspace_root: Path | None = None,
 ) -> InternalToolRegistry:
     """Create a registry with communication tools."""
     registry = InternalToolRegistry(
@@ -91,6 +94,19 @@ def create_communications_registry(
             resolved_path = Path(file_path).expanduser().resolve(strict=True)
             if not resolved_path.is_file():
                 return {"success": False, "error": f"Attachment path is not a file: {file_path}"}
+            project_context = get_project_context()
+            context_root = project_context.get("project_path") if project_context else None
+            configured_root = workspace_root or (
+                Path(context_root) if isinstance(context_root, str) and context_root else None
+            )
+            if configured_root is None:
+                return {"success": False, "error": "Attachment workspace is unavailable"}
+            resolved_root = configured_root.expanduser().resolve(strict=True)
+            if not resolved_path.is_relative_to(resolved_root):
+                return {
+                    "success": False,
+                    "error": f"Attachment path is outside the workspace: {file_path}",
+                }
 
             resolved_content_type = content_type
             if not resolved_content_type:
@@ -264,7 +280,11 @@ def create_communications_registry(
             responder = dict(raw_responder) if isinstance(raw_responder, dict) else {}
             responder["project_id"] = resolved.id
             config["responder"] = responder
-            updated = replace(configured_channel, config_json=config)
+            updated = replace(
+                configured_channel,
+                config_json=config,
+                updated_at=utc_now(),
+            )
             await communications_manager.update_channel(updated)
             return {
                 "success": True,

@@ -34,7 +34,7 @@ def test_stage_review_approval_lock_key_is_task_scoped() -> None:
 
     pool_module = _postgres_pool_module()
 
-    assert pool_module._advisory_lock_keys(StageReviewApprovalMutation(task_id="task-1")) == (
+    assert pool_module.advisory_lock_keys(StageReviewApprovalMutation(task_id="task-1")) == (
         "stage_review_approval:task-1",
     )
 
@@ -90,7 +90,7 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
 
     class Transaction:
         def execute(self, sql: str, params: object = ()):
-            return pool_module._PostgresCursor(Result())
+            return pool_module.PostgresCursor(Result())
 
     @contextmanager
     def transaction() -> Iterator[Transaction]:
@@ -521,7 +521,7 @@ class _FakeResult:
 
 def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
     module = _postgres_pool_module()
-    cursor = module._PostgresCursor(
+    cursor = module.PostgresCursor(
         _FakeResult(
             [
                 {
@@ -542,7 +542,7 @@ def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
 
 def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
     module = _postgres_pool_module()
-    cursor = module._PostgresCursor(
+    cursor = module.PostgresCursor(
         _FakeResult(
             [
                 {
@@ -573,7 +573,7 @@ def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
 def test_postgres_cursor_preserves_date_values_as_dates() -> None:
     module = _postgres_pool_module()
     due_date = date(2026, 5, 21)
-    cursor = module._PostgresCursor(_FakeResult([{"id": "task", "due_date": due_date}]))
+    cursor = module.PostgresCursor(_FakeResult([{"id": "task", "due_date": due_date}]))
 
     row = cursor.fetchone()
 
@@ -584,7 +584,7 @@ def test_postgres_cursor_preserves_date_values_as_dates() -> None:
 
 def test_postgres_conninfo_preserves_options_and_forces_utc_timezone() -> None:
     module = _postgres_pool_module()
-    conninfo = module._conninfo_with_utc_session_timezone(
+    conninfo = module.conninfo_with_utc_session_timezone(
         "postgresql://user:pass@localhost:5432/gobby?options=-cstatement_timeout%3D5000"
     )
 

@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -46,8 +47,8 @@ def mock_manager(mock_store):
 
 
 @pytest.fixture
-def registry(mock_manager):
-    return create_communications_registry(mock_manager)
+def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
+    return create_communications_registry(mock_manager, workspace_root=tmp_path)
 
 
 @pytest.mark.asyncio
@@ -139,6 +140,29 @@ async def test_send_attachment_rejects_missing_path(registry, mock_manager, tmp_
 
     assert result["success"] is False
     assert "Invalid attachment path" in result["error"]
+    mock_manager.send_attachment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_rejects_path_outside_workspace(
+    mock_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("sensitive")
+    registry = create_communications_registry(mock_manager, workspace_root=workspace)
+    tool = registry.get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(
+        channel="test-channel",
+        file_path=str(outside),
+    )
+
+    assert result["success"] is False
+    assert result["error"] == f"Attachment path is outside the workspace: {outside}"
     mock_manager.send_attachment.assert_not_awaited()
 
 
@@ -294,6 +318,7 @@ async def test_set_channel_project_resolves_name_and_persists_config(
     }
     updated = mock_manager.update_channel.await_args.args[0]
     assert updated.config_json == {"responder": {"enabled": True, "project_id": project.id}}
+    assert updated.updated_at > channel.updated_at
     assert channel.config_json == {"responder": {"enabled": True}}
 
 
@@ -436,6 +461,7 @@ def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
     mock_store.update_identity_session.assert_called_once_with("id-1", None)
 
 
+@pytest.mark.asyncio
 async def test_send_message_exposes_inline_keyboard_metadata(
     registry: Any,
     mock_manager: MagicMock,

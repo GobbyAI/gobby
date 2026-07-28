@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
     terminalize_cancelled_agent_run,
     terminalize_killed_agent_run,
 )
+from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
 
@@ -258,24 +259,6 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
     )
 
 
-class _DeliveryRegistry:
-    """Recording registry whose notify returns a configurable delivered map."""
-
-    def __init__(self, delivery: dict[str, bool] | None) -> None:
-        self._delivery = delivery
-        self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
-        self.cleanup_calls: list[str] = []
-
-    async def notify(
-        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
-    ) -> dict[str, bool] | None:
-        self.notify_calls.append((run_id, result, message))
-        return self._delivery
-
-    def cleanup(self, run_id: str) -> None:
-        self.cleanup_calls.append(run_id)
-
-
 class TestStopAgentRunCapturePreemptedDelivery:
     """Plan 1.4.7: capture-committed transitions reach the waiter through the helper."""
 
@@ -298,26 +281,13 @@ class TestStopAgentRunCapturePreemptedDelivery:
         agent_run_manager.get.return_value = SimpleNamespace(
             id="run-123", status=db_status, error=None
         )
-        registry = _DeliveryRegistry(delivery)
+        registry = DeliveryRegistry(delivery)
         return SimpleNamespace(
             run=live_run,
             runner=runner,
             agent_run_manager=agent_run_manager,
             registry=registry,
         )
-
-    def _record_removals(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> list[tuple[str, list[str] | None]]:
-        import gobby.agents.completion_subscribers as subscribers_module
-
-        removals: list[tuple[str, list[str] | None]] = []
-
-        def _record(*, db: Any, run_id: str, session_ids: list[str] | None = None) -> None:
-            removals.append((run_id, session_ids))
-
-        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
-        return removals
 
     async def _stop(self, harness: SimpleNamespace, kill_agent_process: Any) -> dict[str, Any]:
         return await stop_agent_run(
@@ -338,7 +308,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         harness = self._harness(delivery={"waiter-sess": True})
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with patch(
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             new_callable=AsyncMock,
@@ -357,7 +327,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
     @pytest.mark.asyncio
     async def test_failed_delivery_retains_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         harness = self._harness(delivery={"waiter-sess": False})
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with patch(
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             new_callable=AsyncMock,
@@ -374,7 +344,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         harness = self._harness(delivery={"waiter-sess": True})
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         kill_result = {
             "success": False,
             "error": "Terminal closed but no target PID was found to verify process death",
@@ -392,7 +362,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         harness = self._harness(delivery={"waiter-sess": True})
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
 
         async def _commit_then_raise(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
             raise RuntimeError("kill exploded after committing")
@@ -409,7 +379,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         harness = self._harness(delivery={"waiter-sess": True})
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         started = asyncio.Event()
         release = asyncio.Event()
 

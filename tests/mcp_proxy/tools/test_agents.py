@@ -40,6 +40,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.utils.session_context import session_context_for_test
+from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
 
@@ -1877,24 +1878,6 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         assert notify_result["run_id"] == "run-abc"
 
 
-class _KillDeliveryRegistry:
-    """Recording registry whose notify returns a configurable delivered map."""
-
-    def __init__(self, delivery: dict[str, bool] | None) -> None:
-        self._delivery = delivery
-        self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
-        self.cleanup_calls: list[str] = []
-
-    async def notify(
-        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
-    ) -> dict[str, bool] | None:
-        self.notify_calls.append((run_id, result, message))
-        return self._delivery
-
-    def cleanup(self, run_id: str) -> None:
-        self.cleanup_calls.append(run_id)
-
-
 class TestKillAgentCapturePreemptedDelivery:
     """Plan 1.4.7: kill_agent delivers capture-committed rows for both stop values."""
 
@@ -1909,22 +1892,9 @@ class TestKillAgentCapturePreemptedDelivery:
         runner.run_storage.get.return_value = SimpleNamespace(
             id="run-123", status="cancelled", error=None
         )
-        registry = _KillDeliveryRegistry(delivery or {"waiter-sess": True})
+        registry = DeliveryRegistry(delivery or {"waiter-sess": True})
         tool_registry = create_agents_registry(runner, completion_registry=registry)
         return tool_registry._tools["kill_agent"].func, registry
-
-    def _record_removals(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> list[tuple[str, list[str] | None]]:
-        import gobby.agents.completion_subscribers as subscribers_module
-
-        removals: list[tuple[str, list[str] | None]] = []
-
-        def _record(*, db: Any, run_id: str, session_ids: list[str] | None = None) -> None:
-            removals.append((run_id, session_ids))
-
-        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
-        return removals
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("stop", [True, False])
@@ -1932,7 +1902,7 @@ class TestKillAgentCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch, stop: bool
     ) -> None:
         kill_agent, registry = self._harness()
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         kill_result = {
             "success": False,
             "error": "Terminal closed but no target PID was found to verify process death",
@@ -1956,7 +1926,7 @@ class TestKillAgentCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch, stop: bool
     ) -> None:
         kill_agent, registry = self._harness()
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with (
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
@@ -1977,7 +1947,7 @@ class TestKillAgentCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch, stop: bool
     ) -> None:
         kill_agent, registry = self._harness()
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         started = asyncio.Event()
         release = asyncio.Event()
 
@@ -2011,7 +1981,7 @@ class TestKillAgentCapturePreemptedDelivery:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         kill_agent, registry = self._harness()
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with (
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",

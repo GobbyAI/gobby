@@ -38,7 +38,7 @@ from gobby.storage.migrations import (
 
 logger = logging.getLogger(__name__)
 
-_advisory_lock_keys = _postgres_pool._advisory_lock_keys
+advisory_lock_keys = _postgres_pool.advisory_lock_keys
 _OPEN_DATABASES: set[PostgresHubDatabase] = set()
 _POOL_CLOSE_TIMEOUT_SECONDS = 2.0
 
@@ -183,7 +183,7 @@ class PostgresHubDatabase:
         *,
         pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
     ) -> None:
-        self._conninfo = _postgres_pool._conninfo_with_utc_session_timezone(dsn)
+        self._conninfo = _postgres_pool.conninfo_with_utc_session_timezone(dsn)
         self._deployment_token = deployment_token()
         self._application_name = f"gobby-hub-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
         self._pool = ConnectionPool(
@@ -341,7 +341,7 @@ class PostgresHubDatabase:
         if ambient is not None:
             return ambient.execute(sql, params)
         with self.transaction() as txn:
-            cursor = cast(_postgres_pool._PostgresCursor, txn.execute(sql, params))
+            cursor = cast(_postgres_pool.PostgresCursor, txn.execute(sql, params))
             return cursor.materialize()
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
@@ -383,7 +383,7 @@ class PostgresHubDatabase:
     ) -> Cursor:
         built = _build_safe_update(table, values, where, where_params)
         if built is None:
-            return _postgres_pool._PostgresCursor(None, rowcount=0)
+            return _postgres_pool.PostgresCursor(None, rowcount=0)
         sql, params = built
         return self.execute(sql, params)
 
@@ -628,19 +628,15 @@ def _build_safe_update(
 ) -> tuple[str, tuple[Any, ...]] | None:
     if not values:
         return None
-    _validate_identifier(table)
+    _postgres_pool.validate_identifier(table)
 
     update_params: list[Any] = []
     set_clauses: list[str] = []
     for column, value in values.items():
-        _validate_identifier(column)
+        _postgres_pool.validate_identifier(column)
         set_clauses.append(f"{column} = %s")
         update_params.append(value)
 
     # Table/column identifiers are allowlisted above; values remain parameterized.
     sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec
     return sql, (*update_params, *where_params)
-
-
-def _validate_identifier(identifier: str) -> None:
-    _postgres_pool._validate_identifier(identifier)

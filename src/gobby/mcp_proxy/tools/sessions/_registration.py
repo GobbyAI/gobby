@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.sessions._title_defaults import manual_title_source
 from gobby.storage.sessions._update_sentinel import UNSET
 
 if TYPE_CHECKING:
@@ -144,7 +145,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 source=source,
                 project_id=resolved_project_id,
                 title=title,
-                title_source="manual" if isinstance(title, str) and title.strip() else None,
+                title_source=manual_title_source(title),
                 git_branch=git_branch,
                 parent_session_id=parent_session_id if parent_session_id is not None else UNSET,
                 agent_depth=agent_depth,

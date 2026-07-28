@@ -2,7 +2,12 @@
 
 MCP proxy execution, result handling, connection lifecycle, and PostgreSQL Hub services.
 
-Unresolved original findings: **53**
+- Forward-port source: `6d121d19bf8b8111727d503af2ea00d09dd85430`
+- Original task: `#19006`
+- Integration task: `#19172`
+- Packet base: `1242097f2fb0abd571b70c4339b462b9e4131390`
+
+Source findings: **53**
 
 Original finding IDs: 188-193, 233-237, 284-286, 299-302, 330, 373, 427-428, 468-471, 492, 494, 522-523, 557-558, 601, 655-660, 672-675, 701-704, 718-720, 744, 779-780
 
@@ -217,3 +222,70 @@ In @tests/mcp_proxy/tools/test_tasks_create_coverage.py around lines 531 - 540, 
 ## Finding #780
 
 In @tests/mcp_proxy/tools/test_tasks_lifecycle_coverage.py around lines 465 - 467, Update the failure assertions in the task lifecycle test so the configured link_commit failure is verified by asserting mock_task_manager.link_commit was called once (optionally with expected arguments), while retaining close_task.assert_not_called() and the existing invalid_commit_sha result checks.
+
+## Disposition ledger
+
+| Finding | Disposition | Accounting |
+| --- | --- | --- |
+| #188 | Carried | Sequential task-affine disconnect cleanup now has one bounded wall-clock budget and marks every processed connection disconnected. |
+| #189 | Carried | Wait timeout and interval values use explicit `None` guards instead of optimization-sensitive assertions. |
+| #190 | Carried | Pane capture and tmux session-check failures emit structured warnings with run and tmux-session context. |
+| #191 | Carried | Successful wait matches return a bounded output excerpt instead of the full pane buffer. |
+| #192 | Carried | Wait polling is clamped to a 0.1-second minimum. |
+| #193 | Carried | Download provenance matching is restricted to the GitHub-topic provider. |
+| #233 | Carried | Disconnect task-affinity coverage uses a minimal local recording stub. |
+| #234 | Carried | The pathological regex test uses a smaller input while retaining deterministic timeout coverage. |
+| #235 | Carried | The wait branch monolith is split into focused scenario tests. |
+| #236 | Carried | Capture/deadline collision coverage uses a deterministic monotonic timeline. |
+| #237 | Carried | The blocking capture helper declares its non-value return type. |
+| #284 | Carried | Hub transaction timeouts use psycopg SQL/Literal composition. |
+| #285 | Carried | Driver timeout exceptions after an unobserved submitted commit report an indeterminate commit. |
+| #286 | Carried | Postgres cursor, conninfo, identifier, and advisory-lock helpers are public cross-module APIs. |
+| #299 | Carried | Termination-matrix scenarios are split into isolated parametrized cases. |
+| #300 | Carried | Async Hub tests carry narrow unit, integration, and slow markers. |
+| #301 | Already satisfied | `_postgres_pool_module` already had the requested `ModuleType` annotation and import. |
+| #302 | Carried | Protocol coverage compares parsed conninfo key-value mappings. |
+| #330 | Obsolete | Newer receipt/epoch removal deleted the manual verification-receipt persistence path. |
+| #373 | Obsolete | Newer receipt/epoch removal deleted the verification-receipt fixture and integration path. |
+| #427 | Obsolete | The Codex close-reconciliation implementation and targeted test module no longer exist. |
+| #428 | Carried | Compact-self prompt coverage requires the exact direct `get_skill` guidance and excludes inventory/schema detours. |
+| #468 | Carried | Agent lifecycle delivery binds and consistently uses a narrowed resolved run ID. |
+| #469 | Carried | Wait coverage includes an AST guard preventing awaits in the completion-subscription critical region. |
+| #470 | Carried | Spawn failure cleanup offloads run failure and retrieval through the terminal-delivery worker seam. |
+| #471 | Carried | Deferred health delivery catches and logs unexpected terminal-delivery exceptions. |
+| #492 | Carried | Delayed archival-refresh fixtures have concrete database and project annotations. |
+| #494 | Carried | Closed-and-escalated spawn coverage now enforces escalation as a refusal state, including inconsistent legacy metadata. |
+| #522 | Adapted | The current paged snapshot service validates stored bytes before rendering, and the tool returns its structured `ReviewEvidenceError` without restoring the obsolete inline snapshot payload. |
+| #523 | Carried | Review evidence write boundaries convert expected filesystem and psycopg failures to structured errors. |
+| #557 | Carried | Completion delivery registry/removal scaffolding is shared through `tests/completion_delivery_helpers.py`. |
+| #558 | Carried | Review-learning coverage accepts two or more shared contexts. |
+| #601 | Carried | Local endpoint resolution wraps only `LocalModelError`; unrelated programming errors propagate. |
+| #655 | Carried | Recommendation service handles missing prompt storage explicitly and preserves semantic-only hybrid results. |
+| #656 | Carried | Result offload returns a logged minimal valid envelope if fitting still exceeds the working budget. |
+| #657 | Carried | Tracking identity construction and its payload copy execute inside the worker thread. |
+| #658 | Carried | Non-wait stdio intent query parameters are capped at the shared 1,024-character limit. |
+| #659 | Carried | Search argument validation uses `_MAX_SEARCH_LIMIT`. |
+| #660 | Carried | Result hydration performs one bulk query and restores original hit ordering. |
+| #672 | Carried | Result-offload tests have a module-level unit marker. |
+| #673 | Carried | Result-tool tests distinguish module unit coverage from DB-backed integration cases. |
+| #674 | Carried | Stdio tool capture uses the shared test registration utility. |
+| #675 | Carried | Result envelope tests share one support constant across stdio, daemon, proxy, and offload coverage. |
+| #701 | Carried | Attachments are resolved beneath the active project or configured workspace root before sending. |
+| #702 | Carried | Responder-project channel updates refresh `updated_at` in UTC. |
+| #703 | Carried | Registration and bulk title updates share `manual_title_source` for blank-safe provenance. |
+| #704 | Carried | Pending health-check timer handles are tracked, removed on fire, and cancelled during shutdown. |
+| #718 | Already satisfied | Session-context tests already have a module-level unit marker. |
+| #719 | Already satisfied | Spawn health tests already have a module-level unit marker. |
+| #720 | Carried | Inline-keyboard message coverage has the required asyncio marker. |
+| #744 | Carried | Recall queue lookup failures return the standard retrieval failure payload. |
+| #779 | Carried | Task creation coverage asserts exact validation-criteria forwarding. |
+| #780 | Adapted | Current close validation rejects and normalizes an invalid commit before any manager write, so `link_commit` must remain uncalled. |
+
+## Reconciliation audit
+
+- All seven paths shared with current `0.5.0` work were reviewed, including the six clean
+  auto-merges and the plan-review evidence conflict.
+- The current paged snapshot transport remains authoritative; corrupt stored snapshots are
+  rejected in `PlanReviewEvidenceService.snapshot_page`.
+- This packet changes no migration files. Migrations `339`, `342`, `345`, and `346` remain
+  byte-for-byte at the packet base, preserving the current migration chain.

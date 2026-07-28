@@ -11,7 +11,7 @@ from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 from ._constants import validate_session_status_transition
-from ._title_defaults import MANUAL_TITLE_SOURCE
+from ._title_defaults import manual_title_source
 from ._title_update import TitleMutationResult, apply_title_mutation
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict
@@ -138,11 +138,8 @@ class _BulkUpdateMixin:
         if status is not None:
             validate_session_status_transition(current.status if current else None, status)
             values["status"] = status
-        if is_set(title):
-            if not is_set(title_source):
-                title_source = (
-                    MANUAL_TITLE_SOURCE if isinstance(title, str) and title.strip() else None
-                )
+        if is_set(title) and not is_set(title_source):
+            title_source = manual_title_source(title)
         if is_set(title_source):
             if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
                 raise ValueError(

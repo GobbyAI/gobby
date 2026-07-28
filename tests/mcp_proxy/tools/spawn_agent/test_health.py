@@ -13,8 +13,10 @@ from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.spawn_agent._health import (
     _check_tmux_session_alive,
     _deferred_tmux_health_check,
+    cancel_health_checks,
     schedule_tmux_health_check,
 )
+from tests.completion_delivery_helpers import record_removals
 
 pytestmark = pytest.mark.unit
 
@@ -208,6 +210,40 @@ async def test_deferred_health_failure_reports_available_pane_output(
 
 
 @pytest.mark.asyncio
+async def test_deferred_health_delivery_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run_storage = MagicMock()
+    run_storage.get.return_value = SimpleNamespace(status="running")
+    run_storage.fail.return_value = SimpleNamespace(status="error")
+    runner = SimpleNamespace(run_storage=run_storage)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            new_callable=AsyncMock,
+            return_value=(False, None),
+        ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("delivery failed"),
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        await _deferred_tmux_health_check(
+            runner,
+            run_id="run-123",
+            tmux_session_name="tmux-run",
+            socket_name=None,
+            socket_path=None,
+            delay=0,
+        )
+
+    assert "Failed to deliver terminal agent_run run-123 after health check" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
     runner = SimpleNamespace(run_storage=MagicMock())
     existing_tasks = asyncio.all_tasks()
@@ -223,6 +259,24 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
 
     assert asyncio.all_tasks() == existing_tasks
     handle.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cancel_health_checks_cancels_pending_timer_before_callback() -> None:
+    runner = SimpleNamespace(run_storage=MagicMock())
+    with patch("gobby.mcp_proxy.tools.spawn_agent._health._start_tmux_health_check") as start:
+        handle = schedule_tmux_health_check(
+            runner=runner,
+            run_id="run-1",
+            tmux_session_name="session-1",
+            socket_name=None,
+            socket_path=None,
+            delay=60,
+        )
+        cancel_health_checks()
+
+    assert handle.cancelled()
+    start.assert_not_called()
 
 
 class _RecordingWake:
@@ -269,25 +323,12 @@ class TestDeferredHealthFailureWakesWaiter:
         runner = SimpleNamespace(run_storage=run_storage)
         return SimpleNamespace(wake=wake, registry=registry, runner=runner)
 
-    def _record_removals(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> list[tuple[str, list[str] | None]]:
-        import gobby.agents.completion_subscribers as subscribers_module
-
-        removals: list[tuple[str, list[str] | None]] = []
-
-        def _record(*, db: object, run_id: str, session_ids: list[str] | None = None) -> None:
-            removals.append((run_id, session_ids))
-
-        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
-        return removals
-
     @pytest.mark.asyncio
     async def test_acknowledged_delivery_wakes_and_removes_rows(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         harness = self._harness(ism_persisted=True)
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
             new_callable=AsyncMock,
@@ -311,7 +352,7 @@ class TestDeferredHealthFailureWakesWaiter:
     @pytest.mark.asyncio
     async def test_failed_delivery_retains_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         harness = self._harness(ism_persisted=False)
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
             new_callable=AsyncMock,

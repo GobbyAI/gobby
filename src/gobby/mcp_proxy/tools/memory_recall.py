@@ -34,7 +34,14 @@ def register_memory_recall_tool(
                 "error": "No ambient Gobby session is available.",
             }
 
-        delivery = queue.get(session_id, recall_request_id)
+        try:
+            delivery = queue.get(session_id, recall_request_id)
+        except Exception as exc:
+            return {
+                "success": False,
+                "recall_request_id": recall_request_id,
+                "error": f"Memory retrieval failed: {exc}",
+            }
         if delivery is None:
             return {
                 "success": False,
@@ -43,7 +50,14 @@ def register_memory_recall_tool(
             }
 
         if delivery.get("status") == "pending":
-            pending = queue.pending(session_id)
+            try:
+                pending = queue.pending(session_id)
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "recall_request_id": recall_request_id,
+                    "error": f"Memory retrieval failed: {exc}",
+                }
             if not pending or pending[0].get("recall_request_id") != recall_request_id:
                 expected = pending[0].get("recall_request_id") if pending else None
                 return {

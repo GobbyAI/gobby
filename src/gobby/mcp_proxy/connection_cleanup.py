@@ -9,6 +9,8 @@ from typing import Any
 
 from gobby.mcp_proxy.models import ConnectionState
 
+_DISCONNECT_ALL_TIMEOUT_SECONDS = 10.0
+
 
 def describe_exception(exc: BaseException) -> str:
     """Return a useful error string even for exceptions with empty messages."""
@@ -98,12 +100,21 @@ async def finalize_disconnect_all(
             await asyncio.gather(*reconnect_snapshot, return_exceptions=True)
         reconnect_tasks.clear()
 
-        for name, connection in list(connections.items()):
-            # MCP stdio contexts are task-affine. Disconnect in the caller task
-            # so their cancel scopes exit from the task that entered them.
-            await disconnect_connection(name, connection, logger)
-            if name in health:
-                health[name].state = ConnectionState.DISCONNECTED
+        try:
+            async with asyncio.timeout(_DISCONNECT_ALL_TIMEOUT_SECONDS):
+                for name, connection in list(connections.items()):
+                    # MCP stdio contexts are task-affine. Disconnect in the caller task
+                    # so their cancel scopes exit from the task that entered them.
+                    try:
+                        await disconnect_connection(name, connection, logger)
+                    finally:
+                        if name in health:
+                            health[name].state = ConnectionState.DISCONNECTED
+        except TimeoutError:
+            logger.warning(
+                "MCP disconnect cleanup exceeded overall shutdown budget",
+                extra={"timeout_seconds": _DISCONNECT_ALL_TIMEOUT_SECONDS},
+            )
     except asyncio.CancelledError:
         logger.debug("MCP disconnect cleanup cancelled; finalizing state cleanup")
     finally:

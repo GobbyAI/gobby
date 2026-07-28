@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Track fire-and-forget health check tasks for clean shutdown
 _health_check_tasks: set[asyncio.Task[None]] = set()
+_health_check_handles: set[asyncio.TimerHandle] = set()
 
 
 class _RunStorageForHealth(AgentRunTerminalStorage, Protocol):
@@ -30,6 +31,9 @@ class _RunnerWithRunStorage(Protocol):
 
 def cancel_health_checks() -> None:
     """Cancel all pending health check tasks (call on shutdown)."""
+    for handle in _health_check_handles:
+        handle.cancel()
+    _health_check_handles.clear()
     for task in _health_check_tasks:
         task.cancel()
     _health_check_tasks.clear()
@@ -37,6 +41,9 @@ def cancel_health_checks() -> None:
 
 async def cancel_and_await_health_checks() -> None:
     """Cancel deferred health checks and await shielded terminal settlements."""
+    for handle in _health_check_handles:
+        handle.cancel()
+    _health_check_handles.clear()
     tasks = tuple(_health_check_tasks)
     for task in tasks:
         task.cancel()
@@ -134,13 +141,21 @@ async def _deferred_tmux_health_check(
                         run_terminal_delivery_offload,
                     )
 
-                    await deliver_existing_terminal_run(
-                        db=runner.run_storage.db,
-                        agent_run_manager=runner.run_storage,
-                        completion_registry=completion_registry,
-                        run_id=run_id,
-                        run_db=run_terminal_delivery_offload,
-                    )
+                    try:
+                        await deliver_existing_terminal_run(
+                            db=runner.run_storage.db,
+                            agent_run_manager=runner.run_storage,
+                            completion_registry=completion_registry,
+                            run_id=run_id,
+                            run_db=run_terminal_delivery_offload,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to deliver terminal agent_run %s after health check: %s",
+                            run_id,
+                            exc,
+                            exc_info=True,
+                        )
             except psycopg.Error as e:
                 logger.warning("Failed to mark agent_run %s as failed: %s", run_id, e)
     except asyncio.CancelledError:
@@ -184,13 +199,20 @@ def schedule_tmux_health_check(
 ) -> asyncio.TimerHandle:
     """Schedule a post-spawn tmux liveness check without leaving a sleeping task."""
     loop = asyncio.get_running_loop()
-    return loop.call_later(
-        delay,
-        _start_tmux_health_check,
-        runner,
-        run_id,
-        tmux_session_name,
-        socket_name,
-        socket_path,
-        completion_registry,
-    )
+    handle: asyncio.TimerHandle | None = None
+
+    def start_health_check() -> None:
+        if handle is not None:
+            _health_check_handles.discard(handle)
+        _start_tmux_health_check(
+            runner,
+            run_id,
+            tmux_session_name,
+            socket_name,
+            socket_path,
+            completion_registry,
+        )
+
+    handle = loop.call_later(delay, start_health_check)
+    _health_check_handles.add(handle)
+    return handle

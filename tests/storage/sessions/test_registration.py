@@ -17,10 +17,32 @@ from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.sessions import _upsert as session_upsert
 from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
-from gobby.storage.sessions._title_defaults import PROVISIONAL_TITLE_SOURCE
+from gobby.storage.sessions._title_defaults import (
+    MANUAL_TITLE_SOURCE,
+    PROVISIONAL_TITLE_SOURCE,
+    manual_title_source,
+)
 from gobby.storage.sessions._update_sentinel import UNSET
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Session title", MANUAL_TITLE_SOURCE),
+        ("  Session title  ", MANUAL_TITLE_SOURCE),
+        ("", None),
+        ("   ", None),
+        (None, None),
+        (42, None),
+    ],
+)
+def test_manual_title_source_only_marks_non_blank_strings(
+    title: object,
+    expected: str | None,
+) -> None:
+    assert manual_title_source(title) == expected
 
 
 def test_session_registration_boolean_case_is_postgres_safe() -> None:

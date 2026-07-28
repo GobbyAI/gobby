@@ -12,6 +12,8 @@ from gobby.mcp_proxy.session_bootstrap import resolve_session_id_from_terminal_c
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
+from tests.mcp_proxy.tool_capture import async_tool_capture_mock
 
 pytestmark = pytest.mark.unit
 
@@ -25,22 +27,7 @@ def _response(status_code: int, payload: dict[str, object] | None = None) -> Mag
 def _capture_stdio_tools(
     proxy: MagicMock,
 ) -> dict[str, Callable[..., Awaitable[Any]]]:
-    captured: dict[str, Callable[..., Awaitable[Any]]] = {}
-    mcp = MagicMock()
-
-    def tool(
-        name: str | None = None,
-        **_kwargs: Any,
-    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
-        def register(
-            func: Callable[..., Awaitable[Any]],
-        ) -> Callable[..., Awaitable[Any]]:
-            captured[name or func.__name__] = func
-            return func
-
-        return register
-
-    mcp.tool.side_effect = tool
+    mcp, captured = async_tool_capture_mock()
     register_proxy_tools(mcp, proxy)
     return captured
 
@@ -102,6 +89,7 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
     deps.read_project_id.return_value = None
     deps.load_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
     proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+    long_intent = "wrapper-summary" * 200
 
     with patch.object(proxy, "_request", new_callable=AsyncMock) as request:
         request.return_value = {"success": True}
@@ -109,28 +97,27 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
             "example",
             "ordinary",
             {"intent": "target-value"},
-            intent="wrapper-summary",
+            intent=long_intent,
         )
         await proxy.call_tool(
             "gobby-sessions",
             "wait_for_summary",
             {"session_id": "session", "intent": "target-value"},
-            intent="wrapper-summary",
+            intent=long_intent,
         )
 
     direct = request.await_args_list[0]
     assert direct.args[:2] == ("POST", "/api/mcp/example/tools/ordinary")
     assert direct.kwargs["json"] == {"intent": "target-value"}
-    assert direct.kwargs["params"] == {"intent": "wrapper-summary"}
+    assert direct.kwargs["params"] == {"intent": long_intent[:1_024]}
     structured = request.await_args_list[1]
     assert structured.args[:2] == ("POST", "/api/mcp/tools/call")
-    assert structured.kwargs["json"]["intent"] == "wrapper-summary"
+    assert structured.kwargs["json"]["intent"] == long_intent
     assert structured.kwargs["json"]["arguments"]["intent"] == "target-value"
 
 
 @pytest.mark.asyncio
 async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
-    max_envelope_chars = 2_000
     http_envelope = {
         "success": True,
         "result": {
@@ -151,14 +138,13 @@ async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
         intent="find completion",
     )
 
-    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= TEST_MAX_ENVELOPE_CHARS
     assert result["wait_timeout_capped_by_mcp_wrapper"] is True
     assert proxy.call_tool.await_args.kwargs["intent"] == "find completion"
 
 
 @pytest.mark.asyncio
 async def test_stdio_final_retrieval_response_stays_within_shared_cap() -> None:
-    max_envelope_chars = 2_000
     http_result: dict[str, Any] = {
         "success": True,
         "result": {
@@ -181,7 +167,7 @@ async def test_stdio_final_retrieval_response_stays_within_shared_cap() -> None:
     )
 
     assert result == http_result
-    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= TEST_MAX_ENVELOPE_CHARS
 
 
 @pytest.mark.asyncio

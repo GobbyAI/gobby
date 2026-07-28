@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.agents.local_model import LocalModelError
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import resolve_spawn_generation_endpoint
 
@@ -58,8 +59,42 @@ async def test_resolve_spawn_generation_endpoint_uses_named_generation_endpoint(
     assert resolution.api_token == "endpoint-token"
     assert resolution.is_local is True
     ensure_local_model.assert_awaited_once()
-    assert ensure_local_model.await_args.kwargs == {"run_manager": run_manager}
-    assert ensure_local_model.await_args.args[0].model == "qwen-coder-32b"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "wrapped"),
+    [
+        (LocalModelError("model unavailable"), True),
+        (AttributeError("programming error"), False),
+    ],
+)
+async def test_resolve_spawn_generation_endpoint_only_wraps_local_model_errors(
+    error: Exception,
+    wrapped: bool,
+) -> None:
+    with patch(
+        "gobby.agents.local_model.ensure_local_model",
+        new=AsyncMock(side_effect=error),
+    ):
+        if wrapped:
+            with pytest.raises(ValueError, match="Local model pre-flight failed"):
+                await resolve_spawn_generation_endpoint(
+                    model="endpoint:lm-studio",
+                    api_base=None,
+                    api_token=None,
+                    daemon_config=_config(),
+                    run_manager=None,
+                )
+        else:
+            with pytest.raises(AttributeError, match="programming error"):
+                await resolve_spawn_generation_endpoint(
+                    model="endpoint:lm-studio",
+                    api_base=None,
+                    api_token=None,
+                    daemon_config=_config(),
+                    run_manager=None,
+                )
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,11 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
-from gobby.skills.hubs.github_topic import TopicHubError, normalize_topic_item_id
+from gobby.skills.hubs.github_topic import (
+    GitHubTopicProvider,
+    TopicHubError,
+    normalize_topic_item_id,
+)
 from gobby.skills.loader import SkillLoadError
 
 logger = logging.getLogger(__name__)
@@ -113,7 +117,10 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                             "error": f"Failed to download from hub: {download_result.error or 'Unknown error'}",
                         }
 
-                    if download_result.provenance is not None:
+                    if (
+                        isinstance(provider, GitHubTopicProvider)
+                        and download_result.provenance is not None
+                    ):
                         provenance = download_result.provenance
                         try:
                             canonical = normalize_topic_item_id(provenance["item_id"])

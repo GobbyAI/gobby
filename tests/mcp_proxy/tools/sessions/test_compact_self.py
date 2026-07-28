@@ -29,6 +29,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._automation import sweep_stale_claims
@@ -565,7 +566,8 @@ class TestCompactSelfTerminalPath:
             captured_prompts[0].index("wait_for_summary")
         )
         assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
-        assert "directly" in captured_prompts[0]
+        assert 'call_tool("gobby-skills", "get_skill"' in captured_prompts[0]
+        assert "Then continue" in captured_prompts[0]
         assert "list_mcp_servers" not in captured_prompts[0]
         assert "list_tools" not in captured_prompts[0]
         assert "get_tool_schema" not in captured_prompts[0]
@@ -858,8 +860,8 @@ class TestCompactSelfTerminalPath:
 
     def test_delayed_archival_refresh_preserves_resumed_session_claim(
         self,
-        temp_db,
-        sample_project,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
     ) -> None:
         session_manager = SessionManager(temp_db)
         session_id = session_manager.register_session(

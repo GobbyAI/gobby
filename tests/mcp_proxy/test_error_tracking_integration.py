@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,17 +103,31 @@ def _persisting_proxy(
 
 @pytest.mark.asyncio
 async def test_executed_failure_finalizes_once_off_event_loop_thread() -> None:
+    from gobby.mcp_proxy.services import tool_execution
+
     proxy, _, _ = _proxy(result={"success": False, "error": "boom"})
     loop_thread = threading.get_ident()
     tracking_threads: list[int] = []
+    identity_threads: list[int] = []
+    identity_arguments = tool_execution._identity_arguments
 
     def capture_tracking(*_args: object) -> None:
         tracking_threads.append(threading.get_ident())
 
-    with patch(
-        "gobby.mcp_proxy.services.tool_execution.track_proxy_outcome",
-        side_effect=capture_tracking,
-    ) as tracking:
+    def capture_identity(arguments: Any) -> dict[str, Any]:
+        identity_threads.append(threading.get_ident())
+        return identity_arguments(arguments)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.services.tool_execution.track_proxy_outcome",
+            side_effect=capture_tracking,
+        ) as tracking,
+        patch(
+            "gobby.mcp_proxy.services.tool_execution._identity_arguments",
+            side_effect=capture_identity,
+        ),
+    ):
         result = await proxy.call_tool(
             "server-a",
             "run",
@@ -123,6 +138,7 @@ async def test_executed_failure_finalizes_once_off_event_loop_thread() -> None:
     assert result == {"success": False, "error": "boom"}
     assert tracking.call_count == 1
     assert tracking_threads and tracking_threads[0] != loop_thread
+    assert identity_threads and all(thread_id != loop_thread for thread_id in identity_threads)
     assert tracking.call_args.args[1:] == (
         "session-1",
         ("server-a", "run", {"command": "false"}),

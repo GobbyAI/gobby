@@ -306,6 +306,11 @@ class PlanReviewEvidenceService:
         limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
     ) -> dict[str, object]:
         evidence = self.get_evidence(evidence_id)
+        if not isinstance(evidence.snapshot, bytes):
+            raise ReviewEvidenceError(
+                "invalid_evidence_row",
+                "stored plan snapshot is not bytes",
+            )
         document = self._snapshot_document(evidence)
         changed_sections = self._changed_sections_since_prior_round(evidence)
         envelope = serialize_snapshot_envelope(

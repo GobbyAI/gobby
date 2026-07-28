@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import re
 from collections.abc import Callable, Mapping
@@ -39,8 +40,11 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.storage.agent_resume import register_daemon_resume_waiter
 from gobby.storage.agents import AgentRunStatus
 
+logger = logging.getLogger(__name__)
+
 _WAIT_OUTPUT_CAPTURE_LINES = 200
 _WAIT_OUTPUT_CAPTURE_FAILURE_LIMIT = 3
+_WAIT_OUTPUT_EXCERPT_CHARS = 4_096
 
 
 def _clamp_limit(limit: int) -> int:
@@ -93,6 +97,13 @@ def _invalid_run_ref(error: str, **details: Any) -> dict[str, Any]:
 
 def _wait_for_output_error(code: str, message: str) -> dict[str, Any]:
     return {"success": False, "error": code, "message": message}
+
+
+def _bounded_wait_output_excerpt(pane_output: str) -> str:
+    if len(pane_output) <= _WAIT_OUTPUT_EXCERPT_CHARS:
+        return pane_output
+    half = (_WAIT_OUTPUT_EXCERPT_CHARS - len("\n… output omitted …\n")) // 2
+    return f"{pane_output[:half]}\n… output omitted …\n{pane_output[-half:]}"
 
 
 def _finite_number(value: float, *, name: str) -> tuple[float | None, dict[str, Any] | None]:
@@ -360,15 +371,18 @@ def register_agent_query_tools(
         )
         if error is not None:
             return error
-        assert timeout_value is not None
-        assert interval_value is not None
+        if timeout_value is None or interval_value is None:
+            return _wait_for_output_error(
+                "invalid_argument",
+                "timeout_seconds and poll_interval_seconds must be numeric",
+            )
 
         timeout = clamp_wait_tool_timeout(
             "wait_for_output",
             timeout_value,
             default=MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
         )
-        interval = max(0.01, min(interval_value, 30.0))
+        interval = max(0.1, min(interval_value, 30.0))
         deadline = agents.time.monotonic() + timeout
         consecutive_capture_failures = 0
         tmux = get_tmux_session_manager()
@@ -385,6 +399,14 @@ def register_agent_query_tools(
             except asyncio.CancelledError:
                 raise
             except Exception:
+                logger.warning(
+                    "Failed to capture agent terminal output",
+                    extra={
+                        "run_id": run_id,
+                        "tmux_session_name": run.tmux_session_name,
+                    },
+                    exc_info=True,
+                )
                 capture_failed = True
 
             if pane_output is not None:
@@ -396,7 +418,11 @@ def register_agent_query_tools(
                         "pattern execution exceeded its time budget",
                     )
                 if match.matched:
-                    return {"success": True, "matched": True, "excerpt": pane_output}
+                    return {
+                        "success": True,
+                        "matched": True,
+                        "excerpt": _bounded_wait_output_excerpt(pane_output),
+                    }
 
             if run.status in agents._TERMINAL_AGENT_STATUSES:
                 return {
@@ -412,6 +438,14 @@ def register_agent_query_tools(
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    logger.warning(
+                        "Failed to check agent terminal session",
+                        extra={
+                            "run_id": run_id,
+                            "tmux_session_name": run.tmux_session_name,
+                        },
+                        exc_info=True,
+                    )
                     pane_exists = True
                 if not pane_exists:
                     return {

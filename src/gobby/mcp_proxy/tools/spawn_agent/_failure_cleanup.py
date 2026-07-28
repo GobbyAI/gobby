@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gobby.agents.terminal_delivery import run_terminal_delivery_offload
+
 
 async def cleanup_created_isolation(
     handler: Any,
@@ -33,10 +35,9 @@ async def cleanup_failed_spawn(
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     if run_storage is not None:
-        child_session_id = _fail_run(run_storage, run_id, error, child_session_id)
+        child_session_id = await _fail_run(run_storage, run_id, error, child_session_id)
         from gobby.agents.terminal_delivery import (
             deliver_existing_terminal_run,
-            run_terminal_delivery_offload,
         )
 
         await deliver_existing_terminal_run(
@@ -107,14 +108,18 @@ async def start_run_or_cleanup(
     }
 
 
-def _fail_run(
+async def _fail_run(
     run_storage: Any,
     run_id: str,
     error: str,
     child_session_id: str | None,
 ) -> str | None:
     try:
-        failed_run = run_storage.fail(run_id, error=error)
+        failed_run = await run_terminal_delivery_offload(
+            run_storage.fail,
+            run_id,
+            error=error,
+        )
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "Failed to mark agent_run %s as failed: %s", run_id, exc
@@ -122,7 +127,7 @@ def _fail_run(
         failed_run = None
     if failed_run is None:
         try:
-            failed_run = run_storage.get(run_id)
+            failed_run = await run_terminal_delivery_offload(run_storage.get, run_id)
         except Exception:
             failed_run = None
     return _string_attr(failed_run, "child_session_id") or child_session_id

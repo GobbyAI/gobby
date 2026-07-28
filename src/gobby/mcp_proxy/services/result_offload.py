@@ -249,7 +249,26 @@ class ToolResultOffloader:
             _fit_matches(envelope, matches, limit)
 
         if _serialized_size(envelope) > limit:
-            raise AssertionError("tool result envelope exceeded its configured working budget")
+            logger.warning(
+                "Tool result envelope exceeded its configured working budget; degrading envelope",
+                extra={
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "result_id": result_id,
+                    "working_budget": limit,
+                },
+            )
+            degraded: dict[str, Any] = {
+                "offloaded": True,
+                "server_name": render_bounded_identity(server_name),
+                "tool_name": render_bounded_identity(tool_name),
+                "total_chars": total_chars,
+                "stored_chars": stored_chars,
+                "retrieval_available": retrieval_available,
+            }
+            if result_id is not None:
+                degraded["result_id"] = result_id
+            return degraded
         return envelope
 
     def _guidance(

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,22 +44,25 @@ async def _invoke(run: Any | None, tmux: MagicMock, **kwargs: Any) -> dict[str, 
 
 
 @pytest.mark.asyncio
-async def test_wait_branches() -> None:
+async def test_wait_for_output_returns_bounded_matching_excerpt() -> None:
     match_tmux = MagicMock()
-    match_tmux.capture_pane = AsyncMock(return_value="booting\nREADY: port 60887\n")
+    pane_output = f"{'a' * 3_000}\nREADY: port 60887\n{'b' * 3_000}"
+    match_tmux.capture_pane = AsyncMock(return_value=pane_output)
     matched = await _invoke(
         _run(),
         match_tmux,
         pattern=r"READY: port \d+",
         timeout_seconds=1,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.1,
     )
-    assert matched == {
-        "success": True,
-        "matched": True,
-        "excerpt": "booting\nREADY: port 60887\n",
-    }
+    assert matched["success"] is True
+    assert matched["matched"] is True
+    assert len(matched["excerpt"]) <= 4_096
+    assert "output omitted" in matched["excerpt"]
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_returns_timeout() -> None:
     timeout_tmux = MagicMock()
     timeout_tmux.capture_pane = AsyncMock(return_value="still working")
     timed_out = await _invoke(
@@ -64,7 +70,7 @@ async def test_wait_branches() -> None:
         timeout_tmux,
         pattern="READY",
         timeout_seconds=0,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.1,
     )
     assert timed_out == {
         "success": True,
@@ -73,6 +79,9 @@ async def test_wait_branches() -> None:
         "status": "running",
     }
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_returns_terminal_status() -> None:
     terminal_tmux = MagicMock()
     terminal_tmux.capture_pane = AsyncMock(return_value="finished cleanly")
     terminal = await _invoke(
@@ -88,46 +97,37 @@ async def test_wait_branches() -> None:
         "status": "success",
     }
 
-    unknown = await _invoke(
-        None,
-        MagicMock(),
-        pattern="(",
-        timeout_seconds=float("nan"),
-    )
-    assert unknown["error"] == "invalid_run"
 
-    no_terminal = await _invoke(
-        _run(tmux_session_name=None),
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("run", "pattern", "timeout_seconds", "poll_interval_seconds", "error"),
+    [
+        (None, "(", float("nan"), 2.0, "invalid_run"),
+        (_run(tmux_session_name=None), "(", float("nan"), 2.0, "no_terminal"),
+        (_run(), "(", float("nan"), 2.0, "invalid_pattern"),
+        (_run(), "READY", float("nan"), 2.0, "invalid_argument"),
+        (_run(), "READY", 1.0, float("inf"), "invalid_argument"),
+    ],
+)
+async def test_wait_for_output_validates_payload(
+    run: Any | None,
+    pattern: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    error: str,
+) -> None:
+    result = await _invoke(
+        run,
         MagicMock(),
-        pattern="(",
-        timeout_seconds=float("nan"),
+        pattern=pattern,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
-    assert no_terminal["error"] == "no_terminal"
+    assert result["error"] == error
 
-    invalid_pattern = await _invoke(
-        _run(),
-        MagicMock(),
-        pattern="(",
-        timeout_seconds=float("nan"),
-    )
-    assert invalid_pattern["error"] == "invalid_pattern"
 
-    invalid_timeout = await _invoke(
-        _run(),
-        MagicMock(),
-        pattern="READY",
-        timeout_seconds=float("nan"),
-    )
-    assert invalid_timeout["error"] == "invalid_argument"
-    invalid_interval = await _invoke(
-        _run(),
-        MagicMock(),
-        pattern="READY",
-        timeout_seconds=1,
-        poll_interval_seconds=float("inf"),
-    )
-    assert invalid_interval["error"] == "invalid_argument"
-
+@pytest.mark.asyncio
+async def test_wait_for_output_returns_pane_lost() -> None:
     lost_tmux = MagicMock()
     lost_tmux.capture_pane = AsyncMock(return_value=None)
     lost_tmux.has_session = AsyncMock(return_value=False)
@@ -136,7 +136,7 @@ async def test_wait_branches() -> None:
         lost_tmux,
         pattern="READY",
         timeout_seconds=1,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.1,
     )
     assert pane_lost == {
         "success": True,
@@ -145,6 +145,9 @@ async def test_wait_branches() -> None:
         "status": "running",
     }
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_returns_capture_failed_after_three_attempts() -> None:
     failing_tmux = MagicMock()
     failing_tmux.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
     failing_tmux.has_session = AsyncMock(return_value=True)
@@ -153,13 +156,16 @@ async def test_wait_branches() -> None:
         failing_tmux,
         pattern="READY",
         timeout_seconds=1,
-        poll_interval_seconds=0.01,
+        poll_interval_seconds=0.1,
     )
     assert capture_failed["error"] == "capture_failed"
     assert failing_tmux.capture_pane.await_count == 3
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_returns_pattern_timeout() -> None:
     pathological_tmux = MagicMock()
-    pathological_tmux.capture_pane = AsyncMock(return_value="a" * 100_000 + "!")
+    pathological_tmux.capture_pane = AsyncMock(return_value="a" * 10_000 + "!")
     pattern_timeout = await _invoke(
         _run(),
         pathological_tmux,
@@ -168,6 +174,9 @@ async def test_wait_branches() -> None:
     )
     assert pattern_timeout["error"] == "pattern_timeout"
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_match_precedes_terminal_status() -> None:
     collision_tmux = MagicMock()
     collision_tmux.capture_pane = AsyncMock(return_value="READY")
     match_beats_terminal = await _invoke(
@@ -178,23 +187,37 @@ async def test_wait_branches() -> None:
     )
     assert match_beats_terminal["matched"] is True
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_capture_failure_precedes_deadline() -> None:
     deadline_collision_tmux = MagicMock()
     deadline_collision_tmux.capture_pane = AsyncMock(side_effect=TimeoutError)
     deadline_collision_tmux.has_session = AsyncMock(return_value=True)
-    capture_beats_deadline = await _invoke(
-        _run(),
-        deadline_collision_tmux,
-        pattern="READY",
-        timeout_seconds=0.015,
-        poll_interval_seconds=0.01,
+    clock = MagicMock()
+    clock.monotonic.side_effect = [0.0, 0.1, 0.2]
+    agents = SimpleNamespace(
+        _TERMINAL_AGENT_STATUSES={"success", "error", "cancelled"},
+        time=clock,
+        asyncio=SimpleNamespace(sleep=AsyncMock()),
     )
+    with patch("gobby.mcp_proxy.tools.agents_query_tools.facade", return_value=agents):
+        capture_beats_deadline = await _invoke(
+            _run(),
+            deadline_collision_tmux,
+            pattern="READY",
+            timeout_seconds=1,
+            poll_interval_seconds=0.1,
+        )
     assert capture_beats_deadline["error"] == "capture_failed"
     assert deadline_collision_tmux.capture_pane.await_count == 3
 
+
+@pytest.mark.asyncio
+async def test_wait_for_output_cancellation_finishes_capture_cleanup() -> None:
     capture_started = asyncio.Event()
     capture_finished = asyncio.Event()
 
-    async def blocking_capture(*_args: Any, **_kwargs: Any) -> str:
+    async def blocking_capture(*_args: Any, **_kwargs: Any) -> None:
         capture_started.set()
         try:
             await asyncio.Event().wait()
@@ -219,3 +242,19 @@ async def test_wait_branches() -> None:
 
     assert waiting.done()
     assert capture_finished.is_set()
+
+
+def test_wait_for_agent_subscription_critical_region_contains_no_await() -> None:
+    from gobby.mcp_proxy.tools import agents_query_tools
+
+    source = Path(agents_query_tools.__file__).read_text()
+    region = source.split(
+        "# The region from this status re-read through conditional cleanup contains no",
+        1,
+    )[1].split("# ---- end of no-await critical region ----", 1)[0]
+    parsed = ast.parse(textwrap.dedent(region))
+
+    assert not any(isinstance(node, ast.Await) for node in ast.walk(parsed))
+    assert "subscribe_agent_completion(" in region
+    assert "remove_agent_completion_subscribers(" in region
+    assert "ctx.completion_registry.cleanup(" in region

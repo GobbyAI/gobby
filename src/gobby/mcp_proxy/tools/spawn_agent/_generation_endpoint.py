@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
+from gobby.agents.local_model import LocalModelError
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
     codex_endpoint_env,
@@ -74,7 +75,7 @@ async def resolve_spawn_generation_endpoint(
         from gobby.agents.local_model import ensure_local_model
 
         resolved_model = await ensure_local_model(selected_endpoint, run_manager=run_manager)
-    except Exception as exc:
+    except LocalModelError as exc:
         raise ValueError(f"Local model pre-flight failed: {exc}") from exc
 
     if runtime_provider == "codex":

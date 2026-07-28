@@ -286,10 +286,11 @@ def register_agent_lifecycle_tools(
                 "success": False,
                 "error": "Either run_id or session_id required (or active context)",
             }
+        resolved_run_id = run_id
 
-        db_run = ctx.runner.get_run(run_id)
+        db_run = ctx.runner.get_run(resolved_run_id)
         if not db_run:
-            return {"success": False, "error": f"Agent run {run_id} not found"}
+            return {"success": False, "error": f"Agent run {resolved_run_id} not found"}
 
         agent_session_id = db_run.child_session_id or resolved_session_id
         tmux_session_name = db_run.tmux_session_name
@@ -352,7 +353,7 @@ def register_agent_lifecycle_tools(
                 result.update(
                     await terminalize_killed_agent_run(
                         runner=ctx.runner,
-                        run_id=run_id,
+                        run_id=resolved_run_id,
                         effective_status=effective_status,
                         lifecycle_monitor=ctx.lifecycle_monitor,
                         completion_registry=ctx.completion_registry,
@@ -361,7 +362,7 @@ def register_agent_lifecycle_tools(
                 )
 
                 await agents._cleanup_terminal_artifacts(
-                    run_id=run_id,
+                    run_id=resolved_run_id,
                     db=kill_db,
                     tmux_session_name=tmux_session_name,
                     agent_session_id=agent_session_id,
@@ -375,11 +376,11 @@ def register_agent_lifecycle_tools(
                     db=kill_db,
                     agent_run_manager=ctx.agent_run_manager,
                     completion_registry=ctx.completion_registry,
-                    run_id=run_id,
+                    run_id=resolved_run_id,
                     run_db=run_terminal_delivery_offload,
                 )
 
-        response = await shielded_terminal_delivery(run_id, kill_and_deliver)
+        response = await shielded_terminal_delivery(resolved_run_id, kill_and_deliver)
         if response is None:
             return {"success": False, "error": "Daemon shutdown is in progress"}
         return response

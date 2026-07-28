@@ -88,7 +88,7 @@ def is_task_closed(task: Any) -> bool:
 
 
 def _task_is_escalated(task: Any) -> bool:
-    if task is None or is_task_closed(task):
+    if task is None:
         return False
     state_payload = _read_field(task, "state")
     if isinstance(state_payload, dict):
@@ -145,11 +145,10 @@ def is_task_actionable(task: Any) -> bool:
 def is_task_reviewable(task: Any) -> bool:
     """Return whether a closed task can host read-only review work.
 
-    Closed is terminal and mutually exclusive with escalated, so closure alone
-    establishes reviewability; open tasks (escalated or otherwise) are the
-    actionable/refusal domain of ``is_task_actionable``.
+    Escalation remains a refusal state even if inconsistent legacy data also
+    carries a closure timestamp.
     """
-    return task is not None and is_task_closed(task)
+    return task is not None and is_task_closed(task) and not _task_is_escalated(task)
 
 
 def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:

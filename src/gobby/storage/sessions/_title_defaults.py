@@ -26,6 +26,11 @@ _PROVIDER_LABELS = {
 _UNKNOWN_PROVIDER_RE = re.compile(r"[^a-z0-9._-]+")
 
 
+def manual_title_source(title: object) -> str | None:
+    """Return the manual source marker for a non-blank explicit title."""
+    return MANUAL_TITLE_SOURCE if isinstance(title, str) and title.strip() else None
+
+
 def _normalize_provider_label(source: str) -> str:
     normalized = source.strip().lower()
     if normalized in _PROVIDER_LABELS:

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPServerConfig
+from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from tests._timing import wait_forever
 
 
@@ -33,20 +35,46 @@ class BlockingConnection:
 async def test_disconnect_all_closes_transport_in_caller_task() -> None:
     """Task-affine transport contexts must be closed by their caller task."""
     manager = MCPClientManager(server_configs=[])
-    connection = BlockingConnection()
     caller_task = asyncio.current_task()
     observed_task: asyncio.Task[object] | None = None
 
-    async def disconnect() -> None:
-        nonlocal observed_task
-        observed_task = asyncio.current_task()
+    class TaskRecordingConnection:
+        is_connected = True
 
-    connection.disconnect = disconnect  # type: ignore[method-assign]
+        async def disconnect(self) -> None:
+            nonlocal observed_task
+            observed_task = asyncio.current_task()
+
+    connection = TaskRecordingConnection()
     manager._connections["stdio-server"] = connection
 
     await manager.disconnect_all()
 
     assert observed_task is caller_task
+
+
+@pytest.mark.asyncio
+async def test_disconnect_all_has_one_overall_shutdown_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy import connection_cleanup
+
+    manager = MCPClientManager(server_configs=[])
+    first = BlockingConnection()
+    second = BlockingConnection()
+    manager._connections.update(
+        {
+            "first": cast(BaseTransportConnection, first),
+            "second": cast(BaseTransportConnection, second),
+        }
+    )
+    monkeypatch.setattr(connection_cleanup, "_DISCONNECT_ALL_TIMEOUT_SECONDS", 0.01)
+
+    await asyncio.wait_for(manager.disconnect_all(), timeout=0.5)
+
+    assert first.disconnect_cancelled is True
+    assert second.disconnect_started.is_set() is False
+    assert manager._connections == {}
 
 
 @pytest.mark.asyncio

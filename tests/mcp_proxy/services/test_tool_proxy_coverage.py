@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.mcp_proxy.tools.results import create_results_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +31,7 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
 ) -> None:
     config = ToolResultOffloadConfig(
         threshold_chars=3_000,
-        max_envelope_chars=2_000,
+        max_envelope_chars=TEST_MAX_ENVELOPE_CHARS,
         preview_chars=200,
         chunk_chars=200,
         max_stored_chars=10_000,
@@ -106,7 +107,7 @@ async def test_wrapper_originated_single_item_retrieval_is_never_offloaded(
 ) -> None:
     config = ToolResultOffloadConfig(
         threshold_chars=3_000,
-        max_envelope_chars=2_000,
+        max_envelope_chars=TEST_MAX_ENVELOPE_CHARS,
         preview_chars=200,
         chunk_chars=200,
         max_stored_chars=10_000,

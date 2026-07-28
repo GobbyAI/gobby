@@ -4,11 +4,12 @@ import zipfile
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.skills.hubs.base import DownloadResult
+from gobby.skills.hubs.github_topic import GitHubTopicProvider
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
@@ -450,6 +451,7 @@ Content here.
                 path=str(skill_dir),
                 version="1.0.0",
                 slug="commit-message",
+                provenance={"provider": "generic", "opaque": "value"},
             )
         )
 
@@ -501,9 +503,10 @@ Content here.
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("install_skill")
 
-        await tool(source="clawdhub:commit-message")
+        result = await tool(source="clawdhub:commit-message")
 
         # Verify provider was fetched for correct hub
+        assert result["success"] is True
         mock_hub_manager.get_provider.assert_called_with("clawdhub")
         assert mock_hub_manager.get_provider.call_count >= 1
         assert mock_hub_manager.get_provider.call_args is not None
@@ -511,6 +514,45 @@ Content here.
         mock_provider.download_skill.assert_called_once()
         assert mock_provider.download_skill.call_count == 1
         assert mock_provider.download_skill.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_install_skill_topic_hub_rejects_mismatched_provenance(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        skill_dir = tmp_path / "example-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: example-skill\ndescription: Example\nversion: '1.0.0'\n---\n# Example\n"
+        )
+        provider = MagicMock(spec=GitHubTopicProvider)
+        provider.download_skill = AsyncMock(
+            return_value=DownloadResult(
+                success=True,
+                path=str(skill_dir),
+                version="a" * 40,
+                slug="owner/repo:path",
+                provenance={
+                    "item_id": "other/repo:path",
+                    "repo": "other/repo",
+                    "path": "path",
+                    "sha": "a" * 40,
+                },
+            )
+        )
+        mock_hub_manager.get_provider.return_value = provider
+        registry = create_skills_registry(db, hub_manager=mock_hub_manager)
+
+        result = await registry.get_tool("install_skill")(source="clawdhub:owner/repo:path")
+
+        assert result == {
+            "success": False,
+            "error": "Failed to download from hub: item_unavailable",
+        }
 
     @pytest.mark.asyncio
     async def test_install_skill_hub_accepts_nested_slug(
@@ -590,6 +632,7 @@ Content here.
 
         registry = create_skills_registry(db)  # No hub_manager
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="clawdhub:commit-message")
 

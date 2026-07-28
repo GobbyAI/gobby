@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Never
 
 import psycopg
+from psycopg import sql
 
 RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS = 1.0
 
@@ -72,10 +73,14 @@ async def _run_child[T](
 
         if statement_timeout_remaining:
             timeout_ms = _timeout_milliseconds(_require_remaining(work_cutoff))
-            await connection.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
+            await connection.execute(
+                sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(timeout_ms))
+            )
         if lock_timeout:
             timeout_ms = _timeout_milliseconds(_require_remaining(work_cutoff))
-            await connection.execute(f"SET LOCAL lock_timeout = {timeout_ms}")
+            await connection.execute(
+                sql.SQL("SET LOCAL lock_timeout = {}").format(sql.Literal(timeout_ms))
+            )
 
         result = await work(connection, _require_remaining(work_cutoff))
         _require_remaining(work_cutoff)
@@ -148,6 +153,8 @@ def _result_or_raise[T](child: asyncio.Task[T], state: _RunState) -> T:
     except _WorkBudgetExpired as exc:
         _raise_timeout(exc)
     except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable) as exc:
+        if state.commit_submitted and not state.commit_observed:
+            _raise_indeterminate(exc)
         _raise_timeout(exc)
     except BaseException as exc:
         if state.commit_submitted and not state.commit_observed:

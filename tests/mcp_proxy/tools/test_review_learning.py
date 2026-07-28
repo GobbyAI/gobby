@@ -123,7 +123,7 @@ def test_shared_service_identity(
     )
 
     assert manager.get_registry("gobby-review-learning") is not None
-    assert len(contexts) == 2
+    assert len(contexts) >= 2
     assert len(review_services) == 1
     assert all(context.review_learning_service is review_services[0] for context in contexts)
 

@@ -538,6 +538,8 @@ class TestCreateTaskTool:
         )
 
         mock_task_manager.update_task.assert_not_called()
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] == "Test task completion is observable."
         assert "validation_generated" not in result
 
     @pytest.mark.asyncio

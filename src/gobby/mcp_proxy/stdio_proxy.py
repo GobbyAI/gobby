@@ -69,6 +69,7 @@ class DaemonProxyDependencies:
 # A failed lookup (parent_pid mismatch, daemon busy, session not yet active)
 # is retried after this delay rather than permanently giving up.
 _BOOTSTRAP_RETRY_INTERVAL_SECONDS: float = 10.0
+_MAX_INTENT_QUERY_CHARS = 1_024
 
 
 def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
@@ -318,7 +319,7 @@ class DaemonProxy:
         if session_id:
             request_kwargs["session_id"] = session_id
         if intent and tool_name not in WAIT_TOOL_NAMES:
-            request_kwargs["params"] = {"intent": intent}
+            request_kwargs["params"] = {"intent": intent[:_MAX_INTENT_QUERY_CHARS]}
         return await self._request(
             "POST",
             request_path,

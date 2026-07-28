@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp.types import CallToolResult, ImageContent, TextContent
 
+import gobby.mcp_proxy.services.result_offload as result_offload_module
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.services.result_offload import (
     _WRAPPER_MUTATION_RESERVE,
@@ -18,7 +19,9 @@ from gobby.mcp_proxy.services.tool_execution import _execute_tool_dispatch
 from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit, SearchQuerySyntaxError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
+pytestmark = pytest.mark.unit
 RESULT_ID = "11111111-1111-1111-1111-111111111111"
 PROJECT_ID = "22222222-2222-2222-2222-222222222222"
 
@@ -58,7 +61,7 @@ class DispatchService:
 def _config(**overrides: Any) -> ToolResultOffloadConfig:
     values: dict[str, Any] = {
         "threshold_chars": 3_000,
-        "max_envelope_chars": 2_000,
+        "max_envelope_chars": TEST_MAX_ENVELOPE_CHARS,
         "preview_chars": 400,
         "chunk_chars": 500,
         "max_stored_chars": 10_000,
@@ -688,6 +691,37 @@ async def test_envelope_budget_reserves_the_intent_matches_field() -> None:
     )
 
     assert actual["matches"] == []
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persistence_fails", [False, True])
+async def test_over_budget_envelope_degrades_without_losing_success(
+    monkeypatch: pytest.MonkeyPatch,
+    persistence_fails: bool,
+) -> None:
+    harness = _harness()
+    if persistence_fails:
+        harness.store.save.side_effect = RuntimeError("storage unavailable")
+    monkeypatch.setattr(
+        result_offload_module,
+        "_fit_text_field",
+        lambda *_args, **_kwargs: "x" * 5_000,
+    )
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result={"payload": "z" * 4_000},
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual["offloaded"] is True
+    assert actual["retrieval_available"] is (not persistence_fails)
+    assert "preview" not in actual
     assert _serialized_size(actual) <= (
         harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
     )

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.hub.postgres import PostgresHubDatabase, _advisory_lock_keys
+from gobby.storage.hub.postgres import PostgresHubDatabase, advisory_lock_keys
 from gobby.storage.hub.protocol import (
     DispatchMutexRow,
     HubDatabase,
@@ -257,9 +257,7 @@ def test_nested_lock_target_acquires_both_lookup_branch(
 def test_session_registration_lock_key_excludes_project_identity() -> None:
     registration_lock = SessionRegistration("ext", "machine", "codex", "terminal")
 
-    assert _advisory_lock_keys(registration_lock) == (
-        "session_register:ext|machine|codex|terminal",
-    )
+    assert advisory_lock_keys(registration_lock) == ("session_register:ext|machine|codex|terminal",)
 
 
 def test_nested_lock_target_acquires_both_recovery_branch(

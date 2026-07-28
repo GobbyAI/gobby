@@ -24,7 +24,7 @@ class RecommendationService:
         self,
         llm_service: Any,
         mcp_manager: Any,
-        db: HubDatabase,
+        db: HubDatabase | None,
         semantic_search: Any | None = None,
         project_id: str | None = None,
         config: RecommendToolsConfig | None = None,
@@ -34,7 +34,7 @@ class RecommendationService:
         self._semantic_search = semantic_search
         self._project_id = project_id
         self._config = config
-        self._loader = PromptLoader(db=db)
+        self._loader = PromptLoader(db=db) if db is not None else None
 
     def _get_config(self) -> RecommendToolsConfig:
         """Get config with fallback to defaults."""
@@ -147,6 +147,9 @@ class RecommendationService:
         if not semantic_result.get("success") or not semantic_result.get("recommendations"):
             # Fall back to pure LLM if semantic fails
             return await self._recommend_llm(task_description)
+        if self._loader is None:
+            semantic_result["search_mode"] = "hybrid_fallback"
+            return semantic_result
 
         # Use LLM to re-rank and add reasoning
         try:
@@ -196,6 +199,12 @@ class RecommendationService:
 
     async def _recommend_llm(self, task_description: str) -> dict[str, Any]:
         """Recommend tools using LLM (original behavior)."""
+        if self._loader is None:
+            return {
+                "success": False,
+                "error": "Recommendation prompt storage is unavailable",
+                "task": task_description,
+            }
         try:
             config = self._get_config()
             available_servers = self._mcp_manager.get_available_servers()

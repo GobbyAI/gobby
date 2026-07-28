@@ -108,7 +108,7 @@ async def advisory_lock(
     lock: LockTarget,
 ) -> AsyncIterator[None]:
     """Hold typed PostgreSQL session locks without an idle transaction."""
-    lock_keys = _advisory_lock_keys(lock)
+    lock_keys = advisory_lock_keys(lock)
     raw_conn, cancellation = await _await_task_completion(
         asyncio.create_task(
             asyncio.to_thread(open_advisory_lock_connection, conninfo, application_name)
@@ -210,20 +210,20 @@ class _PostgresTransaction:
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
         result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
-        return _PostgresCursor(result)
+        return PostgresCursor(result)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         materialized = [tuple(row) for row in rows]
         if not materialized:
-            return _PostgresCursor(None, rowcount=0)
+            return PostgresCursor(None, rowcount=0)
 
         driver_executemany = getattr(self._conn, "executemany", None)
         if callable(driver_executemany):
             driver_executemany(sql, materialized)
-            return _PostgresCursor(None)
+            return PostgresCursor(None)
         with self._conn.cursor() as cursor:
             cursor.executemany(sql, materialized)
-            return _PostgresCursor(None, rowcount=cursor.rowcount)
+            return PostgresCursor(None, rowcount=cursor.rowcount)
 
     def savepoint(self, name: str) -> Savepoint:
         quoted_name = _quote_identifier(name)
@@ -254,14 +254,14 @@ class _PostgresTransaction:
             self._acquire_advisory_lock(f"task_seq:{lock.project_id}")
             return
 
-        for lock_key in _advisory_lock_keys(lock):
+        for lock_key in advisory_lock_keys(lock):
             self._acquire_advisory_lock(lock_key)
 
     def _acquire_advisory_lock(self, lock_key: str) -> None:
         self.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
 
 
-class _PostgresCursor:
+class PostgresCursor:
     """Cursor adapter whose buffered rows survive returning a connection to the pool.
 
     It retains normal sequential ``fetchone`` and ``fetchall`` behavior.
@@ -273,7 +273,7 @@ class _PostgresCursor:
         self._rows: list[Row] | None = None
         self._position = 0
 
-    def materialize(self) -> _PostgresCursor:
+    def materialize(self) -> PostgresCursor:
         if self._cursor is None:
             return self
         rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
@@ -352,7 +352,7 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
-def _conninfo_with_utc_session_timezone(conninfo: str) -> str:
+def conninfo_with_utc_session_timezone(conninfo: str) -> str:
     parsed = conninfo_to_dict(conninfo)
     raw_options = parsed.get("options")
     options = raw_options if isinstance(raw_options, str) else ""
@@ -362,13 +362,13 @@ def _conninfo_with_utc_session_timezone(conninfo: str) -> str:
     return make_conninfo("", **parsed)
 
 
-def _validate_identifier(identifier: str) -> None:
+def validate_identifier(identifier: str) -> None:
     if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
 
 
 def _quote_identifier(identifier: str) -> str:
-    _validate_identifier(identifier)
+    validate_identifier(identifier)
     return f'"{identifier}"'
 
 
@@ -449,7 +449,7 @@ async def _close_advisory_lock_connection(
         raise cancellation
 
 
-def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     if isinstance(lock, BuildDryRunMutation):
         return (f"build_dry_run:{lock.project_id}",)
     if isinstance(lock, CronRunAdmission):

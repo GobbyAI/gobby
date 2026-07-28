@@ -331,6 +331,58 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
     assert "ambient Gobby session" in no_session["error"]
 
 
+@pytest.mark.asyncio
+async def test_queue_get_failure_returns_standard_error(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_get(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(MemoryRecallDeliveryQueue, "get", fail_get)
+    with session_context_for_test(SESSION_ID):
+        result = await _registry(FakeMemoryManager(temp_db, [])).call(
+            "get_recall_memories",
+            {"recall_request_id": "request-failed"},
+        )
+
+    assert result == {
+        "success": False,
+        "recall_request_id": "request-failed",
+        "error": "Memory retrieval failed: queue unavailable",
+    }
+
+
+@pytest.mark.asyncio
+async def test_queue_pending_failure_returns_standard_error(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_sessions(temp_db)
+    _queue(
+        temp_db,
+        recall_request_id="request-pending-failed",
+        origin_turn_seq=1,
+        memory_ids=["memory-1"],
+    )
+
+    def fail_pending(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("pending unavailable")
+
+    monkeypatch.setattr(MemoryRecallDeliveryQueue, "pending", fail_pending)
+    with session_context_for_test(SESSION_ID):
+        result = await _registry(FakeMemoryManager(temp_db, [])).call(
+            "get_recall_memories",
+            {"recall_request_id": "request-pending-failed"},
+        )
+
+    assert result == {
+        "success": False,
+        "recall_request_id": "request-pending-failed",
+        "error": "Memory retrieval failed: pending unavailable",
+    }
+
+
 def test_main_memory_registry_includes_batch_recall_tool(temp_db: HubDatabase) -> None:
     manager = FakeMemoryManager(temp_db, [])
 

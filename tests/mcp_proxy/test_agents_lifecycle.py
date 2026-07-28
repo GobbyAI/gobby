@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.plans.review_evidence_models import validate_round_result
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
+from tests.review_telemetry_helpers import delivered_telemetry
 
 
 def _terminal_payload(
@@ -25,6 +26,7 @@ def _terminal_payload(
     return {
         "verdict": verdict,
         "evidence_id": evidence_id,
+        "convergence_telemetry": delivered_telemetry(),
         "reason": reason
         or {
             "reason_code": "source_drift",

@@ -10,6 +10,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
 pytestmark = pytest.mark.unit
 
@@ -287,7 +288,6 @@ class TestGobbyDaemonToolsCallTool:
     async def test_call_tool_final_wait_envelope_stays_within_shared_cap(
         self, tools_handler
     ) -> None:
-        max_envelope_chars = 2_000
         envelope = {
             "offloaded": True,
             "result_id": "11111111-1111-4111-8111-111111111111",
@@ -302,7 +302,7 @@ class TestGobbyDaemonToolsCallTool:
             intent="find completion",
         )
 
-        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= TEST_MAX_ENVELOPE_CHARS
         assert result["_mcp_metadata"]["wait_timeout_capped_by_mcp_wrapper"] is True
         assert tools_handler.tool_proxy.call_tool.await_args.kwargs["wrapper_originated"] is True
         assert tools_handler.tool_proxy.call_tool.await_args.kwargs["intent"] == "find completion"
@@ -311,7 +311,6 @@ class TestGobbyDaemonToolsCallTool:
     async def test_call_tool_final_retrieval_response_stays_within_shared_cap(
         self, tools_handler
     ) -> None:
-        max_envelope_chars = 2_000
         retrieval = {
             "success": True,
             "result_id": "11111111-1111-4111-8111-111111111111",
@@ -329,7 +328,7 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         assert "success" not in result
-        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= TEST_MAX_ENVELOPE_CHARS
         assert tools_handler.tool_proxy.call_tool.await_args.kwargs["wrapper_originated"] is True
 
     @pytest.mark.asyncio

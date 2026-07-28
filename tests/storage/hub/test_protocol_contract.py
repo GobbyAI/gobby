@@ -7,6 +7,7 @@ from types import ModuleType
 from typing import Any, ClassVar, Literal, get_args, get_origin, get_type_hints
 
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 
 pytestmark = pytest.mark.unit
 
@@ -145,9 +146,13 @@ def test_hub_database_exposes_read_only_conninfo() -> None:
 
     database = postgres_module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
     try:
-        assert database.conninfo == (
-            "user=gobby password=secret dbname=gobby host=localhost options=-ctimezone=UTC"
-        )
+        assert conninfo_to_dict(database.conninfo) == {
+            "user": "gobby",
+            "password": "secret",
+            "dbname": "gobby",
+            "host": "localhost",
+            "options": "-ctimezone=UTC",
+        }
         with pytest.raises(AttributeError):
             concrete_property.__set__(database, "postgresql://replacement")
     finally:

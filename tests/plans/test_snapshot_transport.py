@@ -4,13 +4,14 @@ import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
 from gobby.plans import review_evidence_io as snapshot_io
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     assemble_requirements_bundle,
@@ -23,6 +24,15 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 OFFLOAD_THRESHOLD_CHARS = 15_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_snapshot_page_rejects_non_bytes_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = PlanReviewEvidenceService.__new__(PlanReviewEvidenceService)
+    corrupt_evidence = cast(PlanReviewEvidence, SimpleNamespace(snapshot="invalid"))
+    monkeypatch.setattr(service, "get_evidence", lambda _evidence_id: corrupt_evidence)
+
+    with pytest.raises(ReviewEvidenceError, match="stored plan snapshot is not bytes"):
+        service.snapshot_page("evidence-1")
 
 
 def _valid_plan_bytes(*, extra: str = "") -> bytes:

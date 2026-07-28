@@ -166,8 +166,13 @@ class TestSpawnAgentDedup:
         [
             ("2026-05-22T00:00:00+00:00", None, True),
             (None, "2026-05-22T01:00:00+00:00", False),
+            (
+                "2026-05-22T00:00:00+00:00",
+                "2026-05-22T01:00:00+00:00",
+                False,
+            ),
         ],
-        ids=["closed-reviewable", "open-escalated"],
+        ids=["closed-reviewable", "open-escalated", "closed-escalated"],
     )
     async def test_allow_closed_task_permits_review_spawn_unless_escalated(
         self, db: HubDatabase, closed_at: str | None, escalated_at: str | None, expect_spawn: bool

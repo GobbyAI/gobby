@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 from gobby.agents.code_index import (
     IndexInventoryError,
     IndexToken,
@@ -280,8 +282,8 @@ def register_review_evidence_tools(
     def bind_evidence_run(evidence_id: str, run_id: str) -> dict[str, object]:
         try:
             evidence = service.bind_evidence_run(evidence_id, run_id)
-        except ReviewEvidenceError as exc:
-            return exc.to_dict()
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "bind_evidence_run_failed")
         return {
             "ok": True,
             "evidence_id": evidence.evidence_id,
@@ -312,8 +314,8 @@ def register_review_evidence_tools(
                 evidence_id,
                 spawn_failed=spawn_failed,
             )
-        except ReviewEvidenceError as exc:
-            return exc.to_dict()
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "expire_plan_review_evidence_failed")
         return {
             "ok": True,
             "evidence_id": evidence.evidence_id,
@@ -337,8 +339,8 @@ def register_review_evidence_tools(
     def verify_plan_unchanged(evidence_id: str, plan_path: str) -> dict[str, object]:
         try:
             service.verify_plan_unchanged(evidence_id, plan_path)
-        except ReviewEvidenceError as exc:
-            return exc.to_dict()
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "verify_plan_unchanged_failed")
         return {"ok": True, "evidence_id": evidence_id, "fresh": True}
 
     registry.register(
@@ -502,8 +504,8 @@ def register_review_evidence_tools(
     ) -> dict[str, object]:
         try:
             evidence = service.finalize_plan_review_evidence(evidence_id, round_result)
-        except ReviewEvidenceError as exc:
-            return exc.to_dict()
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "finalize_plan_review_evidence_failed")
         return {
             "ok": True,
             "evidence_id": evidence.evidence_id,

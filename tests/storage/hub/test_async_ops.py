@@ -11,12 +11,15 @@ from typing import Any
 import psutil
 import psycopg
 import pytest
+from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from gobby.storage.hub.async_ops import (
     RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS,
     BoundedDBTimeoutError,
     IndeterminateCommitError,
+    _result_or_raise,
+    _RunState,
     run_bounded_db,
 )
 from tests.fixtures.postgres import isolated_test_schema
@@ -69,9 +72,10 @@ class _FakeConnection:
         self.block_entered = asyncio.Event()
         self.commit_entered = asyncio.Event()
 
-    async def execute(self, query: str) -> None:
-        self.activity.append(query)
-        if self._block_first_set or query == "SELECT blocked":
+    async def execute(self, query: str | sql.Composable) -> None:
+        query_text = query.as_string() if isinstance(query, sql.Composable) else query
+        self.activity.append(query_text)
+        if self._block_first_set or query_text == "SELECT blocked":
             self._block_first_set = False
             self.block_entered.set()
             await self._stubborn_wait()
@@ -114,6 +118,23 @@ async def _assert_bounded_timeout(
 
     assert elapsed <= deadline_seconds + _SCHEDULER_TOLERANCE_SECONDS
     assert sentinel.done(), "event loop stopped making progress during bounded DB work"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error",
+    [psycopg.errors.QueryCanceled(), psycopg.errors.LockNotAvailable()],
+)
+async def test_commit_phase_driver_timeout_is_indeterminate(error: BaseException) -> None:
+    async def fail() -> None:
+        raise error
+
+    child = asyncio.create_task(fail())
+    await asyncio.gather(child, return_exceptions=True)
+    state = _RunState(commit_submitted=True, commit_observed=False)
+
+    with pytest.raises(IndeterminateCommitError):
+        _result_or_raise(child, state)
 
 
 async def _wait_for_event_loop_callback(delay: float = 0.0) -> None:
@@ -326,12 +347,9 @@ def _install_fake_connect(
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect)
 
 
-async def test_termination_matrix(
-    monkeypatch: pytest.MonkeyPatch,
-    postgres_database_url: str,
-    async_ops_schema: str,
-) -> None:
-    """Every pre-commit wait site terminates inside the caller's original deadline."""
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_blocked_connect_terminates_within_deadline() -> None:
     threads_before = {thread.ident for thread in threading.enumerate()}
     accepted = asyncio.Event()
     release_server = asyncio.Event()
@@ -372,30 +390,48 @@ async def test_termination_matrix(
         server.close()
         await server.wait_closed()
 
-    cases = (("first SET LOCAL", True), ("server-side statement", False))
-    for label, block_first_set in cases:
-        connection = _FakeConnection(block_first_set=block_first_set)
-        with monkeypatch.context() as fake_patch:
-            _install_fake_connect(fake_patch, connection)
+    assert {thread.ident for thread in threading.enumerate()} == threads_before
 
-            async def blocked_work(conn: Any, _remaining: float) -> None:
-                await conn.execute("SELECT blocked")
 
-            await _assert_bounded_timeout(
-                run_bounded_db(
-                    blocked_work,
-                    conninfo="postgresql://unused",
-                    deadline_seconds=_DEADLINE_SECONDS,
-                )
-            )
-        assert connection.block_entered.is_set(), label
-        assert connection.activity.count("cancel-1") == 1, label
-        assert connection.activity.count("cancel-2") == 1, label
-        assert connection.activity.count("hard-close") == 1, label
-        activity_at_return = list(connection.activity)
-        await _wait_for_event_loop_callback(0.02)
-        assert connection.activity == activity_at_return, label
+@pytest.mark.unit
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "block_first_set",
+    [True, False],
+    ids=["set-local", "statement"],
+)
+async def test_fake_connection_wait_terminates_within_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    block_first_set: bool,
+) -> None:
+    connection = _FakeConnection(block_first_set=block_first_set)
+    _install_fake_connect(monkeypatch, connection)
 
+    async def blocked_work(conn: Any, _remaining: float) -> None:
+        await conn.execute("SELECT blocked")
+
+    await _assert_bounded_timeout(
+        run_bounded_db(
+            blocked_work,
+            conninfo="postgresql://unused",
+            deadline_seconds=_DEADLINE_SECONDS,
+        )
+    )
+    assert connection.block_entered.is_set()
+    assert connection.activity.count("cancel-1") == 1
+    assert connection.activity.count("cancel-2") == 1
+    assert connection.activity.count("hard-close") == 1
+    activity_at_return = list(connection.activity)
+    await _wait_for_event_loop_callback(0.02)
+    assert connection.activity == activity_at_return
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_foreign_row_lock_wait_terminates_within_deadline(
+    postgres_database_url: str,
+    async_ops_schema: str,
+) -> None:
     conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     table = "bounded_async_termination_matrix"
     async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as setup:
@@ -423,6 +459,15 @@ async def test_termination_matrix(
         await holder.rollback()
         await holder.close()
 
+
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_proxy_blocked_cancellation_terminates_within_deadline(
+    postgres_database_url: str,
+    async_ops_schema: str,
+) -> None:
+    threads_before = {thread.ident for thread in threading.enumerate()}
+    conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     async with _PostgresProxy(conninfo, block_cancel=True) as proxy:
 
         async def wait_on_server(conn: Any, _remaining: float) -> None:
@@ -442,6 +487,8 @@ async def test_termination_matrix(
     assert {thread.ident for thread in threading.enumerate()} == threads_before
 
 
+@pytest.mark.unit
+@pytest.mark.slow
 async def test_repeated_timeouts_leave_stable_tasks_threads_and_fds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -471,6 +518,8 @@ async def test_repeated_timeouts_leave_stable_tasks_threads_and_fds(
     assert psutil.Process().num_fds() == fds_before
 
 
+@pytest.mark.unit
+@pytest.mark.slow
 async def test_supervisor_cancellation_reaps_precommit_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -497,6 +546,8 @@ async def test_supervisor_cancellation_reaps_precommit_child(
     assert connection.activity.count("hard-close") == 1
 
 
+@pytest.mark.unit
+@pytest.mark.slow
 async def test_supervisor_cancellation_during_commit_is_indeterminate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -523,6 +574,8 @@ async def test_supervisor_cancellation_during_commit_is_indeterminate(
     assert connection.activity.count("hard-close") == 1
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 async def test_lock_release_on_hard_close(
     monkeypatch: pytest.MonkeyPatch,
     postgres_database_url: str,
@@ -566,6 +619,8 @@ async def test_lock_release_on_hard_close(
             await verifier.execute(f"SELECT id FROM {table} WHERE id = 1 FOR UPDATE")
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 async def test_commit_phase_outcomes(
     postgres_database_url: str,
     async_ops_schema: str,

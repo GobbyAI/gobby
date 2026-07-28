@@ -54,6 +54,31 @@ def _identity_arguments(arguments: str | dict[str, Any] | None) -> dict[str, Any
     return {}
 
 
+def _track_proxy_outcome_in_worker(
+    variable_manager: SessionVariableManager,
+    caller_server_name: str,
+    caller_tool_name: str,
+    caller_arguments: str | dict[str, Any] | None,
+    outcome: _CallToolOutcome,
+) -> None:
+    track_proxy_outcome(
+        variable_manager,
+        outcome.effective_session_id,
+        (
+            caller_server_name,
+            caller_tool_name,
+            _identity_arguments(caller_arguments),
+        ),
+        (
+            outcome.server_name,
+            outcome.tool_name,
+            outcome.arguments,
+        ),
+        outcome.result,
+        outcome.outcome_class.value,
+    )
+
+
 def _tracking_variable_manager(service: Any) -> SessionVariableManager | None:
     hook_manager = service._resolve_hook_manager()
     if hook_manager is None:
@@ -247,11 +272,6 @@ async def call_tool(
     intent: str | None = None,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
-    caller_identity = (
-        server_name,
-        tool_name,
-        _identity_arguments(arguments),
-    )
     outcome = await _call_tool_impl(
         service,
         server_name,
@@ -268,17 +288,12 @@ async def call_tool(
         sv_mgr = _tracking_variable_manager(service)
         if sv_mgr is not None:
             await asyncio.to_thread(
-                track_proxy_outcome,
+                _track_proxy_outcome_in_worker,
                 sv_mgr,
-                outcome.effective_session_id,
-                caller_identity,
-                (
-                    outcome.server_name,
-                    outcome.tool_name,
-                    deepcopy(outcome.arguments),
-                ),
-                outcome.result,
-                outcome.outcome_class.value,
+                server_name,
+                tool_name,
+                arguments,
+                outcome,
             )
     except Exception as exc:
         logger.debug(

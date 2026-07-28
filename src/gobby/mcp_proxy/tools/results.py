@@ -214,8 +214,8 @@ def _invalid_arguments(message: str) -> dict[str, Any]:
 
 
 def _validate_search_arguments(*, query: object, limit: object) -> dict[str, Any] | None:
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
-        return _invalid_arguments("limit must be between 1 and 50")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_SEARCH_LIMIT:
+        return _invalid_arguments(f"limit must be between 1 and {_MAX_SEARCH_LIMIT}")
     if not isinstance(query, str):
         return _invalid_arguments("query must be a string")
     if not query.strip():
@@ -247,14 +247,18 @@ def _hydrate_matches(
     result_id: str,
     hits: list[SearchHit],
 ) -> list[dict[str, Any]]:
+    if not hits:
+        return []
+    rows = db.fetchall(
+        """SELECT id, ordinal, start_offset, end_offset, content
+           FROM tool_result_chunks
+           WHERE result_id = %s AND id = ANY(%s)""",
+        (result_id, [hit.id for hit in hits]),
+    )
+    rows_by_id = {str(row["id"]): row for row in rows}
     matches: list[dict[str, Any]] = []
     for hit in hits:
-        row = db.fetchone(
-            """SELECT ordinal, start_offset, end_offset, content
-               FROM tool_result_chunks
-               WHERE id = %s AND result_id = %s""",
-            (hit.id, result_id),
-        )
+        row = rows_by_id.get(hit.id)
         if row is None:
             continue
         matches.append(

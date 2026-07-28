@@ -389,7 +389,6 @@ class TestCloseTaskTool:
             assert close_call.kwargs["closed_commit_sha"] == "new-commit"
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_close_task_fails_when_commit_sha_cannot_be_resolved(
         self, mock_task_manager: MagicMock
     ) -> None:

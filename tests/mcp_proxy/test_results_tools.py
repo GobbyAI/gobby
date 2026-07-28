@@ -9,19 +9,22 @@ import pytest
 
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
-from gobby.mcp_proxy.tools.results import create_results_registry
-from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS
+from gobby.mcp_proxy.tools.results import _hydrate_matches, create_results_registry
+from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tool_results import ToolResultStore
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.workflows.enforcement.blocking import DISCOVERY_TOOLS
+from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
+
+pytestmark = pytest.mark.unit
 
 
 def _config(*, retention_days: int = 13) -> ToolResultOffloadConfig:
     return ToolResultOffloadConfig(
         threshold_chars=3_000,
-        max_envelope_chars=2_000,
+        max_envelope_chars=TEST_MAX_ENVELOPE_CHARS,
         preview_chars=200,
         chunk_chars=200,
         max_stored_chars=10_000,
@@ -72,6 +75,40 @@ def _meta(result_id: str, project_id: str, *, total_chars: int = 500) -> dict[st
     }
 
 
+def test_hydrate_matches_uses_one_bulk_query_and_preserves_hit_order() -> None:
+    db = MagicMock()
+    db.fetchall.return_value = [
+        {
+            "id": "chunk-2",
+            "ordinal": 2,
+            "start_offset": 20,
+            "end_offset": 30,
+            "content": "second",
+        },
+        {
+            "id": "chunk-1",
+            "ordinal": 1,
+            "start_offset": 10,
+            "end_offset": 20,
+            "content": "first",
+        },
+    ]
+
+    matches = _hydrate_matches(
+        db,
+        result_id="result-1",
+        hits=[
+            SearchHit(id="chunk-1", score=9.0),
+            SearchHit(id="missing", score=8.0),
+            SearchHit(id="chunk-2", score=7.0),
+        ],
+    )
+
+    db.fetchall.assert_called_once()
+    assert [match["content"] for match in matches] == ["first", "second"]
+    assert [match["score"] for match in matches] == [9.0, 7.0]
+
+
 def _mocked_registry(
     *,
     config: ToolResultOffloadConfig,
@@ -98,6 +135,7 @@ def _mocked_registry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_get_tool_result_pages_content_and_clamps_to_shared_budget(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -131,6 +169,7 @@ async def test_get_tool_result_pages_content_and_clamps_to_shared_budget(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_search_tool_result_hydrates_ranked_chunks_within_shared_budget(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -162,6 +201,7 @@ async def test_search_tool_result_hydrates_ranked_chunks_within_shared_budget(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_unknown_expired_and_cross_project_ids_share_configured_error(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

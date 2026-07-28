@@ -11,6 +11,7 @@ import pytest
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+from tests.completion_delivery_helpers import record_removals
 
 pytestmark = pytest.mark.unit
 
@@ -1230,19 +1231,6 @@ class TestCleanupFailedSpawnWakesWaiter:
         runner = SimpleNamespace(run_storage=run_storage, session_manager=None)
         return SimpleNamespace(wake=wake, registry=registry, runner=runner)
 
-    def _record_removals(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> list[tuple[str, list[str] | None]]:
-        import gobby.agents.completion_subscribers as subscribers_module
-
-        removals: list[tuple[str, list[str] | None]] = []
-
-        def _record(*, db: object, run_id: str, session_ids: list[str] | None = None) -> None:
-            removals.append((run_id, session_ids))
-
-        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
-        return removals
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize("ism_persisted", [True, False])
     async def test_spawn_failure_delivers_and_settles_rows(
@@ -1251,7 +1239,7 @@ class TestCleanupFailedSpawnWakesWaiter:
         from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import cleanup_failed_spawn
 
         harness = self._harness(ism_persisted=ism_persisted)
-        removals = self._record_removals(monkeypatch)
+        removals = record_removals(monkeypatch)
 
         await cleanup_failed_spawn(
             harness.runner,
