@@ -10,16 +10,22 @@ import './styles/settings.css'
 import './styles/settings-overlay.css'
 import App from './App'
 import { AppErrorBoundary } from './components/app/AppErrorBoundary'
+import { TierPreview } from './components/dev/TierPreview'
+import { isTierPreviewRequested } from './components/dev/tierPreviewConfig'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AppErrorBoundary
-      activeTab="application"
-      onReturnToChat={() => {
-        window.location.reload()
-      }}
-    >
-      <App />
-    </AppErrorBoundary>
+    {isTierPreviewRequested(window.location.search) ? (
+      <TierPreview />
+    ) : (
+      <AppErrorBoundary
+        activeTab="application"
+        onReturnToChat={() => {
+          window.location.reload()
+        }}
+      >
+        <App />
+      </AppErrorBoundary>
+    )}
   </StrictMode>,
 )
