@@ -602,6 +602,7 @@ class TestCompactSelfTerminalPath:
             side_effect=[
                 old_output,
                 old_output,
+                old_output,
                 old_output + "/compact\n'/compact' is disabled while a task is in progress\n",
             ]
         )
@@ -631,6 +632,7 @@ class TestCompactSelfTerminalPath:
             call("%12", "/compact\n", literal=True),
         ]
         assert tmux.capture_pane.await_args_list == [
+            call("%12", lines=1),
             call("%12", lines=30),
             call("%12", lines=100),
             call("%12", lines=30),
@@ -1153,6 +1155,43 @@ class TestCompactSelfFailureModes:
 
         assert result["compacted"] is False
         assert "tmux send-keys failed" in result["reason"]
+
+    def test_deleted_session_remains_terminal(self) -> None:
+        session = _make_terminal_session("codex")
+        session.status = "deleted"
+        registry, tmux = _register_compact_self(session)
+
+        result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is False
+        assert result["error_code"] == "session_deleted"
+        tmux.capture_pane.assert_not_awaited()
+
+    def test_non_live_tmux_target_blocks_before_handoff_mutation(self) -> None:
+        session = _make_terminal_session("codex")
+        session.status = "active"
+        registry, tmux = _register_compact_self(session)
+        tmux.capture_pane.return_value = None
+
+        result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is False
+        assert result["error_code"] == "tmux_target_not_live"
+
+    def test_expired_session_is_revived_through_explicit_activity_path(self) -> None:
+        session = _make_terminal_session("codex")
+        session.status = "expired"
+        registry, tmux = _register_compact_self(session)
+        activity = MagicMock(success=True, session=session)
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.reconcile_compact_session_activity",
+            return_value=activity,
+        ) as reconcile:
+            result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is True
+        reconcile.assert_called_once()
 
     def test_tmux_send_keys_timeout_returns_compacted_false(self) -> None:
         session = _make_terminal_session("claude")

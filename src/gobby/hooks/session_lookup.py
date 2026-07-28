@@ -18,6 +18,8 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     is_gobby_acp_child,
 )
+from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
@@ -308,6 +310,80 @@ class SessionLookupService:
                                 recovered_session.source,
                             )
                             return platform_session_id
+
+                        compact_resolution = resolve_compact_continuation(
+                            self._session_manager.db,
+                            machine_id=machine_id,
+                            source=event.source.value,
+                            terminal_context=event.data.get("terminal_context"),
+                        )
+                        if compact_resolution.ambiguous:
+                            detail = {
+                                "error": (
+                                    "Compact continuation matches multiple persisted sessions."
+                                ),
+                                "error_code": "compact_identity_ambiguous",
+                                "conflicting_session_ids": list(
+                                    compact_resolution.conflicting_session_ids
+                                ),
+                            }
+                            event.metadata["_session_resolution_error"] = detail
+                            self._logger.warning(
+                                "Skipping auto-registration for ambiguous compact continuation",
+                                extra={
+                                    "event": "compact_identity_ambiguous",
+                                    "observed_external_id": external_id,
+                                    **detail,
+                                },
+                            )
+                            return None
+                        if compact_resolution.session is not None:
+                            canonical = compact_resolution.session
+                            activity = reconcile_compact_session_activity(
+                                self._session_manager,
+                                canonical.id,
+                            )
+                            if not activity.success:
+                                detail = activity.error_result()
+                                event.metadata["_session_resolution_error"] = detail
+                                self._logger.warning(
+                                    "Skipping auto-registration for conflicting compact continuation",
+                                    extra={
+                                        "event": "compact_identity_reactivation_blocked",
+                                        "session_id": canonical.id,
+                                        "observed_external_id": external_id,
+                                        **detail,
+                                    },
+                                )
+                                return None
+
+                            event.metadata["_observed_external_id"] = external_id
+                            event.session_id = canonical.external_id
+                            self._session_manager.cache_session_mapping(
+                                external_id=canonical.external_id,
+                                source=event.source.value,
+                                session_id=canonical.id,
+                                machine_id=canonical.machine_id,
+                                project_id=canonical.project_id,
+                            )
+                            self._session_manager.cache_session_mapping(
+                                external_id=external_id,
+                                source=event.source.value,
+                                session_id=canonical.id,
+                                machine_id=machine_id,
+                                project_id=project_id,
+                            )
+                            self._logger.info(
+                                "Recovered pre-start compact continuation as session %s",
+                                canonical.id,
+                                extra={
+                                    "event": "compact_identity_prestart_recovered",
+                                    "session_id": canonical.id,
+                                    "canonical_external_id": canonical.external_id,
+                                    "observed_external_id": external_id,
+                                },
+                            )
+                            return canonical.id
 
                         if event.event_type == HookEventType.SESSION_END:
                             self._logger.warning(

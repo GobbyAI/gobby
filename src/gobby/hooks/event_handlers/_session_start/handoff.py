@@ -16,6 +16,7 @@ from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     consume_compact_handoff_marker,
 )
+from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.utils.injected_context import strip_injected_context
@@ -79,12 +80,10 @@ def resolve_session_start_identity(
 ) -> SessionStartResolution:
     """Resolve a terminal session start against its persisted session row.
 
-    Compaction is an in-place handoff: the same
-    (external_id, machine_id, project_id, source) row is reactivated by
-    registration. Compact classification is one-shot: an explicit compact
-    source, a handoff_ready row, or an expired row with an unconsumed compact
-    marker. A missing row degrades to a normal startup with a diagnostic
-    warning; only a contradicting terminal identity blocks.
+    Compaction is an in-place handoff. A marked row with exact terminal process
+    identity is canonical even when ingress carries a differing provider ID.
+    Compact classification is one-shot: an explicit compact source, a
+    handoff_ready row, or an expired row with an unconsumed compact marker.
     """
     if session_source == "clear" or not handler._session_manager:
         return SessionStartResolution(session=None, session_source=session_source)
@@ -121,6 +120,46 @@ def resolve_session_start_identity(
             project_id,
         )
 
+    compact_candidate_resolved = False
+    candidate_resolution = resolve_compact_continuation(
+        handler._session_manager.db,
+        machine_id=machine_id,
+        source=cli_source,
+        terminal_context=input_data.get("terminal_context"),
+    )
+    if candidate_resolution.ambiguous:
+        handler.logger.warning(
+            "Blocking compact restart: terminal process matches multiple compact rows",
+            extra={
+                "event": "compact_identity_ambiguous",
+                "observed_external_id": external_id,
+                "conflicting_session_ids": list(candidate_resolution.conflicting_session_ids),
+            },
+        )
+        return SessionStartResolution(
+            session=session,
+            session_source=session_source,
+            blocked_reason=(
+                "Compact restart terminal identity matches multiple persisted sessions."
+            ),
+        )
+    if candidate_resolution.session is not None:
+        compact_candidate_resolved = True
+        candidate = candidate_resolution.session
+        if session is None or session.id != candidate.id:
+            handler.logger.info(
+                "Canonicalized compact provider identity for session %s",
+                candidate.id,
+                extra={
+                    "event": "compact_identity_canonicalized",
+                    "session_id": candidate.id,
+                    "canonical_external_id": candidate.external_id,
+                    "observed_external_id": external_id,
+                    "superseded_session_id": getattr(session, "id", None),
+                },
+            )
+        session = candidate
+
     marker_present = False
     if session is not None:
         try:
@@ -132,9 +171,13 @@ def resolve_session_start_identity(
             handler.logger.debug("Could not read compact marker for %s: %s", session.id, e)
 
     status = getattr(session, "status", None)
-    is_compact = session_source == "compact" or (
-        session is not None
-        and (status == "handoff_ready" or (status == "expired" and marker_present))
+    is_compact = (
+        session_source == "compact"
+        or compact_candidate_resolved
+        or (
+            session is not None
+            and (status == "handoff_ready" or (status == "expired" and marker_present))
+        )
     )
     if not is_compact:
         return SessionStartResolution(session=session, session_source=session_source)

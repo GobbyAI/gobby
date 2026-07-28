@@ -11,6 +11,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -246,3 +247,73 @@ class TestRegisterSession:
 
         assert "error" in result
         assert "DB locked" in result["error"]
+
+    def test_ambient_matching_identity_reactivates_and_rereads_same_row(self) -> None:
+        session_manager = MagicMock()
+        ambient = MagicMock(
+            id="uuid-ambient",
+            ref="#42",
+            external_id="provider-stable-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
+        revived = MagicMock(
+            id="uuid-ambient",
+            ref="#42",
+            external_id="provider-stable-id",
+            status="active",
+            source="codex",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
+        session_manager.resolve_session_reference.return_value = ambient.id
+        session_manager.get.return_value = ambient
+        session_manager.update_status_from_activity.return_value = revived
+        register = _make_registry(session_manager=session_manager).get_tool("register_session")
+        assert register is not None
+
+        with session_context_for_test("#42"):
+            result = register(
+                external_id="provider-stable-id",
+                source="codex",
+                machine_id="machine-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+            )
+
+        assert result["session_id"] == ambient.id
+        assert result["session_ref"] == "#42"
+        assert result["status"] == "active"
+        session_manager.update_status_from_activity.assert_called_once_with(
+            ambient.id,
+            "active",
+        )
+        session_manager.register.assert_not_called()
+
+    def test_ambient_conflicting_external_id_returns_identity_mismatch(self) -> None:
+        session_manager = MagicMock()
+        ambient = MagicMock(
+            id="uuid-ambient",
+            ref="#42",
+            external_id="provider-stable-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
+        session_manager.resolve_session_reference.return_value = ambient.id
+        session_manager.get.return_value = ambient
+        register = _make_registry(session_manager=session_manager).get_tool("register_session")
+        assert register is not None
+
+        with session_context_for_test("#42"):
+            result = register(
+                external_id="conflicting-observed-id",
+                source="codex",
+                machine_id="machine-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+            )
+
+        assert result["error_code"] == "identity_mismatch"
+        assert result["session_id"] == ambient.id
+        assert result["canonical_external_id"] == "provider-stable-id"
+        session_manager.update_status_from_activity.assert_not_called()
+        session_manager.register.assert_not_called()

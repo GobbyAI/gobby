@@ -10,6 +10,7 @@ from gobby.sessions.handoff_identity import (
     sessions_have_continuous_terminal_context,
     terminal_context_matches_session,
     terminal_contexts_match,
+    terminal_process_contexts_match,
 )
 
 pytestmark = pytest.mark.unit
@@ -26,6 +27,25 @@ def test_terminal_contexts_reject_same_pane_on_different_tmux_socket() -> None:
     assert not terminal_contexts_match(
         {"tmux_pane": "%12", "tmux_socket_path": "/tmp/old"},
         {"tmux_pane": "%12", "tmux_socket_path": "/tmp/new"},
+    )
+
+
+def test_terminal_process_contexts_require_exact_process_birth_identity() -> None:
+    canonical = {
+        "tmux_pane": "%12",
+        "tmux_socket_path": "/tmp/tmux",
+        "parent_pid": 1234,
+        "parent_create_time": 5678.25,
+    }
+
+    assert terminal_process_contexts_match(canonical, dict(canonical))
+    assert not terminal_process_contexts_match(
+        canonical,
+        {**canonical, "parent_create_time": 5679.25},
+    )
+    assert not terminal_process_contexts_match(
+        canonical,
+        {key: value for key, value in canonical.items() if key != "parent_create_time"},
     )
 
 

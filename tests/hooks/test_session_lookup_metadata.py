@@ -2,13 +2,16 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_lookup import SessionLookupService
+from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.storage.session_activity import SessionActivityResolution
+from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
 
@@ -209,6 +212,51 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
         "tmux-capable-session",
         {"cwd": "/work/repos/gobby"},
     )
+
+
+@patch("gobby.hooks.session_lookup.reconcile_compact_session_activity")
+@patch("gobby.hooks.session_lookup.resolve_compact_continuation")
+def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
+    mock_resolve_compact: MagicMock,
+    mock_reconcile: MagicMock,
+) -> None:
+    canonical = SimpleNamespace(
+        id="canonical-session",
+        external_id="canonical-provider-id",
+        machine_id="machine-id",
+        project_id="project-1",
+        source="claude",
+        title="Canonical session",
+    )
+    canonical_session = cast(Session, canonical)
+    mock_resolve_compact.return_value = CompactIdentityResolution(session=canonical_session)
+    mock_reconcile.return_value = SessionActivityResolution(session=canonical_session)
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = None
+    session_manager.backfill_terminal_context.return_value = (canonical, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(
+        session_manager,
+        session_task_manager,
+        MagicMock(return_value="project-1"),
+    )
+    event = _event()
+    event.data["terminal_context"] = {
+        "tmux_pane": "%1",
+        "parent_pid": 1234,
+        "parent_create_time": 5678.0,
+    }
+
+    result = service.resolve(event)
+
+    assert result == canonical.id
+    assert event.session_id == canonical.external_id
+    assert event.metadata["_observed_external_id"] == "claude-external"
+    assert event.metadata["_platform_session_id"] == canonical.id
+    session_manager.register_session.assert_not_called()
 
 
 def test_task_context_uses_stage_native_state() -> None:

@@ -67,6 +67,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
         """
         from gobby.utils.machine_id import get_machine_id
         from gobby.utils.project_context import get_project_context
+        from gobby.utils.session_context import get_current_session_id
 
         if session_manager is None:
             return {"error": "Session manager not available"}
@@ -87,6 +88,54 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             return {
                 "error": "Could not determine project_id — run 'gobby init' or pass it explicitly"
             }
+
+        ambient_session_ref = get_current_session_id()
+        if ambient_session_ref:
+            ambient_session_id = session_manager.resolve_session_reference(
+                ambient_session_ref,
+                resolved_project_id,
+            )
+            ambient_session = (
+                session_manager.get(ambient_session_id) if ambient_session_id is not None else None
+            )
+            if ambient_session is None:
+                return {
+                    "error": "Current MCP session could not be resolved.",
+                    "error_code": "ambient_session_not_found",
+                }
+            if ambient_session.source == source:
+                identity_matches = (
+                    ambient_session.external_id == external_id
+                    and ambient_session.machine_id == resolved_machine_id
+                    and ambient_session.project_id == resolved_project_id
+                )
+                if not identity_matches:
+                    return {
+                        "error": ("Registration identity does not match the current MCP session."),
+                        "error_code": "identity_mismatch",
+                        "session_id": ambient_session.id,
+                        "session_ref": ambient_session.ref,
+                        "canonical_external_id": ambient_session.external_id,
+                        "observed_external_id": external_id,
+                    }
+                revived = session_manager.update_status_from_activity(
+                    ambient_session.id,
+                    "active",
+                )
+                if revived is None:
+                    return {
+                        "error": "Current MCP session cannot be reactivated.",
+                        "error_code": "ambient_session_terminal",
+                        "session_id": ambient_session.id,
+                    }
+                return {
+                    "session_id": revived.id,
+                    "session_ref": revived.ref,
+                    "external_id": revived.external_id,
+                    "status": revived.status,
+                    "source": revived.source,
+                    "project_id": revived.project_id,
+                }
 
         try:
             session = session_manager.register(

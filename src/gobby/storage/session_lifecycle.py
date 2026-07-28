@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("sessions", ("parent_session_id",)),
-    ("tasks", ("created_in_session_id", "closed_in_session_id")),
+    ("tasks", ("created_in_session_id", "closed_in_session_id", "claimed_by_session_id")),
     ("memories", ("source_session_id",)),
     ("agent_runs", ("parent_session_id", "child_session_id", "claimed_session_id")),
     ("workflow_audit_log", ("session_id",)),
@@ -73,6 +73,23 @@ def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, .
         guards.append(f"NOT EXISTS (SELECT 1 FROM {table_name} {alias} WHERE {column_predicate})")
 
     return tuple(guards)
+
+
+def session_has_retained_references(db: HubDatabase, session_id: str) -> bool:
+    """Return whether any durable record still references a session."""
+    guards = _build_empty_session_prune_reference_guards(db)
+    if not guards:
+        return False
+    row = db.fetchone(
+        f"""
+        SELECT 1 AS retained
+        FROM sessions
+        WHERE id = %s
+          AND NOT ({" AND ".join(guards)})
+        """,  # nosec B608 -- guard SQL is generated from fixed identifiers above.
+        (session_id,),
+    )
+    return row is not None
 
 
 def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:

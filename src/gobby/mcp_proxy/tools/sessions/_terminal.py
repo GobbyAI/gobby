@@ -64,6 +64,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 
 if TYPE_CHECKING:
@@ -464,6 +465,12 @@ def register_terminal_tools(
                 "compacted": False,
                 "reason": f"unsupported session_type: {session_type}",
             }
+        if getattr(session, "status", None) == "deleted":
+            return {
+                "compacted": False,
+                "reason": f"Session {resolved_session_id} is deleted",
+                "error_code": "session_deleted",
+            }
 
         command = _CLI_COMPACT_COMMANDS.get(source) if source else None
         if command is None:
@@ -494,6 +501,49 @@ def register_terminal_tools(
             return {"compacted": False, "reason": error}
         assert target is not None
         assert tmux is not None
+
+        try:
+            pane_probe = await tmux.capture_pane(target, lines=1)
+        except Exception as exc:
+            logger.warning(
+                "Failed verifying compact_self tmux target %s for session %s",
+                target,
+                resolved_session_id,
+                extra={
+                    "event": "compact_self_tmux_target_verification_failed",
+                    "session_id": resolved_session_id,
+                    "tmux_target": target,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+            return {
+                "compacted": False,
+                "reason": f"failed to verify live tmux target {target}: {exc}",
+                "error_code": "tmux_target_verification_failed",
+            }
+        if pane_probe is None:
+            return {
+                "compacted": False,
+                "reason": f"tmux target {target} is not live",
+                "error_code": "tmux_target_not_live",
+            }
+
+        if getattr(session, "status", None) == "expired":
+            activity = reconcile_compact_session_activity(
+                session_manager,
+                resolved_session_id,
+            )
+            if not activity.success:
+                detail = activity.error_result()
+                return {
+                    "compacted": False,
+                    "reason": f"{detail['error_code']}: {detail['error']}",
+                    **detail,
+                }
+            session = activity.session
+            assert session is not None
 
         refresh_result = await _refresh_compact_handoff_context(
             resolved_session_id,

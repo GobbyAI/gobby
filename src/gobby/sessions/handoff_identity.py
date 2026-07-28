@@ -63,6 +63,25 @@ def terminal_contexts_match(
     return False
 
 
+def terminal_process_contexts_match(
+    first: Mapping[str, Any] | str | None,
+    second: Mapping[str, Any] | str | None,
+) -> bool:
+    """Return whether two contexts identify the same live terminal process."""
+    first_context = parse_terminal_context_value(first)
+    second_context = parse_terminal_context_value(second)
+    if not first_context or not second_context:
+        return False
+    if not terminal_contexts_match(first_context, second_context):
+        return False
+
+    return _positive_equal(first_context, second_context, "parent_pid") and _positive_equal(
+        first_context,
+        second_context,
+        "parent_create_time",
+    )
+
+
 def _non_empty_equal(
     first_context: Mapping[str, Any],
     second_context: Mapping[str, Any],
@@ -71,6 +90,23 @@ def _non_empty_equal(
     first_value = first_context.get(field_name)
     second_value = second_context.get(field_name)
     return bool(first_value) and first_value == second_value
+
+
+def _positive_equal(
+    first_context: Mapping[str, Any],
+    second_context: Mapping[str, Any],
+    field_name: str,
+) -> bool:
+    first_value = first_context.get(field_name)
+    second_value = second_context.get(field_name)
+    if not isinstance(first_value, (int, float, str)):
+        return False
+    if not isinstance(second_value, (int, float, str)):
+        return False
+    try:
+        return float(first_value) > 0 and float(first_value) == float(second_value)
+    except (TypeError, ValueError):
+        return False
 
 
 def _tmux_scope_compatible(

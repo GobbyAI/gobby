@@ -25,8 +25,10 @@ from gobby.sessions.compact_continuation import (
     consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
 )
+from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
@@ -55,9 +57,13 @@ def _make_row(
 ) -> MagicMock:
     row = MagicMock()
     row.id = session_id
+    row.external_id = "ext-123"
+    row.machine_id = "machine-1"
+    row.source = "claude"
     row.status = status
     row.project_id = "project-1"
     row.parent_session_id = None
+    row.transcript_path = "/canonical/transcript.jsonl"
     row.terminal_context = dict(TERMINAL_CONTEXT) if terminal_context is None else terminal_context
     return row
 
@@ -337,8 +343,51 @@ class TestSessionStartInPlaceCompact:
 
         assert response.decision == "allow"
         assert event.metadata["_platform_session_id"] == "sess-123"
-        mock_dependencies["session_manager"].register_session.assert_called_once()
+        mock_dependencies["session_manager"].register_session.assert_not_called()
         mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
+
+    @patch("gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity")
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_compact_continuation")
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_compact_canonicalizes_conflicting_observed_id_without_registration(
+        self,
+        mock_sv_mgr_cls: MagicMock,
+        mock_resolve_compact: MagicMock,
+        mock_reconcile: MagicMock,
+        mock_dependencies: dict,
+    ) -> None:
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+        canonical = _make_row(session_id="canonical-session")
+        canonical.external_id = "canonical-provider-id"
+        canonical.summary_markdown = None
+        ghost = _make_row(session_id="ghost-session", status="active")
+        ghost.external_id = "conflicting-observed-id"
+        mock_dependencies["session_storage"].find_by_external_id.return_value = ghost
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: canonical if session_id == canonical.id else None
+        )
+        mock_resolve_compact.return_value = CompactIdentityResolution(session=canonical)
+        mock_reconcile.return_value = SessionActivityResolution(session=canonical)
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="conflicting-observed-id",
+            data={
+                "source": "compact",
+                "cwd": "/some/dir",
+                "terminal_context": dict(TERMINAL_CONTEXT),
+            },
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert event.session_id == "canonical-provider-id"
+        assert event.metadata["_observed_external_id"] == "conflicting-observed-id"
+        assert event.metadata["_platform_session_id"] == canonical.id
+        mock_dependencies["session_manager"].register_session.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_bounds_large_summary_with_breadcrumb(

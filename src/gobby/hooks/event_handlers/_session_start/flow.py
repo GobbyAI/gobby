@@ -18,6 +18,7 @@ from gobby.hooks.terminal_context import (
     is_gobby_acp_child,
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
@@ -510,7 +511,56 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     sandbox_enabled_val = sandbox_enabled if isinstance(sandbox_enabled, bool) else None
 
     session_id = None
-    if handler._session_manager:
+    if handler._session_manager and session_source == "compact" and resolution.session is not None:
+        canonical_session = resolution.session
+        activity = reconcile_compact_session_activity(
+            handler._session_manager,
+            canonical_session.id,
+        )
+        if not activity.success:
+            detail = activity.error_result()
+            handler.logger.warning(
+                "Blocking compact session reactivation: %s",
+                detail["error"],
+                extra={
+                    "event": "compact_identity_reactivation_blocked",
+                    "session_id": canonical_session.id,
+                    **detail,
+                },
+            )
+            return HookResponse(
+                decision="block",
+                reason=f"{detail['error_code']}: {detail['error']}",
+            )
+
+        observed_external_id = external_id
+        external_id = canonical_session.external_id
+        event.session_id = external_id
+        if observed_external_id != external_id:
+            event.metadata["_observed_external_id"] = observed_external_id
+        transcript_path = canonical_session.transcript_path or handler._derive_transcript_path(
+            cli_source,
+            input_data,
+            external_id,
+        )
+        input_data["transcript_path"] = transcript_path
+        session_id = canonical_session.id
+        handler._session_manager.cache_session_mapping(
+            external_id=external_id,
+            source=cli_source,
+            session_id=session_id,
+            machine_id=canonical_session.machine_id,
+            project_id=canonical_session.project_id,
+        )
+        if observed_external_id != external_id:
+            handler._session_manager.cache_session_mapping(
+                external_id=observed_external_id,
+                source=cli_source,
+                session_id=session_id,
+                machine_id=canonical_session.machine_id,
+                project_id=canonical_session.project_id,
+            )
+    elif handler._session_manager:
         session_id = handler._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,
@@ -530,13 +580,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             return HookResponse(
                 decision="block",
                 reason="Compact reactivation did not return a session ID.",
-            )
-        if resolution.session is not None and session_id != resolution.session.id:
-            handler.logger.warning(
-                "Compact restart reactivated session %s but identity resolution "
-                "matched %s; continuing with the registered session",
-                session_id,
-                resolution.session.id,
             )
     elif parent_session_id and session_id and handler._session_manager:
         if parent_session_id != session_id:
