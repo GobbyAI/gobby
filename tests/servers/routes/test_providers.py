@@ -247,7 +247,8 @@ class TestProviderModelsRoute:
         assert {m["context_length_source"] for m in codex} == {"unknown"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert len(droid_values) == 26
+        assert len(droid_values) == 28
+        assert "glm-5.2" in droid_values
         assert "claude-fable-5" in droid_values
         assert "claude-opus-4-7" in droid_values
         assert "gpt-5.4" in droid_values
@@ -514,9 +515,10 @@ class TestProviderModelsRoute:
             }
         ]
 
-    def test_chat_completions_endpoint_remains_catalog_only(
+    def test_healthy_ollama_endpoint_is_available_for_web_chat(
         self,
     ) -> None:
+        """LM Studio/Ollama endpoints route through Codex OSS in web chat (#19161)."""
         app = FastAPI()
         config = DaemonConfig(
             ai=AIConfig(
@@ -558,9 +560,15 @@ class TestProviderModelsRoute:
                 ],
             )
 
-        with patch(
-            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
-            side_effect=fake_discover,
+        with (
+            patch(
+                "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+                side_effect=fake_discover,
+            ),
+            patch(
+                "gobby.servers.routes.providers.shutil.which",
+                side_effect=lambda b: f"/usr/local/bin/{b}",
+            ),
         ):
             response = client.get("/api/providers/models")
 
@@ -568,17 +576,70 @@ class TestProviderModelsRoute:
         local = providers["endpoint:ollama-cloud"]
         codex_model_values = {m["value"] for m in providers["codex"]["models"]}
 
-        assert local["available"] is False
+        assert local["available"] is True
         assert local["display_name"] == "Ollama"
-        assert "execution_provider" not in local
+        assert local["provider_type"] == "ollama"
+        assert local["execution_provider"] == "codex"
         assert local["source"] == "live"
-        assert local["supports_web_chat"] is False
-        assert local["unavailable_reason"] == (
-            "Generic OpenAI-compatible endpoints are unavailable for web chat"
-        )
+        assert local["supports_web_chat"] is True
+        assert local["unavailable_reason"] is None
         assert local["models"][1]["value"] == "endpoint:ollama-cloud/ollama/qwen3-coder"
         assert "endpoint:ollama-cloud" not in codex_model_values
         assert "endpoint:ollama-cloud/ollama/qwen3-coder" not in codex_model_values
+
+    def test_healthy_local_endpoint_without_codex_cli_stays_unavailable(
+        self,
+    ) -> None:
+        app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    endpoints={
+                        "studio": {
+                            "protocol": "lmstudio",
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen-coder-32b",
+                        }
+                    }
+                )
+            ),
+        )
+        server = _server_stub(config=config)
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name="studio",
+                provider_type="lmstudio",
+                provider_label="LM Studio",
+                source="live",
+                models=[
+                    {
+                        "value": "endpoint:studio/qwen-coder-32b",
+                        "label": "Qwen Coder 32B",
+                        "canonical_id": "qwen-coder-32b",
+                    }
+                ],
+            )
+
+        with (
+            patch(
+                "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+                side_effect=fake_discover,
+            ),
+            patch("gobby.servers.routes.providers.shutil.which", return_value=None),
+        ):
+            response = client.get("/api/providers/models")
+
+        local = {p["provider"]: p for p in response.json()["providers"]}["endpoint:studio"]
+
+        assert local["available"] is False
+        assert local["supports_web_chat"] is False
+        assert "execution_provider" not in local
+        assert local["unavailable_reason"] == (
+            "Codex CLI is required to run local models in web chat"
+        )
 
     def test_local_provider_discovery_failures_and_empty_results_are_disabled(
         self,

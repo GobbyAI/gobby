@@ -63,6 +63,32 @@ function buildEndpointCatalog() {
   };
 }
 
+function buildLocalEndpointCatalog(overrides: Record<string, unknown> = {}) {
+  const catalog = buildCatalog();
+  return {
+    providers: [
+      ...catalog.providers,
+      {
+        provider: "endpoint:studio",
+        execution_provider: "codex",
+        available: true,
+        display_name: "LM Studio",
+        provider_type: "lmstudio",
+        supports_web_chat: true,
+        models: [
+          {
+            value: "endpoint:studio/mistralai/devstral-small",
+            label: "Devstral Small",
+            canonical_id: "mistralai/devstral-small",
+          },
+        ],
+        source: "live",
+        ...overrides,
+      },
+    ],
+  };
+}
+
 function getProviderHeader(displayName: string) {
   const header = screen.getByText(displayName).parentElement;
   if (!header) throw new Error(`Missing provider header for ${displayName}`);
@@ -406,6 +432,100 @@ describe("ProviderPicker", () => {
       "codex",
       "endpoint:openrouter/moonshotai/kimi-k3",
     );
+  });
+
+  it("lists a healthy LM Studio endpoint group and routes selection through Codex", async () => {
+    const onSelect = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalEndpointCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="codex"
+        currentModel="gpt-5.4"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        onSelect={onSelect}
+        hasMessages={true}
+      />,
+    );
+
+    const groupLabel = await screen.findByText("LM Studio");
+    expect(
+      groupLabel.parentElement?.querySelector(".source-icon-lmstudio"),
+    ).toBeTruthy();
+
+    // Same execution provider (codex) — no switch confirmation, byte-exact
+    // endpoint selector round-trips (#19161, #18449 contract).
+    await userEvent.click(
+      screen.getByRole("button", { name: "Devstral Small" }),
+    );
+    expect(screen.queryByText("Switch provider?")).toBeNull();
+    expect(onSelect).toHaveBeenCalledWith(
+      "codex",
+      "endpoint:studio/mistralai/devstral-small",
+    );
+  });
+
+  it("marks the LM Studio group active when its endpoint model is selected", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalEndpointCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="codex"
+        currentModel="endpoint:studio/mistralai/devstral-small"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    await screen.findByText("LM Studio");
+
+    expect(getProviderHeader("LM Studio").getByText("active")).toBeTruthy();
+    expect(getProviderHeader("Codex").queryByText("active")).toBeNull();
+  });
+
+  it("hides unreachable local endpoint groups from the picker", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        buildLocalEndpointCatalog({
+          available: false,
+          supports_web_chat: false,
+          execution_provider: undefined,
+          models: [],
+          unavailable_reason: "connection refused",
+        }),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    await screen.findByText("GPT 5.4");
+    expect(screen.queryByText("LM Studio")).toBeNull();
+    expect(screen.queryByText("connection refused")).toBeNull();
   });
 
   it("falls back to a default model entry for Qwen when the catalog is empty", async () => {

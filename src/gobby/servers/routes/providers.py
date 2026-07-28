@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
@@ -114,6 +115,7 @@ _LAZY_ACP_PROVIDERS = frozenset({"grok", "qwen"})
 _GENERIC_LOCAL_UNAVAILABLE_REASON = (
     "Generic OpenAI-compatible endpoints are unavailable for web chat"
 )
+_CODEX_REQUIRED_REASON = "Codex CLI is required to run local models in web chat"
 
 
 def _merge_static_model_metadata(
@@ -212,33 +214,47 @@ async def _local_generation_model_groups(
 
 def _local_generation_provider_entries(
     groups: list[LocalEndpointModelGroup],
+    *,
+    codex_installed: bool,
 ) -> list[dict[str, Any]]:
     provider_type_counts = Counter(group.provider_type for group in groups)
     entries: list[dict[str, Any]] = []
     for group in groups:
-        if group.error:
+        # LM Studio/Ollama chat-completions endpoints execute through the
+        # Codex OSS runtime (see WebChatRuntimeManager); generic
+        # OpenAI-compatible endpoints have no web-chat transport (#19161).
+        routable = group.provider_type in CODEX_OSS_LOCAL_PROVIDERS
+        if not routable:
+            unavailable_reason: str | None = _GENERIC_LOCAL_UNAVAILABLE_REASON
+        elif group.error:
             unavailable_reason = group.error
         elif not group.models:
             unavailable_reason = NO_COMPLETION_MODELS_ERROR
+        elif not codex_installed:
+            unavailable_reason = _CODEX_REQUIRED_REASON
         else:
-            unavailable_reason = _GENERIC_LOCAL_UNAVAILABLE_REASON
+            unavailable_reason = None
+        available = unavailable_reason is None
         display_name = group.provider_label
         if provider_type_counts[group.provider_type] > 1:
             display_name = f"{display_name} ({group.endpoint_name})"
         entry: dict[str, Any] = {
             "provider": group.provider,
-            "available": False,
+            "available": available,
             "models": group.models,
             "source": group.source,
             "startup_error": group.error,
             "display_name": display_name,
+            "provider_type": group.provider_type,
             "installed": True,
             "deprecated": False,
             "deprecation_message": None,
-            "supports_web_chat": False,
+            "supports_web_chat": available,
             "supports_agent_spawn": False,
             "unavailable_reason": unavailable_reason,
         }
+        if available:
+            entry["execution_provider"] = "codex"
         entries.append(entry)
     return entries
 
@@ -414,7 +430,10 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                 entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
                 entry["execution_provider"] = "codex"
             result.append(entry)
-        result.extend(_local_generation_provider_entries(local_model_groups))
+        codex_installed = any(name == "codex" and path is not None for name, path in probed)
+        result.extend(
+            _local_generation_provider_entries(local_model_groups, codex_installed=codex_installed)
+        )
         return {"providers": result}
 
     return router

@@ -243,7 +243,7 @@ export function ProviderPicker({
                 return (
                   <div key={provider} className="mb-1">
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-                      <SourceIcon source={provider} size={14} />
+                      <SourceIcon source={entry?.provider_type ?? provider} size={14} />
                       <span className="font-medium text-foreground">
                         {displayName}
                       </span>

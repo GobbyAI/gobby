@@ -24,6 +24,8 @@ export interface ProviderModelEntry {
   models: ProviderModelOption[];
   source: "static" | "live" | "cache" | "config" | "failed" | "unsupported";
   display_name?: string;
+  /** Local endpoint protocol ("lmstudio", "ollama") used for icon resolution. */
+  provider_type?: string;
   installed?: boolean;
   deprecated?: boolean;
   deprecation_message?: string | null;
@@ -127,6 +129,7 @@ function isProviderModelEntry(value: unknown): value is ProviderModelEntry {
       value.source as string,
     ) &&
     (value.display_name === undefined || typeof value.display_name === "string") &&
+    (value.provider_type === undefined || typeof value.provider_type === "string") &&
     (value.installed === undefined || typeof value.installed === "boolean") &&
     (value.deprecated === undefined || typeof value.deprecated === "boolean") &&
     (value.deprecation_message === undefined ||
