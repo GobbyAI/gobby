@@ -227,21 +227,6 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
   const { fetchFileGraph, expandFile, expandSymbol, fetchBlastRadius, searchSymbols } = useCodeGraph()
 
-  // Fetch config override for limit
-  useEffect(() => {
-    const controller = new AbortController()
-    fetch('/api/config/values', { signal: controller.signal })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!data) return
-        const values = data.values ?? data
-        const cgLimit = values?.['ui.code_graph_limit']
-        if (typeof cgLimit === 'number' && cgLimit >= CODE_GRAPH_LIMIT_MIN) setLimit(cgLimit)
-      })
-      .catch((e) => { if (e.name !== 'AbortError') console.debug('Config fetch failed:', e) })
-    return () => controller.abort()
-  }, [])
-
   // WebGL error handling (from KnowledgeGraph pattern)
   useEffect(() => {
     const handleError = (e: ErrorEvent) => {

@@ -75,6 +75,7 @@ const graph = (id: string, name: string) => ({
 describe('CodeGraphExplorer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.removeItem('gobby-cg-limit')
     vi.stubGlobal('ResizeObserver', MockResizeObserver)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
     codeGraphMock.expandFile.mockResolvedValue(null)
@@ -86,6 +87,17 @@ describe('CodeGraphExplorer', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    localStorage.removeItem('gobby-cg-limit')
+  })
+
+  it('uses the persisted graph limit without fetching configuration', () => {
+    localStorage.setItem('gobby-cg-limit', '80')
+    codeGraphMock.fetchFileGraph.mockResolvedValue(graph('base', 'Base node'))
+
+    render(<CodeGraphExplorer projectId="project" />)
+
+    expect(codeGraphMock.fetchFileGraph).toHaveBeenCalledWith('project', 80)
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('keeps the selected project graph when an older request resolves last', async () => {
