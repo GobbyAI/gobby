@@ -104,7 +104,11 @@ def test_mode_transition_emits_one_debug_record_and_unchanged_mode_emits_none(
 def test_managed_web_chat_uses_persisted_mode_when_runtime_mode_is_missing() -> None:
     variables = {"chat_mode": "bypass", "mode_level": 2, "plan_mode": False}
     persisted = SimpleNamespace(session_type="web_chat", chat_mode="plan")
-    event = _event(SessionSource.CLAUDE, metadata={"session_type": "web_chat"})
+    event = _event(
+        SessionSource.CLAUDE,
+        data={"prompt": "Create a plan"},
+        metadata={"session_type": "web_chat"},
+    )
 
     resolve_plan_mode(event, variables, SESSION_ID, _SessionManager(persisted))
 
@@ -120,6 +124,7 @@ def test_runtime_plan_approval_switches_to_execution_synchronously() -> None:
     resolve_plan_mode(
         _event(
             SessionSource.CODEX,
+            data={"prompt": "Create a plan"},
             metadata={"session_type": "web_chat", "chat_mode": "plan"},
         ),
         variables,

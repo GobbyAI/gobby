@@ -9,6 +9,7 @@ from jsonschema.validators import validator_for
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.mcp_proxy.tools.plans.review_evidence_schemas import SOURCE_CITATION_SCHEMA
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_telemetry import CONVERGENCE_TELEMETRY_SCHEMA
 from gobby.storage.hub.protocol import HubDatabase
@@ -23,6 +24,29 @@ def _registry(db: HubDatabase) -> InternalToolRegistry:
         resolve_project_id=lambda _project: "project-id",
     )
     return registry
+
+
+def test_source_citation_schema_is_a_strict_union() -> None:
+    validator_class = validator_for(SOURCE_CITATION_SCHEMA)
+    validator_class.check_schema(SOURCE_CITATION_SCHEMA)
+    validator = validator_class(SOURCE_CITATION_SCHEMA)
+
+    validator.validate({"path": "src/example.py", "sha256": "a" * 64})
+    validator.validate(
+        {
+            "requirement_id": "req-0123456789ab",
+            "content_sha256": "b" * 64,
+        }
+    )
+    with pytest.raises(ValidationError):
+        validator.validate(
+            {
+                "path": "src/example.py",
+                "sha256": "a" * 64,
+                "requirement_id": "req-0123456789ab",
+                "content_sha256": "b" * 64,
+            }
+        )
 
 
 def _tool_schema(registry: InternalToolRegistry, name: str) -> dict[str, Any]:

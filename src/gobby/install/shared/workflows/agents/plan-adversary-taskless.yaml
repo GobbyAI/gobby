@@ -78,7 +78,10 @@ instructions: |
   record hash and `bundle_digest`, then parse all records before lane review
   begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
   evidence. The parsed records carry plan sections, `prior_round_context`, quality
-  ledger, requirement sources, consumer inventory, and `review_complexity`. Run
+  ledger, the immutable requirements bundle and its requirement sources, consumer
+  inventory, and `review_complexity`. Treat bundle `requirement_id` values and
+  their verified content as the only canonical requirements; never substitute the
+  live initiating request or worktree documents. Run
   lanes in parallel when the snapshot has at least 8 deliverables,
   24 acceptance items, 12 distinct target files, or 4 sections changed since the
   prior finalized round. Otherwise run the same lanes sequentially in this parent.
@@ -99,7 +102,8 @@ instructions: |
   Each lane returns `lane_id`, `status: completed`, every deliverable in
   `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
   Every candidate has `candidate_id`, `section_ids`, `violated_invariant`,
-  citations with repository-relative path/SHA-256/lines, `suggested_fix`,
+  citations using exactly one branch (repository `path`/`sha256` or bundle
+  `requirement_id`/`content_sha256`, with optional lines), `suggested_fix`,
   `adjacent_sites_checked`, and confidence from 0 through 1.
 
   You are the sole verdict and evidence owner. Verify and deduplicate every
@@ -184,10 +188,15 @@ instructions: |
         wrong_outcome: <observable incorrect result>
         violated_obligation: <requirement or invariant violated>
         citation:
-          - path: <repository-relative-path>
-            sha256: <lowercase-sha256>
-            line_start: <optional-positive-line>
-            line_end: <optional-positive-line>
+        - path: <repository-relative-path>
+          sha256: <lowercase-sha256>
+          line_start: <optional-positive-line>
+          line_end: <optional-positive-line>
+        # Or cite an immutable requirement:
+        # - requirement_id: <bundle-requirement-id>
+        #   content_sha256: <bundle-content-sha256>
+        #   line_start: <optional-positive-line>
+        #   line_end: <optional-positive-line>
   ```
 
   If requirements are insufficient, use the exact

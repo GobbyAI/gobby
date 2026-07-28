@@ -83,9 +83,15 @@ agent definition's decision, not the coordinator's. Pass an override only when
 the user explicitly asks for a different reviewer provider or model. Pass the
 prepared snapshot/evidence, `artifact_path`,
 `round_number`, `max_review_rounds`, and the parent session id in the prompt or
-variables, together with the current requirements context. The adversary reads
+variables. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.
 Evidence preparation is the single indexing site for the round.
+The plan-mode entry observer owns the initiating-request anchor. Never create,
+replace, or synthesize that anchor in this skill. Preparation fails closed when
+taskless entry has neither exact request content nor a valid persisted anchor.
+The immutable `requirements_bundle` in the prepared evidence is the reviewer's
+only requirements context; do not send a live or reconstructed requirements
+payload alongside it.
 Do not run a separate pre-spawn `gcode index`; pass preparation's settled `index_token` to
 the reviewer and let every lane verify that token under the protocol in
 `plan-review`.

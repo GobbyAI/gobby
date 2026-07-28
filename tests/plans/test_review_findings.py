@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -15,15 +16,19 @@ from gobby.plans.review_findings import (
     render_rejection_section,
     validate_plan_review_findings,
 )
+from gobby.plans.review_requirements import assemble_requirements_bundle
 
 
-def _evidence() -> PlanReviewEvidence:
+def _evidence(
+    prior_round_context: dict[str, object] | None = None,
+) -> PlanReviewEvidence:
     return cast(
         PlanReviewEvidence,
         SimpleNamespace(
             evidence_id="evidence-1",
             plan_hash="a" * 64,
             section_manifest=(SectionHash(section_id="1.1", section_hash="b" * 64),),
+            prior_round_context=prior_round_context,
         ),
     )
 
@@ -67,6 +72,39 @@ def _failure_trace() -> dict[str, object]:
 
 def test_finding_severities_are_four_tier_vocabulary() -> None:
     assert FINDING_SEVERITIES == frozenset({"blocking", "major", "minor", "nit"})
+
+
+def test_failure_trace_accepts_bound_requirement_citation(tmp_path: Path) -> None:
+    bundle = assemble_requirements_bundle(
+        project_root=tmp_path,
+        plan_snapshot=b"# Plan\n",
+        task_id="task-1",
+        task_fields={
+            "title": "Immutable requirement",
+            "description": "Description",
+            "validation_criteria": "Acceptance",
+        },
+    )
+    sources = bundle["sources"]
+    assert isinstance(sources, list)
+    source = sources[0]
+    assert isinstance(source, dict)
+    finding = _finding(severity="blocking")
+    trace = _failure_trace()
+    trace["citation"] = [
+        {
+            "requirement_id": source["requirement_id"],
+            "content_sha256": source["content_sha256"],
+        }
+    ]
+    finding["failure_trace"] = trace
+
+    validated = validate_plan_review_findings(
+        [finding],
+        evidence=_evidence({"requirements_bundle": bundle}),
+    )
+
+    assert validated[0]["failure_trace"] == trace
 
 
 def test_blocking_requires_failure_trace() -> None:

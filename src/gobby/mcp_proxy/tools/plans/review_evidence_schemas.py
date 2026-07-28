@@ -17,15 +17,33 @@ _STRING_ARRAY = {
 }
 
 SOURCE_CITATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "path": _NONEMPTY_STRING,
-        "sha256": _SHA256,
-        "line_start": {"type": "integer", "minimum": 1},
-        "line_end": {"type": "integer", "minimum": 1},
-    },
-    "required": ["path", "sha256"],
-    "additionalProperties": False,
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                "path": _NONEMPTY_STRING,
+                "sha256": _SHA256,
+                "line_start": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+            },
+            "required": ["path", "sha256"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "requirement_id": {
+                    "type": "string",
+                    "pattern": "^req-[0-9a-f]{12}$",
+                },
+                "content_sha256": _SHA256,
+                "line_start": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+            },
+            "required": ["requirement_id", "content_sha256"],
+            "additionalProperties": False,
+        },
+    ],
 }
 
 _CANDIDATE_SCHEMA = {

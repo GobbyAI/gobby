@@ -124,3 +124,10 @@ class TestPlanDraftContent:
         )
         for check in required_checks:
             assert check in body, f"Verification checklist missing: {check}"
+
+    def test_canonical_requirement_marker_contract(self, body: str) -> None:
+        normalized = " ".join(body.split())
+        assert "requirement-source: docs/repository-relative-path.md" in body
+        assert "inside `## Constraints`" in normalized
+        assert "Preserve existing valid markers" in normalized
+        assert "emit no marker" in normalized

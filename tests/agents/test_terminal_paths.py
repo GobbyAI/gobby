@@ -15,6 +15,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    build_request_anchor,
+)
 from gobby.plans.review_telemetry import (
     deterministic_review_message_id,
     enrich_round_result,
@@ -30,6 +34,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import delivered_telemetry
 from tests.storage.test_stage_review_findings import (
@@ -111,6 +116,15 @@ def _bound_review(
             ]
         ),
         encoding="utf-8",
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        parent.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                f"terminal-review-request{suffix}",
+                "Review the terminal plan",
+            )
+        },
     )
     evidence_service = PlanReviewEvidenceService(temp_db)
     prepared = evidence_service.prepare_plan_review_round(

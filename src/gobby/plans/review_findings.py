@@ -11,6 +11,10 @@ from gobby.plans.review_evidence_models import (
     canonical_json_bytes,
     canonical_json_object,
 )
+from gobby.plans.review_requirements import (
+    requirements_bundle_from_context,
+    validate_source_citation,
+)
 
 FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "nit"})
 FINDING_REPAIR_SCOPES = frozenset({"existing_sections", "new_deliverable"})
@@ -26,7 +30,6 @@ FINDING_CATEGORIES = frozenset(
     }
 )
 CHECK_KEY_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
-_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _REQUIRED_STRING_FIELDS = (
     "finding_id",
     "section_id",
@@ -74,6 +77,7 @@ def validate_plan_review_findings(
     if not isinstance(canonical, list):
         raise _invalid("findings must be an array")
     section_ids = {section.section_id for section in evidence.section_manifest}
+    requirements_bundle = requirements_bundle_from_context(evidence.prior_round_context)
     findings: list[dict[str, object]] = []
     finding_ids: set[str] = set()
     for index, raw in enumerate(canonical):
@@ -83,6 +87,7 @@ def validate_plan_review_findings(
             raw,
             index=index,
             section_ids=section_ids,
+            requirements_bundle=requirements_bundle,
         )
         finding_id = str(finding["finding_id"])
         if finding_id in finding_ids:
@@ -148,6 +153,7 @@ def _validate_finding(
     *,
     index: int,
     section_ids: set[str],
+    requirements_bundle: Mapping[str, object] | None,
 ) -> dict[str, object]:
     prefix = f"findings[{index}]"
     unknown = sorted(set(raw) - _ALLOWED_FIELDS)
@@ -192,6 +198,7 @@ def _validate_finding(
         raw["failure_trace"] = _validate_failure_trace(
             raw["failure_trace"],
             prefix=f"{prefix}.failure_trace",
+            requirements_bundle=requirements_bundle,
         )
 
     for field in _SECTION_SET_FIELDS:
@@ -214,7 +221,12 @@ def _validate_finding(
     return raw
 
 
-def _validate_failure_trace(raw: object, *, prefix: str) -> dict[str, object]:
+def _validate_failure_trace(
+    raw: object,
+    *,
+    prefix: str,
+    requirements_bundle: Mapping[str, object] | None,
+) -> dict[str, object]:
     if not isinstance(raw, Mapping):
         raise _invalid(f"{prefix} must be an object")
     trace = dict(raw)
@@ -229,34 +241,29 @@ def _validate_failure_trace(raw: object, *, prefix: str) -> dict[str, object]:
     trace["citation"] = _validate_citation_list(
         trace["citation"],
         prefix=f"{prefix}.citation",
+        requirements_bundle=requirements_bundle,
     )
     return trace
 
 
-def _validate_citation_list(raw: object, *, prefix: str) -> list[dict[str, object]]:
+def _validate_citation_list(
+    raw: object,
+    *,
+    prefix: str,
+    requirements_bundle: Mapping[str, object] | None,
+) -> list[dict[str, object]]:
     if not isinstance(raw, list) or not raw:
         raise _invalid(f"{prefix} must be a non-empty array")
     citations: list[dict[str, object]] = []
     for index, item in enumerate(raw):
         item_prefix = f"{prefix}[{index}]"
-        if not isinstance(item, Mapping):
-            raise _invalid(f"{item_prefix} must be an object")
-        citation = dict(item)
-        _require_nonempty_string(citation, "path", prefix=item_prefix)
-        digest = _require_nonempty_string(citation, "sha256", prefix=item_prefix)
-        if not _SHA256_RE.fullmatch(digest):
-            raise _invalid(f"{item_prefix}.sha256 must be lowercase hexadecimal SHA-256")
-        start = citation.get("line_start")
-        end = citation.get("line_end")
-        if start is not None and (
-            not isinstance(start, int) or isinstance(start, bool) or start < 1
-        ):
-            raise _invalid(f"{item_prefix}.line_start must be a positive integer")
-        if end is not None and (not isinstance(end, int) or isinstance(end, bool) or end < 1):
-            raise _invalid(f"{item_prefix}.line_end must be a positive integer")
-        if isinstance(start, int) and isinstance(end, int) and end < start:
-            raise _invalid(f"{item_prefix}.line_end precedes line_start")
-        citations.append(citation)
+        citations.append(
+            validate_source_citation(
+                item,
+                requirements_bundle=requirements_bundle,
+                owner=item_prefix,
+            )
+        )
     return citations
 
 

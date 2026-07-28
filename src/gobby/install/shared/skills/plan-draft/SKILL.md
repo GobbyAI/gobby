@@ -142,6 +142,20 @@ drift §2.23 fixes. Leave the manifest to the adversary.
 See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the schema and
 the adversary-writes-on-approval contract.
 
+### Canonical Requirement Documents
+
+When the user explicitly designates a repository document as a canonical
+requirement source, preserve or emit this line inside `## Constraints`, outside
+fenced code:
+
+```text
+requirement-source: docs/repository-relative-path.md
+```
+
+Each marker names exactly one repository-relative path. Preserve existing valid
+markers. If the user does not designate a canonical repository document, emit
+no marker; ordinary links and document mentions are supporting context only.
+
 ### Table-Row Decomposition
 
 Any `deliverable` section whose body uses a markdown table to enumerate work

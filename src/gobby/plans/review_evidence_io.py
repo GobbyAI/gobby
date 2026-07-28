@@ -28,6 +28,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_object,
     validate_round_result,
 )
+from gobby.plans.review_requirements import validate_requirements_bundle
 from gobby.plans.semantic_lint import collect_target_inventory
 
 PREAMBLE_SECTION_ID = "__preamble__"
@@ -259,37 +260,23 @@ def serialize_snapshot_envelope(
     ]
     context = canonical_json_object(prior_round_context) if prior_round_context is not None else {}
     raw_requirements = context.get("requirements_bundle")
-    if isinstance(raw_requirements, Mapping):
+    if raw_requirements is not None:
         context.pop("requirements_bundle")
-        requirements = canonical_json_object(raw_requirements)
-        raw_sources = requirements.get("sources")
-        if isinstance(raw_sources, list) and all(
-            isinstance(source, Mapping) for source in raw_sources
-        ):
-            requirements.pop("sources")
-            records.append(
-                _json_snapshot_record(
-                    "requirements_bundle",
-                    "requirements_bundle",
-                    requirements,
-                )
+        requirements = validate_requirements_bundle(raw_requirements)
+        raw_sources = cast(list[dict[str, object]], requirements.pop("sources"))
+        records.append(
+            _json_snapshot_record(
+                "requirements_bundle",
+                "requirements_bundle",
+                requirements,
             )
-            for index, raw_source in enumerate(raw_sources):
-                source = canonical_json_object(cast(Mapping[str, object], raw_source))
-                source_name = source.get("source_id") or source.get("path") or str(index)
-                records.append(
-                    _json_snapshot_record(
-                        "requirement_source",
-                        f"requirement_source:{index}:{source_name}",
-                        source,
-                    )
-                )
-        else:
+        )
+        for index, source in enumerate(raw_sources):
             records.append(
                 _json_snapshot_record(
-                    "requirements_bundle",
-                    "requirements_bundle",
-                    requirements,
+                    "requirement_source",
+                    f"requirement_source:{index}:{source['requirement_id']}",
+                    source,
                 )
             )
 
@@ -540,10 +527,14 @@ def parse_snapshot_envelope(
             "snapshot_bundle_mismatch",
             "snapshot record bundle digest does not match bundle_digest",
         )
+    if requirement_sources and requirements_bundle is None:
+        raise ReviewEvidenceError(
+            "invalid_requirements_bundle",
+            "requirement source records require a requirements bundle record",
+        )
     if requirements_bundle is not None:
-        if requirement_sources:
-            requirements_bundle["sources"] = requirement_sources
-        context["requirements_bundle"] = requirements_bundle
+        requirements_bundle["sources"] = requirement_sources
+        context["requirements_bundle"] = validate_requirements_bundle(requirements_bundle)
 
     snapshot = b"".join(plan_chunks)
     plan_hash = payload.get("plan_hash")

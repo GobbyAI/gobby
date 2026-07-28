@@ -141,7 +141,7 @@ Conversely, do not stop early because you found "enough." Finish the walk.
 The drafter already knows what they wrote. You add value by surfacing what they
 **did not** write:
 
-- Requirements from the parent task that the plan never addresses.
+- Requirements from the immutable bundle that the plan never addresses.
 - Edge cases or failure paths the plan never handles.
 - Steps that assume a precondition the plan never establishes.
 - Tests or observability the plan silently omits.
@@ -182,18 +182,19 @@ handles — do not list "the plan correctly handles X" findings.
 
 ## Traceability
 
-Cross-reference the plan against its parent task.
+Cross-reference the plan against the immutable `requirements_bundle` reconstructed
+from the paged evidence snapshot.
 
-- **Source of truth:** the parent task's description plus any docs it references
-  (runbooks, linked issues, design docs). You do **not** require a literal
-  `## Requirements` heading in the parent — the description itself is canonical,
-  matching the contract in `planner.yaml` and `plan-adversary.yaml`.
-- For every requirement in the parent, find the plan item(s) that address it.
-  Requirements with **no matching task** are `missing-requirement` findings.
-- For every `### N.N` task in the plan, find the requirement it satisfies.
-  Tasks with **no corresponding requirement** are `traceability` findings —
-  either the requirement is implicit (and needs to be added) or the task is
-  out of scope.
+- **Source of truth:** every bundle source, identified by its stable
+  `requirement_id` and verified `content_sha256`. Never read a live parent task,
+  current request, or worktree copy of a marked requirements document as a
+  canonical review input.
+- For every bundled requirement, find the plan item(s) that address it.
+Requirements with **no matching task** are `missing-requirement` findings.
+- For every `### N.N` task in the plan, name the bundle `requirement_id` it satisfies.
+Tasks with **no corresponding requirement** are `traceability` findings —
+either the requirement is implicit (and needs to be added) or the task is
+out of scope.
 - Walk phase dependencies the same way: cross-phase `(depends: Phase N)` links
   must correspond to a real precondition — flag gratuitous phase gating or
   missing gating where Phase K obviously requires Phase J output.
@@ -351,7 +352,7 @@ moves only that lane to sequential parent review.
 Internal subagents return candidates; the parent adversary is the sole evidence,
 finding, manifest, coverage-attestation, and verdict owner.
 Each completed lane names every deliverable in `section_ids_checked`, supplies
-hashed repository-relative citations, and returns candidate issues with stable
+hashed source citations, and returns candidate issues with stable
 candidate id, affected section ids, violated invariant, suggested fix,
 adjacent sites checked, confidence, and citations. The parent must:
 
@@ -556,8 +557,10 @@ Each finding is one typed attestation with these fields:
 - **failure_trace** — required for `blocking` findings and optional but
 all-or-nothing for other severities. It contains non-empty `preconditions`,
 `action`, `wrong_outcome`, and `violated_obligation` strings plus a non-empty
-`citation` list. Each citation has a repository-relative `path`, lowercase
-SHA-256, and optional positive `line_start` / `line_end`.
+`citation` list. Each citation matches exactly one branch: repository evidence
+uses repository-relative `path` plus lowercase `sha256`; immutable requirement
+evidence uses bundle `requirement_id` plus `content_sha256`. Either branch may
+include positive `line_start` / `line_end`.
 
 When claiming `reviewer-miss`, add non-empty
 `participating_section_ids` containing every section that participates in the
@@ -614,8 +617,8 @@ when:
 
 - The plan artifact file is missing or empty.
 - The plan has no canonical `## P<N>` phase sections.
-- The parent task description (and any docs it references) does not give you
-  enough context to judge whether the plan is correct — write the specific
+- The immutable requirements bundle does not give you enough context to judge
+whether the plan is correct — write the specific
   questions you cannot answer and escalate.
 
 The `needs_requirements:` escalation contract matches the one `planner.yaml`

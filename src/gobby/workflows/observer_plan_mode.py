@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.hooks.events import HookEvent, SessionSource
+from gobby.plans.review_requirements import capture_request_anchor
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -66,6 +68,9 @@ def resolve_plan_mode(
     metadata = event.metadata or {}
     data = event.data or {}
     session_type = metadata.get("session_type") or getattr(session, "session_type", None)
+    prompt = data.get("prompt")
+    request_content = prompt if isinstance(prompt, str) and prompt else None
+    request_anchor_id = _request_anchor_id(data, session_id, request_content)
 
     if session_type == "web_chat":
         mode = _normalize_mode(metadata.get("chat_mode"))
@@ -74,7 +79,15 @@ def resolve_plan_mode(
             mode = _normalize_mode(getattr(session, "chat_mode", None))
             reason = "persisted web-chat session"
         if mode is not None:
-            _apply_resolved_mode(variables, session_id, mode, reason, persist_plan_mode=True)
+            _apply_resolved_mode(
+                variables,
+                session_id,
+                mode,
+                reason,
+                persist_plan_mode=True,
+                request_anchor_id=request_anchor_id,
+                request_content=request_content,
+            )
         return
 
     structured_mode = _normalize_mode(metadata.get("chat_mode")) or _normalize_mode(
@@ -87,6 +100,8 @@ def resolve_plan_mode(
             structured_mode,
             "structured hook mode",
             persist_plan_mode=False,
+            request_anchor_id=request_anchor_id,
+            request_content=request_content,
         )
         return
 
@@ -99,6 +114,8 @@ def resolve_plan_mode(
                 codex_mode,
                 "Codex turn_context collaboration mode",
                 persist_plan_mode=False,
+                request_anchor_id=request_anchor_id,
+                request_content=request_content,
             )
             return
 
@@ -110,6 +127,8 @@ def resolve_plan_mode(
             native_mode,
             "provider-native hook state",
             persist_plan_mode=False,
+            request_anchor_id=request_anchor_id,
+            request_content=request_content,
         )
         return
 
@@ -123,11 +142,15 @@ def resolve_plan_mode(
             workflow_mode,
             "workflow variables",
             persist_plan_mode=True,
+            request_anchor_id=request_anchor_id,
+            request_content=request_content,
         )
 
-    prompt = data.get("prompt")
     detect_plan_mode_from_context(
-        prompt if isinstance(prompt, str) else None, variables, session_id
+        prompt if isinstance(prompt, str) else None,
+        variables,
+        session_id,
+        request_anchor_id=request_anchor_id,
     )
 
 
@@ -148,6 +171,21 @@ def _normalize_mode(value: object) -> str | None:
         return None
     key = re.sub(r"[\s_-]+", "", value).lower()
     return _MODE_ALIASES.get(key)
+
+
+def _request_anchor_id(
+    data: dict[str, Any],
+    session_id: str,
+    content: str | None,
+) -> str:
+    for key in ("request_id", "message_id", "turn_id"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    if content is None:
+        return f"{session_id}:persisted"
+    digest = hashlib.sha256(content.encode()).hexdigest()[:16]
+    return f"{session_id}:{digest}"
 
 
 def _provider_native_mode(data: dict[str, Any]) -> str | None:
@@ -173,6 +211,8 @@ def _apply_resolved_mode(
     reason: str,
     *,
     persist_plan_mode: bool,
+    request_anchor_id: str,
+    request_content: str | None,
 ) -> None:
     level = compute_mode_level(mode)
     persist_mode = mode != "plan" or persist_plan_mode
@@ -181,12 +221,17 @@ def _apply_resolved_mode(
     is_plan = level == 0
     plan_changed = bool(variables.get("plan_mode")) != is_plan
 
+    if plan_changed:
+        _set_plan_mode_with_anchor(
+            variables,
+            is_plan=is_plan,
+            request_anchor_id=request_anchor_id,
+            request_content=request_content,
+        )
     if persist_mode:
         variables["chat_mode"] = mode
     if level_changed:
         variables["mode_level"] = level
-    if plan_changed:
-        variables["plan_mode"] = is_plan
     if not is_plan and variables.get("plan_skill_loaded"):
         variables["plan_skill_loaded"] = False
     if mode_changed or level_changed or plan_changed:
@@ -204,6 +249,22 @@ def _apply_resolved_mode(
                 "resolution_reason": reason,
             },
         )
+
+
+def _set_plan_mode_with_anchor(
+    variables: dict[str, Any],
+    *,
+    is_plan: bool,
+    request_anchor_id: str,
+    request_content: str | None,
+) -> None:
+    if is_plan and not bool(variables.get("plan_mode")):
+        capture_request_anchor(
+            variables,
+            anchor_id=request_anchor_id,
+            content=request_content,
+        )
+    variables["plan_mode"] = is_plan
 
 
 def _latest_codex_collaboration_mode(transcript_path: object) -> str | None:
@@ -251,7 +312,11 @@ def _reverse_jsonl_lines(path: Path, chunk_size: int = 64 * 1024) -> Iterator[by
 
 
 def detect_plan_mode_from_context(
-    prompt: str | None, variables: dict[str, Any], session_id: str
+    prompt: str | None,
+    variables: dict[str, Any],
+    session_id: str,
+    *,
+    request_anchor_id: str | None = None,
 ) -> None:
     """Detect plan mode from system reminders or CLI-specific markers."""
     if not prompt:
@@ -260,6 +325,7 @@ def detect_plan_mode_from_context(
     cleaned = re.sub(
         r"<conversation-history>.*?</conversation-history>", "", prompt, flags=re.DOTALL
     )
+    anchor_id = request_anchor_id or _request_anchor_id({}, session_id, prompt)
 
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
@@ -276,6 +342,8 @@ def detect_plan_mode_from_context(
             chat_mode,
             reason,
             persist_plan_mode=persist_plan_mode,
+            request_anchor_id=anchor_id,
+            request_content=prompt,
         )
 
     plan_mode_indicators = [

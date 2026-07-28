@@ -192,7 +192,10 @@ def _candidate_map(
                 candidate_id=candidate_id,
                 lane_id=lane_id,
                 section_ids=tuple(cast(list[str], candidate["section_ids"])),
-                citation_hashes=frozenset(str(citation["sha256"]) for citation in citations),
+                citation_hashes=frozenset(
+                    str(citation.get("sha256") or citation["content_sha256"])
+                    for citation in citations
+                ),
             )
     return result
 

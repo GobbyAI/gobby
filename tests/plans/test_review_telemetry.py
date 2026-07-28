@@ -12,6 +12,10 @@ import pytest
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    build_request_anchor,
+)
 from gobby.plans.review_telemetry import (
     derive_convergence_comparison,
     derive_daemon_aggregates,
@@ -25,6 +29,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import delivered_telemetry
 from tests.storage.test_stage_review_findings import (
@@ -243,6 +248,15 @@ def test_delivered_and_enriched_states(
         ),
         encoding="utf-8",
     )
+    SessionVariableManager(temp_db).merge_variables(
+        parent.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                "telemetry-request",
+                "Review telemetry convergence",
+            )
+        },
+    )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(
         project_id=project.id,
@@ -393,6 +407,15 @@ def test_producer_contract_survives_delivery(
     plan_path.write_text(
         "# Producer\n**Plan ID:** producer\n\n## V1 Plan Changelog\n`kind: verification`\n",
         encoding="utf-8",
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        parent.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                f"producer-{Path(producer_path).stem}-request",
+                "Review the producer contract",
+            )
+        },
     )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(

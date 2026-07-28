@@ -11,9 +11,15 @@ import pytest
 from gobby.plans import review_evidence_io as snapshot_io
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    assemble_requirements_bundle,
+    build_request_anchor,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 OFFLOAD_THRESHOLD_CHARS = 15_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -149,6 +155,15 @@ def test_manifest_cache_hit(
     plan_dir.mkdir(parents=True)
     plan_path = plan_dir / "snapshot-transport.md"
     plan_path.write_bytes(_valid_plan_bytes())
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                "snapshot-manifest-request",
+                "Review the snapshot manifest",
+            )
+        },
+    )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(
         project_id=project.id,
@@ -216,21 +231,11 @@ def test_page_union_and_local_hash_verification() -> None:
 def test_sidecar_records_paged_and_bounded() -> None:
     snapshot = (REPO_ROOT / ".gobby/plans/adversary-convergence-improvements.md").read_bytes()
     large_value = 'immutable sidecar 🧪 "quoted" \\\\ value\n' * 1_200
-    requirements_bundle: dict[str, object] = {
-        "digest": hashlib.sha256(large_value.encode()).hexdigest(),
-        "sources": [
-            {
-                "source_id": "requirements-a",
-                "path": "docs/requirements-a.md",
-                "content": large_value,
-            },
-            {
-                "source_id": "requirements-b",
-                "path": "docs/requirements-b.md",
-                "content": large_value[::-1],
-            },
-        ],
-    }
+    requirements_bundle = assemble_requirements_bundle(
+        project_root=REPO_ROOT,
+        plan_snapshot=snapshot,
+        request_anchor=build_request_anchor("snapshot-sidecar", large_value),
+    )
     inventory: dict[str, object] = {
         "sites": [{"path": "src/example.py", "context": large_value}],
     }

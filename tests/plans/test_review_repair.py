@@ -33,6 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import coverage_attestation
+from tests.review_telemetry_helpers import enriched_telemetry
 
 pytestmark = pytest.mark.unit
 
@@ -160,6 +161,7 @@ def _finalize_prior_round(
         "verdict": "needs_review",
         "findings": findings,
         "coverage_attestation": attestation,
+        "convergence_telemetry": enriched_telemetry(),
     }
     if candidate_dispositions:
         lanes = attestation["lanes"]
@@ -451,6 +453,7 @@ def test_mixed_repair_carry_preparation(
     context = current.prior_round_context
     assert context is not None
     assert context == {
+        "requirements_bundle": context["requirements_bundle"],
         "prior_evidence_id": context["prior_evidence_id"],
         "prior_findings": [
             {
@@ -502,6 +505,7 @@ def test_prior_round_context_structure(
     context = current.prior_round_context
     assert context is not None
     expected = {
+        "requirements_bundle": context["requirements_bundle"],
         "prior_evidence_id": context["prior_evidence_id"],
         "prior_findings": [
             {
@@ -596,7 +600,11 @@ def test_remedy_vocabulary_round_trip(
         "source_citations": [{"path": "src/example.py", "sha256": "b" * 64}],
         "adjacent_sites_checked": [],
     }
-    canonical_candidate = _validate_candidate(candidate, expected_sections={"1.1"})
+    canonical_candidate = _validate_candidate(
+        candidate,
+        expected_sections={"1.1"},
+        requirements_bundle=None,
+    )
     finding = _finding("finding-1")
     finding["minimal_repair"] = canonical_candidate["suggested_fix"]
     prior = _finalize_prior_round(service, project_id, plan_path, [finding])
@@ -620,7 +628,11 @@ def test_remedy_vocabulary_round_trip(
     assert attestation["deviation_from_minimal_repair"] is None
     for forbidden in ("minimal_repair", "deviation_from_minimal_repair"):
         with pytest.raises(ReviewEvidenceError, match="unknown fields"):
-            _validate_candidate({**candidate, forbidden: "wrong"}, expected_sections={"1.1"})
+            _validate_candidate(
+                {**candidate, forbidden: "wrong"},
+                expected_sections={"1.1"},
+                requirements_bundle=None,
+            )
     for forbidden in ("suggested_fix", "deviation_from_minimal_repair"):
         with pytest.raises(ReviewEvidenceError, match="unknown fields"):
             validate_plan_review_findings(

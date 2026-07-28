@@ -32,6 +32,11 @@ from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
 from gobby.plans.review_repair import repair_preparation_for_round
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    assemble_requirements_bundle,
+    requirements_bundle_from_context,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -39,6 +44,7 @@ from gobby.storage.hub.protocol import (
     Transaction,
 )
 from gobby.storage.projects import LocalProjectManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 EVIDENCE_LEASE_SECONDS = 7_200
 
@@ -47,9 +53,13 @@ class PlanReviewEvidenceService:
     """Coordinate immutable snapshots with durable evidence lifecycle state."""
 
     def __init__(self, db: HubDatabase) -> None:
+        from gobby.storage.tasks import LocalTaskManager
+
         self.db = db
         self.store = PlanReviewEvidenceStore(db)
         self.projects = LocalProjectManager(db)
+        self.tasks = LocalTaskManager(db)
+        self.session_variables = SessionVariableManager(db)
         self.agent_runs = LocalAgentRunManager(db)
         self.checkpoints = ReviewCheckpointService(db=db, store=self.store)
         self.manifests = ReviewManifestService(
@@ -162,13 +172,31 @@ class PlanReviewEvidenceService:
                             prior_finding_resolutions=prior_finding_resolutions,
                             repair_attestations=repair_attestations,
                         )
-                        if context is not None:
-                            active = self.store.write_preparation_context(
-                                transaction=transaction,
-                                evidence_id=active.evidence_id,
-                                repair_attestations=context.repair_attestations,
-                                prior_round_context=context.prior_round_context,
-                            )
+                        requirements_bundle = requirements_bundle_from_context(
+                            active.prior_round_context
+                        ) or self._assemble_requirements_bundle(
+                            project_id=project_id,
+                            project_root=root,
+                            snapshot=active.snapshot,
+                            session_id=session_id,
+                            task_id=task_id,
+                        )
+                        preparation_context = dict(
+                            context.prior_round_context
+                            if context is not None
+                            else active.prior_round_context or {}
+                        )
+                        preparation_context["requirements_bundle"] = requirements_bundle
+                        active = self.store.write_preparation_context(
+                            transaction=transaction,
+                            evidence_id=active.evidence_id,
+                            repair_attestations=(
+                                context.repair_attestations
+                                if context is not None
+                                else active.repair_attestations or []
+                            ),
+                            prior_round_context=preparation_context,
+                        )
                         prepared = active.prepared_result()
                     elif self._attempt_is_dead(active):
                         self.store.expire(
@@ -198,6 +226,13 @@ class PlanReviewEvidenceService:
                         prior_finding_resolutions=prior_finding_resolutions,
                         repair_attestations=repair_attestations,
                     )
+                    requirements_bundle = self._assemble_requirements_bundle(
+                        project_id=project_id,
+                        project_root=root,
+                        snapshot=snapshot,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
                     evidence = self.store.insert(
                         transaction=transaction,
                         project_id=project_id,
@@ -211,13 +246,18 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     )
-                    if context is not None:
-                        evidence = self.store.write_preparation_context(
-                            transaction=transaction,
-                            evidence_id=evidence.evidence_id,
-                            repair_attestations=context.repair_attestations,
-                            prior_round_context=context.prior_round_context,
-                        )
+                    preparation_context = dict(
+                        context.prior_round_context if context is not None else {}
+                    )
+                    preparation_context["requirements_bundle"] = requirements_bundle
+                    evidence = self.store.write_preparation_context(
+                        transaction=transaction,
+                        evidence_id=evidence.evidence_id,
+                        repair_attestations=(
+                            context.repair_attestations if context is not None else []
+                        ),
+                        prior_round_context=preparation_context,
+                    )
                     prepared = evidence.prepared_result()
         if pending_payload:
             raise ReviewEvidenceError(
@@ -614,6 +654,37 @@ class PlanReviewEvidenceService:
 
     def _snapshot_document(self, evidence: PlanReviewEvidence) -> PlanDocument:
         return self.manifests.snapshot_document(evidence)
+
+    def _assemble_requirements_bundle(
+        self,
+        *,
+        project_id: str,
+        project_root: Path,
+        snapshot: bytes,
+        session_id: str | None,
+        task_id: str | None,
+    ) -> dict[str, object]:
+        if task_id is not None:
+            task = self.tasks.get_task(task_id, project_id)
+            return assemble_requirements_bundle(
+                project_root=project_root,
+                plan_snapshot=snapshot,
+                task_id=task.id,
+                task_fields={
+                    "title": task.title,
+                    "description": task.description,
+                    "validation_criteria": task.validation_criteria,
+                },
+            )
+        if session_id is None:  # pragma: no cover - guarded by attempt binding.
+            raise RuntimeError("taskless review preparation requires a session")
+        variables = self.session_variables.get_variables(session_id)
+        anchor = variables.get(REQUEST_ANCHOR_VARIABLE)
+        return assemble_requirements_bundle(
+            project_root=project_root,
+            plan_snapshot=snapshot,
+            request_anchor=anchor if isinstance(anchor, Mapping) else None,
+        )
 
     def _round_result_for_evidence(
         self,

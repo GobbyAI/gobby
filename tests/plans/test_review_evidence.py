@@ -15,11 +15,16 @@ from gobby.plans.review_evidence_io import (
     manifest_key,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    build_request_anchor,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import enriched_telemetry
 
@@ -91,6 +96,15 @@ def review_setup(
             ]
         ),
         encoding="utf-8",
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                "review-evidence-request",
+                "Review the evidence plan",
+            )
+        },
     )
     return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
 

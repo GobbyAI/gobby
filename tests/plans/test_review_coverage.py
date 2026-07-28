@@ -19,7 +19,9 @@ from gobby.plans.review_coverage import (
 from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
 from gobby.plans.review_ledger import inject_dismissed_ledger_context
+from gobby.plans.review_requirements import assemble_requirements_bundle
 from tests.review_coverage_helpers import coverage_attestation, manifest_digest
+from tests.review_telemetry_helpers import delivered_telemetry
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN_SKILL = ROOT / "src/gobby/install/shared/skills/plan/SKILL.md"
@@ -261,6 +263,87 @@ def test_valid_coverage_returns_canonical_attestation(tmp_path: Path) -> None:
     assert validate_coverage_attestation(attestation, verdict="approved") == attestation
 
 
+def test_citation_union_repository_and_requirement(tmp_path: Path) -> None:
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    bundle = assemble_requirements_bundle(
+        project_root=tmp_path,
+        plan_snapshot=document.source_path.read_bytes(),
+        task_id="task-1",
+        task_fields={
+            "title": "Immutable requirement",
+            "description": "Description",
+            "validation_criteria": "Acceptance",
+        },
+    )
+    sources = bundle["sources"]
+    assert isinstance(sources, list)
+    title_source = sources[0]
+    assert isinstance(title_source, dict)
+    requirement_citation: dict[str, object] = {
+        "requirement_id": title_source["requirement_id"],
+        "content_sha256": title_source["content_sha256"],
+        "line_start": 1,
+        "line_end": 1,
+    }
+    for lane in lanes:
+        assert isinstance(lane, dict)
+        lane["source_citations"] = [requirement_citation]
+        candidates = lane["candidate_issues"]
+        assert isinstance(candidates, list)
+        for candidate in candidates:
+            assert isinstance(candidate, dict)
+            candidate["source_citations"] = [requirement_citation]
+    candidate_dispositions = dispositions["candidate_dispositions"]
+    assert isinstance(candidate_dispositions, list)
+    for disposition in candidate_dispositions:
+        assert isinstance(disposition, dict)
+        disposition["source_hash"] = title_source["content_sha256"]
+    prior_context = inject_dismissed_ledger_context(
+        prior_round_context={"requirements_bundle": bundle},
+        prior_ledger=[],
+        current_section_hashes={},
+    )
+
+    attestation = _validate(
+        tmp_path,
+        document,
+        lanes,
+        dispositions,
+        shadow,
+        prior_round_context=prior_context,
+    )
+    assert attestation["source_digest"]
+
+    repository_document, repository_lanes, repository_dispositions, repository_shadow = (
+        _coverage_case(tmp_path)
+    )
+    assert _validate(
+        tmp_path,
+        repository_document,
+        repository_lanes,
+        repository_dispositions,
+        repository_shadow,
+    )["source_digest"]
+
+    mismatched = copy.deepcopy(lanes)
+    for lane in mismatched:
+        assert isinstance(lane, dict)
+        citations = lane["source_citations"]
+        assert isinstance(citations, list)
+        citation = citations[0]
+        assert isinstance(citation, dict)
+        citation["content_sha256"] = "f" * 64
+    with pytest.raises(ReviewEvidenceError, match="requirement citation hash"):
+        _validate(
+            tmp_path,
+            document,
+            mismatched,
+            dispositions,
+            shadow,
+            prior_round_context=prior_context,
+        )
+
+
 def test_derived_sweep_booleans(tmp_path: Path) -> None:
     document, lanes, records, shadow = _coverage_case(tmp_path, candidate_count=2)
     first_lane = lanes[0]
@@ -416,6 +499,7 @@ def test_validator_returns_canonical_record_bundle(tmp_path: Path) -> None:
             "verdict": "needs_review",
             "findings": [],
             "coverage_attestation": attestation,
+            "convergence_telemetry": delivered_telemetry(),
         }
     )
     round_attestation = round_result["coverage_attestation"]
@@ -430,6 +514,7 @@ def test_validator_returns_canonical_record_bundle(tmp_path: Path) -> None:
                 "verdict": "needs_review",
                 "findings": [],
                 "coverage_attestation": dropped,
+                "convergence_telemetry": delivered_telemetry(),
             }
         )
 
