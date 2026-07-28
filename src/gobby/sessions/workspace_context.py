@@ -51,23 +51,27 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     if not handoff_ctx.files_modified:
         return
 
-    if not handoff_ctx.git_status:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "status",
-                "--short",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-            handoff_ctx.git_status = stdout.decode().strip() if proc.returncode == 0 else ""
-        except Exception as e:
-            logger.debug("Failed to get git status for %s: %s", cwd, e)
-
-    if handoff_ctx.git_commits:
+    paths = _session_git_paths(handoff_ctx.files_modified, cwd)
+    handoff_ctx.git_status = ""
+    handoff_ctx.git_commits = []
+    if not paths:
         return
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "status",
+            "--short",
+            "--",
+            *paths,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        handoff_ctx.git_status = stdout.decode().strip() if proc.returncode == 0 else ""
+    except Exception as e:
+        logger.debug("Failed to get git status for %s: %s", cwd, e)
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -76,6 +80,8 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
             "--oneline",
             "-10",
             "--format=%H|%s",
+            "--",
+            *paths,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -91,3 +97,18 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
                 handoff_ctx.git_commits = commits
     except Exception as e:
         logger.debug("Failed to get git log for %s: %s", cwd, e)
+
+
+def _session_git_paths(files_modified: list[str], cwd: Path) -> tuple[str, ...]:
+    paths: list[str] = []
+    for raw_path in files_modified:
+        path = Path(raw_path)
+        if path.is_absolute():
+            try:
+                path = path.relative_to(cwd)
+            except ValueError:
+                continue
+        value = path.as_posix()
+        if value not in paths:
+            paths.append(value)
+    return tuple(paths)

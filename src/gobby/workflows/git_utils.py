@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess  # nosec B404 # subprocess needed for git commands
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,20 +76,25 @@ def get_recent_git_commits(
         return []
 
 
-def get_file_changes(project_path: str | None = None) -> str:
+def get_file_changes(
+    project_path: str | None = None,
+    paths: Sequence[str] | None = None,
+) -> str:
     """Get detailed file changes from git.
 
     Args:
         project_path: Optional path to the project directory. When provided,
             git commands run in this directory instead of the current working directory.
+        paths: Optional repository paths that bound the returned changes.
 
     Returns:
         Formatted string with modified/deleted and untracked files.
     """
     try:
         # Get changed files with status
+        path_args = ["--", *paths] if paths else []
         diff_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-            ["git", "diff", "HEAD", "--name-status"],
+            ["git", "diff", "HEAD", "--name-status", *path_args],
             capture_output=True,
             text=True,
             timeout=5,
@@ -97,7 +103,7 @@ def get_file_changes(project_path: str | None = None) -> str:
 
         # Get untracked files
         untracked_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "--others", "--exclude-standard", *path_args],
             capture_output=True,
             text=True,
             timeout=5,
@@ -120,7 +126,11 @@ def get_file_changes(project_path: str | None = None) -> str:
         return "Unable to determine file changes"
 
 
-def get_git_diff_summary(max_chars: int = 8000, project_path: str | None = None) -> str:
+def get_git_diff_summary(
+    max_chars: int = 8000,
+    project_path: str | None = None,
+    paths: Sequence[str] | None = None,
+) -> str:
     """Get git diff --stat + truncated diff content.
 
     Provides actual code change context beyond just file names.
@@ -130,14 +140,16 @@ def get_git_diff_summary(max_chars: int = 8000, project_path: str | None = None)
         max_chars: Maximum characters for the diff content
         project_path: Optional path to the project directory. When provided,
             git commands run in this directory instead of the current working directory.
+        paths: Optional repository paths that bound the returned diff.
 
     Returns:
         Formatted markdown with stat overview + truncated diff
     """
     try:
         # Get stat overview
+        path_args = ["--", *paths] if paths else []
         stat_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-            ["git", "diff", "HEAD", "--stat"],
+            ["git", "diff", "HEAD", "--stat", *path_args],
             capture_output=True,
             text=True,
             timeout=10,
@@ -147,7 +159,7 @@ def get_git_diff_summary(max_chars: int = 8000, project_path: str | None = None)
 
         # Get actual diff content
         diff_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-            ["git", "diff", "HEAD"],
+            ["git", "diff", "HEAD", *path_args],
             capture_output=True,
             text=True,
             timeout=10,
@@ -158,7 +170,7 @@ def get_git_diff_summary(max_chars: int = 8000, project_path: str | None = None)
         # Fall back to staged changes if HEAD diff is empty
         if not diff_output:
             diff_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-                ["git", "diff", "--cached"],
+                ["git", "diff", "--cached", *path_args],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -167,7 +179,7 @@ def get_git_diff_summary(max_chars: int = 8000, project_path: str | None = None)
             diff_output = diff_result.stdout.strip()
             if not stat_output:
                 stat_result = subprocess.run(  # nosec B603 B607 # hardcoded git command
-                    ["git", "diff", "--cached", "--stat"],
+                    ["git", "diff", "--cached", "--stat", *path_args],
                     capture_output=True,
                     text=True,
                     timeout=10,

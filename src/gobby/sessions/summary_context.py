@@ -26,6 +26,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.sessions.summarize")
 
 
+def _scoped_git_status(status: str, paths: tuple[str, ...]) -> str:
+    scoped: list[str] = []
+    for line in status.splitlines():
+        for path in paths:
+            if line.endswith(path):
+                prefix = line[:3] if len(line) >= 3 else ""
+                scoped.append(f"{prefix}{path}")
+                break
+    return "\n".join(scoped)
+
+
 def _facade_attr(name: str) -> Any:
     from gobby.sessions import summarize
 
@@ -159,19 +170,30 @@ async def _build_summary_prompt_context(
         else ""
     )
     has_session_edits = bool(handoff_ctx.files_modified)
-    structured_handoff_ctx = handoff_ctx
-    if not has_session_edits:
-        structured_handoff_ctx = copy(handoff_ctx)
+    session_paths = tuple(str(path) for path in handoff_ctx.files_modified)
+    structured_handoff_ctx = copy(handoff_ctx)
+    if has_session_edits:
+        structured_handoff_ctx.git_status = _scoped_git_status(
+            handoff_ctx.git_status,
+            session_paths,
+        )
+    else:
         structured_handoff_ctx.git_status = ""
         structured_handoff_ctx.git_commits = []
 
     return {
         "transcript_summary": transcript_summary,
         "last_messages": last_messages_str,
-        "git_status": handoff_ctx.git_status if has_session_edits else "",
-        "file_changes": get_file_changes(project_path=project_path) if has_session_edits else "",
+        "git_status": structured_handoff_ctx.git_status,
+        "file_changes": (
+            get_file_changes(project_path=project_path, paths=session_paths)
+            if has_session_edits
+            else ""
+        ),
         "git_diff_summary": (
-            get_git_diff_summary(project_path=project_path) if has_session_edits else ""
+            get_git_diff_summary(project_path=project_path, paths=session_paths)
+            if has_session_edits
+            else ""
         ),
         "structured_context": _format_structured_context(structured_handoff_ctx),
         "claimed_tasks": claimed_tasks,
