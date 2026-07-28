@@ -17,6 +17,7 @@ from gobby.storage.tasks import (
     Task,
     TaskAlreadyEscalatedError,
     _lifecycle,
+    _review_transitions,
     _transitions,
 )
 
@@ -203,7 +204,7 @@ def test_submit_for_review_preserves_label_added_during_transition(
     manager.stage_states.start_stage(task.id, "development", by_session_id=session.id)
     manager.claim_task(task.id, session.id)
     manager.add_label(task.id, "planning-current-verdict:rejected")
-    original_update_task = _transitions.update_task
+    original_update_task = _review_transitions.update_task
 
     def _update_after_concurrent_label(
         db: HubDatabase,
@@ -214,7 +215,7 @@ def test_submit_for_review_preserves_label_added_during_transition(
         _lifecycle.add_label(db, task_id, "covers:concurrent")
         return original_update_task(db, task_id, *args, **kwargs)
 
-    monkeypatch.setattr(_transitions, "update_task", _update_after_concurrent_label)
+    monkeypatch.setattr(_review_transitions, "update_task", _update_after_concurrent_label)
 
     reviewed = manager.submit_for_review(
         task.id,

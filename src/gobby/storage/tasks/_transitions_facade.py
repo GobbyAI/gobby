@@ -19,8 +19,14 @@ from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
 from gobby.storage.tasks._plan_enhancement import (
     record_plan_enhancement as _record_plan_enhancement,
 )
-from gobby.storage.tasks._transitions import (
+from gobby.storage.tasks._review_transitions import (
     approve_review as _approve_review,
+)
+from gobby.storage.tasks._review_transitions import (
+    reject_review as _reject_review,
+)
+from gobby.storage.tasks._review_transitions import (
+    submit_for_review as _submit_for_review,
 )
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
@@ -35,13 +41,7 @@ from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
-    reject_review as _reject_review,
-)
-from gobby.storage.tasks._transitions import (
     release_task_claim as _release_task_claim,
-)
-from gobby.storage.tasks._transitions import (
-    submit_for_review as _submit_for_review,
 )
 
 

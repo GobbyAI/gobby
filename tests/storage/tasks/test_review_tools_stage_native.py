@@ -9,15 +9,15 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._review_transitions import (
+    approve_review,
+    reject_review,
+    submit_for_review,
+)
 from gobby.storage.tasks._stage_states import (
     IllegalStageTransitionError,
     NoCurrentStageError,
     StageStatesManager,
-)
-from gobby.storage.tasks._transitions import (
-    approve_review,
-    reject_review,
-    submit_for_review,
 )
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
