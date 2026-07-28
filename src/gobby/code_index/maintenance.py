@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
 from gobby.code_index.gcode_gateway import (
+    GcodeDaemonConfigUnavailableError,
     GcodeProjectNotFoundError,
     _classify_gcode_command_error,
 )
@@ -86,6 +87,7 @@ async def _run_maintenance(
     await _retry_pending_projection_cleanups(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_gateway = context.gcode_gateway
+    daemon_config_breaker = context.daemon_config_breaker
     index_timeout = context.config.maintenance_index_timeout_seconds
 
     if gcode_gateway is None:
@@ -119,11 +121,17 @@ async def _run_maintenance(
 
         missing_root_observations.pop(project_id, None)
 
-        if gcode_gateway is not None:
+        if gcode_gateway is not None and daemon_config_breaker.should_attempt():
             purge_project = False
             try:
                 result = await gcode_gateway.maintenance_index(root, timeout=index_timeout)
-                if not result.success:
+                daemon_config_breaker.record_success()
+                if result.returncode == 3:
+                    logger.debug(
+                        "Maintenance reindex skipped for %s (index lock busy)",
+                        project.id,
+                    )
+                elif not result.success:
                     detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
                     if result.timed_out:
                         logger.error(
@@ -146,7 +154,10 @@ async def _run_maintenance(
                                 result.returncode,
                                 detail,
                             )
+            except GcodeDaemonConfigUnavailableError:
+                daemon_config_breaker.record_failure()
             except Exception:
+                daemon_config_breaker.record_success()
                 logger.exception("Maintenance reindex failed for %s", project.id)
 
             if purge_project:

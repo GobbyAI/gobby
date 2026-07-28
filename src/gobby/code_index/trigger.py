@@ -13,7 +13,11 @@ import logging
 import os
 from pathlib import Path
 
-from gobby.utils.native_bin import resolve_native_bin
+from gobby.code_index.gcode_gateway import (
+    GcodeDaemonConfigUnavailableError,
+    GcodeGateway,
+)
+from gobby.code_index.sync_breaker import SyncCircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +36,17 @@ class CodeIndexTrigger:
         retry_base_seconds: float = 1.0,
         retry_max_seconds: float = 30.0,
         index_timeout_seconds: float = 30.0,
+        *,
+        gcode_gateway: GcodeGateway,
+        daemon_config_breaker: SyncCircuitBreaker,
     ) -> None:
         self._loop = loop
         self._debounce_seconds = debounce_seconds
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
         self._index_timeout_seconds = index_timeout_seconds
+        self._gcode_gateway = gcode_gateway
+        self._daemon_config_breaker = daemon_config_breaker
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
@@ -77,15 +86,26 @@ class CodeIndexTrigger:
             _schedule_flush,
         )
 
-    def _requeue_for_retry(self, root_key: str, project_id: str, files: set[str]) -> None:
+    def _requeue_for_retry(
+        self,
+        root_key: str,
+        project_id: str,
+        files: set[str],
+        *,
+        retry_delay: float | None = None,
+    ) -> None:
         """Return a failed batch to pending files and schedule retry with backoff."""
         self._pending_by_root.setdefault(root_key, set()).update(files)
 
         if root_key in self._flush_timers_by_root:
             self._flush_timers_by_root[root_key].cancel()
 
-        retry_delay = self._retry_delay_by_root.get(root_key, self._retry_base_seconds)
-        self._retry_delay_by_root[root_key] = min(retry_delay * 2, self._retry_max_seconds)
+        if retry_delay is None:
+            retry_delay = self._retry_delay_by_root.get(root_key, self._retry_base_seconds)
+            self._retry_delay_by_root[root_key] = min(
+                retry_delay * 2,
+                self._retry_max_seconds,
+            )
 
         def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
             self._loop.create_task(self._flush(root, pid))
@@ -118,49 +138,38 @@ class CodeIndexTrigger:
         return os.path.normpath(os.fspath(resolved))
 
     async def _flush(self, root_key: str, project_id: str) -> None:
-        """Flush pending files for a root via gcode subprocess."""
+        """Flush pending files for a root through the shared gcode gateway."""
         files = self._pending_by_root.pop(root_key, set())
         self._flush_timers_by_root.pop(root_key, None)
 
         if not files:
             return
 
-        gcode_bin = resolve_native_bin("gcode")
-        if gcode_bin is None:
-            logger.warning("gcode not installed — skipping incremental index. Run `gobby install`.")
+        if not self._daemon_config_breaker.should_attempt():
+            self._requeue_for_retry(
+                root_key,
+                project_id,
+                files,
+                retry_delay=max(
+                    self._retry_base_seconds,
+                    self._daemon_config_breaker.retry_after_seconds(),
+                ),
+            )
             return
 
-        proc: asyncio.subprocess.Process | None = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                gcode_bin,
-                "index",
-                "--files",
-                *files,
-                "--quiet",
-                # Yield instead of blocking on the project index lock: a blocking
-                # flush that is later killed on timeout leaves a lingering
-                # advisory-lock waiter, which pileup-wedges the index under a slow
-                # reindex (#17701). gcode exits 3 when it skips.
-                "--skip-if-locked",
-                cwd=root_key,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(),
+            result = await self._gcode_gateway.incremental_index(
+                Path(root_key),
+                sorted(files),
                 timeout=self._index_timeout_seconds,
             )
-            if proc.returncode == 0:
+            self._daemon_config_breaker.record_success()
+            if result.success:
                 self._clear_retry_backoff(root_key)
                 logger.debug(
                     "gcode indexed %s files for project %s at %s", len(files), project_id, root_key
                 )
-            elif proc.returncode == 3:
-                # Index lock was held (typically by a concurrent reindex, which
-                # covers these files); gcode skipped without blocking. Requeue so
-                # the files are re-flushed once the lock frees, without emitting a
-                # scary warning for an expected transient condition.
+            elif result.returncode == 3:
                 logger.debug(
                     "gcode index skipped %s files for project %s (index lock busy); requeuing",
                     len(files),
@@ -168,26 +177,26 @@ class CodeIndexTrigger:
                 )
                 self._requeue_for_retry(root_key, project_id, files)
             else:
-                detail = stderr.decode().strip() if stderr else "(no stderr)"
-                logger.warning("gcode index exited %s: %s", proc.returncode, detail)
+                detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+                if result.timed_out:
+                    logger.warning("gcode index timed out after %gs", result.timeout_seconds)
+                else:
+                    logger.warning("gcode index exited %s: %s", result.returncode, detail)
                 self._requeue_for_retry(root_key, project_id, files)
+        except GcodeDaemonConfigUnavailableError:
+            self._daemon_config_breaker.record_failure()
+            self._requeue_for_retry(
+                root_key,
+                project_id,
+                files,
+                retry_delay=max(
+                    self._retry_base_seconds,
+                    self._daemon_config_breaker.retry_after_seconds(),
+                ),
+            )
         except asyncio.CancelledError:
-            try:
-                if proc is not None:
-                    proc.kill()
-                    await proc.wait()
-            except ProcessLookupError:
-                pass
             raise
-        except TimeoutError:
-            logger.warning("gcode index timed out after %gs", self._index_timeout_seconds)
-            try:
-                if proc is not None:
-                    proc.kill()
-                    await proc.wait()
-            except ProcessLookupError:
-                pass
-            self._requeue_for_retry(root_key, project_id, files)
         except Exception as e:
+            self._daemon_config_breaker.record_success()
             logger.warning("gcode index failed: %s", e)
             self._requeue_for_retry(root_key, project_id, files)

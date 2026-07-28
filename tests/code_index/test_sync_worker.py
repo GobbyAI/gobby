@@ -231,7 +231,15 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
     gcode_gateway = RecordingGcodeGateway(fail=True)
     context = cast(
         CodeIndexContext,
-        SimpleNamespace(gcode_gateway=gcode_gateway, clear_graph=None),
+        SimpleNamespace(
+            gcode_gateway=gcode_gateway,
+            clear_graph=None,
+            daemon_config_breaker=SyncCircuitBreaker(
+                name="test",
+                probe_target="daemon config",
+                operation="sync",
+            ),
+        ),
     )
     shutdown_flag = asyncio.Event()
 
@@ -276,7 +284,15 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
     gcode_gateway = RecordingGcodeGateway()
     context = cast(
         CodeIndexContext,
-        SimpleNamespace(gcode_gateway=gcode_gateway, clear_graph=None),
+        SimpleNamespace(
+            gcode_gateway=gcode_gateway,
+            clear_graph=None,
+            daemon_config_breaker=SyncCircuitBreaker(
+                name="test",
+                probe_target="daemon config",
+                operation="sync",
+            ),
+        ),
     )
     shutdown_flag = asyncio.Event()
 

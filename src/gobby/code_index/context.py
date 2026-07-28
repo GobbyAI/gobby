@@ -16,6 +16,7 @@ from typing import Any
 
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.code_index.storage import CodeIndexStorage
+from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
@@ -65,9 +66,18 @@ class CodeIndexContext:
         gcode_gateway: GcodeGateway | None = None,
         config: CodeIndexConfig | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        daemon_config_breaker: SyncCircuitBreaker | None = None,
     ) -> None:
         self._storage = storage
         self._config = config or CodeIndexConfig()
+        self._daemon_config_breaker = daemon_config_breaker or SyncCircuitBreaker(
+            name="Gcode daemon-config",
+            probe_target="daemon config endpoint",
+            operation="daemon-owned gcode work",
+            failure_threshold=1,
+            base_backoff_seconds=self._config.sync_worker_breaker_backoff_seconds,
+            max_backoff_seconds=self._config.sync_worker_breaker_max_backoff_seconds,
+        )
         self._gcode_gateway: GcodeGateway | None = gcode_gateway
         if self._gcode_gateway is None and (
             self._config.graph_enabled or self._config.embedding_enabled
@@ -85,6 +95,10 @@ class CodeIndexContext:
     @property
     def gcode_gateway(self) -> GcodeGateway | None:
         return self._gcode_gateway
+
+    @property
+    def daemon_config_breaker(self) -> SyncCircuitBreaker:
+        return self._daemon_config_breaker
 
     @property
     def config(self) -> CodeIndexConfig:

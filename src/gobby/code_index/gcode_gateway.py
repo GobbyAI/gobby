@@ -415,7 +415,29 @@ class GcodeGateway:
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
-            [binary, "index", "--project", str(project_root)],
+            [binary, "index", "--project", str(project_root), "--skip-if-locked"],
+            timeout=timeout,
+        )
+
+    async def incremental_index(
+        self,
+        project_root: Path,
+        files: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [
+                binary,
+                "index",
+                "--project",
+                str(project_root),
+                "--files",
+                *files,
+                "--quiet",
+                "--skip-if-locked",
+            ],
             timeout=timeout,
         )
 

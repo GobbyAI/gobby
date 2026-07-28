@@ -31,7 +31,7 @@ if [ -n "$CHANGED_FILES" ]; then
     GCODE="$HOME/.gobby/bin/gcode"
     if [ -x "$GCODE" ]; then
         (
-            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then
+            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then
                 ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
                 if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
                     DAEMON_URL="${GOBBY_DAEMON_URL:-}"

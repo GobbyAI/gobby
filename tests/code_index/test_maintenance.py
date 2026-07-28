@@ -8,22 +8,31 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.code_index.gcode_gateway import GcodeCommandResult
+from gobby.code_index.context import CodeIndexContext
+from gobby.code_index.gcode_gateway import (
+    GcodeCommandResult,
+    GcodeDaemonConfigUnavailableError,
+)
 from gobby.code_index.maintenance import (
     _run_maintenance,
     _summarize_unsummarized,
     _update_symbol_summaries,
 )
 from gobby.code_index.models import IndexedProject
+from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 
 pytestmark = pytest.mark.unit
 
 T = TypeVar("T")
+DAEMON_CONFIG_STDERR = (
+    "Error: daemon effective config unavailable "
+    "(timeout; url=http://127.0.0.1:60887/api/config/effective)"
+)
 
 
 class _MaintenanceConfig(Protocol):
@@ -58,6 +67,7 @@ def _gcode_result(
 class _MaintenanceContext(Protocol):
     storage: Any
     gcode_gateway: Any | None
+    daemon_config_breaker: SyncCircuitBreaker
     config: _MaintenanceConfig
 
     async def run_db(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T: ...
@@ -72,10 +82,12 @@ class RecordingGcodeGateway:
         vector_sync_result: dict[str, Any] | None = None,
         vector_clear_result: dict[str, Any] | None = None,
         maintenance_result: GcodeCommandResult | None = None,
+        maintenance_exception: BaseException | None = None,
     ) -> None:
         self.vector_sync_result = vector_sync_result or {"success": True}
         self.vector_clear_result = vector_clear_result or {"success": True}
         self.maintenance_result = maintenance_result
+        self.maintenance_exception = maintenance_exception
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.vector_cleared_roots: list[Path] = []
         self.maintenance_calls: list[tuple[Path, float | None]] = []
@@ -87,8 +99,16 @@ class RecordingGcodeGateway:
         timeout: float | None = None,
     ) -> GcodeCommandResult:
         self.maintenance_calls.append((project_root, timeout))
+        if self.maintenance_exception is not None:
+            raise self.maintenance_exception
         return self.maintenance_result or _gcode_result(
-            ("/tmp/gcode", "index", "--project", str(project_root), "--quiet"),
+            (
+                "/tmp/gcode",
+                "index",
+                "--project",
+                str(project_root),
+                "--skip-if-locked",
+            ),
             timeout_seconds=timeout,
         )
 
@@ -140,6 +160,11 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
         storage=storage,
         clear_graph=clear_graph,
         gcode_gateway=gcode_gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
         config=SimpleNamespace(
             graph_enabled=True,
             embedding_enabled=True,
@@ -225,6 +250,11 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gcode_gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
         config=SimpleNamespace(
             graph_enabled=True,
             embedding_enabled=True,
@@ -293,6 +323,11 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         storage=storage,
         clear_graph=clear_graph,
         gcode_gateway=gcode_gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
         config=SimpleNamespace(
             graph_enabled=True,
             embedding_enabled=True,
@@ -358,6 +393,11 @@ async def test_maintenance_logs_unexpected_reindex_failure_at_error(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gcode_gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
         config=SimpleNamespace(
             graph_enabled=True,
             embedding_enabled=True,
@@ -367,12 +407,137 @@ async def test_maintenance_logs_unexpected_reindex_failure_at_error(
     )
 
     with caplog.at_level(logging.ERROR, logger="gobby.code_index.maintenance"):
-        await _run_maintenance(context)
+        await _run_maintenance(cast(CodeIndexContext, context))
 
     assert "Maintenance reindex failed for proj-failed (exit code 1)" in caplog.text
     assert diagnostic in caplog.text
     assert any(record.levelno == logging.ERROR for record in caplog.records)
     storage.delete_project_index.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_lock_busy_is_expected_and_continues_summaries(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-busy",
+        root_path=str(root),
+        total_files=1,
+        total_symbols=1,
+    )
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    storage.get_unsummarized_symbols.return_value = []
+    gateway = RecordingGcodeGateway(
+        maintenance_result=_gcode_result(
+            (
+                "/tmp/gcode",
+                "index",
+                "--project",
+                str(root),
+                "--skip-if-locked",
+            ),
+            returncode=3,
+            stderr="index lock busy",
+        )
+    )
+    breaker = SyncCircuitBreaker(
+        name="test",
+        probe_target="daemon config",
+        operation="maintenance",
+        failure_threshold=1,
+        base_backoff_seconds=0.0,
+    )
+    breaker.record_failure()
+    caplog.clear()
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        gcode_gateway=gateway,
+        daemon_config_breaker=breaker,
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=900,
+        ),
+        run_db=run_db,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await _run_maintenance(
+            context,
+            summarizer=SimpleNamespace(summarize_batch=AsyncMock()),
+        )
+
+    assert gateway.maintenance_calls == [(root, 900)]
+    assert breaker.state is BreakerState.CLOSED
+    storage.get_unsummarized_symbols.assert_called_once()
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-config-down",
+        root_path=str(root),
+        total_files=1,
+        total_symbols=1,
+    )
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    gateway = RecordingGcodeGateway(
+        maintenance_exception=GcodeDaemonConfigUnavailableError(
+            ("gcode", "index"),
+            1,
+            DAEMON_CONFIG_STDERR,
+        )
+    )
+    breaker = SyncCircuitBreaker(
+        name="test",
+        probe_target="daemon config",
+        operation="maintenance",
+        failure_threshold=1,
+    )
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        gcode_gateway=gateway,
+        daemon_config_breaker=breaker,
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=900,
+        ),
+        run_db=run_db,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await _run_maintenance(context)
+        await _run_maintenance(context)
+
+    assert breaker.state is BreakerState.OPEN
+    assert gateway.maintenance_calls == [(root, 900)]
+    assert caplog.text.count("breaker open") == 1
+    assert "Maintenance reindex failed" not in caplog.text
+    assert DAEMON_CONFIG_STDERR not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -399,6 +564,11 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=None,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
         config=SimpleNamespace(
             graph_enabled=True,
             embedding_enabled=True,
@@ -451,7 +621,13 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
     content_hashes = {symbol_id: f"hash-{index}" for index, symbol_id in enumerate(results)}
 
-    update_task = asyncio.create_task(_update_symbol_summaries(context, results, content_hashes))
+    update_task = asyncio.create_task(
+        _update_symbol_summaries(
+            cast(CodeIndexContext, context),
+            results,
+            content_hashes,
+        )
+    )
     assert await asyncio.to_thread(all_slots_busy.wait, 1)
     release_updates.set()
     await update_task
@@ -532,7 +708,7 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _summarize_unsummarized(
-            context,
+            cast(CodeIndexContext, context),
             SimpleNamespace(id="proj-1", root_path=str(tmp_path)),
             Summarizer(),  # type: ignore[arg-type]
             batch_size=3,
@@ -566,7 +742,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _update_symbol_summaries(
-            context,
+            cast(CodeIndexContext, context),
             {"sym-ok": "ok", "sym-bad": "bad", "sym-later": "later"},
             {"sym-ok": "hash-ok", "sym-bad": "hash-bad", "sym-later": "hash-later"},
         )

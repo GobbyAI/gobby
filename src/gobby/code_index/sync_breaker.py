@@ -65,6 +65,14 @@ class SyncCircuitBreaker:
             return self._monotonic() >= self._open_until
         return False
 
+    def retry_after_seconds(self) -> float:
+        """Delay until another caller may attempt a half-open probe."""
+        if self._state is BreakerState.OPEN:
+            return max(0.0, self._open_until - self._monotonic())
+        if self._state is BreakerState.HALF_OPEN:
+            return self._current_backoff
+        return 0.0
+
     def should_attempt(self) -> bool:
         """Per-file gate for the protected operation.
 

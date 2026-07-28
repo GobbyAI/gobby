@@ -186,15 +186,6 @@ async def sync_worker_loop(
         base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
         max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
     )
-    gateway_breaker = SyncCircuitBreaker(
-        name="Gcode daemon-config",
-        probe_target="daemon config endpoint",
-        operation="gcode projections",
-        failure_threshold=1,
-        base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
-        max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
-    )
-
     logger.info(
         "Code index sync worker started (interval=%ss, batch=%s)",
         interval,
@@ -213,7 +204,7 @@ async def sync_worker_loop(
                 clear_graph=context.clear_graph,
                 run_db=run_db,
                 vector_breaker=vector_breaker,
-                gateway_breaker=gateway_breaker,
+                gateway_breaker=context.daemon_config_breaker,
             )
         except Exception as e:
             logger.exception("Sync worker pass error: %s", e)
@@ -395,6 +386,8 @@ async def _sync_file(
                     e,
                 )
             except (GcodeTimeoutError, GcodeUnavailableError) as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 if vector_breaker is not None:
                     vector_breaker.record_failure()
                 logger.warning(
@@ -411,6 +404,8 @@ async def _sync_file(
                     e,
                 )
             except Exception as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 logger.exception(
                     "Sync worker: vector sync failed for %s: %s",
                     current.file_path,
@@ -488,6 +483,8 @@ async def _sync_file(
                 )
                 return False
             except GcodeTimeoutError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 logger.warning(
                     "Sync worker: graph sync timed out for %s: %s",
                     current.file_path,
@@ -502,6 +499,8 @@ async def _sync_file(
                     e,
                 )
             except Exception as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 logger.exception(
                     "Sync worker: graph sync failed for %s: %s",
                     current.file_path,

@@ -4,6 +4,7 @@ import os
 import shlex
 import stat
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -696,7 +697,9 @@ class TestInstallGitHooks:
         for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
-            assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in content
+            assert (
+                'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+            ) in content
             assert "/api/code-index/codewiki/refresh" in content
             assert "GOBBY HOOK START" in content
 
@@ -751,6 +754,78 @@ class TestInstallGitHooks:
             pytest.fail("post-checkout hook did not reindex branch-only.txt")
 
         assert "branch-only.txt" in stdout
+
+    def test_post_commit_lock_busy_exits_without_codewiki_refresh(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        fake_home = tmp_path / "home"
+        gobby_bin = fake_home / ".gobby" / "bin"
+        path_bin = fake_home / "bin"
+        gobby_bin.mkdir(parents=True)
+        path_bin.mkdir()
+        args_file = tmp_path / "gcode.args"
+        done_fifo = tmp_path / "gcode.done.fifo"
+        os.mkfifo(done_fifo)
+        waiter_file = tmp_path / "gcode.waiter"
+        curl_file = tmp_path / "curl.called"
+        gcode = gobby_bin / "gcode"
+        gcode.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' \"$@\" > {shlex.quote(str(args_file))}\n"
+            'for ARG in "$@"; do\n'
+            '  if [ "$ARG" = "--skip-if-locked" ]; then\n'
+            f"    printf 'done\\n' > {shlex.quote(str(done_fifo))}\n"
+            "    exit 3\n"
+            "  fi\n"
+            "done\n"
+            f"touch {shlex.quote(str(waiter_file))}\n"
+            "sleep 5\n"
+        )
+        gcode.chmod(gcode.stat().st_mode | stat.S_IXUSR)
+        curl = path_bin / "curl"
+        curl.write_text(f"#!/usr/bin/env bash\ntouch {shlex.quote(str(curl_file))}\n")
+        curl.chmod(curl.stat().st_mode | stat.S_IXUSR)
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("PATH", f"{path_bin}{os.pathsep}{os.environ['PATH']}")
+
+        self._git(repo, "init")
+        self._git(repo, "config", "user.email", "test@example.com")
+        self._git(repo, "config", "user.name", "Test User")
+        (repo / "tracked.txt").write_text("content\n")
+        self._git(repo, "add", "tracked.txt")
+        self._git(repo, "commit", "-m", "initial")
+        (repo / "tracked.txt").write_text("updated\n")
+        self._git(repo, "add", "tracked.txt")
+        self._git(repo, "commit", "-m", "update")
+        result = install_git_hooks(repo)
+        assert result["success"] is True
+
+        hook = repo / ".git" / "hooks" / "post-commit"
+        reader = subprocess.Popen(
+            ["cat", str(done_fifo)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            started = time.monotonic()
+            subprocess.run([str(hook)], cwd=repo, check=False, timeout=1)
+            elapsed = time.monotonic() - started
+            stdout, _ = reader.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            reader.kill()
+            reader.communicate()
+            pytest.fail("post-commit gcode process did not exit after lock skip")
+
+        assert elapsed < 1
+        assert stdout == "done\n"
+        assert "--skip-if-locked" in args_file.read_text().splitlines()
+        assert not waiter_file.exists()
+        assert not curl_file.exists()
 
     @staticmethod
     def _git(repo: Path, *args: str) -> None:
@@ -1022,7 +1097,9 @@ class TestHookTemplates:
         content = HOOK_TEMPLATES["post-commit"]
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
-        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in content
+        assert (
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+        ) in content
         assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in content
         assert '-H "Content-Type: application/json" \\' in content
         assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in content
@@ -1045,7 +1122,9 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in installed
+        assert (
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+        ) in installed
         assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in installed
         assert '-H "Content-Type: application/json" \\' in installed
         assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in installed
@@ -1063,7 +1142,7 @@ class TestHookTemplates:
         shared_snippets = (
             'GCODE="$HOME/.gobby/bin/gcode"',
             r"tr '\n' '\0'",
-            'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then',
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then',
             "/api/code-index/codewiki/refresh",
             "codewiki refresh request failed",
         )

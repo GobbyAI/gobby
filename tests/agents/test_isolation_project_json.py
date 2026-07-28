@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig, repair_isolation_environment
+from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.code_index.trigger import CodeIndexTrigger
 
 pytestmark = pytest.mark.unit
@@ -282,23 +284,30 @@ async def test_clone_and_parent_can_index_same_relative_file_without_collision(
 ) -> None:
     """Parent and clone roots sharing a parent id flush with distinct cwd values."""
     loop = asyncio.get_running_loop()
-    trigger = CodeIndexTrigger(loop=loop, debounce_seconds=0.05)
-    mock_proc = _make_mock_proc()
+    gateway = AsyncMock(spec=GcodeGateway)
+    gateway.incremental_index.return_value = MagicMock(success=True)
+    trigger = CodeIndexTrigger(
+        loop=loop,
+        debounce_seconds=0.05,
+        gcode_gateway=gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="index",
+            failure_threshold=1,
+        ),
+    )
     parent = tmp_path / "parent"
     clone = tmp_path / "clone"
     parent.mkdir()
     clone.mkdir()
 
-    with (
-        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
-    ):
-        trigger._schedule_file("src/shared.py", "parent-proj", str(parent))
-        trigger._schedule_file("src/shared.py", "parent-proj", str(clone))
+    trigger._schedule_file("src/shared.py", "parent-proj", str(parent))
+    trigger._schedule_file("src/shared.py", "parent-proj", str(clone))
 
-        await trigger._flush(trigger._root_key(str(parent)), "parent-proj")
-        await trigger._flush(trigger._root_key(str(clone)), "parent-proj")
+    await trigger._flush(trigger._root_key(str(parent)), "parent-proj")
+    await trigger._flush(trigger._root_key(str(clone)), "parent-proj")
 
-    assert mock_exec.call_count == 2
-    cwds = {call.kwargs["cwd"] for call in mock_exec.call_args_list}
-    assert cwds == {str(parent.resolve()), str(clone.resolve())}
+    assert gateway.incremental_index.await_count == 2
+    roots = {call.args[0] for call in gateway.incremental_index.await_args_list}
+    assert roots == {parent.resolve(), clone.resolve()}

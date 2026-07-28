@@ -229,6 +229,38 @@ async def test_gateway_builds_clear_and_rebuild_args(
     ]
 
 
+async def test_gateway_builds_incremental_index_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b"indexed"),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    result = await gateway.incremental_index(
+        tmp_path,
+        ["src/app.py", "docs/readme.md"],
+        timeout=11,
+    )
+
+    assert result.success is True
+    assert calls[1] == (
+        "/tmp/gcode",
+        "index",
+        "--project",
+        str(tmp_path),
+        "--files",
+        "src/app.py",
+        "docs/readme.md",
+        "--quiet",
+        "--skip-if-locked",
+    )
+    assert result.timeout_seconds == 11
+
+
 async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -322,6 +354,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "index",
             "--project",
             str(tmp_path),
+            "--skip-if-locked",
         ),
         (
             "/tmp/gcode",

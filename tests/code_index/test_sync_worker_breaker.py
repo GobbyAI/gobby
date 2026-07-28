@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
@@ -18,7 +21,7 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.code_index.models import IndexedFile, IndexedProject
 from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
-from gobby.code_index.sync_worker import _sync_pass
+from gobby.code_index.sync_worker import _sync_pass, sync_worker_loop
 from gobby.config.code_index import CodeIndexConfig
 from tests.code_index.conftest import PROJECT_ID
 
@@ -71,17 +74,22 @@ class TestSyncCircuitBreakerUnit:
         assert breaker.state is BreakerState.OPEN
         assert not breaker.pending_allowed()
         assert not breaker.should_attempt()
+        assert breaker.retry_after_seconds() == 30.0
 
+        clock.now = 10.0
+        assert breaker.retry_after_seconds() == 20.0
         clock.now = 30.0
         assert breaker.pending_allowed()
         assert breaker.should_attempt()  # transitions to half-open probe
         assert breaker.state is BreakerState.HALF_OPEN
         assert not breaker.should_attempt()  # only one probe
         assert not breaker.pending_allowed()
+        assert breaker.retry_after_seconds() == 30.0
 
         breaker.record_success()
         assert breaker.state is BreakerState.CLOSED
         assert breaker.should_attempt()
+        assert breaker.retry_after_seconds() == 0.0
 
     def test_failed_probe_doubles_backoff_to_cap(self) -> None:
         clock = FakeClock()
@@ -262,6 +270,36 @@ def _config(
         embedding_enabled=embedding_enabled,
         graph_enabled=graph_enabled,
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_worker_loop_uses_context_daemon_config_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    breaker = make_breaker(failure_threshold=1)
+    shutdown = asyncio.Event()
+    seen_breakers: list[SyncCircuitBreaker] = []
+
+    async def fake_sync_pass(**kwargs: Any) -> None:
+        seen_breakers.append(kwargs["gateway_breaker"])
+        shutdown.set()
+
+    monkeypatch.setattr("gobby.code_index.sync_worker._sync_pass", fake_sync_pass)
+    context = SimpleNamespace(
+        gcode_gateway=MagicMock(),
+        clear_graph=AsyncMock(),
+        daemon_config_breaker=breaker,
+    )
+
+    await sync_worker_loop(
+        storage=MagicMock(),
+        context=cast(CodeIndexContext, context),
+        config=CodeIndexConfig(sync_worker_interval_seconds=0.01),
+        shutdown_flag=shutdown,
+    )
+
+    assert seen_breakers == [breaker]
+    assert shutdown.is_set()
 
 
 @pytest.mark.asyncio
