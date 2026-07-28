@@ -924,7 +924,8 @@ Target: `crates/gcode/src/cli.rs`, `crates/gcode/src/dispatch.rs`,
 `src/gobby/runner_init/orchestration.py`,
 `src/gobby/servers/_app_lifecycle.py`, `src/gobby/app_context.py`,
 `src/gobby/servers/routes/code_index.py`,
-`src/gobby/cli/installers/git_hooks.py`
+`src/gobby/cli/installers/git_hooks.py`,
+`src/gobby/config/wiki.py`, `tests/config/test_app_config.py`
 
 By this point the subtree has given up everything the new pipeline needs: 2.2
 copy-refactored its snapshot/model/cluster producers, 3.1 reimplemented the
@@ -980,6 +981,16 @@ promise moves into this section, because the routes have no implementation left
 once the trigger is gone, and 4.2 builds its own debounce into the new service
 rather than adopting an orphan.
 
+The graph's last node is configuration. `resolve_codewiki_scopes`
+(`config/wiki.py:141`) exists only to assemble the `--scope` argv of the command
+being removed, and its two callers (`codewiki_nightly.py:149`,
+`servers/routes/code_index.py:474`) both die above. Delete the function, the
+`codewiki_scopes` keys it resolves, and their assertions
+(`tests/config/test_app_config.py:94,103,112`) here as well, or retirement leaves
+configuration that documents a command the binary no longer has. The nightly
+keys (`codewiki_nightly`, its cron expression, and its timezone) stay: 4.6
+rewires that registration onto the new service rather than removing it.
+
 This opens a deliberate window: from here until 4.2 wires the new endpoint, no
 codewiki automation runs at all. That is the point rather than a cost — the
 generated pages are already stale, nobody queries them, and a nightly job
@@ -994,6 +1005,7 @@ state; 4.2 repoints them at the new endpoints.
 - 3.8.1 - No `codewiki` command, arg enum, dispatch arm, or contract entry remains in gcode; drift and phase7 contract tests pass. file: `crates/gcode/contract/gcode.contract.json`.
 - 3.8.2 - The relocated catalog's command set still equals every pinned contract exactly after the gcode entry is dropped. test: `crates/gwiki/src/code_wiki/features/tests.rs::catalog_command_set_equals_each_pinned_contract_exactly`.
 - 3.8.3 - The daemon retains no `gcode codewiki` call path at any depth: the gateway method, the refresh service, the debounce trigger, its startup construction and service-container field, both legacy routes, and the nightly cron registration are all gone, and the installed git hook posts to no codewiki route. file: `src/gobby/code_index/codewiki_refresh.py`.
+- 3.8.5 - No configuration remains that only fed the retired command: `resolve_codewiki_scopes` and the `codewiki_scopes` keys are gone with their assertions, while the nightly schedule keys survive for 4.6. test: `tests/config/test_app_config.py`.
 - 3.8.4 - The subtree's module declaration is gone, `gcode` builds with the subtree uncompiled and its tests no longer collected, and its index, search, symbol, graph, and outline commands are unaffected. test: `tests/code_index/test_gcode_phase7_contract.py`.
 
 ## P4: Daemon Orchestration and Templates
