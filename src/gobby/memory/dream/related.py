@@ -164,7 +164,7 @@ class RelatedEvidenceSession:
     """Sweep-owned concurrency, circuit-breaker, and task-lifecycle state."""
 
     def __init__(self) -> None:
-        self._semaphore = asyncio.Semaphore(4)
+        self._db_semaphore = asyncio.Semaphore(4)
         self._timeout_counts: dict[_Channel, int] = {
             "keyword": 0,
             "vector": 0,
@@ -218,31 +218,39 @@ class RelatedEvidenceSession:
     ) -> _CallOutcome:
         if self.channel_tripped(channel):
             return _CallOutcome()
-        async with self._semaphore:
-            task: asyncio.Task[_T] | None = None
-            try:
-                async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
+
+        task: asyncio.Task[_T] | None = None
+        try:
+            async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
+                if channel in {"keyword", "hydration"}:
+                    async with self._db_semaphore:
+                        task = self.create_task(
+                            operation(),
+                            name=f"dream-related-{channel}-page-{page_index}",
+                        )
+                        return _CallOutcome(value=await task)
+                else:
                     task = self.create_task(
                         operation(),
                         name=f"dream-related-{channel}-page-{page_index}",
                     )
                     return _CallOutcome(value=await task)
-            except TimeoutError:
-                if task is not None:
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-                return _CallOutcome(timed_out=True)
-            except VectorStoreUnavailableError:
-                return _CallOutcome(failed=True)
-            except Exception:
-                logger.debug(
-                    "Related-memory %s channel failed on page %s",
-                    channel,
-                    page_index,
-                    exc_info=True,
-                )
-                return _CallOutcome(failed=True)
+        except TimeoutError:
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            return _CallOutcome(timed_out=True)
+        except VectorStoreUnavailableError:
+            return _CallOutcome(failed=True)
+        except Exception:
+            logger.debug(
+                "Related-memory %s channel failed on page %s",
+                channel,
+                page_index,
+                exc_info=True,
+            )
+            return _CallOutcome(failed=True)
 
     async def aclose(self) -> None:
         if self._closed:

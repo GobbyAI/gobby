@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,7 +30,7 @@ from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import render_get_memories_statement
-from gobby.storage.memories_models import Memory
+from gobby.storage.memories_models import Memory, MemoryType
 
 _NOW = datetime(2026, 7, 22, tzinfo=UTC)
 _PROJECT_A = "11111111-1111-4111-8111-111111111111"
@@ -69,7 +70,7 @@ def _memory(
 ) -> Memory:
     return Memory(
         id=memory_id,
-        memory_type="fact",
+        memory_type=MemoryType.FACT,
         content=content or f"content for {memory_id}",
         created_at=created_at,
         updated_at=created_at,
@@ -543,32 +544,91 @@ async def test_blocking_channel_deadline(caplog: pytest.LogCaptureFixture) -> No
 
 
 @pytest.mark.unit
+async def test_saturated_keyword_calls_do_not_starve_vector(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    blocker = asyncio.Event()
+    candidates = [_candidate(f"candidate-{index}") for index in range(8)]
+    started_count = 0
+    active_count = 0
+
+    async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
+        nonlocal active_count, started_count
+        started_count += 1
+        active_count += 1
+        try:
+            await blocker.wait()
+        finally:
+            active_count -= 1
+        return []
+
+    vector = AsyncMock(return_value={})
+    session = RelatedEvidenceSession()
+    with (
+        patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.03),
+        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
+        patch("gobby.memory.dream.related._keyword_hits", side_effect=block_keyword),
+        patch("gobby.memory.dream.related._vector_hits", vector),
+    ):
+        started = asyncio.get_running_loop().time()
+        result = await gather_related_evidence(
+            candidates,
+            db=MagicMock(),
+            vector_store=MagicMock(),
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+        await session.aclose()
+        calls_after_close = started_count
+        await asyncio.wait_for(asyncio.to_thread(lambda: None), timeout=0.2)
+
+    assert result == candidates
+    assert elapsed < 0.2
+    assert "channels=keyword" in caplog.text
+    assert "channels=page" not in caplog.text
+    assert started_count > 0
+    assert started_count <= 4
+    assert calls_after_close == started_count
+    assert active_count == 0
+    assert session._timeout_counts["keyword"] == 1
+    assert session._timeout_counts["vector"] == 0
+    assert vector.await_count == 1
+    assert not session._tasks
+
+
+@pytest.mark.unit
 async def test_persistent_blocker_bounded_connections() -> None:
     blocker = asyncio.Event()
-    candidate = _candidate()
+    candidates = [_candidate(f"candidate-{index}") for index in range(8)]
     newer = _memory("vector-hit", created_at=_NOW + timedelta(days=1))
 
     async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
         await blocker.wait()
         return []
 
+    async def healthy_vector(
+        page_candidates: list[DreamCandidate],
+        **_kwargs: object,
+    ) -> dict[str, list[tuple[str, float]]]:
+        return {page_candidate.id: [("vector-hit", 0.8)] for page_candidate in page_candidates}
+
     keyword = AsyncMock(side_effect=block_keyword)
+    vector = AsyncMock(side_effect=healthy_vector)
     session = RelatedEvidenceSession()
     with (
         patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.01),
         patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
         patch("gobby.memory.dream.related._keyword_hits", keyword),
-        patch(
-            "gobby.memory.dream.related._vector_hits",
-            AsyncMock(return_value={"candidate": [("vector-hit", 0.8)]}),
-        ),
+        patch("gobby.memory.dream.related._vector_hits", vector),
         patch(
             "gobby.memory.dream.related._hydrate_hits",
             AsyncMock(return_value=[newer]),
         ),
     ):
         first = await gather_related_evidence(
-            [candidate],
+            candidates,
             db=MagicMock(),
             vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
@@ -576,15 +636,16 @@ async def test_persistent_blocker_bounded_connections() -> None:
             scope=RetrievalScope.project_only("project-a"),
         )
         second = await gather_related_evidence(
-            [candidate],
+            candidates,
             db=MagicMock(),
             vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
             session=session,
             scope=RetrievalScope.project_only("project-a"),
         )
+        keyword_calls_before_breaker = keyword.await_count
         recovered = await gather_related_evidence(
-            [candidate],
+            candidates,
             db=MagicMock(),
             vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
@@ -593,13 +654,20 @@ async def test_persistent_blocker_bounded_connections() -> None:
         )
     await session.aclose()
 
-    assert first == [candidate]
-    assert second == [candidate]
+    assert first == candidates
+    assert second == candidates
     assert recovered[0].related[0].id == "vector-hit"
-    assert keyword.await_count == 2
+    assert keyword_calls_before_breaker > 0
+    assert keyword.await_count == keyword_calls_before_breaker
+    assert vector.await_count == 3
+    assert session.channel_tripped("keyword")
+    assert not session.channel_tripped("vector")
+    assert not session.channel_tripped("hydration")
+    assert session._timeout_counts == {"keyword": 2, "vector": 0, "hydration": 0}
     assert not session._tasks
     fresh_session = RelatedEvidenceSession()
     assert not fresh_session.channel_tripped("keyword")
+    assert fresh_session._timeout_counts == {"keyword": 0, "vector": 0, "hydration": 0}
     await fresh_session.aclose()
 
 
@@ -630,8 +698,12 @@ async def test_session_caller_owned() -> None:
 
     assert not session._closed
     assert session._page_index == 2
+    invalid_gather = cast(
+        Callable[..., Awaitable[list[DreamCandidate]]],
+        gather_related_evidence,
+    )
     with pytest.raises(TypeError, match="session"):
-        gather_related_evidence(  # type: ignore[call-arg]
+        await invalid_gather(
             [candidate],
             db=MagicMock(),
             vector_store=None,
@@ -828,6 +900,7 @@ async def test_statement_timeout_server_hygiene() -> None:
         )
 
     assert result == []
+    assert bounded.await_args is not None
     assert bounded.await_args.kwargs == {
         "conninfo": "postgresql://evidence",
         "deadline_seconds": related_module.RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS,
@@ -887,4 +960,5 @@ async def test_hub_pool_independence() -> None:
             fetch_limit=4,
         )
 
+    assert bounded.await_args is not None
     assert bounded.await_args.kwargs["conninfo"] == "postgresql://dedicated"
