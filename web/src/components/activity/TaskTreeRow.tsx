@@ -16,6 +16,7 @@ import {
   type VisibleTaskRow,
 } from "./TasksTabModel";
 import { DEFAULT_TASK_PRIORITY } from "../../lib/taskOptions";
+import { KebabIcon } from "./QuickMenu";
 
 interface TaskTreeRowProps {
   row: VisibleTaskRow;
@@ -182,11 +183,7 @@ function TaskTreeRowComponent({
         aria-label="Task actions"
         disabled={isBusy}
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="12" cy="5" r="2" />
-          <circle cx="12" cy="12" r="2" />
-          <circle cx="12" cy="19" r="2" />
-        </svg>
+        <KebabIcon />
       </button>
     </div>
   );

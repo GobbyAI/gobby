@@ -28,7 +28,6 @@ export function DetailPaneHeader({
           <>
             <DetailActionButton
               label="Discard"
-              variant="ghost"
               disabled={saving}
               onClick={onDiscard}
             />
@@ -56,7 +55,7 @@ interface DetailActionButtonProps {
 export function DetailActionButton({
   label,
   onClick,
-  variant = "ghost",
+  variant = "accent",
   disabled,
   icon,
 }: DetailActionButtonProps) {

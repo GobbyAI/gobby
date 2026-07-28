@@ -6,6 +6,7 @@ import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
+import { KebabIcon } from "./QuickMenu";
 import type { SessionStatusMode } from "./SessionsTab.entries";
 import {
   type WatchingSessionEntry,
@@ -215,11 +216,7 @@ function SessionEntryRow({
             aria-label="Session actions"
             aria-haspopup="menu"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="5" r="2" />
-              <circle cx="12" cy="12" r="2" />
-              <circle cx="12" cy="19" r="2" />
-            </svg>
+            <KebabIcon />
           </button>
         )}
       </div>

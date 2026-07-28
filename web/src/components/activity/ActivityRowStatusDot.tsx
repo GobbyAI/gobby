@@ -69,7 +69,7 @@ export type StatusGlyph = (props: SVGProps<SVGSVGElement>) => ReactNode;
 
 const KIND_ICON: Record<StatusKind, StatusGlyph> = {
   active: (props) => (
-    <LocalGlyph {...props}>
+    <LocalGlyph fill="currentColor" {...props}>
       <polygon points="6 3 20 12 6 21 6 3" />
     </LocalGlyph>
   ),
@@ -100,7 +100,7 @@ const KIND_ICON: Record<StatusKind, StatusGlyph> = {
     </LocalGlyph>
   ),
   paused: (props) => (
-    <LocalGlyph {...props}>
+    <LocalGlyph fill="currentColor" {...props}>
       <rect x="14" y="3" width="5" height="18" rx="1" />
       <rect x="5" y="3" width="5" height="18" rx="1" />
     </LocalGlyph>

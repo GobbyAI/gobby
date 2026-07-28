@@ -396,7 +396,13 @@
   opacity: 0.55;
 }
 
-.quick-menu-trigger {
+/* The one kebab trigger. QuickMenu, session rows, and task rows share this
+   box so every three-dot button in the app reads identically. Desktop keeps
+   it compact so list rows match the Sessions row height; touch promotes it
+   to the 44px target. */
+.quick-menu-trigger,
+.session-more-btn,
+.task-more-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -404,6 +410,7 @@
   height: 1.75rem;
   min-width: 1.75rem;
   min-height: 1.75rem;
+  flex-shrink: 0;
   border: none;
   border-radius: 0.375rem;
   background: transparent;
@@ -414,10 +421,10 @@
     background-color 0.15s;
 }
 
-/* Desktop keeps the kebab compact so list rows match the Sessions row height;
-   touch promotes it to the 44px target. */
 @media (pointer: coarse) {
-  .quick-menu-trigger {
+  .quick-menu-trigger,
+  .session-more-btn,
+  .task-more-btn {
     width: 2.75rem;
     height: 2.75rem;
     min-width: 2.75rem;
@@ -429,7 +436,9 @@
   }
 }
 
-.quick-menu-trigger:hover {
+.quick-menu-trigger:hover,
+.session-more-btn:hover,
+.task-more-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
@@ -463,50 +472,6 @@
 
 .session-ctx-item--destructive:hover {
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
-}
-
-/* --- Session more button (mobile) --- */
-.session-more-btn,
-.task-more-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border: none;
-  border-radius: 0.25rem;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    background-color 0.15s;
-  flex-shrink: 0;
-}
-
-.task-more-btn {
-  width: 1.75rem;
-  height: 1.75rem;
-  min-width: 1.75rem;
-  min-height: 1.75rem;
-}
-
-/* Desktop keeps the kebab compact so task/MCP rows match the Sessions row
-   height; touch promotes it to the 44px target. */
-@media (pointer: coarse) {
-  .session-more-btn,
-  .task-more-btn {
-    width: 2.75rem;
-    height: 2.75rem;
-    min-width: 2.75rem;
-    min-height: 2.75rem;
-  }
-}
-
-.session-more-btn:hover,
-.task-more-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
 }
 
 /* --- Session interaction modal --- */

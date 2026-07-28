@@ -208,7 +208,7 @@ export function RulesDetailPanel({
         onDiscard={handleDiscard}
         actions={
           <div className="flex items-center gap-2">
-            <span className="rules-detail__source">{detail.source}</span>
+            <span className="activity-chip rules-detail__source">{detail.source}</span>
             <div
               className="inline-flex min-h-11 rounded-md border border-border bg-[var(--bg-primary)] p-0.5"
               aria-label="Rule detail view"

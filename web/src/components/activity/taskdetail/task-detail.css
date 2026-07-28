@@ -240,17 +240,20 @@
   background: var(--bg-secondary);
 }
 
+/* Label chips read as accent-tint pills (the shared TagsField/.activity-chip
+   treatment), sans-serif — mono is reserved for load-bearing copyable values. */
 .task-inline-edit__tag {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  height: 1.35rem;
-  padding: 0 0.45rem;
+  height: 1.25rem;
+  padding: 0 0.5rem;
   border-radius: 9999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-family: var(--font-sans);
   font-size: var(--text-2xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .task-inline-edit__tag-remove {

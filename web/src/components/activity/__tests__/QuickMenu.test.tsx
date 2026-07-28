@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
@@ -86,6 +86,57 @@ describe("QuickMenu (#17016)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open row actions" }));
 
     const menu = screen.getByRole("menu", { name: "Row actions" });
+    expect(menu).toHaveStyle({ left: "202px", top: "636px" });
+  });
+
+  it("ignores a zero-width first measurement and re-clamps once the menu has real size (#19151)", () => {
+    let menuSized = false;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function getBoundingClientRect(this: HTMLElement) {
+        if (this.getAttribute("aria-label") === "Open row actions") {
+          return rect(360, 800, 44, 44);
+        }
+        if (this.getAttribute("role") === "menu") {
+          return menuSized ? rect(0, 0, 180, 160) : rect(0, 0, 0, 0);
+        }
+        return rect(0, 0, 0, 0);
+      },
+    );
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal("innerHeight", 844);
+    const observerCallbacks: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          observerCallbacks.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+
+    render(
+      <QuickMenu
+        triggerLabel="Open row actions"
+        menuLabel="Row actions"
+        items={[{ label: "Inspect", onSelect: vi.fn() }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open row actions" }));
+
+    // Clamping against the unmeasured menu would park it at trigger.right
+    // (404px — off a 390px viewport). The safe initial position must hold.
+    const menu = screen.getByRole("menu", { name: "Row actions" });
+    expect(menu).toHaveStyle({ left: "8px", top: "8px" });
+
+    menuSized = true;
+    act(() => {
+      for (const callback of observerCallbacks) {
+        callback([], {} as ResizeObserver);
+      }
+    });
     expect(menu).toHaveStyle({ left: "202px", top: "636px" });
   });
 

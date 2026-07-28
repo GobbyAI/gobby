@@ -64,8 +64,8 @@ export function RulesTabList({
                 label={rule.enabled ? "Rule enabled" : "Rule disabled"}
               />
               <span className="activity-row-title">{rule.name}</span>
-              {rule.event && <span className="rules-row__badge">{rule.event}</span>}
-              {rule.group && <span className="rules-row__group">{rule.group}</span>}
+              {rule.event && <span className="activity-chip rules-row__badge">{rule.event}</span>}
+              {rule.group && <span className="activity-chip rules-row__group">{rule.group}</span>}
             </button>
             <QuickMenu
               items={menuItems}

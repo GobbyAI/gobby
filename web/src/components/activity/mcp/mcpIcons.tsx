@@ -1,21 +1,5 @@
 import { cn } from "../../../lib/utils";
 
-export function MoreIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="5" r="2" />
-      <circle cx="12" cy="12" r="2" />
-      <circle cx="12" cy="19" r="2" />
-    </svg>
-  );
-}
-
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
     <span

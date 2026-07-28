@@ -11,7 +11,7 @@ interface DateTimeFieldProps extends DraftFieldBaseProps {
 }
 
 const fieldShellClass = "flex flex-col gap-1.5";
-const labelClass = "text-xs font-medium text-muted-foreground";
+const labelClass = "text-sm font-medium text-muted-foreground";
 const controlClass = cn(
   "min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2",
   "text-sm text-foreground transition-colors placeholder:text-muted-foreground",

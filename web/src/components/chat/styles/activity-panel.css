@@ -17,6 +17,16 @@
   container-name: activity-panel;
 }
 
+/* Scrollbar policy: activity-pane surfaces scroll without visible scrollbar
+   chrome — content stays scrollable via wheel/trackpad/touch. */
+.activity-panel * {
+  scrollbar-width: none;
+}
+
+.activity-panel *::-webkit-scrollbar {
+  display: none;
+}
+
 @container activity-panel (max-width: 380px) {
   .activity-panel-tab-label {
     display: none;
@@ -495,6 +505,12 @@
   margin-left: auto;
 }
 
+/* PRIMARY status bar — panel headers (Watching/Sessions/New Session rank).
+   Every tab's top bar composes this class; SECONDARY bars (search/filter
+   rows) compose .activity-panel-toolbar. Both read at
+   --activity-panel-bar-height with --status-bar-control-height controls, so
+   all bars across tabs align to the command-bar. Do not hand-roll new bar
+   containers. */
 .activity-panel-status-bar {
   display: flex;
   align-items: center;

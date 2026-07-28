@@ -34,7 +34,7 @@ interface TagsFieldProps extends DraftFieldBaseProps {
 }
 
 const fieldShellClass = "flex flex-col gap-1.5";
-const labelClass = "text-xs font-medium text-muted-foreground";
+const labelClass = "text-sm font-medium text-muted-foreground";
 const controlClass = cn(
   "min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2",
   "text-sm text-foreground transition-colors placeholder:text-muted-foreground",
@@ -174,9 +174,11 @@ export function TextAreaField({
   return (
     <label className={fieldShellClass} htmlFor={id}>
       <span className={labelClass}>{label}</span>
+      {/* No resize grip, no scrollbars: content soft-wraps and the field
+          auto-grows to fit (field-sizing) — the pane scrolls, not the box. */}
       <textarea
         id={id}
-        className={cn(controlClass, "min-h-24 resize-y")}
+        className={cn(controlClass, "min-h-24 resize-none [field-sizing:content]")}
         aria-label={ariaLabel}
         value={value}
         disabled={disabled}
@@ -258,7 +260,7 @@ export function TagsField({
         role="group"
         aria-label={ariaLabel}
         className={cn(
-          "flex min-h-11 flex-wrap items-center gap-2 rounded-md border",
+          "flex flex-wrap items-center gap-1.5 rounded-md border",
           "border-border bg-[var(--bg-secondary)] px-2 py-1.5",
           disabled && "opacity-50",
         )}
@@ -266,21 +268,21 @@ export function TagsField({
         {value.map((tag) => (
           <span
             key={tag}
-            className="inline-flex min-h-11 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground"
+            className="inline-flex h-5 items-center gap-1 rounded-full bg-accent-tint px-2 text-2xs font-semibold text-accent"
           >
             {tag}
             <button
               type="button"
               className={cn(
-                "inline-flex h-11 w-11 items-center justify-center rounded text-muted-foreground",
-                "hover:bg-[var(--bg-tertiary)] hover:text-foreground",
+                "inline-flex items-center justify-center rounded-full text-muted-foreground",
+                "hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
               )}
               aria-label={`Remove ${tag}`}
               disabled={disabled}
               onClick={() => onChange(value.filter((item) => item !== tag))}
             >
-              x
+              ×
             </button>
           </span>
         ))}
@@ -288,7 +290,7 @@ export function TagsField({
           id={inputId}
           type="text"
           className={cn(
-            "min-h-11 min-w-24 flex-1 bg-transparent px-1 text-sm text-foreground",
+            "min-h-7 min-w-24 flex-1 bg-transparent px-1 text-sm text-foreground",
             "placeholder:text-muted-foreground focus-visible:outline-none",
           )}
           aria-label={`Add ${label}`}

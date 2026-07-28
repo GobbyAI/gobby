@@ -16,8 +16,8 @@ export function SwitchField({
   ariaLabel,
 }: SwitchFieldProps) {
   return (
-    <div className="flex min-h-11 items-center justify-between gap-3">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+    <div className="flex min-h-8 items-center gap-2">
+      <span className="text-sm font-medium text-muted-foreground">{label}</span>
       <Switch
         checked={value}
         disabled={disabled}

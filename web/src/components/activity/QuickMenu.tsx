@@ -46,7 +46,9 @@ interface QuickMenuProps {
 const VIEWPORT_GUTTER = 8;
 const MENU_GAP = 4;
 
-function EllipsisVerticalIcon() {
+/* The one vertical-dot kebab glyph. Every three-dot trigger (QuickMenu,
+   session rows, task rows) renders this — no per-surface copies. */
+export function KebabIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <circle cx="12" cy="5" r="2" />
@@ -154,7 +156,11 @@ export function QuickMenu({
       ? anchorToRect(anchor)
       : triggerRef.current?.getBoundingClientRect();
     const menuRect = menuRef.current?.getBoundingClientRect();
-    if (!triggerRect || !menuRect) return;
+    // A zero-width rect means the menu hasn't laid out yet; clamping against
+    // it would park the menu at triggerRect.right, off-viewport. Keep the
+    // safe initial position — the ResizeObserver re-runs this once the menu
+    // has real dimensions.
+    if (!triggerRect || !menuRect || menuRect.width === 0) return;
 
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
@@ -175,6 +181,11 @@ export function QuickMenu({
   useLayoutEffect(() => {
     if (!isOpen) return;
     updatePosition();
+    const menu = menuRef.current;
+    if (!menu || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => updatePosition());
+    observer.observe(menu);
+    return () => observer.disconnect();
   }, [isOpen, items.length, updatePosition]);
 
   useEffect(() => {
@@ -246,7 +257,7 @@ export function QuickMenu({
             }
           }}
         >
-          <EllipsisVerticalIcon />
+          <KebabIcon />
         </button>
       )}
       {isOpen && (

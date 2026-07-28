@@ -3,6 +3,7 @@ import type { GobbySession } from '../../types/sessions'
 import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { Button } from '../ui/Button'
 
 export interface CommandPaletteAction {
   id: string
@@ -222,7 +223,9 @@ export function CommandPalette({
             autoComplete="off"
             spellCheck={false}
           />
-          <kbd className="command-palette-kbd">Esc</kbd>
+          <Button variant="accent" size="sm" dense onClick={onClose} aria-label="Close command palette">
+            Esc
+          </Button>
         </div>
 
         <div
