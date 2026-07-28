@@ -1,5 +1,6 @@
 """Tests for SpawnExecutor unified spawn dispatch."""
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,29 @@ from gobby.agents.spawn_executor import (
 from gobby.mcp_proxy.server import GobbyDaemonTools
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_native_subagent_strip_warns(caplog: pytest.LogCaptureFixture) -> None:
+    request = SpawnRequest(
+        prompt="Review the plan",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        agent_name="plan-adversary",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.spawn_executor"):
+        result = await execute_spawn(request)
+
+    assert result.success is False
+    warning = " ".join(caplog.messages)
+    assert "plan-adversary" in warning
+    assert "provider-native internal subagents" in warning
+    assert "Task" in warning
 
 
 def test_codex_preapproved_gobby_tools_exist_on_mcp_handler() -> None:

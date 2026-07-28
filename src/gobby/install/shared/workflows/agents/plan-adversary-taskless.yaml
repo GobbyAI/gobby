@@ -13,6 +13,7 @@ model: gpt-5.6-sol
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
+timeout: 2700
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
@@ -82,10 +83,12 @@ instructions: |
   Give each subagent only its lane scope, the immutable evidence snapshot, and
   the result schema below. Forbid file edits, task/service mutation, findings,
   manifests, evidence finalization, and verdicts. Never use
-  `gobby-agents:spawn_agent` for lane research. When the native facility exposes
-  a deadline, cap each lane at 15 minutes. Capacity shortage, timeout,
-  unavailable internal collaboration, subagent failure, or malformed output
-  sends only that lane back to sequential review in this parent.
+  `gobby-agents:spawn_agent` for lane research. Native lane duration is not
+  enforced by Gobby. Request a 15-minute deadline only when the current facility
+  supports one; it is best-effort, not a guarantee. The 2700-second agent timeout
+  is the only enforced wall-clock bound for this reviewer. Capacity shortage,
+  timeout, unavailable internal collaboration, subagent failure, or malformed
+  output sends only that lane back to sequential review in this parent.
 
   Each lane returns `lane_id`, `status: completed`, every deliverable in
   `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
@@ -117,7 +120,7 @@ instructions: |
   `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700}}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
   the shown top-level and reason keys. `reason_code` is closed to
   `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.

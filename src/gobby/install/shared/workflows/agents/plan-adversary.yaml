@@ -12,6 +12,7 @@ model: gpt-5.6-sol
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
+timeout: 2700
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
@@ -137,7 +138,10 @@ instructions: |
   15 minutes. Capacity shortage, timeout, unavailable internal collaboration,
   subagent failure, or malformed output sends only that lane back to sequential
   execution in this parent. You remain the sole verdict, evidence, finding,
-  lesson, manifest, and coverage-attestation owner.
+  lesson, manifest, and coverage-attestation owner. Native lane duration is not
+  enforced by Gobby. Request a 15-minute deadline only when the current facility
+  supports one; it is best-effort, not a guarantee. The 2700-second agent timeout
+  is the only enforced wall-clock bound for this reviewer.
 
   Call `derive_plan_review_manifest` during every round. Call
   `validate_plan_review_coverage` before approve/reject and pass its
@@ -153,7 +157,7 @@ instructions: |
   `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700}}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
   the shown top-level and reason keys. `reason_code` is closed to
   `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.

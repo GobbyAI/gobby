@@ -5,6 +5,7 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
+import logging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -42,6 +43,9 @@ from gobby.config.tmux import TmuxConfig
 # Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
 # delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
 _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
+_NATIVE_SUBAGENT_RESEARCH_AGENTS = frozenset({"plan-adversary", "plan-adversary-taskless"})
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "SpawnRequest",
@@ -123,6 +127,14 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     if unsupported_sandbox := _unsupported_sandbox_request_error(request):
         return unsupported_sandbox
+
+    if request.provider == "claude" and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS:
+        logger.warning(
+            "Agent %s requests provider-native internal subagents, but the managed "
+            "Claude runtime strips the native Task facility; internal research lanes "
+            "will be unavailable",
+            request.agent_name,
+        )
 
     if request.provider == "grok":
         return await _spawn_grok_terminal(request)

@@ -82,6 +82,19 @@ def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None
     assert "/schedule" not in section
 
 
+def test_review_timeout_restarts_same_display_round_from_fresh_evidence(body: str) -> None:
+    normalized = " ".join(body.split())
+
+    assert "`inconclusive` with reason code `timeout` and `timeout_seconds: 2700`" in normalized
+    assert "Do not reuse partial lane output or create a timeout checkpoint" in normalized
+    assert "Call `expire_plan_review_evidence`" in normalized
+    assert (
+        "retry the same display round from a fresh snapshot, inventory, and index token"
+        in normalized
+    )
+    assert "sole timeout recovery path" in normalized
+
+
 def test_waiting_steps_redirect_to_shared_policy(body: str) -> None:
     assert body.count("Wait as described in **Waiting on Spawned Runs**") == 2
 

@@ -2441,9 +2441,10 @@ class TestCheckExpiredAgents:
         # Backdate started_at to simulate expiration
         now = datetime.now(UTC)
         past = (now - timedelta(seconds=600)).isoformat()
+        partial_result = '{"status":"inconclusive","reason":"timeout"}'
         temp_db.execute(
-            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
-            (past, run.id),
+            "UPDATE agent_runs SET started_at = %s, result = %s WHERE id = %s",
+            (past, partial_result, run.id),
         )
 
         with (
@@ -2461,6 +2462,7 @@ class TestCheckExpiredAgents:
         assert updated is not None
         assert updated.status == "timeout"
         assert "timeout" in (updated.error or "").lower()
+        assert updated.result == partial_result
 
     @pytest.mark.asyncio
     async def test_timed_out_dispatched_agent_is_killed_before_claim_release(
@@ -2541,6 +2543,9 @@ class TestCheckExpiredAgents:
         assert lease_holder is not None
         assert lease_holder.startswith("task_recovery:")
         assert mutexes.get_mutex(task.id) is None
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
         recovered = task_manager.get_task(task.id)
         assert recovered is not None
         assert recovered.claimed_by_session_id is None
@@ -4621,3 +4626,4 @@ class TestNonTaskResumeCallback:
             "non_task",
             "pending_terminations",
         ]
+        assert fail_first is False

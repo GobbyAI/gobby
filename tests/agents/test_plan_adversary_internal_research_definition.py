@@ -45,6 +45,17 @@ def test_adversary_agents_pin_the_reviewer_model() -> None:
         assert agent["isolation"] == "none"
 
 
+def test_adversary_run_timeout_contract() -> None:
+    for name in ADVERSARIES:
+        agent = _agent(name)
+        instructions = " ".join(agent["instructions"].split())
+
+        assert agent["timeout"] == 2700
+        assert "Native lane duration is not enforced by Gobby" in instructions
+        assert "2700-second agent timeout" in instructions
+        assert '"reason_code":"timeout","timeout_seconds":2700' in instructions
+
+
 def test_removed_researcher_is_absent_from_inventory_and_manifest() -> None:
     assert not (AGENTS_DIR / f"{REMOVED_RESEARCHER}.yaml").exists()
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))

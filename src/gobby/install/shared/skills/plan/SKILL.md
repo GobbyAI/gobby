@@ -139,7 +139,14 @@ Treat the ledger as approval output; approval inputs remain the canonical
 findings, routing decisions, manifest entries, and coverage attestation.
 For `inconclusive/source_drift`, expire evidence and respawn the same display
 round without appending a changelog entry, incrementing the round, finalizing
-evidence, or minting lessons. Otherwise append a `## V1 Plan Changelog` entry,
+evidence, or minting lessons.
+For a terminal agent timeout, classify the result as `inconclusive` with reason
+code `timeout` and `timeout_seconds: 2700`. Do not reuse partial lane output or
+create a timeout checkpoint. Call `expire_plan_review_evidence`, then retry the
+same display round from a fresh snapshot, inventory, and index token under a
+newly bound adversary run. This is the sole timeout recovery path; do not append
+a changelog entry, increment the round, finalize evidence, or mint lessons.
+Otherwise append a `## V1 Plan Changelog` entry,
 persist the exact fence returned by `render_v1_round_checkpoint`, then call
 `finalize_plan_review_evidence` with that same result. Before any step 7
 revision, present a ranked
