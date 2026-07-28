@@ -1188,3 +1188,85 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert updated.summary_path is None
         assert updated.summary_markdown == "# Just markdown"
+
+
+class TestHandoffTitlePrecedence:
+    def test_handoff_title_replaces_provisional_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="handoff-title-test",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_title(
+            session.id,
+            "Handoff Title",
+            title_source="handoff",
+        )
+
+        assert updated is not None
+        assert updated.title == "Handoff Title"
+        assert updated.title_source == "handoff"
+
+    @pytest.mark.parametrize("owner", ["llm", "manual"])
+    def test_stronger_title_ownership_replaces_handoff(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        owner: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"stronger-than-handoff-{owner}",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_title(
+            session.id,
+            "Handoff Title",
+            title_source="handoff",
+        )
+
+        updated = session_manager.update_title(
+            session.id,
+            f"{owner} title",
+            title_source=owner,
+        )
+
+        assert updated is not None
+        assert updated.title == f"{owner} title"
+        assert updated.title_source == owner
+
+    @pytest.mark.parametrize("owner", ["llm", "manual"])
+    def test_handoff_cannot_downgrade_stronger_title_ownership(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        owner: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"handoff-downgrade-{owner}",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_title(
+            session.id,
+            f"{owner} title",
+            title_source=owner,
+        )
+
+        updated = session_manager.update_title(
+            session.id,
+            "Late Handoff",
+            title_source="handoff",
+        )
+
+        assert updated is not None
+        assert updated.title == f"{owner} title"
+        assert updated.title_source == owner

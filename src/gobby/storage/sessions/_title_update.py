@@ -9,6 +9,7 @@ from gobby.storage.hub.protocol import Transaction
 
 from ._title_defaults import (
     DIGEST_TITLE_SOURCE,
+    HANDOFF_TITLE_SOURCE,
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
 )
@@ -18,6 +19,7 @@ TITLE_UPDATE_ALLOWED_SQL = f"""
     CASE COALESCE(incoming.title_source, '{PROVISIONAL_TITLE_SOURCE}')
         WHEN '{MANUAL_TITLE_SOURCE}' THEN 3
         WHEN '{DIGEST_TITLE_SOURCE}' THEN 2
+        WHEN '{HANDOFF_TITLE_SOURCE}' THEN 1
         ELSE 1
     END
     >=
@@ -27,6 +29,7 @@ TITLE_UPDATE_ALLOWED_SQL = f"""
             THEN 0
         WHEN current_session.title_source = '{MANUAL_TITLE_SOURCE}' THEN 3
         WHEN current_session.title_source = '{DIGEST_TITLE_SOURCE}' THEN 2
+        WHEN current_session.title_source = '{HANDOFF_TITLE_SOURCE}' THEN 1
         ELSE 1
     END
 )

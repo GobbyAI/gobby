@@ -1584,14 +1584,20 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["status"] == "inProgress"
 
     def test_turn_started_preserves_prompt_when_available(self) -> None:
-        """Translate turn/started with prompt text for broadcaster compatibility."""
+        """Preserve the full canonical handoff prompt in UserPromptSubmit data."""
         adapter = CodexAdapter()
+        handoff_prompt = (
+            "A previous agent produced the plan below to accomplish the user's task. "
+            "Implement the plan in a fresh context. Treat the plan as the source of user intent, "
+            "re-read files as needed, and carry the work through implementation and verification."
+            "\n\n# Preserve Full Handoff Prompt\n\n## Summary\n\nKeep every line."
+        )
 
         native_event = {
             "method": "turn/started",
             "params": {
                 "threadId": "thr-789",
-                "prompt": "list_mcp_servers",
+                "prompt": handoff_prompt,
                 "turn": {
                     "id": "turn-1",
                     "status": "inProgress",
@@ -1602,7 +1608,7 @@ class TestCodexAdapterTranslateToHookEvent:
         hook_event = adapter.translate_to_hook_event(native_event)
 
         assert hook_event is not None
-        assert hook_event.data["prompt"] == "list_mcp_servers"
+        assert hook_event.data["prompt"] == handoff_prompt
 
     def test_turn_completed(self) -> None:
         """Translate turn/completed to AFTER_AGENT."""

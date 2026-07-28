@@ -23,7 +23,12 @@ from ._registration_cache import (
 )
 from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
-from ._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE, PROVISIONAL_TITLE_SOURCE
+from ._title_defaults import (
+    DIGEST_TITLE_SOURCE,
+    HANDOFF_TITLE_SOURCE,
+    MANUAL_TITLE_SOURCE,
+    PROVISIONAL_TITLE_SOURCE,
+)
 from ._transcript import _TranscriptMixin
 from ._update_sentinel import UNSET, UnsetType
 from ._usage import _UsageMixin
@@ -64,6 +69,7 @@ class SessionManager(
 
     _VALID_TITLE_SOURCES: ClassVar[set[str]] = {
         DIGEST_TITLE_SOURCE,
+        HANDOFF_TITLE_SOURCE,
         MANUAL_TITLE_SOURCE,
         PROVISIONAL_TITLE_SOURCE,
     }

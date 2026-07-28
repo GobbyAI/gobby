@@ -36,6 +36,14 @@ class HookSessionManager(Protocol):
 
     def update(self, session_id: str, **kwargs: Any) -> Session | None: ...
 
+    def update_title(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        title_source: str | None = "manual",
+    ) -> Session | None: ...
+
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
     def update_summary(

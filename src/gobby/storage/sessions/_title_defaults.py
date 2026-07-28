@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 PROVISIONAL_TITLE_SOURCE = "provisional"
+HANDOFF_TITLE_SOURCE = "handoff"
 DIGEST_TITLE_SOURCE = "llm"
 MANUAL_TITLE_SOURCE = "manual"
 
