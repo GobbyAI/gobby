@@ -26,7 +26,7 @@ main.rs::run_gobby_owned
   ├─ dispatch::inject_machine_identity
   │     ── machine_id + os, or machine_id_error
   │
-  ├─ terminal_context::inject  (if TMUX + valid TMUX_PANE are present)
+  ├─ terminal_context::inject  (for normalized lifecycle hooks)
   │
   ├─ envelope::Envelope::new
   │
@@ -67,7 +67,7 @@ The original Python `hook_dispatcher.py` ran inside the daemon process. That mad
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
-| `terminal_context.rs` | Captures parent PID, TTY, tmux pane/socket, `TERM_PROGRAM`, `GOBBY_*` env vars when `TMUX_PANE` is valid. Injects under `input_data.terminal_context`. |
+| `terminal_context.rs` | Captures parent PID, TTY, `TERM_PROGRAM`, and `GOBBY_*` env vars for lifecycle hooks, plus tmux pane/socket when valid. Injects under `input_data.terminal_context`. |
 | `diagnose.rs` | `--diagnose` mode — pure introspection, no I/O side effects. Returns `DiagnoseOutput` matching `schemas/diagnose-output.v2.schema.json`. |
 | `detach.rs` | Unix `setsid(2)` / Windows `FreeConsole()` — best-effort detach from controlling TTY and process group. |
 
@@ -102,7 +102,7 @@ pub struct Envelope {
 | `enqueued_at` | Lets the drain worker compute hook latency and detect very-stale envelopes. |
 | `critical` | Recorded so the daemon knows whether the host CLI was told this hook fail-closed. Influences alerting. |
 | `hook_type` | Opaque — exact identifier the host CLI's hook system uses (`session-start`, `PreToolUse`, etc.). |
-| `input_data` | Original stdin with dispatch-owned enrichment. `machine_id` + `os` are stamped from local Gobby machine identity, or `machine_id_error` is emitted when unavailable. When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, `terminal_context` is *injected* into the existing object (mirrors Python's `setdefault`) — never overwritten if already present. |
+| `input_data` | Original stdin with dispatch-owned enrichment. `machine_id` + `os` are stamped from local Gobby machine identity, or `machine_id_error` is emitted when unavailable. Lifecycle hooks receive captured `terminal_context`; existing provider fields remain, and `gobby_agent_run_id` is replaced with the trusted environment value. |
 | `source` | Recognized CLI → canonical name from `CliConfig::source`. Unknown CLI → the `--cli` value verbatim, so future CLIs route correctly without code changes. |
 | `headers` | Mirrors what ghook sent (or would have sent) on the POST. Omitted headers are absent keys; **empty-string values are never emitted** — this matches `hook_dispatcher.py:695-700` behavior and is enforced by the schema (`additionalProperties.minLength: 1`). |
 
@@ -133,14 +133,17 @@ pub struct DiagnoseOutput {
     pub daemon_port: u16,
     pub project_root: Option<PathBuf>,
     pub project_id: Option<String>,
-    pub terminal_context_preview: Option<Value>,  // populated when tmux pane context is valid
+    pub terminal_context_preview: Option<Value>,  // populated when terminal context is enabled
     pub cli_recognized: bool,
     pub install_method: Option<String>,           // from .ghook-install.json sidecar
     pub install_source_url: Option<String>,       // from .ghook-install.json sidecar
 }
 ```
 
-The `terminal_context_preview` field is the actual context that *would* be injected when the current process has `TMUX` and a valid `TMUX_PANE` — operators can inspect what the daemon will receive without sending a real hook.
+The `terminal_context_preview` field is the actual context that *would* be
+injected for an enabled lifecycle hook. Invalid or missing tmux state appears
+as null tmux fields, so operators can inspect what the daemon will receive
+without sending a real hook.
 
 `install_method` and `install_source_url` are sourced from the install-provenance sidecar described below. Both fields are `null` when no sidecar is present.
 
@@ -259,9 +262,10 @@ The drain never replays quarantined envelopes — they surface via `gobby status
 
 **File:** `src/terminal_context.rs`
 
-Captures the caller's process context for any dispatch where tmux context is
-valid. `TMUX` must be set and `TMUX_PANE` must match `^%\d+$`; the pane value is
-passed through verbatim.
+Captures the caller's process context for normalized `SessionStart`,
+`SessionEnd`, `Stop`, `AfterAgent`, and `PostInvocation` aliases. Tool hooks
+remain unenriched. `TMUX` must be set and `TMUX_PANE` must match `^%\d+$` for
+the tmux-specific fields; the pane value is passed through verbatim.
 
 | Field | Source | Notes |
 |-------|--------|-------|
@@ -272,13 +276,15 @@ passed through verbatim.
 | `term_program` | `TERM_PROGRAM` env var | |
 | `gobby_session_id`, `gobby_parent_session_id`, `gobby_agent_run_id`, `gobby_project_id`, `gobby_workflow_name` | Eponymous env vars | Set by the Gobby daemon when it spawns the host CLI; let us correlate hooks back to the spawning context. |
 
-`inject(input_data)` only adds `terminal_context` when:
+`inject(input_data)` enriches terminal context when:
 
 1. `input_data` is a JSON object (not an array, scalar, etc.).
-2. The key isn't already present (`setdefault` semantics from dispatcher `:682`).
-3. `TMUX` is present and `TMUX_PANE` is non-empty and valid.
+2. The hook name normalizes to one of the lifecycle aliases above.
 
-This means a host CLI can pre-populate `terminal_context` and ghook will respect it.
+An existing object-shaped `terminal_context` is merged. Provider fields are
+preserved, captured fields fill gaps, and `gobby_agent_run_id` always comes
+from ghook's process environment. Missing or invalid tmux data produces null
+tmux fields while the remaining process and Gobby context is still captured.
 
 ## Detach Semantics
 
@@ -308,7 +314,9 @@ Each module has `#[cfg(test)] mod tests` with comprehensive coverage:
   identity and reports stable `machine_id_error` codes when local identity is
   missing or empty.
 - **cli_config.rs**: per-CLI critical-hook membership; case-insensitive CLI lookup; unknown CLIs remain unrecognized for diagnose and fall back to conservative Claude-like config on the live dispatch path.
-- **terminal_context.rs**: tmux socket-path parsing edge cases, tmux pane validation, `inject` respects existing context, `inject` no-ops on non-objects, `capture` emits all expected keys when valid.
+- **terminal_context.rs**: lifecycle alias normalization, tool-hook exclusion,
+  tmux socket-path parsing and pane validation, provider-context merging,
+  non-object no-op behavior, and complete captured key coverage.
 
 ### Schema Validation in Tests
 

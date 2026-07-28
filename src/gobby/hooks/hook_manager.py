@@ -378,11 +378,22 @@ class HookManager:
                     registry_loop=self._loop,
                 )
                 if not ingress.accepted:
-                    self.logger.info(
-                        "Ignoring stale managed hook for run %s (event=%s)",
-                        ingress.run_id,
-                        event.event_type.value,
-                    )
+                    if ingress.ambiguous:
+                        self.logger.warning(
+                            "Discarding ambiguous managed terminal hook envelope",
+                            extra={
+                                "event_type": event.event_type.value,
+                                "session_id": platform_session_id,
+                                "envelope_id": event.data.get("source_event_id"),
+                                "reason": ingress.reason,
+                            },
+                        )
+                    else:
+                        self.logger.info(
+                            "Ignoring stale managed hook for run %s (event=%s)",
+                            ingress.run_id,
+                            event.event_type.value,
+                        )
                     return HookResponse(decision="allow")
                 self._session_lookup.apply_session_mutations(event, platform_session_id)
             self._record_session_activity_pulse(event)

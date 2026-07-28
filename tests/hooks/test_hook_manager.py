@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.agent_run_ingress import AgentRunIngressRetryableError
 from gobby.hooks.dispatchers.mcp import (
     PROJECT_MEMORY_CLOSE_TAG,
     PROJECT_MEMORY_CONTEXT_BUDGET,
@@ -1805,28 +1804,51 @@ class TestTerminalIngressGate:
         mocks._workflow_handler.handle.assert_not_called()
         mocks._session_lookup.apply_session_mutations.assert_not_called()
 
-    def test_missing_run_identity_raises_retryable_and_defers_mutations(
+    @pytest.mark.parametrize(
+        "terminal_context",
+        [None, {"gobby_agent_run_id": "not-a-uuid"}],
+    )
+    def test_ambiguous_run_identity_is_acked_without_terminal_side_effects(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable[..., HookEvent],
+        terminal_context: dict[str, str] | None,
     ) -> None:
-        """A managed terminal hook without an exact run id retains the envelope."""
+        """An ambiguous managed terminal hook is discarded after one warning."""
         manager = manager_with_mocks
         mocks = cast(Any, manager)
         handler = self._prime_managed_session(manager)
+        manager.logger = MagicMock()
+        mocks._record_machine_ingress = MagicMock()
+        event_data: dict[str, Any] = {
+            "project_id": "proj-1",
+            "source_event_id": "legacy-envelope",
+        }
+        if terminal_context is not None:
+            event_data["terminal_context"] = terminal_context
         event = make_event(
             event_type=HookEventType.STOP,
-            data={"project_id": "proj-1"},
+            data=event_data,
         )
 
-        with pytest.raises(AgentRunIngressRetryableError) as exc_info:
-            manager._handle_internal(event)
+        response = manager._handle_internal(event)
 
-        assert exc_info.value.expected_run_id == self._RUN_ID
-        assert exc_info.value.session_id == self._PLATFORM_SESSION_ID
+        assert response.decision == "allow"
+        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        manager.logger.warning.assert_called_once_with(
+            "Discarding ambiguous managed terminal hook envelope",
+            extra={
+                "event_type": HookEventType.STOP.value,
+                "session_id": self._PLATFORM_SESSION_ID,
+                "envelope_id": "legacy-envelope",
+                "reason": "managed hook is missing an exact gobby_agent_run_id",
+            },
+        )
         handler.assert_not_called()
+        mocks._agent_run_manager.get.assert_not_called()
         mocks._workflow_handler.handle.assert_not_called()
         mocks._session_lookup.apply_session_mutations.assert_not_called()
+        mocks._record_machine_ingress.assert_not_called()
 
     def test_matching_terminal_hook_applies_mutations_and_runs_handler(
         self,

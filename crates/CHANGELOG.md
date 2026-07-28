@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### ghook
 
+- **Lifecycle run identity** — enrich normalized `SessionStart`, `SessionEnd`,
+  `Stop`, `AfterAgent`, and `PostInvocation` hooks with the exact
+  `GOBBY_AGENT_RUN_ID`, while preserving provider terminal-context fields.
 - **Reject unsupported CLIs uniformly** — return `{}` with exit code 2 before dispatch
   side effects instead of falling back to Claude configuration.
 

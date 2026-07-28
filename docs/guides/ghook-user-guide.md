@@ -36,7 +36,7 @@ host AI CLI fires hook
       ├─ resolves project root (walk up from cwd to .gobby/project.json or .gobby/gcode.json)
       ├─ reads stdin (the host CLI's hook payload)
       ├─ stamps machine_id + os, or machine_id_error when unavailable
-      ├─ enriches input_data with terminal_context (when TMUX_PANE is valid)
+      ├─ enriches input_data with terminal_context (for lifecycle hooks)
       ├─ writes envelope atomically to ~/.gobby/hooks/inbox/
       └─ POSTs Python-compatible hook payload to the Gobby daemon
           ├─ 2xx → delete inbox file, return Python-dispatcher-compatible stdout/stderr/exit
@@ -78,10 +78,15 @@ Environment knobs:
 
 ### Terminal Context
 
-When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, `ghook` adds
-`input_data.terminal_context.tmux_pane` to the envelope for every `--cli` value.
-The pane ID is passed through exactly as provided by tmux. If `TMUX_PANE` is
-unset, empty, or invalid, `terminal_context` is omitted.
+For normalized `SessionStart`, `SessionEnd`, `Stop`, `AfterAgent`, and
+`PostInvocation` aliases, `ghook` adds `input_data.terminal_context`. Tool
+hooks remain unenriched. Existing provider fields are preserved, and
+`gobby_agent_run_id` is stamped from the trusted `GOBBY_AGENT_RUN_ID`
+environment variable.
+
+When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, the pane ID is passed
+through exactly as provided by tmux. Missing or invalid tmux data produces null
+tmux fields while the remaining process context is still captured.
 
 ## CLI Surface
 
@@ -247,7 +252,9 @@ Look for:
 
 - **`cli_recognized: true`** — confirms ghook knows about this CLI explicitly. Unknown CLIs fall back to conservative Claude-like live dispatch behavior.
 - **`critical: true/false`** — does ghook consider this hook type critical under the current per-CLI hook protocol?
-- **`terminal_context_enabled: true`** — this recognized CLI can receive terminal context. `terminal_context_preview` is populated only when the current process has `TMUX` and a valid `TMUX_PANE`.
+- **`terminal_context_enabled: true`** — this recognized CLI lifecycle hook
+  receives terminal context. `terminal_context_preview` shows the captured
+  values; unavailable tmux fields are `null`.
 - **`daemon_url`** — where will the POST go? If this is wrong, check
   `GOBBY_DAEMON_URL`, `GOBBY_PORT`, then `~/.gobby/bootstrap.yaml`.
 - **`project_root` / `project_id`** — did ghook correctly walk up from cwd to the project? `null` means no `.gobby/project.json` or `.gobby/gcode.json` marker was found — daemon will receive the envelope without an `X-Gobby-Project-Id` header.

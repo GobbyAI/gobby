@@ -2,7 +2,7 @@
 //!
 //! Port of `hook_dispatcher.py:181-223` — captures the caller's PID, TTY,
 //! tmux pane, `TERM_PROGRAM`, and `GOBBY_*` env vars so the daemon can
-//! reconcile spawned-terminal agents on session-start.
+//! reconcile spawned-terminal agents across lifecycle hooks.
 //!
 //! Sharp edge (dispatcher `:205`): `TMUX_PANE` is inherited by children
 //! spawned into *other* terminals (e.g. Ghostty), so emitting it when
@@ -23,12 +23,15 @@ pub fn capture() -> Value {
 }
 
 pub fn enabled_for_hook(hook_type: &str) -> bool {
-    hook_type
-        .chars()
-        .filter(|ch| !matches!(ch, '-' | '_'))
-        .flat_map(char::to_lowercase)
-        .collect::<String>()
-        == "sessionstart"
+    matches!(
+        hook_type
+            .chars()
+            .filter(|ch| !matches!(ch, '-' | '_'))
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+            .as_str(),
+        "sessionstart" | "sessionend" | "stop" | "afteragent" | "postinvocation"
+    )
 }
 
 fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
@@ -64,15 +67,32 @@ fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
     })
 }
 
-/// Inject terminal context into `input_data` when:
-/// (a) `input_data` is a JSON object, AND
-/// (b) no `terminal_context` key is already present (mirror Python's
-///     `setdefault` — dispatcher `:682`).
+/// Inject terminal context into an object-shaped `input_data`.
+///
+/// Existing provider context is preserved. Captured fields fill gaps, while
+/// `gobby_agent_run_id` always comes from ghook's trusted process environment.
 pub fn inject(input_data: &mut Value) {
-    if let Some(obj) = input_data.as_object_mut()
-        && !obj.contains_key("terminal_context")
-    {
-        obj.insert("terminal_context".into(), capture());
+    let Some(obj) = input_data.as_object_mut() else {
+        return;
+    };
+
+    match obj.get_mut("terminal_context") {
+        Some(Value::Object(existing)) => {
+            let Value::Object(captured) = capture() else {
+                return;
+            };
+            for (key, value) in captured {
+                if key == "gobby_agent_run_id" {
+                    existing.insert(key, value);
+                } else {
+                    existing.entry(key).or_insert(value);
+                }
+            }
+        }
+        Some(_) => {}
+        None => {
+            obj.insert("terminal_context".into(), capture());
+        }
     }
 }
 
@@ -198,14 +218,50 @@ mod tests {
     }
 
     #[test]
-    fn inject_respects_existing_terminal_context() {
+    fn lifecycle_aliases_enable_terminal_context() {
+        for hook_type in [
+            "SessionStart",
+            "session-start",
+            "session_start",
+            "SessionEnd",
+            "session-end",
+            "session_end",
+            "Stop",
+            "stop",
+            "AfterAgent",
+            "after-agent",
+            "after_agent",
+            "PostInvocation",
+            "post-invocation",
+            "post_invocation",
+        ] {
+            assert!(enabled_for_hook(hook_type), "{hook_type}");
+        }
+    }
+
+    #[test]
+    fn tool_hooks_do_not_enable_terminal_context() {
+        for hook_type in [
+            "PreToolUse",
+            "PostToolUse",
+            "BeforeTool",
+            "AfterTool",
+            "PermissionRequest",
+        ] {
+            assert!(!enabled_for_hook(hook_type), "{hook_type}");
+        }
+    }
+
+    #[test]
+    fn inject_preserves_existing_provider_terminal_context() {
         let mut data = json!({
             "session_id": "s1",
             "terminal_context": {"custom": "preserved"},
         });
         inject(&mut data);
         assert_eq!(data["terminal_context"]["custom"], "preserved");
-        assert!(data["terminal_context"].get("parent_pid").is_none());
+        assert!(data["terminal_context"].get("parent_pid").is_some());
+        assert!(data["terminal_context"].get("gobby_agent_run_id").is_some());
     }
 
     #[test]

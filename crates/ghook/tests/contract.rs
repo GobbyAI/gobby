@@ -243,7 +243,7 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
     assert_eq!(critical_json["hook_type"], "Stop");
     assert_eq!(critical_json["source"], "codex");
     assert_eq!(critical_json["critical"], true);
-    assert_eq!(critical_json["terminal_context_enabled"], false);
+    assert_eq!(critical_json["terminal_context_enabled"], true);
     assert_eq!(critical_json["cli_recognized"], true);
     assert_eq!(critical_json["recent_failure_count"], 0);
     assert_eq!(critical_json["recent_failures"], serde_json::json!([]));
@@ -253,12 +253,13 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
             .is_some_and(|path| path.ends_with("hooks/inbox/failures"))
     );
 
-    for (cli, hook_type) in [
-        ("agy", "Stop"),
-        ("grok", "stop"),
-        ("claude", "Stop"),
-        ("droid", "Stop"),
-        ("qwen", "PreToolUse"),
+    for (cli, hook_type, terminal_context_enabled) in [
+        ("agy", "PostInvocation", true),
+        ("grok", "stop", true),
+        ("claude", "Stop", true),
+        ("droid", "Stop", true),
+        ("qwen", "AfterAgent", true),
+        ("qwen", "PreToolUse", false),
     ] {
         let noncritical =
             run_diagnose_with_dirs(home.path(), gobby_home.path(), cli, hook_type, &daemon_url)?;
@@ -269,8 +270,112 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
         assert_eq!(noncritical_json["hook_type"], hook_type);
         assert_eq!(noncritical_json["source"], cli);
         assert_eq!(noncritical_json["critical"], false);
+        assert_eq!(
+            noncritical_json["terminal_context_enabled"],
+            terminal_context_enabled
+        );
         assert_eq!(noncritical_json["cli_recognized"], true);
     }
+
+    Ok(())
+}
+
+#[test]
+fn lifecycle_hooks_enqueue_exact_agent_run_identity() -> TestResult {
+    const RUN_ID: &str = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764";
+
+    for (cli, hook_type) in [
+        ("claude", "session-end"),
+        ("codex", "Stop"),
+        ("qwen", "AfterAgent"),
+        ("agy", "PostInvocation"),
+        ("grok", "session_end"),
+        ("droid", "SessionEnd"),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let daemon_url = closed_local_url()?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some(cli),
+            Some(hook_type),
+            &daemon_url,
+            VALID_STDIN,
+            RunGhookExtras {
+                env: &[("GOBBY_AGENT_RUN_ID", RUN_ID)],
+                args: &["--enqueue-only"],
+            },
+        )?;
+
+        assert!(output.status.success(), "{cli} {hook_type}");
+        let envelope = read_single_inbox_envelope(gobby_home.path())?;
+        assert_eq!(
+            envelope["input_data"]["terminal_context"]["gobby_agent_run_id"], RUN_ID,
+            "{cli} {hook_type}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn lifecycle_hook_preserves_provider_context_and_replaces_untrusted_run_id() -> TestResult {
+    const RUN_ID: &str = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764";
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let input = r#"{
+        "session_id": "test-session",
+        "terminal_context": {
+            "provider_field": "preserved",
+            "gobby_agent_run_id": "8292b975-f848-42c4-a8a9-6b6e8b30ddc6"
+        }
+    }"#;
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("Stop"),
+        &daemon_url,
+        input,
+        RunGhookExtras {
+            env: &[("GOBBY_AGENT_RUN_ID", RUN_ID)],
+            args: &["--enqueue-only"],
+        },
+    )?;
+
+    assert!(output.status.success());
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    let context = &envelope["input_data"]["terminal_context"];
+    assert_eq!(context["provider_field"], "preserved");
+    assert_eq!(context["gobby_agent_run_id"], RUN_ID);
+
+    Ok(())
+}
+
+#[test]
+fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[("GOBBY_AGENT_RUN_ID", "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764")],
+            args: &["--enqueue-only"],
+        },
+    )?;
+
+    assert!(output.status.success());
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    assert!(envelope["input_data"].get("terminal_context").is_none());
 
     Ok(())
 }
@@ -1047,6 +1152,7 @@ fn run_ghook_with_dirs_and_args(
         .env_remove("GOBBY_PORT")
         .env_remove("GOBBY_DAEMON_PORT")
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_AGENT_RUN_ID")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -1109,6 +1215,12 @@ fn inbox_envelopes(gobby_home: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error
         .collect::<Vec<_>>();
     envelopes.sort();
     Ok(envelopes)
+}
+
+fn read_single_inbox_envelope(gobby_home: &Path) -> Result<Value, Box<dyn std::error::Error>> {
+    let paths = inbox_envelopes(gobby_home)?;
+    assert_eq!(paths.len(), 1);
+    Ok(serde_json::from_slice(&fs::read(&paths[0])?)?)
 }
 
 fn read_failure_artifacts(gobby_home: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {

@@ -41,6 +41,8 @@ class ManagedHookIngress:
     accepted: bool
     managed: bool
     run_id: str | None = None
+    ambiguous: bool = False
+    reason: str | None = None
 
 
 class AgentRunIngressRetryableError(RuntimeError):
@@ -77,9 +79,10 @@ def validate_managed_agent_hook(
         terminal_context.get("gobby_agent_run_id") if isinstance(terminal_context, dict) else None
     )
     if not isinstance(supplied_run_id, str) or not _is_uuid(supplied_run_id):
-        raise AgentRunIngressRetryableError(
-            session_id=session_id,
-            expected_run_id=expected_run_id,
+        return ManagedHookIngress(
+            accepted=False,
+            managed=True,
+            ambiguous=True,
             reason="managed hook is missing an exact gobby_agent_run_id",
         )
     if supplied_run_id != expected_run_id:

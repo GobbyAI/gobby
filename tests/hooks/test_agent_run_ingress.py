@@ -49,20 +49,23 @@ def _managers(*, phase: str | None = None) -> tuple[MagicMock, MagicMock]:
     return session_manager, run_manager
 
 
-def test_missing_managed_run_identity_is_retryable() -> None:
+def test_missing_managed_run_identity_is_ambiguous() -> None:
     session_manager, run_manager = _managers()
 
-    with pytest.raises(AgentRunIngressRetryableError) as exc_info:
-        validate_managed_agent_hook(
-            _event(None),
-            session_manager=session_manager,
-            agent_run_manager=run_manager,
-            database=MagicMock(),
-            completion_registry=None,
-            registry_loop=None,
-        )
+    result = validate_managed_agent_hook(
+        _event(None),
+        session_manager=session_manager,
+        agent_run_manager=run_manager,
+        database=MagicMock(),
+        completion_registry=None,
+        registry_loop=None,
+    )
 
-    assert exc_info.value.expected_run_id == _RUN_ID
+    assert result.accepted is False
+    assert result.managed is True
+    assert result.ambiguous is True
+    assert result.run_id is None
+    assert result.reason == "managed hook is missing an exact gobby_agent_run_id"
     run_manager.get.assert_not_called()
 
 
@@ -147,20 +150,23 @@ def test_session_without_run_owner_is_accepted_as_unmanaged() -> None:
     run_manager.get.assert_not_called()
 
 
-def test_non_uuid_managed_run_identity_is_retryable() -> None:
+def test_non_uuid_managed_run_identity_is_ambiguous() -> None:
     session_manager, run_manager = _managers()
 
-    with pytest.raises(AgentRunIngressRetryableError) as exc_info:
-        validate_managed_agent_hook(
-            _event("not-a-uuid"),
-            session_manager=session_manager,
-            agent_run_manager=run_manager,
-            database=MagicMock(),
-            completion_registry=None,
-            registry_loop=None,
-        )
+    result = validate_managed_agent_hook(
+        _event("not-a-uuid"),
+        session_manager=session_manager,
+        agent_run_manager=run_manager,
+        database=MagicMock(),
+        completion_registry=None,
+        registry_loop=None,
+    )
 
-    assert exc_info.value.expected_run_id == _RUN_ID
+    assert result.accepted is False
+    assert result.managed is True
+    assert result.ambiguous is True
+    assert result.run_id is None
+    assert result.reason == "managed hook is missing an exact gobby_agent_run_id"
     run_manager.get.assert_not_called()
 
 

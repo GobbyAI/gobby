@@ -24,6 +24,7 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 
 import asyncio
 import concurrent.futures
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -39,7 +40,10 @@ from starlette.requests import ClientDisconnect
 from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
+from gobby.hooks.envelope_dedupe import is_envelope_processed
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.inbox import drain_hook_inbox_barrier
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
@@ -3639,6 +3643,139 @@ class TestHooksEndpoints:
             assert "blocking this critical hook for safety" in reason
         else:
             assert "non-fatal" in data["systemMessage"]
+
+    @pytest.mark.parametrize("supplied_run_id", [None, "not-a-uuid"])
+    def test_execute_hook_acks_ambiguous_managed_terminal_identity(
+        self,
+        session_storage: SessionManager,
+        supplied_run_id: str | None,
+    ) -> None:
+        platform_session_id = "d92fc5be-6638-415d-8143-c349293fb35c"
+        expected_run_id = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
+        fence_sessions = MagicMock()
+        fence_sessions.get.return_value = MagicMock(agent_run_id=expected_run_id)
+        fence_runs = MagicMock()
+        hook_manager = _mock_hook_manager()
+        ingress_results: list[Any] = []
+
+        def handle(event: HookEvent) -> HookResponse:
+            ingress_results.append(
+                validate_managed_agent_hook(
+                    event,
+                    session_manager=fence_sessions,
+                    agent_run_manager=fence_runs,
+                    database=MagicMock(),
+                    completion_registry=None,
+                    registry_loop=None,
+                )
+            )
+            return HookResponse(decision="allow")
+
+        hook_manager.handle.side_effect = handle
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = hook_manager
+        input_data: dict[str, Any] = {"session_id": "external-child"}
+        if supplied_run_id is not None:
+            input_data["terminal_context"] = {"gobby_agent_run_id": supplied_run_id}
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Session-Id": platform_session_id},
+                json=_hook_envelope(
+                    hook_type="Stop",
+                    source="codex",
+                    critical=True,
+                    input_data=input_data,
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"continue": True}
+        assert len(ingress_results) == 1
+        assert ingress_results[0].accepted is False
+        assert ingress_results[0].ambiguous is True
+        fence_runs.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_identity_less_envelope_is_removed_and_barrier_settles(
+        self,
+        session_storage: SessionManager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        inbox_dir = tmp_path / "hooks" / "inbox"
+        inbox_dir.mkdir(parents=True)
+        envelope_id = "n-0000000000001-legacy"
+        envelope_path = inbox_dir / f"{envelope_id}.json"
+        platform_session_id = "d92fc5be-6638-415d-8143-c349293fb35c"
+        expected_run_id = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
+        envelope_path.write_text(
+            json.dumps(
+                {
+                    **_hook_envelope(
+                        hook_type="Stop",
+                        source="codex",
+                        critical=True,
+                        input_data={"session_id": "external-child"},
+                    ),
+                    "headers": {"X-Gobby-Session-Id": platform_session_id},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        fence_sessions = MagicMock()
+        fence_sessions.get.return_value = MagicMock(agent_run_id=expected_run_id)
+        fence_runs = MagicMock()
+        hook_manager = _mock_hook_manager()
+
+        def handle(event: HookEvent) -> HookResponse:
+            result = validate_managed_agent_hook(
+                event,
+                session_manager=fence_sessions,
+                agent_run_manager=fence_runs,
+                database=MagicMock(),
+                completion_registry=None,
+                registry_loop=None,
+            )
+            assert result.ambiguous is True
+            return HookResponse(decision="allow")
+
+        hook_manager.handle.side_effect = handle
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = hook_manager
+
+        with patch("gobby.hooks.inbox.load_bootstrap") as load_bootstrap:
+            load_bootstrap.return_value.auth_mode = "disabled"
+            first = await drain_hook_inbox_barrier(
+                server.app,
+                inbox_dir,
+                timeout_seconds=1.0,
+            )
+            second = await drain_hook_inbox_barrier(
+                server.app,
+                inbox_dir,
+                timeout_seconds=1.0,
+            )
+
+        assert first.replayed == 1
+        assert first.timed_out is False
+        assert second.replayed == 0
+        assert second.timed_out is False
+        assert envelope_path.exists() is False
+        assert is_envelope_processed(envelope_id, processed_dir=inbox_dir / "processed")
+        assert hook_manager.handle.call_count == 1
+        fence_runs.get.assert_not_called()
 
     def test_execute_hook_releases_claim_for_retryable_run_identity(
         self,

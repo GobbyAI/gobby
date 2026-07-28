@@ -102,6 +102,32 @@ def test_stale_runtime_version_is_typed(tmp_path: Path) -> None:
     assert MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA in diagnostic.detail
 
 
+@pytest.mark.parametrize(
+    ("version", "expected_state"),
+    [
+        ("0.7.2", GhookRuntimeState.STALE_VERSION),
+        ("0.7.3", GhookRuntimeState.COMPATIBLE),
+    ],
+)
+def test_agent_identity_runtime_version_floor(
+    tmp_path: Path,
+    version: str,
+    expected_state: GhookRuntimeState,
+) -> None:
+    stamp = tmp_path / ".ghook-runtime.json"
+    _write_stamp(
+        stamp,
+        {
+            "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+            "ghook_version": version,
+        },
+    )
+
+    diagnostic = read_ghook_runtime_diagnostic(stamp)
+
+    assert diagnostic.state is expected_state
+
+
 def test_current_runtime_stamp_is_compatible(tmp_path: Path) -> None:
     stamp = tmp_path / ".ghook-runtime.json"
     _write_stamp(
