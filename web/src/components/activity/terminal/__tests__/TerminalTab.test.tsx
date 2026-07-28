@@ -83,6 +83,8 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
     pane_pid: 123,
     pane_dead: false,
     pane_title: null,
+    pane_command: null,
+    pane_path: null,
     window_name: null,
     session_title: null,
     gobby_session_id: null,
@@ -198,8 +200,8 @@ describe("attach lifecycle", () => {
       expect(hookState.attachSession).toHaveBeenCalledWith("finished", "default");
     });
     expect(screen.getByRole("log", { name: "Terminal output (read-only)" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open terminal composer" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Open terminal composer" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Enable input" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
       "title",
       "This pane has exited. Terminal input is unavailable.",
     );
@@ -430,8 +432,11 @@ describe("ready handshake repaint", () => {
       );
     });
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
-    await user.click(screen.getByRole("button", { name: "Open terminal composer" }));
-    expect(screen.getByText("Composer open")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Enable input" }));
+    expect(screen.getByRole("button", { name: "Disable input" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
 
     hookState = {
       ...hookState,
@@ -451,7 +456,10 @@ describe("ready handshake repaint", () => {
       streamingId: "same-stream",
     };
     rendered.rerender(<TerminalTab />);
-    expect(screen.getByText("Viewing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
@@ -471,7 +479,10 @@ describe("composer only input", () => {
     render(<TerminalTab />);
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
 
-    expect(screen.getByText("Viewing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     const terminalSurface = screen.getByRole("log", { name: "Terminal output (read-only)" });
     fireEvent.keyDown(terminalSurface, { key: "x", code: "KeyX" });
     expect(hookState.sendInput).not.toHaveBeenCalled();
@@ -479,8 +490,11 @@ describe("composer only input", () => {
     await user.click(screen.getByRole("button", { name: "Protocol reply" }));
     expect(hookState.sendInput).toHaveBeenCalledWith("\u001b[6n");
 
-    await user.click(screen.getByRole("button", { name: "Open terminal composer" }));
-    expect(screen.getByText("Composer open")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Enable input" }));
+    expect(screen.getByRole("button", { name: "Disable input" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await user.type(screen.getByLabelText("Terminal input"), "status");
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(hookState.sendInput).toHaveBeenCalledWith("status\r");

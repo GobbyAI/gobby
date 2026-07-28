@@ -9,6 +9,7 @@ import {
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
 const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
 const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
+const STORAGE_KEY_TERMINAL = 'gobby-terminal-dock-open'
 
 const VALID_TABS = ACTIVITY_PANEL_TABS.map(({ id }) => id)
 
@@ -54,11 +55,20 @@ function normalizeStoredTab(value: string | null): ActivityTab | null {
 function loadActiveTab(): ActivityTab {
   try {
     const stored = normalizeStoredTab(localStorage.getItem(STORAGE_KEY_TAB))
-    if (stored) return stored
+    // 'terminal' routes to the bottom dock now — it is never panel content.
+    if (stored && stored !== 'terminal') return stored
   } catch {
     /* ignore */
   }
   return 'sessions'
+}
+
+function loadTerminalOpen(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY_TERMINAL) === 'true'
+  } catch {
+    return false
+  }
 }
 
 export function loadLayoutMode(): LayoutMode {
@@ -99,6 +109,8 @@ export function useActivityPanel(isMobile: boolean) {
 
   const [activeTab, setActiveTab] = useState<ActivityTab>(loadActiveTab)
   const [terminalSessionRequest, setTerminalSessionRequest] = useState<string | null>(null)
+  const [terminalOpen, setTerminalOpen] = useState<boolean>(loadTerminalOpen)
+  const [terminalExpanded, setTerminalExpanded] = useState(false)
 
   useEffect(() => {
     if (isMobile) return
@@ -124,6 +136,14 @@ export function useActivityPanel(isMobile: boolean) {
       /* ignore */
     }
   }, [activeTab])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_TERMINAL, String(terminalOpen))
+    } catch {
+      /* ignore */
+    }
+  }, [terminalOpen])
 
   // Crossing desktop -> mobile derives the mobile binary from the persisted
   // desktop mode. Crossing back leaves `mode` untouched (mobile never writes
@@ -162,8 +182,29 @@ export function useActivityPanel(isMobile: boolean) {
     })
   }, [dirtyGuard, isMobile])
 
+  // The terminal lives in the bottom dock, not the side panel. Opening it on
+  // mobile returns to the chat view so the dock isn't hidden under the
+  // full-screen panel overlay.
+  const openTerminal = useCallback(() => {
+    setTerminalOpen(true)
+    if (isMobile) setMobileView('chat')
+  }, [isMobile])
+
+  const closeTerminal = useCallback(() => {
+    setTerminalOpen(false)
+    setTerminalExpanded(false)
+  }, [])
+
+  const toggleTerminalExpanded = useCallback(() => {
+    setTerminalExpanded((expanded) => !expanded)
+  }, [])
+
   const showTab = useCallback(
     (tab: ActivityTab) => {
+      if (tab === 'terminal') {
+        openTerminal()
+        return
+      }
       void dirtyGuard.guardedRun(() => {
         setViewOverride(null)
         setActiveTab(tab)
@@ -186,7 +227,7 @@ export function useActivityPanel(isMobile: boolean) {
         })
       })
     },
-    [dirtyGuard, isMobile],
+    [dirtyGuard, isMobile, openTerminal],
   )
 
   // Cross-tab escape hatch (`gobby:open-command-palette` precedent): deep
@@ -234,12 +275,16 @@ export function useActivityPanel(isMobile: boolean) {
   }, [dirtyGuard, isMobile])
 
   const handleTabChange = useCallback((tab: ActivityTab) => {
+    if (tab === 'terminal') {
+      openTerminal()
+      return
+    }
     void dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
       setViewOverride(null)
       setActiveTab(tab)
     })
-  }, [dirtyGuard])
+  }, [dirtyGuard, openTerminal])
 
   const baseEffectiveMode: LayoutMode = isMobile
     ? mobileView === 'panel'
@@ -273,6 +318,11 @@ export function useActivityPanel(isMobile: boolean) {
     activeTab,
     terminalSessionRequest,
     clearTerminalSessionRequest,
+    terminalOpen,
+    terminalExpanded,
+    openTerminal,
+    closeTerminal,
+    toggleTerminalExpanded,
     setActiveTab: handleTabChange,
     showTab,
     closeIfAutoOpened,

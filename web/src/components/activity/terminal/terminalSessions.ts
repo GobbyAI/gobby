@@ -5,25 +5,61 @@ export interface JoinedTerminalSession {
   tmux: TmuxSession;
   gobby: GobbySession | null;
   label: string;
+  provider: string | null;
+  paneRef: string;
   dead: boolean;
   agentManaged: boolean;
   external: boolean;
 }
 
+// CLI providers that ship a SourceIcon mark. Matched against the joined Gobby
+// session's source first, then the pane's running command.
+const PROVIDER_COMMANDS = new Set(["claude", "codex", "droid", "grok", "qwen", "agy"]);
+
+// Commands that mean "nothing interesting is running" — an idle shell titles
+// the pane by its cwd instead.
+const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "tmux", "login"]);
+
 export function sessionKey(tmuxSession: TmuxSession): string {
   return `${tmuxSession.socket}:${tmuxSession.name}`;
 }
 
+function paneDirectory(panePath: string | null): string | null {
+  if (!panePath) return null;
+  const trimmed = panePath.replace(/\/+$/, "");
+  const base = trimmed.split("/").pop();
+  return base || trimmed || null;
+}
+
+// Title priority: Gobby session ref+title, then agent run name, then the
+// running app, then cwd basename, then the raw tmux session name.
 function displayLabel(
   tmuxSession: TmuxSession,
   gobbySession: GobbySession | null,
 ): string {
-  if (gobbySession === null) {
+  if (gobbySession !== null) {
+    const ref = gobbySession.seq_num === null ? gobbySession.ref : `#${gobbySession.seq_num}`;
+    return gobbySession.title ? `${ref} ${gobbySession.title}` : ref;
+  }
+  if (tmuxSession.agent_managed) {
     return tmuxSession.name;
   }
+  const rawCommand = tmuxSession.pane_command;
+  if (rawCommand && !SHELL_COMMANDS.has(rawCommand.toLowerCase().replace(/^-/, ""))) {
+    return rawCommand;
+  }
+  return paneDirectory(tmuxSession.pane_path) ?? tmuxSession.name;
+}
 
-  const ref = gobbySession.seq_num === null ? gobbySession.ref : `#${gobbySession.seq_num}`;
-  return gobbySession.title ? `${ref} ${gobbySession.title}` : ref;
+function providerFor(
+  tmuxSession: TmuxSession,
+  gobbySession: GobbySession | null,
+): string | null {
+  const source = gobbySession?.source?.toLowerCase();
+  if (source && PROVIDER_COMMANDS.has(source)) return source;
+  const command = tmuxSession.pane_command?.toLowerCase().replace(/^-/, "");
+  if (command && PROVIDER_COMMANDS.has(command)) return command;
+  return null;
 }
 
 export function joinTmuxSessions(
@@ -54,6 +90,8 @@ export function joinTmuxSessions(
       tmux,
       gobby,
       label: displayLabel(tmux, gobby),
+      provider: providerFor(tmux, gobby),
+      paneRef: `tmux ${tmux.name}`,
       dead: tmux.pane_dead,
       agentManaged: tmux.socket === "gobby" && gobby !== null,
       external: gobby === null,

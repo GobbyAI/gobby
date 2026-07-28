@@ -75,6 +75,8 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
     pane_pid: 123,
     pane_dead: false,
     pane_title: null,
+    pane_command: null,
+    pane_path: null,
     window_name: null,
     session_title: null,
     gobby_session_id: null,
@@ -92,6 +94,8 @@ function joinedSessions(): JoinedTerminalSession[] {
       tmux: matchedTmux,
       gobby: makeGobbySession({ title: "Matched session", status: "active" }),
       label: "#1 Matched session",
+      provider: "codex",
+      paneRef: "tmux matched",
       dead: false,
       agentManaged: true,
       external: false,
@@ -100,6 +104,8 @@ function joinedSessions(): JoinedTerminalSession[] {
       tmux: makeTmuxSession({ name: "external", pane_dead: true }),
       gobby: null,
       label: "External shell",
+      provider: null,
+      paneRef: "tmux external",
       dead: true,
       agentManaged: false,
       external: true,
@@ -147,9 +153,32 @@ describe("TerminalSessionPicker", () => {
     const listbox = screen.getByRole("listbox");
     expect(within(listbox).getByText("Agent-managed")).toBeInTheDocument();
     expect(within(listbox).getByText("Dead")).toBeInTheDocument();
-    expect(within(listbox).getByText("External")).toBeInTheDocument();
+    expect(within(listbox).queryByText("External")).not.toBeInTheDocument();
+    expect(within(listbox).getByText("Not Gobby-managed")).toBeInTheDocument();
 
     await user.click(within(listbox).getByRole("option", { name: /External shell/ }));
     expect(onChange).toHaveBeenCalledWith(sessionKey(sessions[1].tmux));
+  });
+
+  it("shows the provider icon and tmux ref alongside the title", async () => {
+    const user = userEvent.setup();
+    const sessions = joinedSessions();
+    render(
+      <TerminalSessionPicker
+        sessions={sessions}
+        value={sessionKey(sessions[0].tmux)}
+        onChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Terminal session" }));
+    const listbox = screen.getByRole("listbox");
+    const matched = within(listbox).getByRole("option", { name: /Matched session/ });
+    const external = within(listbox).getByRole("option", { name: /External shell/ });
+
+    expect(matched.querySelector("svg.source-icon-codex")).toBeTruthy();
+    expect(within(matched).getByText("tmux matched")).toBeInTheDocument();
+    expect(external.querySelector(".source-icon")).toBeNull();
+    expect(within(external).getByText("tmux external")).toBeInTheDocument();
   });
 });

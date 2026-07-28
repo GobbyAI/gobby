@@ -8,6 +8,8 @@ export interface TmuxSession {
   pane_pid: number | null
   pane_dead: boolean
   pane_title: string | null
+  pane_command: string | null
+  pane_path: string | null
   window_name: string | null
   session_title: string | null
   gobby_session_id: string | null

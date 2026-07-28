@@ -275,6 +275,8 @@ class TmuxMixin:
                             "pane_pid": s.pane_pid,
                             "pane_dead": getattr(s, "pane_dead", False),
                             "pane_title": s.pane_title,
+                            "pane_command": s.pane_command,
+                            "pane_path": s.pane_path,
                             "window_name": s.window_name,
                             "session_title": session_title,
                             "gobby_session_id": gobby_session_id,

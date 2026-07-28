@@ -14,6 +14,7 @@ import asyncio
 import fcntl
 import logging
 import os
+import signal
 import struct
 import termios
 from dataclasses import dataclass, field
@@ -97,11 +98,19 @@ class TmuxPTYBridge:
                 )
 
                 cmd = self._build_attach_cmd(session_name, cfg)
+                # The daemon usually runs without a usable $TERM (launchd, gobby
+                # start). tmux attach-session exits immediately with "missing or
+                # unsuitable terminal" in that case, leaving a dead PTY that
+                # surfaces only as EIO on later writes. The bridge output is
+                # rendered by an xterm-compatible web terminal, so force a
+                # matching terminfo regardless of the inherited environment.
+                env = {**os.environ, "TERM": "xterm-256color"}
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=slave_fd,
                     stdout=slave_fd,
                     stderr=slave_fd,
+                    env=env,
                 )
             except Exception:
                 if master_fd is not None:
@@ -220,6 +229,15 @@ class TmuxPTYBridge:
                     termios.TIOCSWINSZ,
                     struct.pack("HHHH", rows, cols, 0, 0),
                 )
+                # The attach process is not a session leader with this PTY as
+                # its controlling terminal, so the kernel does not deliver the
+                # SIGWINCH that TIOCSWINSZ normally implies. Without it the
+                # tmux client never re-reads the winsize and the resize is a
+                # silent no-op.
+                try:
+                    bridge.proc.send_signal(signal.SIGWINCH)
+                except ProcessLookupError:
+                    logger.debug("Bridge %s process exited before SIGWINCH", streaming_id)
                 return bridge
             except OSError as e:
                 logger.warning("Resize failed for %s: %s", streaming_id, e)

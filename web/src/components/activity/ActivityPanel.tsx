@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useState,
   useEffect,
   useRef,
@@ -47,10 +45,6 @@ import {
   ActivityActionButtons,
   ActivityActionsProvider,
 } from "./ActivityActionsContext";
-
-const TerminalTab = lazy(() =>
-  import("./terminal/TerminalTab").then((module) => ({ default: module.TerminalTab })),
-);
 
 const noopFetchDiff = async (): Promise<string> => "";
 
@@ -99,8 +93,6 @@ interface ActivityPanelProps {
   sessionsLoading?: boolean;
   sessionsFilters?: SessionsFilters;
   onSessionsFiltersChange?: (filters: SessionsFilters) => void;
-  terminalFocusSessionId?: string | null;
-  onTerminalFocusHandled?: () => void;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // MCP tab
@@ -201,8 +193,6 @@ export function ActivityPanel({
   sessionsLoading = false,
   sessionsFilters,
   onSessionsFiltersChange,
-  terminalFocusSessionId,
-  onTerminalFocusHandled,
   onAddFileToChat,
   mcp,
   onKillAgent,
@@ -313,16 +303,6 @@ export function ActivityPanel({
             onSwapSession={onSwapSession}
             onResumeSession={onResumeSession}
           />
-        );
-      case "terminal":
-        return (
-          <Suspense fallback={null}>
-            <TerminalTab
-              sessions={sessions}
-              focusSessionId={terminalFocusSessionId}
-              onFocusHandled={onTerminalFocusHandled}
-            />
-          </Suspense>
         );
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;

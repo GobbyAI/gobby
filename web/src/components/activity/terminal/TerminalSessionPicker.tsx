@@ -1,4 +1,5 @@
 import { ActivityRowStatusDot, type StatusKind } from "../ActivityRowStatusDot";
+import { SourceIcon } from "../../shared/SourceIcon";
 import {
   Select,
   SelectContent,
@@ -53,7 +54,11 @@ function SessionOption({ session }: { session: JoinedTerminalSession }) {
           label={lifecycle.label}
         />
       ) : null}
+      {session.provider ? <SourceIcon source={session.provider} size={14} /> : null}
       <span className="min-w-0 flex-1 truncate">{session.label}</span>
+      <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+        {session.paneRef}
+      </span>
       <span className="flex shrink-0 items-center gap-1">
         {session.dead ? (
           <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">
@@ -66,8 +71,11 @@ function SessionOption({ session }: { session: JoinedTerminalSession }) {
           </span>
         ) : null}
         {session.external ? (
-          <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-            External
+          <span
+            className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
+            title="A tmux session on this machine that Gobby didn't create and isn't tracking"
+          >
+            Not Gobby-managed
           </span>
         ) : null}
       </span>

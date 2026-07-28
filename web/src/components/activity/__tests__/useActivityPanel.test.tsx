@@ -67,12 +67,39 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.activeTab).toBe('sessions')
   })
 
-  it('restores Terminal from the registry-backed stored tab value', () => {
+  it('never restores Terminal as the active panel tab (it lives in the dock)', () => {
     localStorage.setItem(TAB_KEY, 'terminal')
 
     const { result } = renderHook(() => useActivityPanel(false))
 
-    expect(result.current.activeTab).toBe('terminal')
+    expect(result.current.activeTab).toBe('sessions')
+  })
+
+  it('opens, expands, and closes the terminal dock', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    expect(result.current.terminalOpen).toBe(false)
+    expect(result.current.terminalExpanded).toBe(false)
+
+    act(() => result.current.openTerminal())
+    expect(result.current.terminalOpen).toBe(true)
+    expect(localStorage.getItem('gobby-terminal-dock-open')).toBe('true')
+
+    act(() => result.current.toggleTerminalExpanded())
+    expect(result.current.terminalExpanded).toBe(true)
+
+    act(() => result.current.closeTerminal())
+    expect(result.current.terminalOpen).toBe(false)
+    expect(result.current.terminalExpanded).toBe(false)
+    expect(localStorage.getItem('gobby-terminal-dock-open')).toBe('false')
+  })
+
+  it('restores the persisted dock-open preference', () => {
+    localStorage.setItem('gobby-terminal-dock-open', 'true')
+
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    expect(result.current.terminalOpen).toBe(true)
   })
 
   it('toggleFromChat walks split -> chat -> split and persists', () => {
@@ -176,22 +203,24 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.effectiveMode).toBe('split')
   })
 
-  it('switches to Terminal on the gobby:show-activity-tab event and ignores unknown tabs', () => {
+  it('opens the terminal dock on the gobby:show-activity-tab event and ignores unknown tabs', () => {
     const { result } = renderHook(() => useActivityPanel(false))
+    const initialTab = result.current.activeTab
 
     act(() => {
       window.dispatchEvent(
         new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'terminal' } }),
       )
     })
-    expect(result.current.activeTab).toBe('terminal')
+    expect(result.current.terminalOpen).toBe(true)
+    expect(result.current.activeTab).toBe(initialTab)
 
     act(() => {
       window.dispatchEvent(
         new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'bogus' } }),
       )
     })
-    expect(result.current.activeTab).toBe('terminal')
+    expect(result.current.activeTab).toBe(initialTab)
   })
 
   it('stores terminal session request', () => {
@@ -204,7 +233,7 @@ describe('useActivityPanel — desktop', () => {
         }),
       )
     })
-    expect(result.current.activeTab).toBe('terminal')
+    expect(result.current.terminalOpen).toBe(true)
     expect(result.current.terminalSessionRequest).toBe('session-focus')
 
     act(() => result.current.clearTerminalSessionRequest())
@@ -365,7 +394,9 @@ describe('useActivityPanel — tab persistence', () => {
 
       const { result, unmount } = renderHook(() => useActivityPanel(false))
 
-      expect(result.current.activeTab).toBe(id)
+      // Terminal is dock-only content: it stays in the tab registry for the
+      // dropdown but never restores as the panel's active tab.
+      expect(result.current.activeTab).toBe(id === 'terminal' ? 'sessions' : id)
       unmount()
     }
   })

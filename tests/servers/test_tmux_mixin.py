@@ -107,7 +107,11 @@ class TestTmuxListSessions:
         from gobby.agents.tmux.session_manager import TmuxSessionInfo
 
         ws = MockWebSocket()
-        default_sessions = [TmuxSessionInfo(name="user-1", pane_pid=100)]
+        default_sessions = [
+            TmuxSessionInfo(
+                name="user-1", pane_pid=100, pane_command="claude", pane_path="/Users/dev/proj"
+            )
+        ]
         gobby_sessions = [TmuxSessionInfo(name="agent-1", pane_pid=200)]
 
         with (
@@ -131,8 +135,12 @@ class TestTmuxListSessions:
         assert msg["sessions"][0]["name"] == "user-1"
         assert msg["sessions"][0]["socket"] == "default"
         assert msg["sessions"][0]["pane_pid"] == 100
+        assert msg["sessions"][0]["pane_command"] == "claude"
+        assert msg["sessions"][0]["pane_path"] == "/Users/dev/proj"
         assert msg["sessions"][1]["name"] == "agent-1"
         assert msg["sessions"][1]["socket"] == "gobby"
+        assert msg["sessions"][1]["pane_command"] is None
+        assert msg["sessions"][1]["pane_path"] is None
 
     @pytest.mark.asyncio
     async def test_list_ignores_disconnect_during_response_send(

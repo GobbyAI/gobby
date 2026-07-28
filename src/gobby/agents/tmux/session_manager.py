@@ -118,6 +118,8 @@ class TmuxSessionInfo:
     window_name: str | None = None
     pane_title: str | None = None
     pane_dead: bool = False
+    pane_command: str | None = None
+    pane_path: str | None = None
 
 
 class TmuxSessionManager:
@@ -182,6 +184,8 @@ class TmuxSessionManager:
             window_name=parts[3] if len(parts) > 3 and parts[3] else None,
             pane_title=parts[4] if len(parts) > 4 and parts[4] else None,
             pane_dead=parts[5] == "1" if len(parts) > 5 else False,
+            pane_command=parts[6] if len(parts) > 6 and parts[6] else None,
+            pane_path=parts[7] if len(parts) > 7 and parts[7] else None,
         )
 
     async def _run(
@@ -457,11 +461,12 @@ class TmuxSessionManager:
 
     async def list_sessions(self) -> list[TmuxSessionInfo]:
         """List all Gobby tmux sessions on the isolated socket."""
-        # Fetch name, pid, pane_id, window name, pane title, and pane_dead status in one go
+        # Fetch name, pid, pane_id, window name, pane title, pane_dead,
+        # running command, and cwd in one go
         rc, stdout, _stderr = await self._run(
             "list-sessions",
             "-F",
-            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
+            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
         )
         if rc != 0:
             # No server running is rc=1 with "no server running"
@@ -483,7 +488,7 @@ class TmuxSessionManager:
             "-t",
             _exact_session_target(name),
             "-F",
-            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
+            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
             timeout=2.0,
         )
         if rc != 0:

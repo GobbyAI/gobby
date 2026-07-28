@@ -646,10 +646,12 @@ class TestTmuxSessionManager:
     async def test_list_sessions_with_entries(self) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            # Format: session_name\tpane_pid\tpane_id\twindow_name\tpane_title\tpane_dead
+            # Format: session_name\tpane_pid\tpane_id\twindow_name\tpane_title
+            # \tpane_dead\tpane_current_command\tpane_current_path
             mock_run.return_value = (
                 0,
-                "session1\t100\t%1\tzsh\t\t0\nsession2\t200\t%2\tzsh\t\t0\n",
+                "session1\t100\t%1\tzsh\t\t0\tclaude\t/Users/dev/proj\n"
+                "session2\t200\t%2\tzsh\t\t0\t\t\n",
                 "",
             )
             result = await mgr.list_sessions()
@@ -657,14 +659,18 @@ class TestTmuxSessionManager:
             assert result[0].name == "session1"
             assert result[0].pane_pid == 100
             assert result[0].pane_id == "%1"
+            assert result[0].pane_command == "claude"
+            assert result[0].pane_path == "/Users/dev/proj"
             assert result[1].name == "session2"
             assert result[1].pane_id == "%2"
+            assert result[1].pane_command is None
+            assert result[1].pane_path is None
 
     @pytest.mark.asyncio
     async def test_get_session_returns_target_pane_metadata(self) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "session1\t100\t%1\tzsh\tTitle\t0\n", "")
+            mock_run.return_value = (0, "session1\t100\t%1\tzsh\tTitle\t0\tvim\t/tmp/work\n", "")
             result = await mgr.get_session("session1")
 
         assert result is not None
@@ -673,12 +679,14 @@ class TestTmuxSessionManager:
         assert result.pane_id == "%1"
         assert result.window_name == "zsh"
         assert result.pane_title == "Title"
+        assert result.pane_command == "vim"
+        assert result.pane_path == "/tmp/work"
         mock_run.assert_awaited_once_with(
             "list-panes",
             "-t",
             "=session1:",
             "-F",
-            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
+            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
             timeout=2.0,
         )
 
@@ -1206,6 +1214,52 @@ class TestTmuxPTYBridge:
     async def test_resize_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
         assert await bridge.resize("nonexistent", 50, 200) is None
+
+    @pytest.mark.asyncio
+    async def test_resize_signals_sigwinch_to_attach_process(self) -> None:
+        """TIOCSWINSZ alone never reaches the tmux client: the attach process
+        has no controlling-terminal tie to the PTY, so resize must deliver
+        SIGWINCH explicitly or the client keeps its old size forever."""
+        from gobby.agents.tmux.pty_bridge import BridgeInfo
+
+        bridge = TmuxPTYBridge()
+        master_fd, slave_fd = os.openpty()
+        mock_proc = MagicMock()
+        bridge._bridges["winch-id"] = BridgeInfo(
+            master_fd=master_fd, proc=mock_proc, session_name="sess", socket_name=""
+        )
+
+        try:
+            result = await bridge.resize("winch-id", 21, 111)
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+        assert result is not None
+        mock_proc.send_signal.assert_called_once_with(signal.SIGWINCH)
+
+    @pytest.mark.asyncio
+    async def test_attach_forces_xterm_term_in_subprocess_env(self) -> None:
+        """attach must override TERM: the daemon env has none (or an unusable
+        one), and tmux attach-session exits immediately without a usable TERM,
+        leaving a dead PTY that only surfaces as EIO on later input writes."""
+        bridge = TmuxPTYBridge()
+        mock_proc = MagicMock()
+        with (
+            patch(
+                "gobby.agents.tmux.pty_bridge.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ) as mock_exec,
+            patch.dict(os.environ, {"TERM": "dumb"}),
+        ):
+            master_fd = await bridge.attach("sess", "term-env-id", TmuxConfig(socket_name="gobby"))
+
+        assert mock_exec.await_args is not None
+        env = mock_exec.await_args.kwargs["env"]
+        assert env["TERM"] == "xterm-256color"
+        assert await bridge.get_master_fd("term-env-id") == master_fd
+        os.close(master_fd)
 
 
 # =============================================================================

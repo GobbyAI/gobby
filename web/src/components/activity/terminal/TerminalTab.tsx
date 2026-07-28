@@ -10,6 +10,7 @@ import {
 
 import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../types/sessions";
+import { Button } from "../../ui/Button";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { TerminalSessionPicker } from "./TerminalSessionPicker";
 import {
@@ -327,15 +328,15 @@ export function TerminalTab({
       readyContext !== terminalContext);
   const composerDisabled = selected?.dead ?? false;
   const newTerminalButton = (
-    <button
-      className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45 pointer-coarse:min-h-11"
-      type="button"
+    <Button
+      variant="accent"
+      size="sm"
       disabled={!connected || requestPending}
       onClick={() => createSession()}
     >
       <PlusIcon />
       New Terminal
-    </button>
+    </Button>
   );
 
   if (!sessionsLoaded && selectedKey === null) {
@@ -354,13 +355,9 @@ export function TerminalTab({
         title="Terminal session ended"
         body="The selected socket and tmux session disappeared. Dismiss this notice to choose another live session."
         action={
-          <button
-            className="min-h-9 rounded-md border border-border bg-[var(--bg-secondary)] px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
-            type="button"
-            onClick={dismissVanishedSession}
-          >
+          <Button variant="secondary" size="sm" onClick={dismissVanishedSession}>
             Dismiss ended session
-          </button>
+          </Button>
         }
       />
     );
@@ -397,20 +394,14 @@ export function TerminalTab({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {newTerminalButton}
-          <span
-            className="inline-flex min-h-8 items-center rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-muted-foreground"
-            aria-live="polite"
-          >
-            {controlMode ? "Composer open" : "Viewing"}
-          </span>
-          <button
-            className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45 pointer-coarse:min-h-11"
-            type="button"
-            aria-label={controlMode ? "Close terminal composer" : "Open terminal composer"}
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-pressed={controlMode}
             title={
               composerDisabled
                 ? "This pane has exited. Terminal input is unavailable."
-                : undefined
+                : "The terminal is read-only until input is enabled."
             }
             disabled={composerDisabled}
             onClick={() =>
@@ -419,8 +410,8 @@ export function TerminalTab({
               )
             }
           >
-            {controlMode ? "Close composer" : "Compose"}
-          </button>
+            {controlMode ? "Disable input" : "Enable input"}
+          </Button>
         </div>
       </div>
 
@@ -469,13 +460,9 @@ export function TerminalTab({
               <p className="text-sm font-semibold text-foreground">
                 Couldn’t attach to this terminal. {attachError}
               </p>
-              <button
-                className="min-h-9 rounded-md border border-border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
-                type="button"
-                onClick={clearAttachError}
-              >
+              <Button variant="secondary" size="sm" onClick={clearAttachError}>
                 Retry terminal attach
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}

@@ -7,12 +7,6 @@ import {
   ACTIVITY_PANEL_DROPDOWN_TABS,
   ACTIVITY_PANEL_TABS,
 } from '../ActivityPanelTabs'
-import type { GobbySession } from '../../../types/sessions'
-
-const { terminalTabSpy } = vi.hoisted(() => ({
-  terminalTabSpy: vi.fn(),
-}))
-
 vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: ({
     panelWidth,
@@ -73,17 +67,6 @@ vi.mock('../AgentsTab', () => ({
   AgentsTab: () => <div>Agents Tab</div>,
 }))
 
-vi.mock('../terminal/TerminalTab', () => ({
-  TerminalTab: (props: {
-    sessions: unknown[]
-    focusSessionId?: string | null
-    onFocusHandled?: () => void
-  }) => {
-    terminalTabSpy(props)
-    return <div>Terminal Tab</div>
-  },
-}))
-
 describe('ActivityPanel', () => {
   it('registers Terminal immediately after Sessions with the prompt icon', () => {
     const sessionsIndex = ACTIVITY_PANEL_TABS.findIndex((tab) => tab.id === 'sessions')
@@ -101,10 +84,7 @@ describe('ActivityPanel', () => {
     expect(container.querySelector('line')).toHaveAttribute('y2', '19')
   })
 
-  it('lazy-renders Terminal with session focus wiring', async () => {
-    const sessions: GobbySession[] = []
-    const onTerminalFocusHandled = vi.fn()
-
+  it('renders no panel content for the terminal tab (it lives in the bottom dock)', () => {
     render(
       <ActivityPanel
         mode="split"
@@ -117,19 +97,13 @@ describe('ActivityPanel', () => {
         activePlan={null}
         onOpenPlan={vi.fn()}
         onSetPlanVersion={vi.fn()}
-        sessions={sessions}
-        terminalFocusSessionId="gobby-session-42"
-        onTerminalFocusHandled={onTerminalFocusHandled}
+        sessions={[]}
         isMobile={false}
       />,
     )
 
-    expect(await screen.findByText('Terminal Tab')).toBeInTheDocument()
-    expect(terminalTabSpy.mock.lastCall?.[0]).toMatchObject({
-      sessions,
-      focusSessionId: 'gobby-session-42',
-      onFocusHandled: onTerminalFocusHandled,
-    })
+    expect(screen.queryByText('Terminal Tab')).not.toBeInTheDocument()
+    expect(screen.queryByRole('log')).not.toBeInTheDocument()
   })
 
   it('returns null in chat-only mode', () => {

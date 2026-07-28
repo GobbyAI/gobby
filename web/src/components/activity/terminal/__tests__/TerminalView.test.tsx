@@ -42,6 +42,7 @@ interface MockWTermInstance {
   marker: HTMLSpanElement;
   init: () => Promise<MockWTermInstance>;
   write: (data: string) => void;
+  resize: (cols: number, rows: number) => void;
   destroy: () => void;
 }
 
@@ -75,6 +76,11 @@ vi.mock("@wterm/dom", () => {
     marker: HTMLSpanElement;
     init: () => Promise<MockWTermInstance>;
     write = vi.fn((_data: string) => undefined);
+    resize = vi.fn((cols: number, rows: number) => {
+      this.cols = cols;
+      this.rows = rows;
+      this.options.onResize?.(cols, rows);
+    });
     destroy: () => void;
 
     constructor(element: HTMLElement, options: MockWTermOptions) {
@@ -206,6 +212,41 @@ describe("TerminalView", () => {
     act(() => terminalRef.current?.write("hello"));
     expect(instance.write).toHaveBeenCalledWith("hello");
     expect(terminalRef.current?.getSize()).toEqual({ rows: 57, cols: 211 });
+  });
+
+  it("fits the grid to the mount size once measurable", async () => {
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: height,
+        right: width,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this instanceof HTMLSpanElement) return rect(8, 16);
+        if (this.classList.contains("term-row")) return rect(800, 16);
+        return rect(800, 320);
+      });
+
+    try {
+      const onSizeChange = vi.fn();
+      render(<TerminalView onSizeChange={onSizeChange} />);
+      await settleAsyncWork();
+
+      // 800px / 8px per char = 100 cols; 320px / 16px per row = 20 rows.
+      const instance = latestInstance();
+      expect(instance.resize).toHaveBeenCalledWith(100, 20);
+      await waitFor(() => expect(onSizeChange).toHaveBeenCalledWith(20, 100));
+    } finally {
+      rectSpy.mockRestore();
+    }
   });
 
   it("resize transposition", async () => {

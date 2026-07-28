@@ -67,7 +67,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/taskdetail/TaskDetailKV.tsx': 1,
     'src/components/activity/taskdetail/TaskDetailRelationships.tsx': 1,
     'src/components/activity/terminal/TerminalKeysBar.tsx': 2,
-    'src/components/activity/terminal/TerminalTab.tsx': 4,
     'src/components/activity/terminal/TerminalView.tsx': 2,
     'src/components/activity/wiki/WikiAskMode.tsx': 7,
     'src/components/activity/wiki/WikiBacklinks.tsx': 3,

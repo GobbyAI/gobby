@@ -89,6 +89,26 @@ function applyGobbyTheme(element: HTMLElement): void {
   element.style.setProperty("--term-color-15", "var(--text-primary)");
 }
 
+// wterm's built-in autoResize probes character metrics once during init and
+// silently gives up when the measurement lands at 0 (fonts not yet loaded,
+// layout not settled), leaving the grid stuck at the 80x24 default forever.
+// Measure with the same .term-row probe so the numbers match the renderer.
+function measureCell(root: HTMLElement): { charWidth: number; rowHeight: number } | null {
+  const row = document.createElement("div");
+  row.className = "term-row";
+  row.style.visibility = "hidden";
+  row.style.position = "absolute";
+  const probe = document.createElement("span");
+  probe.textContent = "W";
+  row.appendChild(probe);
+  root.appendChild(row);
+  const charWidth = probe.getBoundingClientRect().width;
+  const rowHeight = row.getBoundingClientRect().height;
+  row.remove();
+  if (charWidth === 0 || rowHeight === 0) return null;
+  return { charWidth, rowHeight };
+}
+
 function TerminalInstance({
   container,
   resolution,
@@ -102,6 +122,7 @@ function TerminalInstance({
   useLayoutEffect(() => {
     let disposed = false;
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let fitObserver: ResizeObserver | null = null;
     const mountElement = document.createElement("div");
     applyGobbyTheme(mountElement);
     container.appendChild(mountElement);
@@ -140,6 +161,30 @@ function TerminalInstance({
           textarea.tabIndex = -1;
           textarea.blur();
         }
+        // Own the container-to-grid fit: resize the terminal whenever the
+        // outer container changes size (dock expand/collapse, panel resize)
+        // and once fonts finish loading so the first measurement isn't
+        // garbage. Observe the container, not the wterm element — the
+        // renderer locks the wterm element's height to the current grid, so
+        // it never reports growth on its own.
+        const applyFit = () => {
+          if (disposed) return;
+          const cell = measureCell(readyTerminal.element);
+          if (!cell) return;
+          const rect = container.getBoundingClientRect();
+          const cols = Math.max(1, Math.floor(rect.width / cell.charWidth));
+          const rows = Math.max(1, Math.floor(rect.height / cell.rowHeight));
+          if (cols !== readyTerminal.cols || rows !== readyTerminal.rows) {
+            readyTerminal.resize(cols, rows);
+          }
+        };
+        if (typeof ResizeObserver !== "undefined") {
+          fitObserver = new ResizeObserver(() => applyFit());
+          fitObserver.observe(container);
+        }
+        void document.fonts?.ready.then(() => applyFit());
+        applyFit();
+
         const size = {
           rows: readyTerminal.rows,
           cols: readyTerminal.cols,
@@ -154,6 +199,7 @@ function TerminalInstance({
     return () => {
       disposed = true;
       if (resizeTimer !== null) clearTimeout(resizeTimer);
+      fitObserver?.disconnect();
       if (terminalRef.current === terminal) terminalRef.current = null;
       sizeRef.current = null;
       terminal.destroy();

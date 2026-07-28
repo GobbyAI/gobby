@@ -45,6 +45,8 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
     pane_pid: 123,
     pane_dead: false,
     pane_title: null,
+    pane_command: null,
+    pane_path: null,
     window_name: null,
     session_title: null,
     gobby_session_id: null,
@@ -91,6 +93,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[0],
         gobby: userSession,
         label: "#7 User shell",
+        provider: "codex",
+        paneRef: "tmux user-shell",
         dead: false,
         agentManaged: false,
         external: false,
@@ -99,6 +103,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[1],
         gobby: null,
         label: "external-shell",
+        provider: null,
+        paneRef: "tmux external-shell",
         dead: true,
         agentManaged: false,
         external: true,
@@ -107,6 +113,8 @@ describe("terminal session helpers", () => {
         tmux: tmux[2],
         gobby: agentSession,
         label: "#8 Agent shell",
+        provider: "codex",
+        paneRef: "tmux agent-shell",
         dead: false,
         agentManaged: true,
         external: false,
@@ -170,5 +178,61 @@ describe("terminal session helpers", () => {
       external: true,
     });
     expect(findByGobbySessionId(joined, agentSession.id)).toBe(joined[1]);
+  });
+
+  it("titles unmanaged panes by running app, then cwd, then tmux name", () => {
+    const tmux = [
+      makeTmuxSession({
+        name: "0",
+        pane_command: "vim",
+        pane_path: "/Users/dev/notes",
+      }),
+      makeTmuxSession({
+        name: "1",
+        pane_command: "zsh",
+        pane_path: "/Users/dev/projects/gobby",
+      }),
+      makeTmuxSession({ name: "2", pane_command: "-bash", pane_path: null }),
+    ];
+
+    const joined = joinTmuxSessions(tmux, []);
+
+    expect(joined[0].label).toBe("vim");
+    expect(joined[1].label).toBe("gobby");
+    expect(joined[2].label).toBe("2");
+    expect(joined.map(({ paneRef }) => paneRef)).toEqual(["tmux 0", "tmux 1", "tmux 2"]);
+  });
+
+  it("derives the provider icon from the pane command for unmanaged panes", () => {
+    const joined = joinTmuxSessions(
+      [
+        makeTmuxSession({ name: "0", pane_command: "claude", pane_path: "/tmp" }),
+        makeTmuxSession({ name: "1", pane_command: "htop", pane_path: "/tmp" }),
+      ],
+      [],
+    );
+
+    expect(joined[0].provider).toBe("claude");
+    expect(joined[0].label).toBe("claude");
+    expect(joined[1].provider).toBeNull();
+  });
+
+  it("titles agent-managed panes without a joined session by tmux name", () => {
+    const joined = joinTmuxSessions(
+      [
+        makeTmuxSession({
+          name: "gobby-agent-refactor",
+          socket: "gobby",
+          agent_managed: true,
+          agent_run_id: "run-unknown",
+          pane_command: "node",
+          pane_path: "/Users/dev/projects/gobby",
+        }),
+      ],
+      [],
+    );
+
+    expect(joined[0].label).toBe("gobby-agent-refactor");
+    expect(joined[0].external).toBe(true);
   });
 });
