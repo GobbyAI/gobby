@@ -160,14 +160,31 @@ instructions: |
   exact server-derived routing_decisions and manifest_entries. On first
   source drift, rerun affected lanes once.
 
+  CONVERGENCE TELEMETRY:
+  Every reviewer-produced terminal result includes `convergence_telemetry` with
+  `state: delivered`, `reviewer.status: available`, and no `daemon` object. The
+  reviewer object always contains all six records:
+  `reviewer_miss`, `fixer_induced`, and `repeated_check_keys` each have an
+  explicit `count` and `classifications`; `remedy_scope` has `scope` plus
+  provenance; `ledger_entries_carried` has an explicit `count` plus provenance;
+  and `artifact_growth` has explicit `section_delta`, `target_delta`, and
+  `acceptance_delta` plus provenance. Every classification carries `check_key`,
+  `check_key_class`, `finding_ids`, `ledger_ids`, and non-empty
+  `classification_inputs` entries with `name` and `value`. Every other
+  provenance-bearing record carries the same IDs and `classification_inputs`.
+  Use `0` and an empty classification list for a genuine zero; `absent` never
+  means zero. Terminal cleanup changes the state to `enriched` and adds the
+  authoritative `daemon` aggregates. Only the daemon may synthesize timeout
+  telemetry with `reviewer.status: unavailable`.
+
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:
-  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
-  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
-  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700}}`
+  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
   the shown top-level and reason keys. `reason_code` is closed to
   `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
@@ -187,7 +204,8 @@ instructions: |
     your prompt; do NOT overwrite prior rounds).
   - If blocking findings remain, call `reject_review` with `stage_name="planning"`,
     rejection notes, the display round from your prompt, AND a
-    `signoff_summary` (see SIGNOFF SUMMARY below). Do NOT edit the plan file
+    `signoff_summary` (see SIGNOFF SUMMARY below) and the complete
+    `convergence_telemetry` object in delivered state. Do NOT edit the plan file
     on rejection — planner owns plan edits between rounds (§2.23).
   - If context is insufficient, escalate with `needs_requirements:` plus the
     specific questions you cannot answer.
@@ -224,9 +242,12 @@ instructions: |
   6. On success, call `approve_review` with `stage_name="planning"`,
      `round_number`, the complete typed `findings` list, the complete typed
      `routing_decisions`, `manifest_entries`, `coverage_attestation`, the
-     current `evidence_id`, and `approval_notes`
+     current `evidence_id`, `approval_notes`, and the complete delivered
+     `convergence_telemetry`
      that document the outcome. The tool builds the canonical `round_result`;
-     a count alone is invalid.
+     a count alone is invalid. Approval/rejection records durable verdict intent
+     without mutating the stage; terminal cleanup enriches telemetry, finalizes
+     evidence, commits the stage, applies effects, and terminalizes the run.
 
   YOLO MANIFEST FALLBACK:
   - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
@@ -283,8 +304,6 @@ step_variables:
   skill_loaded: false
   proportionality_loaded: false
   review_complete: false
-  lesson_backfill_required: false
-  lesson_backfill_failed: false
 
 steps:
   - name: claim
@@ -360,13 +379,17 @@ steps:
     description: "Review the implementation plan and decide"
     status_message: |
       Review the plan artifact. If blocking issues remain, reject review with
-      reject_review(stage_name="planning"). If the plan is sound, approve it with
+      reject_review(stage_name="planning", convergence_telemetry={state:delivered,...}).
+      If the plan is sound, approve it with
       approve_review(stage_name="planning", round_number=..., findings=[],
       routing_decisions={...}, manifest_entries=[...],
-      coverage_attestation={...}, evidence_id=...). If approval returns
-      lesson_mint_status=failed or pending, the workflow requires exactly one
-      backfill_plan_review_lessons call before termination. Use escalate_task only for
-      `needs_requirements:` or true human-intervention blockers.
+      coverage_attestation={...}, evidence_id=...,
+      convergence_telemetry={state:delivered,...}). These lifecycle calls record
+      durable verdict intent and do not mutate the stage. Proceed directly to
+      end_agent_run; terminal cleanup owns enrichment, finalization, stage commit,
+      replay-safe effects, and parent wake. Do not send_message or wait for lesson
+      minting on this staged path. Use escalate_task only for `needs_requirements:`
+      or true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
@@ -393,17 +416,6 @@ steps:
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: approve_review
-        when: >-
-          (tool_output.get('result') or tool_output).get('lesson_mint_status')
-          in ['failed', 'pending']
-        action: set_variable
-        variable: lesson_backfill_required
-        value: true
-      - server: gobby-tasks-ops
-        tool: approve_review
-        when: >-
-          (tool_output.get('result') or tool_output).get('lesson_mint_status')
-          in ['minted', 'none']
         action: set_variable
         variable: review_complete
         value: true
@@ -435,111 +447,17 @@ steps:
         when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
-        value: true
-    transitions:
-      - to: backfill_lessons
-        when: "vars.lesson_backfill_required"
-      - to: deliver_result
-        when: "vars.review_complete"
-
-  - name: backfill_lessons
-    description: "Retry a failed or pending plan-review lesson mint once"
-    status_message: |
-      Call gobby-tasks-ops:backfill_plan_review_lessons exactly once with the
-      assigned task_id and stage="planning". Do not call approve_review again.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks-ops:backfill_plan_review_lessons"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: backfill_plan_review_lessons
-        when: >-
-          (tool_output.get('result') or tool_output).get('lesson_mint_status')
-          in ['failed', 'pending']
-          or bool((tool_output.get('result') or tool_output).get('error'))
-        action: set_variable
-        variable: lesson_backfill_failed
-        value: true
-      - server: gobby-tasks-ops
-        tool: backfill_plan_review_lessons
-        when: >-
-          (tool_output.get('result') or tool_output).get('lesson_mint_status')
-          in ['minted', 'none']
-        action: set_variable
-        variable: review_complete
-        value: true
-    on_mcp_error:
-      - server: gobby-tasks-ops
-        tool: backfill_plan_review_lessons
-        action: set_variable
-        variable: lesson_backfill_failed
-        value: true
-    transitions:
-      - to: relay_backfill_failure
-        when: "vars.lesson_backfill_failed"
-      - to: deliver_result
-        when: "vars.review_complete"
-
-  - name: relay_backfill_failure
-    description: "Relay the remaining mint failure to the coordinator"
-    status_message: |
-      Send one gobby-agents:send_message to the parent coordinator with the
-      remaining plan-review lesson-mint failure, then terminate normally.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:send_message"
-    on_mcp_success:
-      - server: gobby-agents
-        tool: send_message
-        action: set_variable
-        variable: review_complete
-        value: true
-    on_mcp_error:
-      - server: gobby-agents
-        tool: send_message
-        action: set_variable
-        variable: review_complete
-        value: true
-    transitions:
-      - to: deliver_result
-        when: "vars.review_complete"
-
-  - name: deliver_result
-    description: "Deliver the canonical round result"
-    status_message: |
-      Send one gobby-agents:send_message to the parent containing only the
-      canonical JSON round result from the completed verdict. This durable
-      message populates agent_runs.result and must precede end_agent_run.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-agents:send_message"
-    on_mcp_success:
-      - server: gobby-agents
-        tool: send_message
-        action: set_variable
-        variable: result_delivered
         value: true
     transitions:
       - to: terminate
-        when: "vars.result_delivered"
+        when: "vars.review_complete"
 
   - name: terminate
     description: "Self-terminate"
     status_message: >-
       Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run.
+      tool_name="end_agent_run", and arguments={} to finish the run. Do not send a
+      separate result message; terminal cleanup commits and relays the staged verdict.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

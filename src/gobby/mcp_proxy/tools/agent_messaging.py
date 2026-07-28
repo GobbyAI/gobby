@@ -172,11 +172,74 @@ def add_messaging_tools(
                 assert target_id is not None
                 resolved_target_id = _resolve(target_id)
 
+            from_sess = session_manager.get(from_id)
+            bound_review: tuple[str, str, dict[str, object]] | None = None
+            if (
+                from_sess
+                and normalized_target == "session"
+                and from_sess.parent_session_id == resolved_target_id
+            ):
+                row = db.fetchone(
+                    """
+                    SELECT ar.id AS run_id, pre.evidence_id
+                      FROM agent_runs ar
+                      JOIN plan_review_evidence pre ON pre.dispatch_run_id = ar.id
+                     WHERE ar.child_session_id = %s
+                       AND pre.finalized_at IS NULL
+                       AND pre.expired_at IS NULL
+                     ORDER BY ar.created_at DESC
+                     LIMIT 1
+                    """,
+                    (from_id,),
+                )
+                if row is not None and "evidence_id" in row and "run_id" in row:
+                    from gobby.plans.review_evidence_models import (
+                        ReviewEvidenceError,
+                        validate_round_result,
+                    )
+                    from gobby.plans.review_telemetry import (
+                        deterministic_review_message_id,
+                        validate_convergence_telemetry,
+                    )
+
+                    try:
+                        raw_result = json.loads(content)
+                        if not isinstance(raw_result, Mapping):
+                            raise ReviewEvidenceError(
+                                "invalid_round_result",
+                                "delivered round result must be a JSON object",
+                            )
+                        payload = validate_round_result(raw_result)
+                        telemetry = payload.get("convergence_telemetry")
+                        if not isinstance(telemetry, Mapping):
+                            raise ReviewEvidenceError(
+                                "invalid_round_result",
+                                "round result requires convergence_telemetry",
+                            )
+                        validate_convergence_telemetry(
+                            telemetry,
+                            required_state="delivered",
+                        )
+                    except (json.JSONDecodeError, ReviewEvidenceError) as exc:
+                        return {
+                            "success": False,
+                            "error": f"Invalid delivered plan-review result: {exc}",
+                            "error_code": getattr(exc, "code", "invalid_round_result"),
+                        }
+                    message_id = deterministic_review_message_id(
+                        evidence_id=str(row["evidence_id"]),
+                        run_id=str(row["run_id"]),
+                        effect_kind="round_result",
+                        target_session_id=str(resolved_target_id),
+                    )
+                    bound_review = (str(row["run_id"]), message_id, payload)
+
             send_result = await mailbox.send(
                 from_session_id=from_id,
                 target=normalized_target,
                 target_id=resolved_target_id,
-                include_wakeup=include_wakeup,
+                message_id=bound_review[1] if bound_review is not None else None,
+                include_wakeup=include_wakeup if bound_review is None else False,
                 content=content,
                 priority=priority,
                 message_type=message_type,
@@ -185,28 +248,48 @@ def add_messaging_tools(
             )
             msg = send_result.messages[0] if len(send_result.messages) == 1 else None
 
-            from_sess = session_manager.get(from_id)
-
             # Auto-write to agent_runs.result when sending to parent
             if (
                 from_sess
                 and len(send_result.recipient_session_ids) == 1
                 and from_sess.parent_session_id == send_result.recipient_session_ids[0]
             ):
-                try:
-                    row = db.fetchone(
-                        "SELECT id FROM agent_runs WHERE child_session_id = %s "
-                        "ORDER BY created_at DESC LIMIT 1",
-                        (from_id,),
-                    )
-                    if row:
-                        now = utc_now()
-                        db.execute(
-                            "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s",
-                            (content, now, row["id"]),
+                if bound_review is not None:
+                    from gobby.plans.review_evidence_models import ReviewEvidenceError
+                    from gobby.plans.review_telemetry import persist_delivered_round_result
+
+                    try:
+                        persist_delivered_round_result(
+                            db,
+                            run_id=bound_review[0],
+                            round_result=bound_review[2],
                         )
-                except Exception as e:
-                    logger.warning("Failed to write to agent_runs.result: %s", e)
+                    except ReviewEvidenceError as exc:
+                        return {
+                            "success": False,
+                            "error": f"Failed to persist delivered plan-review result: {exc}",
+                            "error_code": exc.code,
+                            "message": msg.to_dict() if msg is not None else None,
+                        }
+                    if include_wakeup:
+                        send_result.wake_results = [
+                            await mailbox._wake(send_result.recipient_session_ids[0])
+                        ]
+                else:
+                    try:
+                        row = db.fetchone(
+                            "SELECT id FROM agent_runs WHERE child_session_id = %s "
+                            "ORDER BY created_at DESC LIMIT 1",
+                            (from_id,),
+                        )
+                        if row:
+                            now = utc_now()
+                            db.execute(
+                                "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s",
+                                (content, now, row["id"]),
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to write to agent_runs.result: %s", e)
 
             # Broadcast agent_message event
             failed_ws_broadcasts: list[dict[str, Any]] = []

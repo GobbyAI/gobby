@@ -102,35 +102,24 @@ class TestManifestEmissionOnApproval:
         assert "gobby-tasks-ops:approve_review" not in blocked
 
 
-class TestLessonBackfill:
-    def test_failed_approval_mint_backfills_once_then_relays_remaining_failure(
+class TestTerminalCleanupOwnership:
+    def test_staged_verdict_proceeds_directly_to_terminal_cleanup(
         self,
         agent: AgentDefinitionBody,
     ) -> None:
         review = find_step(agent.steps or [], "review")
-        backfill = find_step(agent.steps or [], "backfill_lessons")
-        relay = find_step(agent.steps or [], "relay_backfill_failure")
-        deliver = find_step(agent.steps or [], "deliver_result")
         assert review is not None
-        assert backfill is not None
-        assert relay is not None
-        assert deliver is not None
-
+        assert find_step(agent.steps or [], "backfill_lessons") is None
+        assert find_step(agent.steps or [], "relay_backfill_failure") is None
+        assert find_step(agent.steps or [], "deliver_result") is None
         assert any(
-            transition.to == "backfill_lessons"
-            and transition.when == "vars.lesson_backfill_required"
+            transition.to == "terminate" and transition.when == "vars.review_complete"
             for transition in review.transitions
         )
-        assert backfill.allowed_mcp_tools == ["gobby-tasks-ops:backfill_plan_review_lessons"]
-        assert any(
-            transition.to == "relay_backfill_failure"
-            and transition.when == "vars.lesson_backfill_failed"
-            for transition in backfill.transitions
-        )
-        assert relay.allowed_mcp_tools == ["gobby-agents:send_message"]
-        assert any(transition.to == "deliver_result" for transition in relay.transitions)
-        assert deliver.allowed_mcp_tools == ["gobby-agents:send_message"]
-        assert any(transition.to == "terminate" for transition in deliver.transitions)
+        assert "gobby-agents:send_message" not in (review.allowed_mcp_tools or [])
+        review_prompt = review.status_message or ""
+        assert "terminal cleanup owns enrichment, finalization, stage commit" in (review_prompt)
+        assert "Do not send_message or wait for lesson" in review_prompt
 
 
 class TestCoordinatorOwnedWrites:

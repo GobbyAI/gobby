@@ -176,8 +176,16 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
     """Validate and canonicalize the stable round-result envelope."""
     from gobby.plans.review_coverage import validate_coverage_attestation
     from gobby.plans.review_ledger import validate_candidate_dispositions
+    from gobby.plans.review_telemetry import validate_convergence_telemetry
 
     payload = canonical_json_object(raw)
+    telemetry = payload.get("convergence_telemetry")
+    if not isinstance(telemetry, dict):
+        raise ReviewEvidenceError(
+            "invalid_round_result",
+            "round_result.convergence_telemetry must be an object",
+        )
+    payload["convergence_telemetry"] = validate_convergence_telemetry(telemetry)
     verdict = payload.get("verdict")
     if verdict in {"needs_requirements", "inconclusive"}:
         return _validate_non_attested_result(payload, verdict=str(verdict))
@@ -228,10 +236,18 @@ def _validate_non_attested_result(
     *,
     verdict: str,
 ) -> dict[str, object]:
-    if set(payload) != {"verdict", "evidence_id", "reason"}:
+    if set(payload) != {
+        "verdict",
+        "evidence_id",
+        "reason",
+        "convergence_telemetry",
+    }:
         raise ReviewEvidenceError(
             "invalid_round_result",
-            f"{verdict} round_result must contain exactly verdict, evidence_id, and reason",
+            (
+                f"{verdict} round_result must contain exactly verdict, evidence_id, "
+                "reason, and convergence_telemetry"
+            ),
         )
     evidence_id = payload.get("evidence_id")
     if not isinstance(evidence_id, str) or not evidence_id:

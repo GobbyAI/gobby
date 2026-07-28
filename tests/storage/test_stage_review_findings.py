@@ -23,6 +23,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.review_coverage_helpers import coverage_attestation
+from tests.review_telemetry_helpers import enriched_telemetry
 from tests.storage.tasks._stage_test_helpers import (
     lifecycle_events,
     set_stage_state,
@@ -290,6 +291,7 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
             ),
             evidence_id=evidence_id,
             round_number=1,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id=run_id,
         )
     assert stage_review_setup.evidence.get_evidence(evidence_id).finalized_at is None
@@ -304,6 +306,7 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
         ),
         evidence_id=evidence_id,
         round_number=1,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
 
@@ -320,6 +323,7 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
             evidence_id=evidence_id,
             shadow_valid=False,
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
 
 
@@ -339,6 +343,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         ),
         evidence_id=evidence_id,
         round_number=1,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
 
@@ -361,6 +366,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
             ),
             evidence_id=evidence_id,
             round_number=2,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id=run_id,
         )
 
@@ -390,6 +396,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
             ),
             evidence_id=evidence_id,
             round_number=1,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id=run_id,
         )
 
@@ -436,6 +443,7 @@ async def test_staged_prompt_uses_evidence_handle(
                 ),
                 evidence_id=prepared.evidence_id,
                 round_number=1,
+                convergence_telemetry=enriched_telemetry(),
                 dispatch_run_id=run_id,
             )
         assert pending.value.code == "binding_pending"
@@ -508,6 +516,7 @@ async def test_staged_prompt_uses_evidence_handle(
         ),
         evidence_id=prepared.evidence_id,
         round_number=1,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
     TaskDispatchMutexManager(stage_review_setup.db).clear_by_run_id(run_id)
@@ -599,6 +608,7 @@ def test_rejection_finalizes_evidence(
             ),
             evidence_id=evidence_id,
             round_number=1,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id=run_id,
         )
 
@@ -625,6 +635,7 @@ def test_rejection_finalizes_evidence(
         ),
         evidence_id=evidence_id,
         round_number=1,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
     finalized = stage_review_setup.evidence.get_evidence(evidence_id)
@@ -644,6 +655,7 @@ def test_rejection_finalizes_evidence(
         ),
         evidence_id=evidence_id,
         round_number=1,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
     assert replay.description == first.description
@@ -663,6 +675,7 @@ def test_rejection_finalizes_evidence(
             ),
             evidence_id=evidence_id,
             round_number=1,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id="wrong-run",
         )
 
@@ -758,6 +771,7 @@ def test_approval_ledger_is_server_derived(
             routing_decisions={},
             manifest_entries=manifest_entries,
             coverage_attestation=approval_attestation,
+            convergence_telemetry=enriched_telemetry(),
             dispatch_run_id=run_id,
         )
     assert stage_mutated is False
@@ -779,6 +793,7 @@ def test_approval_ledger_is_server_derived(
         routing_decisions={},
         manifest_entries=manifest_entries,
         coverage_attestation=approval_attestation,
+        convergence_telemetry=enriched_telemetry(),
         dispatch_run_id=run_id,
     )
 

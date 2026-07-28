@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import (
     ACTIVE_AGENT_RUN_STATUSES,
     STATUS_CANCELLED,
@@ -228,7 +229,14 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             if run:
-                arm.fail(run_id, error="Unregistered via test endpoint")
+                review_outcome = terminalize_plan_review_run(
+                    arm,
+                    run_id=run_id,
+                    action="fail",
+                    error="Unregistered via test endpoint",
+                )
+                if not review_outcome.handled:
+                    arm.fail(run_id, error="Unregistered via test endpoint")
                 await deliver_existing_terminal_run(
                     db=db,
                     agent_run_manager=arm,

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import gobby.agents.run_completion as run_completion
+from gobby.plans.review_terminal import terminalize_plan_review_run
 
 pytestmark = pytest.mark.unit
 
@@ -43,12 +44,23 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
 
     assert completed is True
     assert to_thread_calls[0] == (
+        terminalize_plan_review_run,
+        (runner.run_storage,),
+        {
+            "db": runner.run_storage.db,
+            "run_id": "run-123",
+            "action": "complete",
+            "tool_calls_count": 0,
+            "turns_used": 0,
+        },
+    )
+    assert to_thread_calls[1] == (
         runner.complete_run,
         ("run-123",),
         {"result": None},
     )
-    assert to_thread_calls[1][0].__name__ == "read_terminal_run"
-    assert to_thread_calls[1][1:] == ((), {})
+    assert getattr(to_thread_calls[2][0], "__name__", None) == "read_terminal_run"
+    assert to_thread_calls[2][1:] == ((), {})
     runner.run_storage.db.bounded_transaction.assert_called_once_with()
     completion_registry.notify.assert_awaited_once_with(
         "run-123",
@@ -92,7 +104,11 @@ async def test_complete_and_notify_settles_delivery_before_cancellation() -> Non
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def offload(func, *args, **kwargs):
+    async def offload(
+        func: Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> object:
         if func is runner.complete_run:
             started.set()
             await release.wait()

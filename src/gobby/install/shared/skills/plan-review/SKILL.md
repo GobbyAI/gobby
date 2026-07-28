@@ -379,12 +379,12 @@ attestation whole so its validated records remain digest-bound to the result.
 
 TERMINAL_RESULT_UNION_V1_START
 Every parent delivery is one JSON object matching one branch:
-`{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
-`{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
-`{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":900}}`
+`{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+`{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+`{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
 Reviewed branches require canonical coverage. Non-attested branches use exactly
 the shown top-level and reason keys. `reason_code` is closed to
 `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
@@ -441,6 +441,34 @@ re-derives entries from the evidence snapshot and routing decisions, rejects
 any differing payload, revalidates freshness, and performs the only manifest
 write. Rejection returns typed findings plus shadow-manifest diagnostics. The
 coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
+
+### Convergence telemetry contract
+
+Every reviewer-produced terminal branch (`approved`, `needs_review`,
+`needs_requirements`, `source_drift`, or `index_mismatch`) includes
+`convergence_telemetry` with `state: delivered` and `reviewer.status:
+available`. The reviewer emits only reviewer-owned facts; it never invents the
+`daemon` object. Terminal cleanup adds that authoritative object and changes
+the state to `enriched`. Only the daemon may synthesize the timeout branch with
+`reviewer.status: unavailable`.
+
+The available reviewer object contains exactly:
+
+- `reviewer_miss`: `count` plus `classifications`
+- `fixer_induced`: `count` plus `classifications`
+- `repeated_check_keys`: `count` plus `classifications`
+- `remedy_scope`: `scope` plus provenance
+- `ledger_entries_carried`: `count` plus provenance
+- `artifact_growth`: `section_delta`, `target_delta`, `acceptance_delta`, plus
+  provenance
+
+Every classification carries `check_key`, `check_key_class`, `finding_ids`,
+`ledger_ids`, and non-empty `classification_inputs` entries with `name` and
+`value`. Every other provenance-bearing record carries `finding_ids`,
+`ledger_ids`, and `classification_inputs`. Counts and deltas are explicit:
+genuine zero uses `0` (and an empty classification list where applicable);
+an absent field never means zero. Emit all six records on every
+reviewer-produced verdict, even when their counts and deltas are zero.
 
 ---
 

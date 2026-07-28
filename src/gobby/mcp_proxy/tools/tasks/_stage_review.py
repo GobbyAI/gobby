@@ -25,6 +25,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_findings import FINDING_REPAIR_SCOPES, FINDING_SEVERITIES
+from gobby.plans.review_telemetry import CONVERGENCE_TELEMETRY_SCHEMA
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -311,6 +312,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         manifest_entries: list[dict[str, object]] | None = None,
         routing_decisions: dict[str, object] | None = None,
         coverage_attestation: dict[str, object] | None = None,
+        convergence_telemetry: dict[str, object] | None = None,
         evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -354,6 +356,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             approval_kwargs["routing_decisions"] = routing_decisions
         if coverage_attestation is not None:
             approval_kwargs["coverage_attestation"] = coverage_attestation
+        if convergence_telemetry is not None:
+            approval_kwargs["convergence_telemetry"] = convergence_telemetry
         if evidence_id is not None:
             approval_kwargs["evidence_id"] = evidence_id
         try:
@@ -368,6 +372,14 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             return _lifecycle_value_error(str(e))
         if not updated:
             return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
+        if (
+            stage_name == "planning"
+            and convergence_telemetry is not None
+            and convergence_telemetry.get("state") == "delivered"
+        ):
+            response = _operation_response(ctx, resolved_id, stage_name)
+            response["verdict_intent_recorded"] = True
+            return response
 
         mint_result: dict[str, object] | None = None
         if stage_name == "planning":
@@ -471,6 +483,12 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 },
                 "routing_decisions": {"type": ["object", "null"]},
                 "coverage_attestation": {"type": ["object", "null"]},
+                "convergence_telemetry": {
+                    "anyOf": [
+                        CONVERGENCE_TELEMETRY_SCHEMA,
+                        {"type": "null"},
+                    ]
+                },
                 "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },
@@ -487,6 +505,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         round_number: int | None = None,
         findings: list[dict[str, object]] | None = None,
         coverage_attestation: dict[str, object] | None = None,
+        convergence_telemetry: dict[str, object] | None = None,
         evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -517,6 +536,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             review_kwargs["findings"] = findings
         if coverage_attestation is not None:
             review_kwargs["coverage_attestation"] = coverage_attestation
+        if convergence_telemetry is not None:
+            review_kwargs["convergence_telemetry"] = convergence_telemetry
         if evidence_id is not None:
             review_kwargs["evidence_id"] = evidence_id
         try:
@@ -531,6 +552,14 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             return _lifecycle_value_error(str(e))
         if not updated:
             return {"error": f"Failed to reject review for stage {stage_name} on task {task_id}"}
+        if (
+            stage_name == "planning"
+            and convergence_telemetry is not None
+            and convergence_telemetry.get("state") == "delivered"
+        ):
+            response = _operation_response(ctx, resolved_id, stage_name)
+            response["verdict_intent_recorded"] = True
+            return response
 
         _auto_link_session_commits(
             ctx,
@@ -737,6 +766,12 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                     },
                 },
                 "coverage_attestation": {"type": ["object", "null"]},
+                "convergence_telemetry": {
+                    "anyOf": [
+                        CONVERGENCE_TELEMETRY_SCHEMA,
+                        {"type": "null"},
+                    ]
+                },
                 "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },

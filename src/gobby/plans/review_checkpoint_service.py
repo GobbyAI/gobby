@@ -290,8 +290,11 @@ class ReviewCheckpointService:
             and row.expired_at is None
             and row.round_number < evidence.round_number
         ]
+        prior_ledger = (prior_rows[-1].quality_ledger or []) if prior_rows else []
+        if payload.get("verdict") in {"needs_requirements", "inconclusive"}:
+            return validate_quality_ledger(prior_ledger)
         return merge_quality_ledger(
-            prior_ledger=(prior_rows[-1].quality_ledger or []) if prior_rows else [],
+            prior_ledger=prior_ledger,
             round_number=evidence.round_number,
             current_section_hashes=reviewed_section_hashes(evidence.section_manifest),
             round_result=payload,
@@ -304,10 +307,15 @@ class ReviewCheckpointService:
         round_result: Mapping[str, object],
     ) -> dict[str, object]:
         payload = validate_round_result(round_result)
-        coverage = payload["coverage_attestation"]
-        if not isinstance(coverage, dict) or coverage.get("evidence_id") != evidence_id:
+        verdict = payload["verdict"]
+        if verdict in {"approved", "needs_review"}:
+            coverage = payload["coverage_attestation"]
+            result_evidence_id = coverage.get("evidence_id") if isinstance(coverage, dict) else None
+        else:
+            result_evidence_id = payload.get("evidence_id")
+        if result_evidence_id != evidence_id:
             raise ReviewEvidenceError(
                 "coverage_evidence_mismatch",
-                "coverage attestation belongs to a different review evidence snapshot",
+                "round result belongs to a different review evidence snapshot",
             )
         return payload

@@ -538,8 +538,17 @@ class PlanReviewEvidenceService:
         *,
         _derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
     ) -> PlanReviewEvidence:
+        from gobby.plans.review_telemetry import validate_convergence_telemetry
+
         evidence = self.get_evidence(evidence_id)
         payload = self._round_result_for_evidence(evidence_id, round_result)
+        telemetry = payload.get("convergence_telemetry")
+        if not isinstance(telemetry, dict):
+            raise ReviewEvidenceError(
+                "invalid_round_result",
+                "round_result.convergence_telemetry must be an object",
+            )
+        validate_convergence_telemetry(telemetry, required_state="enriched")
         if evidence.round_result is not None and evidence.round_result != payload:
             raise ReviewEvidenceError(
                 "round_result_conflict",

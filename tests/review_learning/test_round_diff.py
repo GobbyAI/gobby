@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -21,9 +21,14 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import coverage_attestation
-
-pytest_plugins = ("tests.storage.test_stage_review_findings",)
-
+from tests.review_telemetry_helpers import enriched_telemetry
+from tests.storage.test_stage_review_findings import (
+    StageReviewSetup,
+    _prepare_bound,
+)
+from tests.storage.test_stage_review_findings import (
+    stage_review_setup as _stage_review_setup,  # noqa: F401 - pytest fixture re-export
+)
 
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
@@ -103,6 +108,7 @@ def _row(
             shadow_valid=verdict == "approved",
             manifest_entries=[{"source_section": "A"}] if verdict == "approved" else None,
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
     if verdict == "approved":
         round_result["manifest_entries"] = [{"source_section": "A"}]
@@ -430,6 +436,7 @@ def _persist_round(
             evidence_id=prepared.evidence_id,
             shadow_valid=False,
         )
+    result["convergence_telemetry"] = enriched_telemetry()
     lineage.service.finalize_plan_review_evidence(prepared.evidence_id, result)
     return prepared.evidence_id
 
@@ -597,29 +604,37 @@ async def test_description_mutation_immunity(durable_lineage: DurableLineage) ->
 
 
 def test_approval_evidence_finalization(
-    stage_review_setup: Any,
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.plans.review_evidence_models import ReviewEvidenceError
     from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
-    from tests.storage.test_stage_review_findings import _prepare_bound
 
-    setup = stage_review_setup
+    setup = cast(
+        StageReviewSetup,
+        request.getfixturevalue("_stage_review_setup"),
+    )
     evidence_id, run_id = _prepare_bound(setup)
     derived = setup.evidence.derive_plan_review_manifest(
         evidence_id,
         routing_decisions={},
     )
-    manifest_entries = derived["manifest_entries"]
-    assert isinstance(manifest_entries, list)
-    approval = {
-        "findings": [],
-        "routing_decisions": {},
+    raw_manifest_entries = derived["manifest_entries"]
+    assert isinstance(raw_manifest_entries, list)
+    manifest_entries = cast(list[dict[str, object]], raw_manifest_entries)
+    findings: list[dict[str, object]] = []
+    routing_decisions: dict[str, object] = {}
+    attestation = coverage_attestation(
+        evidence_id=evidence_id,
+        manifest_entries=manifest_entries,
+    )
+    telemetry = enriched_telemetry()
+    approval: dict[str, object] = {
+        "findings": findings,
+        "routing_decisions": routing_decisions,
         "manifest_entries": manifest_entries,
-        "coverage_attestation": coverage_attestation(
-            evidence_id=evidence_id,
-            manifest_entries=manifest_entries,
-        ),
+        "coverage_attestation": attestation,
+        "convergence_telemetry": telemetry,
     }
 
     with pytest.raises(ReviewEvidenceError) as wrong_round:
@@ -628,11 +643,17 @@ def test_approval_evidence_finalization(
             "planning",
             evidence_id=evidence_id,
             round_number=2,
-            **approval,
+            findings=findings,
+            routing_decisions=routing_decisions,
+            manifest_entries=manifest_entries,
+            coverage_attestation=attestation,
+            convergence_telemetry=telemetry,
             dispatch_run_id=run_id,
         )
     assert wrong_round.value.code == "wrong_attempt"
-    assert setup.manager.stage_states.current_stage(setup.task_id).state == "needs_review"
+    wrong_state = setup.manager.stage_states.current_stage(setup.task_id)
+    assert wrong_state is not None
+    assert wrong_state.state == "needs_review"
 
     original_finalize = PlanReviewEvidenceStore.finalize
 
@@ -646,10 +667,16 @@ def test_approval_evidence_finalization(
             "planning",
             evidence_id=evidence_id,
             round_number=1,
-            **approval,
+            findings=findings,
+            routing_decisions=routing_decisions,
+            manifest_entries=manifest_entries,
+            coverage_attestation=attestation,
+            convergence_telemetry=telemetry,
             dispatch_run_id=run_id,
         )
-    assert setup.manager.stage_states.current_stage(setup.task_id).state == "needs_review"
+    interrupted_state = setup.manager.stage_states.current_stage(setup.task_id)
+    assert interrupted_state is not None
+    assert interrupted_state.state == "needs_review"
     interrupted = setup.evidence.get_evidence(evidence_id)
     assert interrupted.manifest_state == "applied"
     assert interrupted.finalized_at is None
@@ -660,12 +687,18 @@ def test_approval_evidence_finalization(
         "planning",
         evidence_id=evidence_id,
         round_number=1,
-        **approval,
+        findings=findings,
+        routing_decisions=routing_decisions,
+        manifest_entries=manifest_entries,
+        coverage_attestation=attestation,
+        convergence_telemetry=telemetry,
         dispatch_run_id=run_id,
     )
     finalized = setup.evidence.get_evidence(evidence_id)
     assert approved.id == setup.task_id
-    assert setup.manager.stage_states.current_stage(setup.task_id).state == "review_approved"
+    approved_state = setup.manager.stage_states.current_stage(setup.task_id)
+    assert approved_state is not None
+    assert approved_state.state == "review_approved"
     assert finalized.finalized_at is not None
     assert finalized.approval_result == {
         "verdict": "approved",
@@ -679,7 +712,11 @@ def test_approval_evidence_finalization(
         "planning",
         evidence_id=evidence_id,
         round_number=1,
-        **approval,
+        findings=findings,
+        routing_decisions=routing_decisions,
+        manifest_entries=manifest_entries,
+        coverage_attestation=attestation,
+        convergence_telemetry=telemetry,
         dispatch_run_id=run_id,
     )
     assert replay.id == setup.task_id

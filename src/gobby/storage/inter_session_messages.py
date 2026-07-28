@@ -6,6 +6,7 @@ enabling parent-child session communication and agent coordination.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -26,6 +27,13 @@ MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
     "sent": "sent",
 }
 MESSAGE_DIRECTION_OPTIONS = tuple(MESSAGE_DIRECTION_ALIASES)
+
+
+def _canonical_metadata_json(value: object) -> str | None:
+    if value is None:
+        return None
+    parsed = json.loads(value) if isinstance(value, str) else value
+    return json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def normalize_message_direction(direction: str) -> str:
@@ -88,7 +96,7 @@ class InterSessionMessage:
             priority=row["priority"],
             sent_at=row["sent_at"],
             message_type=row["message_type"],
-            metadata_json=row["metadata_json"],
+            metadata_json=_canonical_metadata_json(row["metadata_json"]),
             delivered_at=row["delivered_at"],
         )
 
@@ -146,6 +154,7 @@ class InterSessionMessageManager:
         priority: str = "normal",
         message_type: str = "message",
         metadata_json: str | None = None,
+        message_id: str | None = None,
     ) -> InterSessionMessage:
         """Create and persist a new message.
 
@@ -160,15 +169,18 @@ class InterSessionMessageManager:
         Returns:
             The created InterSessionMessage
         """
-        message_id = str(uuid.uuid4())
+        message_id = message_id or str(uuid.uuid4())
         sent_at = utc_now()
+        canonical_metadata = _canonical_metadata_json(metadata_json)
 
-        self.db.execute(
+        row = self.db.execute(
             """
             INSERT INTO inter_session_messages
             (id, from_session, to_session, content, priority, sent_at,
              message_type, metadata_json)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING *
             """,
             (
                 message_id,
@@ -178,20 +190,37 @@ class InterSessionMessageManager:
                 priority,
                 sent_at,
                 message_type,
-                metadata_json,
+                canonical_metadata,
             ),
-        )
-
-        return InterSessionMessage(
-            id=message_id,
-            from_session=from_session,
-            to_session=to_session,
-            content=content,
-            priority=priority,
-            sent_at=sent_at,
-            message_type=message_type,
-            metadata_json=metadata_json,
-        )
+        ).fetchone()
+        if row is None:
+            row = self.db.execute(
+                "SELECT * FROM inter_session_messages WHERE id = %s",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f"Message insert conflict disappeared: {message_id}")
+            existing = InterSessionMessage.from_row(row)
+            identity = (
+                existing.from_session,
+                existing.to_session,
+                existing.content,
+                existing.priority,
+                existing.message_type,
+                _canonical_metadata_json(existing.metadata_json),
+            )
+            requested = (
+                from_session,
+                to_session,
+                content,
+                priority,
+                message_type,
+                canonical_metadata,
+            )
+            if identity != requested:
+                raise ValueError(f"Message idempotency conflict for {message_id}")
+            return existing
+        return InterSessionMessage.from_row(row)
 
     def get_message(self, message_id: str) -> InterSessionMessage | None:
         """Get a message by ID.

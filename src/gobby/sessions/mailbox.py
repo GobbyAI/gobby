@@ -114,6 +114,7 @@ class MailboxService:
         target: str,
         content: str,
         target_id: str | None = None,
+        message_id: str | None = None,
         include_wakeup: bool = False,
         priority: str = "normal",
         message_type: str = "message",
@@ -132,6 +133,8 @@ class MailboxService:
             project_id=project_id,
         )
         recipient_ids = resolution.recipient_session_ids
+        if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
+            raise ValueError("message_id requires exactly one direct recipient")
         if resolution.fanout:
             broadcast_id = str(uuid.uuid4())
             if not recipient_ids:
@@ -170,6 +173,7 @@ class MailboxService:
                         priority=priority,
                         message_type=message_type,
                         metadata_json=metadata_json,
+                        message_id=message_id,
                     )
                 )
 

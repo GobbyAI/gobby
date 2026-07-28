@@ -370,10 +370,10 @@ class TestMailboxBroadcast:
             for record in caplog.records
             if record.message == "Mailbox target resolved no recipients"
         )
-        assert log_record.from_session_id == sender.id
-        assert log_record.target == "project"
-        assert log_record.target_id == sample_project["id"]
-        assert log_record.broadcast_id == result.broadcast_id
+        assert getattr(log_record, "from_session_id", None) == sender.id
+        assert getattr(log_record, "target", None) == "project"
+        assert getattr(log_record, "target_id", None) == sample_project["id"]
+        assert getattr(log_record, "broadcast_id", None) == result.broadcast_id
 
     @pytest.mark.asyncio
     async def test_project_target_fans_out_to_active_agent_run_sessions(
@@ -643,7 +643,7 @@ class TestMailboxBroadcast:
             calls.append((from_session_id, build_project_id, task_id))
             return next(allowed_values)
 
-        monkeypatch.setattr(mailbox_module.time, "monotonic", monotonic)
+        monkeypatch.setattr("gobby.sessions.mailbox.time.monotonic", monotonic)
         monkeypatch.setattr(
             mailbox,
             "_allows_cross_project_build_coordinator",
@@ -783,13 +783,22 @@ class TestMailboxBroadcast:
         tasks = LocalTaskManager(temp_db)
         agent_runs = LocalAgentRunManager(temp_db)
         history = BuildHistoryStorage(temp_db)
-        root = tasks.create_task(sample_project["id"], "Build root")
+        root = tasks.create_task(
+            sample_project["id"],
+            "Build root",
+            validation_criteria="Build root completes.",
+        )
         child_task = tasks.create_task(
             sample_project["id"],
             "Build child",
             parent_task_id=root.id,
+            validation_criteria="Build child completes.",
         )
-        outside_task = tasks.create_task(sample_project["id"], "Outside")
+        outside_task = tasks.create_task(
+            sample_project["id"],
+            "Outside",
+            validation_criteria="Outside work completes.",
+        )
         build_run = history.record_run(
             project_id=sample_project["id"],
             action="build",

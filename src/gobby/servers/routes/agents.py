@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
 
 if TYPE_CHECKING:
@@ -39,15 +40,24 @@ def _bundled_definition_path(agents_path: Path, name: str) -> Path:
 
 def _reconcile_cancelled_agent_run(manager: Any, run_id: str) -> None:
     """Persist cancellation after a process kill, retrying a transient manager failure."""
+
+    def cancel() -> Any:
+        review_outcome = terminalize_plan_review_run(
+            manager,
+            run_id=run_id,
+            action="cancel",
+        )
+        return review_outcome.run if review_outcome.handled else manager.cancel(run_id)
+
     try:
-        cancelled = manager.cancel(run_id)
+        cancelled = cancel()
     except Exception:
         logger.warning(
             "Failed to cancel agent run '%s'; retrying reconciliation",
             run_id,
             exc_info=True,
         )
-        cancelled = manager.cancel(run_id)
+        cancelled = cancel()
 
     if cancelled is None:
         current = manager.get(run_id)

@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.task_recovery import TaskRecoveryHandler
+from gobby.plans.review_terminal import terminalize_plan_review_run
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,17 @@ async def terminalize_killed_agent_run(
 
     if effective_status == "error":
         error = "Agent self-reported error"
-        failed_run = runner.run_storage.fail(run_id, error=error)
+        review_outcome = terminalize_plan_review_run(
+            runner.run_storage,
+            run_id=run_id,
+            action="fail",
+            error=error,
+        )
+        failed_run = (
+            review_outcome.run
+            if review_outcome.handled
+            else runner.run_storage.fail(run_id, error=error)
+        )
         if failed_run is None:
             current = runner.get_run(run_id)
             logger.debug(

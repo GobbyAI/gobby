@@ -22,13 +22,14 @@ import logging
 import threading
 import uuid
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -549,6 +550,7 @@ class TestAgentRunCompletion:
     ) -> None:
         session_id = str(uuid.uuid4())
         recipient_id = str(uuid.uuid4())
+        run_id = str(uuid.uuid4())
         _create_session_row(temp_db, session_id)
         _create_session_row(temp_db, recipient_id)
         temp_db.executemany(
@@ -581,7 +583,7 @@ class TestAgentRunCompletion:
         coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
         session = SimpleNamespace(
             id=session_id,
-            agent_run_id="run-123",
+            agent_run_id=run_id,
             summary_markdown=None,
             last_assistant_content=None,
             tool_call_count=1,
@@ -599,7 +601,7 @@ class TestAgentRunCompletion:
         mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
         mock_agent_run_manager.complete.return_value = None
         coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
-        coordinator._notify_agent_completion = MagicMock()
+        notify = MagicMock()
         session = MagicMock(
             id="session-123",
             agent_run_id="run-123",
@@ -608,13 +610,14 @@ class TestAgentRunCompletion:
             turn_count=1,
         )
 
-        coordinator.complete_agent_run(session)
+        with patch.object(coordinator, "_notify_agent_completion", notify):
+            coordinator.complete_agent_run(session)
 
-        coordinator._notify_agent_completion.assert_called_once_with("run-123", "cancelled")
+        notify.assert_called_once_with("run-123", "cancelled")
         assert mock_agent_run_manager.get.call_count == 2
         assert mock_agent_run_manager.complete.call_count == 1
         assert mock_agent_run_manager.fail.call_count == 0
-        assert coordinator._notify_agent_completion.call_count == 1
+        assert notify.call_count == 1
 
     def test_complete_agent_run_notifies_stored_status_when_fail_loses_race(self) -> None:
         mock_agent_run_manager = MagicMock()
@@ -623,7 +626,7 @@ class TestAgentRunCompletion:
         mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
         mock_agent_run_manager.fail.return_value = None
         coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
-        coordinator._notify_agent_completion = MagicMock()
+        notify = MagicMock()
         session = MagicMock(
             id="session-123",
             agent_run_id="run-123",
@@ -632,13 +635,14 @@ class TestAgentRunCompletion:
             turn_count=0,
         )
 
-        coordinator.complete_agent_run(session)
+        with patch.object(coordinator, "_notify_agent_completion", notify):
+            coordinator.complete_agent_run(session)
 
-        coordinator._notify_agent_completion.assert_called_once_with("run-123", "success")
+        notify.assert_called_once_with("run-123", "success")
         assert mock_agent_run_manager.get.call_count == 2
         assert mock_agent_run_manager.fail.call_count == 1
         assert mock_agent_run_manager.complete.call_count == 0
-        assert coordinator._notify_agent_completion.call_count == 1
+        assert notify.call_count == 1
 
     def test_timed_out_terminal_offload_runs_followups_after_persistence(self) -> None:
         manager = MagicMock()
@@ -1156,11 +1160,13 @@ class _GatedRegistry:
         self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
         self.cleanup_calls: list[str] = []
         self.order: list[str] = []
+        self.started = asyncio.Event()
 
     async def notify(
         self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
     ) -> dict[str, bool] | None:
         self.notify_calls.append((run_id, result, message))
+        self.started.set()
         await self._release.wait()
         self.order.append("notify-resolved")
         return self._delivery
@@ -1176,7 +1182,10 @@ class TestNotifyAgentCompletionDelivery:
     def _coordinator(self, registry: _GatedRegistry) -> SessionCoordinator:
         coordinator = SessionCoordinator()
         coordinator._completion_registry = registry
-        coordinator._agent_run_manager = SimpleNamespace(db=MagicMock())
+        coordinator._agent_run_manager = cast(
+            LocalAgentRunManager,
+            SimpleNamespace(db=MagicMock()),
+        )
         return coordinator
 
     def _record_removals(
@@ -1210,7 +1219,7 @@ class TestNotifyAgentCompletionDelivery:
         coordinator = self._coordinator(registry)
 
         task = self._schedule(coordinator, "run-1")
-        await asyncio.sleep(0)
+        await registry.started.wait()
         assert registry.notify_calls[0][1] == {"status": "completed", "run_id": "run-1"}
         assert removals == []
         assert registry.cleanup_calls == []
@@ -1245,7 +1254,7 @@ class TestNotifyAgentCompletionDelivery:
         coordinator = self._coordinator(registry)
 
         task = self._schedule(coordinator, "run-1")
-        await asyncio.sleep(0)
+        await registry.started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -1264,7 +1273,7 @@ class TestNotifyAgentCompletionDelivery:
 
         before = asyncio.all_tasks()
         await asyncio.to_thread(coordinator._notify_agent_completion, "run-1", "completed")
-        await asyncio.sleep(0)
+        await registry.started.wait()
         new_tasks = asyncio.all_tasks() - before
         assert len(new_tasks) == 1
         task = new_tasks.pop()
@@ -1286,7 +1295,7 @@ class TestNotifyAgentCompletionDelivery:
 
         before = asyncio.all_tasks()
         await asyncio.to_thread(coordinator._notify_agent_completion, "run-1", "completed")
-        await asyncio.sleep(0)
+        await registry.started.wait()
         task = (asyncio.all_tasks() - before).pop()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

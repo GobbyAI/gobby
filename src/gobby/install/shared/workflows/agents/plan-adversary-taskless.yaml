@@ -121,14 +121,31 @@ instructions: |
   `round_result`. Approval also returns the exact server-derived routing_decisions
   and `manifest_entries`.
 
+  CONVERGENCE TELEMETRY:
+  Every reviewer-produced terminal result includes `convergence_telemetry` with
+  `state: delivered`, `reviewer.status: available`, and no `daemon` object. The
+  reviewer object always contains all six records:
+  `reviewer_miss`, `fixer_induced`, and `repeated_check_keys` each have an
+  explicit `count` and `classifications`; `remedy_scope` has `scope` plus
+  provenance; `ledger_entries_carried` has an explicit `count` plus provenance;
+  and `artifact_growth` has explicit `section_delta`, `target_delta`, and
+  `acceptance_delta` plus provenance. Every classification carries `check_key`,
+  `check_key_class`, `finding_ids`, `ledger_ids`, and non-empty
+  `classification_inputs` entries with `name` and `value`. Every other
+  provenance-bearing record carries the same IDs and `classification_inputs`.
+  Use `0` and an empty classification list for a genuine zero; `absent` never
+  means zero. Terminal cleanup changes the state to `enriched` and adds the
+  authoritative `daemon` aggregates. Only the daemon may synthesize timeout
+  telemetry with `reviewer.status: unavailable`.
+
   TERMINAL_RESULT_UNION_V1_START
   Every parent delivery is one JSON object matching one branch:
-  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...}}`
-  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...}}`
-  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"}}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700}}`
+  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"index_mismatch","expected_token":"<token>","actual_token":"<token>"},"convergence_telemetry":<delivered-reviewer-telemetry>}`
+  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
   the shown top-level and reason keys. `reason_code` is closed to
   `missing_requirements`, `source_drift`, `index_mismatch`, and `timeout`.
@@ -147,6 +164,7 @@ instructions: |
   round: <N>
   reviewer_session: <session-id>
   coverage_attestation: <canonical coverage attestation>
+  convergence_telemetry: <delivered reviewer telemetry>
   findings:
     - finding_id: <stable-id>
       severity: <blocking | major | minor | nit>
@@ -197,6 +215,7 @@ instructions: |
     - <full typed entry>
   coverage_attestation: <canonical coverage attestation>
   findings: [<zero or more typed major | minor | nit findings>]
+  convergence_telemetry: <delivered reviewer telemetry>
   ```
 
   The approval payload contains full typed entries; a count alone is invalid.
@@ -270,7 +289,9 @@ steps:
     description: "Review the plan artifact and return structured findings"
     status_message: |
       Review artifact_path. Return verdict approved, needs_review, or
-      needs_requirements to the parent, then call end_agent_run.
+      needs_requirements to the parent. Every reviewer-produced result must include
+      the complete delivered convergence_telemetry object. Send that exact JSON with
+      send_message, then call end_agent_run.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:create_task"

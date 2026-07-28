@@ -21,6 +21,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import coverage_attestation
+from tests.review_telemetry_helpers import enriched_telemetry
 
 
 @pytest.fixture
@@ -224,6 +225,7 @@ def test_stale_write_guard_and_lifecycle(
                     evidence_id="another-evidence",
                     shadow_valid=False,
                 ),
+                "convergence_telemetry": enriched_telemetry(),
             },
         )
     assert replayed_coverage.value.code == "coverage_evidence_mismatch"
@@ -234,6 +236,7 @@ def test_stale_write_guard_and_lifecycle(
             evidence_id=prepared.evidence_id,
             shadow_valid=False,
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
     checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id, rejection)
     ensure_checkpoint(plan_path, checkpoint)
@@ -450,6 +453,7 @@ def test_path_boundary_and_binding_validation(
                 evidence_id=prepared.evidence_id,
                 shadow_valid=False,
             ),
+            "convergence_telemetry": enriched_telemetry(),
         },
     )
     replay = service.authorize_current_attempt(
@@ -508,6 +512,7 @@ def test_manifest_compare_and_apply(
                 evidence_id=evidence_id,
                 manifest_entries=manifest_entries,
             ),
+            "convergence_telemetry": enriched_telemetry(),
         }
 
     approval = canonical_approval(prepared.evidence_id)
@@ -794,6 +799,7 @@ def test_interactive_mint_status_lifecycle(
             evidence_id=prepared.evidence_id,
             manifest_entries=manifest_entries,
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
     with pytest.raises(ReviewEvidenceError, match="V1 checkpoint"):
         service.finalize_plan_review_evidence(prepared.evidence_id, approval)
@@ -925,6 +931,7 @@ def test_finalize_persists_server_derived_quality_ledger(
             evidence_id=prepared.evidence_id,
             manifest_entries=[{"source_section": "1.1"}],
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
     ensure_checkpoint(
         plan_path,
@@ -958,6 +965,7 @@ def test_finalize_persists_server_derived_quality_ledger(
             evidence_id=round_two.evidence_id,
             manifest_entries=[{"source_section": "1.1"}],
         ),
+        "convergence_telemetry": enriched_telemetry(),
     }
     ensure_checkpoint(
         plan_path,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import AgentRunStatus
 
 if TYPE_CHECKING:
@@ -64,7 +65,15 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
     if run.status not in ("pending", "running"):
         return False
 
-    cancelled_run = runner._run_storage.cancel(run_id)
+    review_outcome = terminalize_plan_review_run(
+        runner._run_storage,
+        run_id=run_id,
+        action="cancel",
+        terminal_reason="user_cancelled",
+    )
+    cancelled_run = (
+        review_outcome.run if review_outcome.handled else runner._run_storage.cancel(run_id)
+    )
     if cancelled_run is None:
         runner.logger.debug(
             "Cancel no-op for run %s; another terminal state won the race",
@@ -116,11 +125,22 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
             tool_calls_count = getattr(session, "tool_call_count", 0) or tool_calls_count
             turns_used = getattr(session, "turn_count", 0) or turns_used
 
-    completed_run = runner._run_storage.complete(
+    review_outcome = terminalize_plan_review_run(
+        runner._run_storage,
         run_id=run_id,
-        result=result,
+        action="complete",
         tool_calls_count=tool_calls_count,
         turns_used=turns_used,
+    )
+    completed_run = (
+        review_outcome.run
+        if review_outcome.handled
+        else runner._run_storage.complete(
+            run_id=run_id,
+            result=result,
+            tool_calls_count=tool_calls_count,
+            turns_used=turns_used,
+        )
     )
     if completed_run is None:
         runner.logger.debug(

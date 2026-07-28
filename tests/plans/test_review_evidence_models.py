@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from gobby.plans.review_evidence_models import validate_round_result
+from tests.review_telemetry_helpers import delivered_telemetry, unavailable_telemetry
 
 ROOT = Path(__file__).resolve().parents[2]
 UNION_START = "TERMINAL_RESULT_UNION_V1_START"
@@ -77,11 +78,13 @@ def test_terminal_branch_union_producer_parity() -> None:
             "coverage_attestation": _coverage(evidence_id),
             "manifest_entries": [{"artifact_kind": "test"}],
             "routing_decisions": {},
+            "convergence_telemetry": delivered_telemetry(),
         },
         {
             "verdict": "needs_review",
             "findings": [],
             "coverage_attestation": _coverage(evidence_id),
+            "convergence_telemetry": delivered_telemetry(),
         },
         {
             "verdict": "needs_requirements",
@@ -90,6 +93,7 @@ def test_terminal_branch_union_producer_parity() -> None:
                 "reason_code": "missing_requirements",
                 "questions": ["Which service owns the retry deadline?"],
             },
+            "convergence_telemetry": delivered_telemetry(),
         },
         {
             "verdict": "inconclusive",
@@ -98,6 +102,7 @@ def test_terminal_branch_union_producer_parity() -> None:
                 "reason_code": "source_drift",
                 "paths": ["src/gobby/plans/review_evidence.py"],
             },
+            "convergence_telemetry": delivered_telemetry(),
         },
         {
             "verdict": "inconclusive",
@@ -107,6 +112,7 @@ def test_terminal_branch_union_producer_parity() -> None:
                 "expected_token": "generation-1",
                 "actual_token": "generation-2",
             },
+            "convergence_telemetry": delivered_telemetry(),
         },
         {
             "verdict": "inconclusive",
@@ -115,6 +121,7 @@ def test_terminal_branch_union_producer_parity() -> None:
                 "reason_code": "timeout",
                 "timeout_seconds": 900,
             },
+            "convergence_telemetry": unavailable_telemetry(),
         },
     ]
 

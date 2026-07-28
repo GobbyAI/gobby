@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gobby.plans.review_telemetry import CONVERGENCE_TELEMETRY_SCHEMA
+
 _NONEMPTY_STRING = {"type": "string", "minLength": 1}
 _SHA256 = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 _CHECK_KEY = {
@@ -627,6 +629,7 @@ _ATTESTED_ROUND_PROPERTIES = {
         "items": _FINDING_SCHEMA,
     },
     "coverage_attestation": _COVERAGE_ATTESTATION_SCHEMA,
+    "convergence_telemetry": CONVERGENCE_TELEMETRY_SCHEMA,
     "routing_decisions": ROUTING_DECISIONS_SCHEMA,
     "manifest_entries": {
         "type": "array",
@@ -647,6 +650,7 @@ ROUND_RESULT_SCHEMA = {
                 "verdict",
                 "findings",
                 "coverage_attestation",
+                "convergence_telemetry",
                 "routing_decisions",
                 "manifest_entries",
             ],
@@ -658,7 +662,12 @@ ROUND_RESULT_SCHEMA = {
                 **_ATTESTED_ROUND_PROPERTIES,
                 "verdict": {"const": "needs_review"},
             },
-            "required": ["verdict", "findings", "coverage_attestation"],
+            "required": [
+                "verdict",
+                "findings",
+                "coverage_attestation",
+                "convergence_telemetry",
+            ],
             "additionalProperties": False,
         },
         {
@@ -678,8 +687,9 @@ ROUND_RESULT_SCHEMA = {
                     "required": ["reason_code", "questions"],
                     "additionalProperties": False,
                 },
+                "convergence_telemetry": CONVERGENCE_TELEMETRY_SCHEMA,
             },
-            "required": ["verdict", "evidence_id", "reason"],
+            "required": ["verdict", "evidence_id", "reason", "convergence_telemetry"],
             "additionalProperties": False,
         },
         {
@@ -725,8 +735,9 @@ ROUND_RESULT_SCHEMA = {
                         },
                     ],
                 },
+                "convergence_telemetry": CONVERGENCE_TELEMETRY_SCHEMA,
             },
-            "required": ["verdict", "evidence_id", "reason"],
+            "required": ["verdict", "evidence_id", "reason", "convergence_telemetry"],
             "additionalProperties": False,
         },
     ],

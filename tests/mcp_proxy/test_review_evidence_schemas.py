@@ -10,7 +10,9 @@ from jsonschema.validators import validator_for
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
 from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.plans.review_telemetry import CONVERGENCE_TELEMETRY_SCHEMA
 from gobby.storage.hub.protocol import HubDatabase
+from tests.review_telemetry_helpers import delivered_telemetry
 
 
 def _registry(db: HubDatabase) -> InternalToolRegistry:
@@ -121,6 +123,29 @@ def test_disposition_schema_rejects_malformed(temp_db: HubDatabase) -> None:
         validate(record)
     assert list(exc_info.value.absolute_path) == ["rationale"]
     assert exc_info.value.validator == "type"
+
+
+def test_convergence_telemetry_schema(temp_db: HubDatabase) -> None:
+    registry = _registry(temp_db)
+    schema = _tool_schema(registry, "finalize_plan_review_evidence")
+    round_result_schema = cast(dict[str, Any], schema["properties"]["round_result"])
+
+    branches = cast(list[dict[str, Any]], round_result_schema["oneOf"])
+    for branch in branches:
+        properties = cast(dict[str, Any], branch["properties"])
+        assert properties["convergence_telemetry"] == CONVERGENCE_TELEMETRY_SCHEMA
+        assert "convergence_telemetry" in branch["required"]
+
+    validator_class = validator_for(CONVERGENCE_TELEMETRY_SCHEMA)
+    validator_class.check_schema(CONVERGENCE_TELEMETRY_SCHEMA)
+    validate = validator_class(CONVERGENCE_TELEMETRY_SCHEMA).validate
+    payload = delivered_telemetry()
+    validate(payload)
+
+    malformed = cast(dict[str, Any], delivered_telemetry())
+    del malformed["reviewer"]["reviewer_miss"]["count"]
+    with pytest.raises(ValidationError):
+        validate(malformed)
 
 
 @pytest.mark.asyncio

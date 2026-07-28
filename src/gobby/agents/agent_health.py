@@ -417,7 +417,8 @@ class AgentHealthMonitor:
                     error_msg = (
                         f"Provider stall: {classification.reason} "
                         f"(provider={run.provider}, "
-                        f"consecutive_hits={classification.consecutive_hits})"
+                        f"consecutive_hits={classification.consecutive_hits})\n\n"
+                        f"{(pane_output or '').strip()}"
                     )
                     if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
                         stalled += 1
