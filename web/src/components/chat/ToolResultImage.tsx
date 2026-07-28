@@ -76,7 +76,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
                 <Button
                   type="button"
                   size="sm"
-                  variant={fitToScreen ? 'default' : 'ghost'}
+                  variant={fitToScreen ? 'accent' : 'ghost'}
                   className="h-7 px-2"
                   onClick={() => setFitToScreen(true)}
                 >
@@ -85,7 +85,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
                 <Button
                   type="button"
                   size="sm"
-                  variant={fitToScreen ? 'ghost' : 'default'}
+                  variant={fitToScreen ? 'ghost' : 'accent'}
                   className="h-7 px-2"
                   onClick={() => setFitToScreen(false)}
                 >

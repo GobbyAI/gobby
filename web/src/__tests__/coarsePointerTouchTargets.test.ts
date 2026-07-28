@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compile } from '@tailwindcss/node'
 import postcss from 'postcss'
+import { buttonVariants } from '../components/ui/buttonVariants'
 
 const targets = [
   'primary action',
@@ -71,6 +72,68 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   return style
 }
 
+/**
+ * Compile Tailwind for the given candidates and inject both the base rules
+ * (so ladder min-heights resolve) and the unwrapped pointer-coarse rules
+ * (appended last, so the coarse promotion wins where both match). JSDOM
+ * ignores rules wrapped in @layer or @media, so both sets are flattened to
+ * plain selector blocks before injection.
+ */
+async function emulateButtonStyles(candidates: readonly string[]): Promise<HTMLStyleElement> {
+  const tailwind = await compile('@import "tailwindcss";', {
+    base: srcRoot,
+    onDependency() {},
+  })
+  const css = tailwind.build([...new Set(candidates)])
+  const root = postcss.parse(css)
+  let spacing: string | undefined
+  root.walkDecls('--spacing', declaration => {
+    spacing ??= declaration.value
+  })
+
+  const flatRules: string[] = []
+  root.walkRules(rule => {
+    // Keep rules whose only at-rule ancestors are @layer; conditional rules
+    // (@media, @supports) are handled by the coarse extraction below.
+    let conditional = false
+    for (
+      let parent: typeof rule.parent = rule.parent;
+      parent && parent.type !== 'root';
+      parent = parent.parent as typeof rule.parent
+    ) {
+      if (parent.type === 'atrule' && (parent as postcss.AtRule).name !== 'layer') {
+        conditional = true
+        break
+      }
+    }
+    if (conditional) return
+    const declarations = (rule.nodes ?? [])
+      .filter(node => node.type === 'decl')
+      .map(String)
+      .join('; ')
+    if (declarations) flatRules.push(`${rule.selector} { ${declarations} }`)
+  })
+
+  const coarseRules: string[] = []
+  root.walkAtRules('media', rule => {
+    if (/pointer\s*:\s*coarse/.test(rule.params)) {
+      if (rule.parent?.type === 'rule') {
+        coarseRules.push(rule.parent.clone({ nodes: rule.nodes }).toString())
+      } else {
+        for (const nestedRule of rule.nodes ?? []) coarseRules.push(nestedRule.toString())
+      }
+    }
+  })
+
+  expect(spacing).toBeDefined()
+  document.documentElement.style.setProperty('--spacing', spacing!)
+  const style = document.createElement('style')
+  style.dataset.testCoarsePointer = 'true'
+  style.textContent = [...flatRules, ...coarseRules].join('\n')
+  document.head.append(style)
+  return style
+}
+
 function cssLengthToPixels(value: string): number {
   if (!value || value === 'auto') return 0
   const number = parseFloat(value)
@@ -120,6 +183,36 @@ describe('coarse-pointer touch targets', () => {
       const style = getComputedStyle(element!)
       expect(computedFloor(style, 'width'), `${target} width`).toBeGreaterThanOrEqual(44)
       expect(computedFloor(style, 'height'), `${target} height`).toBeGreaterThanOrEqual(44)
+    }
+  })
+
+  it('promotes every Button size to 44px on coarse pointers unless dense', async () => {
+    const sizes = ['sm', 'md', 'lg', 'icon'] as const
+    const denseStates = [false, true] as const
+    const ladder: Record<(typeof sizes)[number], number> = { sm: 28, md: 32, lg: 40, icon: 32 }
+
+    const candidates = sizes.flatMap(size =>
+      denseStates.flatMap(dense =>
+        buttonVariants({ variant: 'secondary', size, dense }).split(/\s+/),
+      ),
+    )
+    await emulateButtonStyles(candidates)
+
+    for (const size of sizes) {
+      for (const dense of denseStates) {
+        document.body.innerHTML = `<button class="${buttonVariants({ variant: 'secondary', size, dense })}">Go</button>`
+        const style = getComputedStyle(document.body.querySelector('button')!)
+        const height = computedFloor(style, 'height')
+        const width = computedFloor(style, 'width')
+        if (dense) {
+          expect(height, `${size} dense keeps the ladder height`).toBe(ladder[size])
+          expect(height, `${size} dense must not promote`).toBeLessThan(44)
+          if (size === 'icon') expect(width, 'icon dense width').toBe(ladder.icon)
+        } else {
+          expect(height, `${size} height`).toBeGreaterThanOrEqual(44)
+          expect(width, `${size} width`).toBeGreaterThanOrEqual(44)
+        }
+      }
     }
   })
 })
