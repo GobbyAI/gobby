@@ -145,7 +145,10 @@ describe('KnowledgeGraph', () => {
     expect(nodeTooltip).not.toContain('<img src=x')
     expect(nodeTooltip).not.toContain('<b>role</b>')
     expect(linkTooltip).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
-    expect(linkColor).toMatch(/^var\(--(?:color-|accent)/)
+    // Link colors reach three.js resolved (#19153): a concrete color — or empty
+    // in jsdom, where custom properties don't resolve — never a `var()` literal,
+    // which three.js renders as black.
+    expect(linkColor).not.toMatch(/var\(/)
     expect(linkColor).not.toContain('hsl(')
   })
 })

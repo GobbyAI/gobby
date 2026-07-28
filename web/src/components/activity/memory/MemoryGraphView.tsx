@@ -97,20 +97,20 @@ export function MemoryGraphView({
     </div>
   );
 
+  // No chrome bar of its own: close lives in the graph's floating toolbar
+  // (KnowledgeGraph onClose), plus Escape and the error fallback (#19153).
+  // The wrapper is a flex row so the graph container stretches to the full
+  // panel height instead of sitting at its 600px canvas default.
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
-      <div className="flex h-10 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
-        <h2 className="truncate text-sm font-medium text-foreground">Memory graph</h2>
-        <DetailActionButton label="Close graph" onClick={handleClose} />
-      </div>
-      <div className="min-h-0 flex-1 p-3">
+      <div className="flex min-h-0 flex-1 p-3">
         {graphFailed ? (
           errorFallback
         ) : (
           <MemoryGraphErrorBoundary fallback={errorFallback}>
             <Suspense
               fallback={
-                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <div className="flex h-full flex-1 items-center justify-center text-sm text-muted-foreground">
                   Loading 3D graph...
                 </div>
               }
@@ -120,6 +120,7 @@ export function MemoryGraphView({
                 fetchEntityNeighbors={fetchEntityNeighbors}
                 limit={limit}
                 onError={() => setGraphFailed(true)}
+                onClose={handleClose}
               />
             </Suspense>
           </MemoryGraphErrorBoundary>

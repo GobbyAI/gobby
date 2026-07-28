@@ -10,8 +10,17 @@ vi.mock("../../../../hooks/useIsMobile", () => ({
   useIsMobile: vi.fn(),
 }));
 
+// The mock mirrors the real contract: close is a toolbar button inside the
+// graph, wired through the onClose prop — there is no external chrome bar.
 vi.mock("../KnowledgeGraph", () => ({
-  KnowledgeGraph: () => <div data-testid="knowledge-graph">Knowledge graph canvas</div>,
+  KnowledgeGraph: ({ onClose }: { onClose?: () => void }) => (
+    <div data-testid="knowledge-graph">
+      Knowledge graph canvas
+      <button type="button" onClick={onClose}>
+        Close graph
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../../../shared/ResizeHandle", () => ({
@@ -135,7 +144,9 @@ describe("Memory graph activity view", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show Graph" }));
 
     expect(requestPanelOverride).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("heading", { name: "Memory graph" })).toBeInTheDocument();
+    // The secondary "Memory graph" statusbar is gone (#19153) — close lives in
+    // the graph toolbar, so the panel is all canvas.
+    expect(screen.queryByRole("heading", { name: "Memory graph" })).not.toBeInTheDocument();
     expect(await screen.findByTestId("knowledge-graph")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Memory content" })).not.toBeInTheDocument();
 

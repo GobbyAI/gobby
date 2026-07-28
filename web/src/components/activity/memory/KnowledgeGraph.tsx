@@ -4,16 +4,20 @@ import SpriteText from 'three-spritetext'
 import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
 import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
-import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../../hooks/useMemory'
+import type { KnowledgeGraphData, KnowledgeEntity } from '../../../hooks/useMemory'
 import { inputFocusCls } from '../../shared/focusStyles'
+import { Button } from '../../ui/Button'
+import { buildForceData, getEntityColorCss, mergeGraphData, numericId } from './KnowledgeGraphModel'
 
-const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
-const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
+// `isolate` scopes the z-10 overlays to this container so panel chrome with a
+// lower z-index (.activity-panel-mobile-menu, z-5) still layers above the graph.
+const CONTAINER_CLS = 'relative isolate flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+const EMPTY_CLS = 'flex h-full min-h-[300px] flex-1 flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
 const OVERLAY_STACK_CLS = 'absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5'
 const INFO_CLS = 'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
 const LEGEND_CLS = 'absolute bottom-2 left-2 z-10 flex items-center gap-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-xs)] text-[var(--text-muted)]'
 const CONTROLS_CLS = 'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
-const CTRL_BTN_CLS = 'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const CTRL_BTN_CLS = 'flex h-7 min-h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:min-h-11 pointer-coarse:w-11'
 const CTRL_BTN_ACTIVE_CLS = 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]'
 const PHYSICS_CLS = 'absolute right-2 top-[42px] z-10 flex min-w-[200px] flex-col gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2'
 const PHYSICS_ROW_CLS = 'flex cursor-default items-center gap-1.5'
@@ -21,139 +25,42 @@ const PHYSICS_LABEL_CLS = 'min-w-[56px] text-[length:var(--text-xs)] text-[var(-
 const PHYSICS_VALUE_CLS = 'min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]'
 const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
 const PHYSICS_RESET_CLS = 'mt-0.5 cursor-pointer self-end rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
-const SEARCH_INPUT_CLS = `w-[150px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)] ${inputFocusCls}`
+const SEARCH_INPUT_CLS = `h-7 w-[150px] rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)] ${inputFocusCls}`
 
 interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>
   fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>
   limit?: number
   onError?: () => void
-}
-
-function numericId(id: unknown): number {
-  if (typeof id === 'number') return id
-  const s = String(id)
-  let h = 5381
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
-  return Math.abs(h)
-}
-
-interface GraphNode {
-  id: string
-  name: string
-  type: string
-  entity: KnowledgeEntity
-  color: string
-  val: number // node size
-}
-
-interface GraphLink {
-  source: string
-  target: string
-  type: string
-  color: string
-}
-
-// Categorical entity types collapse onto the deutan-safe semantic palette.
-// Multiple types intentionally share a token; the legend disambiguates by name.
-const ENTITY_TYPE_COLOR_VARS: Record<string, string> = {
-  function: '--color-info',
-  file: '--color-success-foreground',
-  class: '--text-muted',
-  concept: '--color-warning-foreground',
-  hook: '--color-error',
-  module: '--color-review',
-  config: '--color-warning-foreground',
-  test: '--text-muted',
-  route: '--color-info',
-  component: '--accent',
-}
-
-function entityColorVar(type: string): string {
-  return ENTITY_TYPE_COLOR_VARS[type.toLowerCase()] ?? '--text-muted'
-}
-
-function getEntityColor(type: string): string {
-  return resolveCssVar(entityColorVar(type))
-}
-
-function getEntityColorCss(type: string): string {
-  return `var(${entityColorVar(type)})`
-}
-
-const EDGE_COLOR_VARS = [
-  '--color-info',
-  '--color-success-foreground',
-  '--color-warning-foreground',
-  '--color-error',
-  '--color-review',
-  '--accent',
-] as const
-
-function hashString(str: string): number {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return Math.abs(hash)
-}
-
-function edgeColor(relType: string): string {
-  const colorVar = EDGE_COLOR_VARS[hashString(relType) % EDGE_COLOR_VARS.length]
-  return `var(${colorVar})`
-}
-
-function mergeGraphData(
-  existing: KnowledgeGraphData,
-  incoming: KnowledgeGraphData
-): KnowledgeGraphData {
-  const entityMap = new Map(existing.entities.map(e => [e.entity_key, e]))
-  for (const e of incoming.entities) {
-    if (!entityMap.has(e.entity_key)) entityMap.set(e.entity_key, e)
-  }
-
-  const edgeKey = (r: KnowledgeRelationship) => `${r.source_key}|${r.type}|${r.target_key}`
-  const edgeSet = new Set(existing.relationships.map(edgeKey))
-  const merged = [...existing.relationships]
-  for (const r of incoming.relationships) {
-    if (!edgeSet.has(edgeKey(r))) {
-      edgeSet.add(edgeKey(r))
-      merged.push(r)
-    }
-  }
-
-  return { entities: [...entityMap.values()], relationships: merged }
-}
-
-function buildForceData(data: KnowledgeGraphData): { nodes: GraphNode[]; links: GraphLink[] } {
-  const entityKeys = new Set(data.entities.map(e => e.entity_key))
-
-  const nodes: GraphNode[] = data.entities.map(e => ({
-    id: e.entity_key,
-    name: e.name,
-    type: e.entity_type,
-    entity: e,
-    color: getEntityColor(e.entity_type),
-    val: 2,
-  }))
-
-  const links: GraphLink[] = data.relationships
-    .filter(r => entityKeys.has(r.source_key) && entityKeys.has(r.target_key))
-    .map(r => ({
-      source: r.source_key,
-      target: r.target_key,
-      type: r.type,
-      color: edgeColor(r.type),
-    }))
-
-  return { nodes, links }
+  onClose?: () => void
 }
 
 const DEFAULT_CHARGE = -120
 const DEFAULT_LINK_DIST = 60
 const DEFAULT_CENTER = 0.05
 
-export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limit, onError }: KnowledgeGraphProps) {
+// Close lives in the graph's floating toolbar (and alone in the loading/error/
+// empty branches) so the graph needs no chrome bar of its own.
+function GraphCloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      dense
+      className={CTRL_BTN_CLS}
+      onClick={onClose}
+      title="Close graph"
+      aria-label="Close graph"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </svg>
+    </Button>
+  )
+}
+
+export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limit, onError, onClose }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fgRef = useRef<any>(null)
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
@@ -161,6 +68,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   const [loadError, setLoadError] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
+  const [showSearch, setShowSearch] = useState(false)
   const [expandingNode, setExpandingNode] = useState<string | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [animateIdle, setAnimateIdle] = useState(() => {
@@ -372,11 +280,12 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         // Other mobile: smaller text, no background/border (smaller canvas textures)
         sprite.textHeight = 2
       } else {
-        // Desktop: full styling
-        sprite.textHeight = 3
+        // Desktop: full styling — textHeight 4 with a near-opaque backing plate
+        // keeps labels legible against link clutter (#19153)
+        sprite.textHeight = 4
         sprite.backgroundColor = dimmed
           ? resolveCssVar('--bg-primary', 0.3)
-          : resolveCssVar('--bg-primary', 0.75)
+          : resolveCssVar('--bg-primary', 0.85)
         sprite.borderColor = dimmed ? 'transparent' : color
         sprite.borderWidth = 0.3
         sprite.borderRadius = 3
@@ -444,11 +353,20 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return [...new Set(graphData.entities.map(e => e.entity_type.toLowerCase()))]
   }, [graphData])
 
+  // Close must stay reachable in every branch, so the loading/error/empty
+  // returns render a toolbar stub holding only the close button.
+  const closeControls = onClose ? (
+    <div className={CONTROLS_CLS}>
+      <GraphCloseButton onClose={onClose} />
+    </div>
+  ) : null
+
   // Loading state
   if (loading) {
     return (
       <div className={CONTAINER_CLS} ref={containerRef}>
         <div className={EMPTY_CLS}>Loading knowledge graph...</div>
+        {closeControls}
       </div>
     )
   }
@@ -469,6 +387,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             Retry
           </button>
         </div>
+        {closeControls}
       </div>
     )
   }
@@ -483,6 +402,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             Connect a FalkorDB instance to explore knowledge graph entities and relationships.
           </div>
         </div>
+        {closeControls}
       </div>
     )
   }
@@ -537,13 +457,6 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             Expanding {expandingNode}...
           </div>
         )}
-        <input
-          type="text"
-          placeholder="Filter entities..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className={SEARCH_INPUT_CLS}
-        />
       </div>
 
       {/* Legend overlay (bottom-left) */}
@@ -563,6 +476,34 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
       {/* Controls (top-right) */}
       <div className={CONTROLS_CLS}>
+        {showSearch && (
+          <input
+            type="text"
+            placeholder="Filter entities..."
+            aria-label="Filter entities"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className={SEARCH_INPUT_CLS}
+            autoFocus
+          />
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn(CTRL_BTN_CLS, (showSearch || isSearchActive) && CTRL_BTN_ACTIVE_CLS)}
+          onClick={() => {
+            if (showSearch) setSearchQuery('')
+            setShowSearch(!showSearch)
+          }}
+          title="Filter entities"
+          aria-label="Filter entities"
+          aria-expanded={showSearch}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </Button>
         <button
           type="button"
           className={CTRL_BTN_CLS}
@@ -604,6 +545,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
+        {onClose && <GraphCloseButton onClose={onClose} />}
       </div>
 
       {/* Physics controls panel */}
