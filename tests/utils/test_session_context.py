@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -704,6 +704,19 @@ def test_reset_seeded_contexts_safe_on_empty_and_partial_tokens() -> None:
     assert tokens.session_token is None
     assert tokens.project_token is not None
     reset_seeded_contexts(tokens)  # must not raise
+
+
+def test_reset_seeded_contexts_propagates_unexpected_reset_errors() -> None:
+    tokens = SeededContextTokens(agent_run_token=cast(Any, object()))
+
+    with (
+        patch(
+            "gobby.utils.session_context.reset_current_agent_run_id",
+            side_effect=OSError("unexpected"),
+        ),
+        pytest.raises(OSError, match="unexpected"),
+    ):
+        reset_seeded_contexts(tokens)
 
 
 # --- Propagation of unexpected infrastructure failures --------------------

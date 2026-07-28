@@ -824,6 +824,8 @@ class TestProviderModelCatalog:
                 "supported_efforts": ["off", "high", "max"],
                 "default_effort": "high",
             }
+        assert by_id["glm-5.2"]["label"] == "Droid Core (GLM-5.2)"
+        assert by_id["glm-5.2-fast"]["label"] == "Droid Core (GLM-5.2 Fast)"
         assert all(model.get("context_length") is not None for model in models)
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []

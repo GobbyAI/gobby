@@ -104,3 +104,19 @@ async def test_start_raising_cleans_up_and_reports_error() -> None:
     }
     cleanup.assert_awaited_once()
     runner.run_storage.get.assert_not_called()
+
+
+async def test_get_after_lost_start_race_cleans_up_on_storage_error() -> None:
+    runner = _runner(None)
+    runner.run_storage.get.side_effect = RuntimeError("read failed")
+
+    with patch.object(_failure_cleanup, "cleanup_failed_spawn", AsyncMock()) as cleanup:
+        result = await _start_run_or_cleanup(runner)
+
+    assert result == {
+        "success": False,
+        "error": "Failed to read agent run run-1 after start conflict: read failed",
+        "run_id": "run-1",
+        "child_session_id": "child-1",
+    }
+    cleanup.assert_awaited_once()

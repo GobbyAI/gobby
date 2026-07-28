@@ -117,6 +117,7 @@ _GENERIC_LOCAL_UNAVAILABLE_REASON = (
     "Generic OpenAI-compatible endpoints are unavailable for web chat"
 )
 _CODEX_REQUIRED_REASON = "Codex CLI is required to run local models in web chat"
+_CODEX_UNHEALTHY_REASON = "Codex runtime is unavailable"
 
 
 def _merge_static_model_metadata(
@@ -206,6 +207,8 @@ def _local_generation_provider_entries(
     groups: list[LocalEndpointModelGroup],
     *,
     codex_installed: bool,
+    codex_available: bool,
+    codex_unavailable_reason: str | None,
 ) -> list[dict[str, Any]]:
     provider_type_counts = Counter(group.provider_type for group in groups)
     entries: list[dict[str, Any]] = []
@@ -222,6 +225,8 @@ def _local_generation_provider_entries(
             unavailable_reason = NO_COMPLETION_MODELS_ERROR
         elif not codex_installed:
             unavailable_reason = _CODEX_REQUIRED_REASON
+        elif not codex_available:
+            unavailable_reason = codex_unavailable_reason or _CODEX_UNHEALTHY_REASON
         else:
             unavailable_reason = None
         available = unavailable_reason is None
@@ -403,6 +408,9 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             "static",
         )
         result: list[dict[str, Any]] = []
+        codex_installed = False
+        codex_available = False
+        codex_unavailable_reason: str | None = None
         for name, path in probed:
             available, startup_error = _provider_health(server, name, path)
             models, source = model_catalog.get(name, fallback_entry)
@@ -416,12 +424,19 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                 **_provider_metadata_fields(name, path),
             }
             if name == "codex":
+                codex_installed = path is not None
+                codex_available = available
+                codex_unavailable_reason = startup_error
                 entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
                 entry["execution_provider"] = "codex"
             result.append(entry)
-        codex_installed = any(name == "codex" and path is not None for name, path in probed)
         result.extend(
-            _local_generation_provider_entries(local_model_groups, codex_installed=codex_installed)
+            _local_generation_provider_entries(
+                local_model_groups,
+                codex_installed=codex_installed,
+                codex_available=codex_available,
+                codex_unavailable_reason=codex_unavailable_reason,
+            )
         )
         return {"providers": result}
 

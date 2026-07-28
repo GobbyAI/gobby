@@ -19,9 +19,33 @@ from click.testing import CliRunner
 
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli import cli
+from gobby.cli.daemon import _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("managed_services", [False, True])
+def test_start_dependency_errors_detects_managed_services_from_home(
+    tmp_path: Path,
+    managed_services: bool,
+) -> None:
+    if managed_services:
+        compose_file = tmp_path / "services" / "docker-compose.yml"
+        compose_file.parent.mkdir()
+        compose_file.touch()
+
+    report = MagicMock()
+    with (
+        patch("gobby.cli.daemon.unsupported_platform_error", return_value=None),
+        patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.daemon.collect_dependency_report", return_value=report) as collect,
+        patch("gobby.cli.daemon.required_dependency_errors", return_value=[]) as required,
+    ):
+        assert _start_dependency_errors() == []
+
+    collect.assert_called_once_with(managed_services=managed_services, include_srt=True)
+    required.assert_called_once_with(report)
 
 
 @pytest.fixture(autouse=True)

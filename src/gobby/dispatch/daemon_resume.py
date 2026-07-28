@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from gobby.agents.resume_executor import resume_agent_run
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.context import _field
 from gobby.dispatch.mutex import RuntimeDispatchMutex
+from gobby.storage.agent_resume import increment_daemon_resume_failure_count
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import TaskAlreadyEscalatedError
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 _AUDIT_HEADING = "Agent resume after daemon restart failed"
 _ESCALATION_REASON = "agent_resume_after_daemon_restart_failed"
 _MAX_RESUME_FAILURES = 3
+_MAX_RESUME_RETRY_DELAY_SECONDS = 30.0
 _WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS = 10
 
 
@@ -56,8 +59,6 @@ async def try_resume_daemon_stop_run(
     workspace_dirty = await _workspace_dirty(workspace_path)
     runner = getattr(services, "agent_runner", None)
     session_manager = getattr(services, "session_manager", None)
-    from gobby.storage.agent_resume import increment_daemon_resume_failure_count
-
     if runner is None or session_manager is None:
         error = "services_missing:agent_runner,session_manager"
         return _handle_resume_failure(
@@ -145,10 +146,18 @@ def _handle_resume_failure(
         mutex.release()
         from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_task
 
-        schedule_dispatcher_tick_for_task(
-            db,
-            task_id=action.task_id,
-            reason="daemon_resume_retry",
+        delay_seconds = min(
+            2 ** max(failure_count - 1, 0),
+            _MAX_RESUME_RETRY_DELAY_SECONDS,
+        )
+        asyncio.get_running_loop().call_later(
+            delay_seconds,
+            partial(
+                schedule_dispatcher_tick_for_task,
+                db,
+                task_id=action.task_id,
+                reason="daemon_resume_retry",
+            ),
         )
         return DaemonStopResumeResult(attempted=True, handled=True)
 

@@ -83,9 +83,9 @@ def _prepare_plan_adversary_evidence(
     artifacts: object,
     project_id: str,
     prompt: str,
-) -> tuple[str, PlanReviewEvidenceService | None, str | None]:
+) -> tuple[str, PlanReviewEvidenceService | None, str | None, str | None]:
     if action.agent_slug != "plan-adversary":
-        return prompt, None, None
+        return prompt, None, None, None
     stage_name = str((action.initial_variables or {}).get("stage_name") or "")
     if stage_name != "planning":
         raise DispatchSpawnFailed("plan_review_stage_missing")
@@ -113,12 +113,15 @@ def _prepare_plan_adversary_evidence(
         if isinstance(artifact_refs, dict)
         else None
     )
+    attested_submission = (
+        raw_submission if isinstance(raw_submission, str) and raw_submission else None
+    )
     submission = (
         decode_repair_submission(
-            raw_submission,
+            attested_submission,
             expected_round_number=round_number,
         )
-        if isinstance(raw_submission, str) and raw_submission
+        if attested_submission is not None
         else None
     )
     service = PlanReviewEvidenceService(db)
@@ -142,7 +145,7 @@ def _prepare_plan_adversary_evidence(
     except BaseException:
         _expire_failed_adversary_spawn(service, prepared.evidence_id)
         raise
-    return transport, service, prepared.evidence_id
+    return transport, service, prepared.evidence_id, attested_submission
 
 
 def _expire_failed_adversary_spawn(
@@ -326,7 +329,7 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    prompt, evidence_service, evidence_id = await asyncio.to_thread(
+    prompt, evidence_service, evidence_id, attested_submission = await asyncio.to_thread(
         _prepare_plan_adversary_evidence,
         db=db,
         action=action,
@@ -388,18 +391,14 @@ async def spawn_agent(
                 f"plan_review_evidence_bind_failed:{exc.code}",
                 spawned_run_id=str(run_id),
             ) from exc
-        stage_name = str((action.initial_variables or {}).get("stage_name") or "")
-        current_stage = task_manager.stage_states.get(action.task_id, stage_name)
-        artifact_refs = current_stage.artifact_refs if current_stage is not None else None
-        raw_submission = (
-            artifact_refs.get(REPAIR_SUBMISSION_ARTIFACT_KEY) if artifact_refs is not None else None
-        )
-        if raw_submission:
+        if attested_submission is not None:
+            stage_name = str((action.initial_variables or {}).get("stage_name") or "")
             try:
-                task_manager.stage_states.consume_plan_review_submission(
+                await asyncio.to_thread(
+                    task_manager.stage_states.consume_plan_review_submission,
                     action.task_id,
                     stage_name,
-                    raw_submission=raw_submission,
+                    raw_submission=attested_submission,
                     evidence_id=evidence_id,
                 )
             except ValueError as exc:

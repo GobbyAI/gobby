@@ -253,28 +253,7 @@ async def _read_undigested_turns(
 
         segment_turn_offset = len(turns) - len(segment)
         if prior_turn_only:
-            if (source or "").lower() != "codex":
-                return [], digested_pair_index
-
-            def _is_task_started(record: dict[str, Any]) -> bool:
-                payload = record.get("payload")
-                return (
-                    record.get("type") == "event_msg"
-                    and isinstance(payload, dict)
-                    and payload.get("type") == "task_started"
-                )
-
-            current_turn_start = next(
-                (
-                    index
-                    for index in range(len(segment) - 1, -1, -1)
-                    if _is_task_started(segment[index])
-                ),
-                None,
-            )
-            if current_turn_start is None:
-                return [], digested_pair_index
-            segment = segment[:current_turn_start]
+            segment = _prior_codex_turns(segment, source)
             if not segment:
                 return [], digested_pair_index
 
@@ -304,6 +283,29 @@ async def _read_undigested_turns(
     except Exception as e:
         logger.warning("Failed to read undigested turns from %s: %s", transcript_path, e)
         return [], digested_pair_index
+
+
+def _prior_codex_turns(
+    segment: list[dict[str, Any]],
+    source: str | None,
+) -> list[dict[str, Any]]:
+    """Return records before the active Codex turn, or an empty list when unavailable."""
+    if (source or "").lower() != "codex":
+        return []
+
+    def is_task_started(record: dict[str, Any]) -> bool:
+        payload = record.get("payload")
+        return (
+            record.get("type") == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "task_started"
+        )
+
+    current_turn_start = next(
+        (index for index in range(len(segment) - 1, -1, -1) if is_task_started(segment[index])),
+        None,
+    )
+    return segment[:current_turn_start] if current_turn_start is not None else []
 
 
 def _get_next_turn_number(previous_digest: str | None) -> int:

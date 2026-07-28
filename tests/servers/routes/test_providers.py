@@ -313,24 +313,60 @@ class TestProviderModelsRoute:
 
     def test_models_route_uses_runtime_health_for_backend_failures(self) -> None:
         app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    endpoints={
+                        "studio": {
+                            "protocol": "lmstudio",
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen-coder",
+                        }
+                    }
+                )
+            )
+        )
         runtime_manager = MagicMock()
         runtime_manager.health.side_effect = lambda provider: SimpleNamespace(
             available=False if provider == "codex" else True,
             startup_error="codex failed" if provider == "codex" else None,
         )
-        server = _server_stub(web_chat_runtime_manager=runtime_manager)
+        server = _server_stub(config=config, web_chat_runtime_manager=runtime_manager)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
-        with patch(
-            "gobby.servers.routes.providers.shutil.which",
-            side_effect=lambda b: f"/usr/local/bin/{b}",
+        async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name="studio",
+                provider_type="lmstudio",
+                provider_label="LM Studio",
+                source="live",
+                models=[
+                    {
+                        "value": "endpoint:studio/qwen-coder",
+                        "label": "Qwen Coder",
+                        "canonical_id": "qwen-coder",
+                    }
+                ],
+            )
+
+        with (
+            patch(
+                "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+                side_effect=fake_discover,
+            ),
+            patch(
+                "gobby.servers.routes.providers.shutil.which",
+                side_effect=lambda b: f"/usr/local/bin/{b}",
+            ),
         ):
             response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert providers["codex"]["available"] is False
         assert providers["codex"]["startup_error"] == "codex failed"
+        assert providers["endpoint:studio"]["available"] is False
+        assert providers["endpoint:studio"]["unavailable_reason"] == "codex failed"
 
     def test_models_route_keeps_lazy_acp_models_available_after_warmup_failure(self) -> None:
         app = FastAPI()

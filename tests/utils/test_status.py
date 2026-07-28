@@ -103,6 +103,14 @@ class TestStatusUtils:
         assert "100.0 MB" in msg
         assert "localhost:8080" in msg
 
+    def test_format_status_message_tolerates_null_mapping_sections(self) -> None:
+        msg = format_status_message(
+            running=True,
+            deps_info={"services": None, "integrations": None},
+        )
+
+        assert "Services:" in msg
+
     def test_format_status_message_shows_resolved_ui_mode_and_pid(self) -> None:
         msg = format_status_message(
             running=True,

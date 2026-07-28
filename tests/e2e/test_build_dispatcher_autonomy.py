@@ -144,7 +144,7 @@ class MiniBuildHarness:
         )
         self.monkeypatch.setattr(
             "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
-            lambda **kwargs: (str(kwargs["prompt"]), None, None),
+            lambda **kwargs: (str(kwargs["prompt"]), None, None, None),
         )
         self.monkeypatch.setattr(
             "gobby.dispatch.dispatcher._execute_pipeline_background",
@@ -716,7 +716,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     )
     monkeypatch.setattr(
         "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
-        lambda **kwargs: (str(kwargs["prompt"]), None, None),
+        lambda **kwargs: (str(kwargs["prompt"]), None, None, None),
     )
 
     registry_task_manager = LocalTaskManager(temp_db)
@@ -852,7 +852,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     )
     monkeypatch.setattr(
         "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
-        lambda **kwargs: (str(kwargs["prompt"]), None, None),
+        lambda **kwargs: (str(kwargs["prompt"]), None, None, None),
     )
 
     monitor = AgentLifecycleMonitor(

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.github import github
+from gobby.cli.github import _gather_github_access, github
 from gobby.storage.github_triage import GitHubTriageConfig
 from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 
@@ -19,6 +19,22 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.mark.asyncio
+async def test_gather_github_access_isolates_per_repository_failures() -> None:
+    with patch(
+        "gobby.cli.github._check_github_access_result",
+        new=AsyncMock(side_effect=[RuntimeError("boom"), (("owner/repo",), None)]),
+    ):
+        results = await _gather_github_access(
+            [
+                (MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+                (MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            ]
+        )
+
+    assert results == [(None, "boom"), (("owner/repo",), None)]
 
 
 def _mock_github_deps(

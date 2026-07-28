@@ -176,13 +176,23 @@ def _expand_preserved_agent_processes(
     root_pids: set[int],
 ) -> set[int]:
     """Include descendants and in-daemon ancestors for preserved agent pane PIDs."""
-    preserved = set(root_pids)
-    child_pids = {child.pid for child in children}
+    preserved: set[int] = set()
+    children_by_pid = {child.pid: child for child in children}
+    child_pids = set(children_by_pid)
     for pid in root_pids:
+        snapshotted_process = children_by_pid.get(pid)
+        if snapshotted_process is None:
+            continue
         try:
             process = psutil_module.Process(pid)
         except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
             continue
+        try:
+            if process.create_time() != snapshotted_process.create_time():
+                continue
+        except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
+            continue
+        preserved.add(pid)
         try:
             preserved.update(child.pid for child in process.children(recursive=True))
         except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):

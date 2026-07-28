@@ -1861,10 +1861,12 @@ class TestShutdownDaemonServices:
             "Lifecycle manager shutdown timed out" in record.message for record in caplog.records
         )
 
+    @pytest.mark.parametrize("recycled_preserved_pid", [False, True])
     @pytest.mark.asyncio
     async def test_restart_reaps_only_non_terminal_agent_children(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        recycled_preserved_pid: bool,
     ) -> None:
         class FakeNoSuchProcess(Exception):
             pass
@@ -1879,11 +1881,13 @@ class TestShutdownDaemonServices:
                 name: str,
                 cmdline: list[str],
                 children: list["FakeProcess"] | None = None,
+                create_time: float | None = None,
             ) -> None:
                 self.pid = pid
                 self._name = name
                 self._cmdline = cmdline
                 self._children = children or []
+                self._create_time = float(pid) if create_time is None else create_time
                 self._parent: FakeProcess | None = None
                 self.terminated = False
                 for child in self._children:
@@ -1909,6 +1913,9 @@ class TestShutdownDaemonServices:
             def cmdline(self) -> list[str]:
                 return self._cmdline
 
+            def create_time(self) -> float:
+                return self._create_time
+
             def terminate(self) -> None:
                 self.terminated = True
 
@@ -1923,6 +1930,12 @@ class TestShutdownDaemonServices:
         processes = {
             process.pid: process for process in [current, tmux, pane, unrelated_tmux, worker]
         }
+        recycled_pane = FakeProcess(
+            pane.pid,
+            "zsh",
+            ["zsh"],
+            create_time=pane.create_time() + 1,
+        )
 
         class FakePsutil:
             NoSuchProcess = FakeNoSuchProcess
@@ -1930,6 +1943,8 @@ class TestShutdownDaemonServices:
 
             @staticmethod
             def Process(pid: int) -> FakeProcess:
+                if recycled_preserved_pid and pid == pane.pid:
+                    return recycled_pane
                 return processes[pid]
 
             @staticmethod
@@ -1945,8 +1960,8 @@ class TestShutdownDaemonServices:
             preserved_agent_pids={pane.pid},
         )
 
-        assert tmux.terminated is False
-        assert pane.terminated is False
+        assert tmux.terminated is recycled_preserved_pid
+        assert pane.terminated is recycled_preserved_pid
         assert unrelated_tmux.terminated is True
         assert worker.terminated is True
 

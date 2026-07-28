@@ -727,6 +727,33 @@ def test_parse_webhook(adapter: TelegramAdapter) -> None:
     }
 
 
+@pytest.mark.parametrize("payload", [b"{", b"[]"])
+def test_parse_webhook_rejects_malformed_or_non_mapping_json(
+    adapter: TelegramAdapter,
+    payload: bytes,
+) -> None:
+    assert adapter.parse_webhook(payload, {}) == []
+
+
+def test_parse_webhook_tolerates_explicit_null_message_sections(
+    adapter: TelegramAdapter,
+) -> None:
+    payload = {
+        "update_id": 10001,
+        "message": {
+            "message_id": 1366,
+            "from": {"id": 1111111},
+            "chat": None,
+            "text": "hello",
+        },
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    assert messages[0].metadata_json["chat_id"] == ""
+
+
 def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapter) -> None:
     adapter._bot_username = "gobby_bot"
     payload = {

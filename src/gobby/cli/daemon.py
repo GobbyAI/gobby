@@ -73,7 +73,9 @@ class ServiceStartResult:
 def _start_dependency_errors() -> list[str]:
     if platform_error := unsupported_platform_error():
         return [platform_error]
-    report = collect_dependency_report(managed_services=True, include_srt=True)
+    gobby_home = get_gobby_home()
+    managed_services = (gobby_home / "services" / "docker-compose.yml").is_file()
+    report = collect_dependency_report(managed_services=managed_services, include_srt=True)
     return required_dependency_errors(report)
 
 
@@ -419,13 +421,13 @@ def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
 
+    gobby_dir = get_gobby_home()
     if dependency_errors := _start_dependency_errors():
         for error in dependency_errors:
             _step(error, error=True)
         sys.exit(1)
 
     config = get_cli_runtime(ctx).config
-    gobby_dir = get_gobby_home()
     sandbox = config.agent_sandbox
     if sandbox.enabled and sandbox.backend == "srt":
         from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation

@@ -209,6 +209,41 @@ def test_full_install_exits_before_provisioning_without_docker(
     install_postgres.assert_not_called()
 
 
+def test_all_with_only_repository_hooks_is_not_a_full_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    for detector in (
+        "_is_claude_code_installed",
+        "_is_grok_cli_installed",
+        "_is_agy_cli_installed",
+        "_is_qwen_cli_installed",
+        "_is_codex_cli_installed",
+        "_is_droid_cli_installed",
+    ):
+        monkeypatch.setattr(install_module, detector, lambda: False)
+
+    preflight = MagicMock(return_value=(["stop after classification"], []))
+    monkeypatch.setattr(install_module, "_run_install_preflight", preflight)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--all", "--no-interactive", "-C", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    preflight.assert_called_once_with(
+        is_full_install=False,
+        detected_clis=[],
+        install_dir=tmp_path,
+        embedding_url=None,
+        embedding_provider=None,
+        managed_services=False,
+    )
+
+
 def test_config_only_requires_git_before_provisioning(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

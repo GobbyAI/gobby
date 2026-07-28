@@ -85,7 +85,27 @@ async def start_run_or_cleanup(
 
     if not start_skipped:
         return None
-    current = runner.run_storage.get(run_id)
+    try:
+        current = runner.run_storage.get(run_id)
+    except Exception as exc:
+        error = f"Failed to read agent run {run_id} after start conflict: {exc}"
+        logging.getLogger(__name__).warning(error)
+        await cleanup_failed_spawn(
+            runner,
+            run_id,
+            error,
+            handler,
+            spawn_config,
+            completion_registry=completion_registry,
+            cleanup_isolation=cleanup_isolation,
+            child_session_id=child_session_id,
+        )
+        return {
+            "success": False,
+            "error": error,
+            "run_id": run_id,
+            "child_session_id": child_session_id,
+        }
     if current is not None and current.status == "running":
         return None
 

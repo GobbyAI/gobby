@@ -729,8 +729,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """Update one skill file's content."""
         try:
-            updated = server.skill_manager.update_skill_file(
-                skill_id, file_path, request_data.content
+            updated = await run_in_threadpool(
+                server.skill_manager.update_skill_file, skill_id, file_path, request_data.content
             )
         except Exception as e:
             logger.error("Failed to write file %s for skill %s: %s", file_path, skill_id, e)

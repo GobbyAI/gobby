@@ -304,7 +304,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     },
     {
         "value": "glm-5.2",
-        "label": "GLM-5.2 (Droid Core)",
+        "label": "Droid Core (GLM-5.2)",
         "reasoning": {
             "supported_efforts": ["off", "high", "max"],
             "default_effort": "high",
@@ -312,7 +312,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     },
     {
         "value": "glm-5.2-fast",
-        "label": "GLM-5.2 Fast (Droid Core)",
+        "label": "Droid Core (GLM-5.2 Fast)",
         "reasoning": {
             "supported_efforts": ["off", "high", "max"],
             "default_effort": "high",

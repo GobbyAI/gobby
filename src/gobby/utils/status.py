@@ -145,18 +145,19 @@ def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name
 def _dependency_sections(
     deps_info: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    info = deps_info or {}
-    dependencies = info.get("dependencies")
-    if not isinstance(dependencies, dict):
-        dependencies = {}
-    required = dependencies.get("required")
-    optional = dependencies.get("optional")
-    runtime = info.get("runtime")
+    dependencies = _mapping_section(deps_info, "dependencies")
     return (
-        required if isinstance(required, dict) else {},
-        optional if isinstance(optional, dict) else {},
-        runtime if isinstance(runtime, dict) else {},
+        _mapping_section(dependencies, "required"),
+        _mapping_section(dependencies, "optional"),
+        _mapping_section(deps_info, "runtime"),
     )
+
+
+def _mapping_section(value: dict[str, Any] | None, key: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    section = value.get(key)
+    return section if isinstance(section, dict) else {}
 
 
 def _unhealthy_required_dependencies(deps_info: dict[str, Any] | None) -> list[tuple[str, str]]:
@@ -305,7 +306,7 @@ def format_status_message(
             lines.append(f"  {'WebSocket:':<{_LW}}localhost:{websocket_port}")
 
         # Tailscale
-        ts_info = (deps_info or {}).get("integrations", {}).get("tailscale")
+        ts_info = _mapping_section(deps_info, "integrations").get("tailscale")
         if ts_info and isinstance(ts_info, dict) and ts_info.get("hostname"):
             ts_line = f"https://{ts_info['hostname']}"
             if ts_info.get("serving"):
@@ -365,8 +366,8 @@ def format_status_message(
     # ---- Services ----
     if running:
         lines.append("Services:")
-        services = (deps_info or {}).get("services", {})
-        integrations = (deps_info or {}).get("integrations", {})
+        services = _mapping_section(deps_info, "services")
+        integrations = _mapping_section(deps_info, "integrations")
 
         # Docker Engine and Compose
         docker = services.get("docker") if isinstance(services, dict) else None

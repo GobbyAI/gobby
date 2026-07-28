@@ -551,11 +551,13 @@ async def test_saturated_keyword_calls_do_not_starve_vector(
     candidates = [_candidate(f"candidate-{index}") for index in range(8)]
     started_count = 0
     active_count = 0
+    peak_active_count = 0
 
     async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
-        nonlocal active_count, started_count
+        nonlocal active_count, peak_active_count, started_count
         started_count += 1
         active_count += 1
+        peak_active_count = max(peak_active_count, active_count)
         try:
             await blocker.wait()
         finally:
@@ -589,7 +591,7 @@ async def test_saturated_keyword_calls_do_not_starve_vector(
     assert "channels=keyword" in caplog.text
     assert "channels=page" not in caplog.text
     assert started_count > 0
-    assert started_count <= 4
+    assert peak_active_count <= 4
     assert calls_after_close == started_count
     assert active_count == 0
     assert session._timeout_counts["keyword"] == 1

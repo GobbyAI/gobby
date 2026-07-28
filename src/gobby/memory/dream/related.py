@@ -101,6 +101,7 @@ _STOPWORDS = frozenset(
 
 RetrievalScopeKind = Literal["global_only", "project_only", "project_and_global"]
 _Channel = Literal["keyword", "vector", "hydration"]
+_DB_BACKED_CHANNELS: frozenset[_Channel] = frozenset({"keyword", "hydration"})
 
 
 @dataclass(frozen=True)
@@ -220,21 +221,21 @@ class RelatedEvidenceSession:
             return _CallOutcome()
 
         task: asyncio.Task[_T] | None = None
-        try:
+
+        async def execute() -> _CallOutcome:
+            nonlocal task
             async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
-                if channel in {"keyword", "hydration"}:
-                    async with self._db_semaphore:
-                        task = self.create_task(
-                            operation(),
-                            name=f"dream-related-{channel}-page-{page_index}",
-                        )
-                        return _CallOutcome(value=await task)
-                else:
-                    task = self.create_task(
-                        operation(),
-                        name=f"dream-related-{channel}-page-{page_index}",
-                    )
-                    return _CallOutcome(value=await task)
+                task = self.create_task(
+                    operation(),
+                    name=f"dream-related-{channel}-page-{page_index}",
+                )
+                return _CallOutcome(value=await task)
+
+        try:
+            if channel in _DB_BACKED_CHANNELS:
+                async with self._db_semaphore:
+                    return await execute()
+            return await execute()
         except TimeoutError:
             if task is not None:
                 task.cancel()

@@ -119,7 +119,7 @@ def _telegram_media_attachment(msg_data: Mapping[str, Any]) -> dict[str, Any] | 
 
 
 def _normalized_reaction(reaction: object) -> dict[str, str] | None:
-    if not isinstance(reaction, dict):
+    if not isinstance(reaction, Mapping):
         return None
     reaction_type = reaction.get("type")
     if reaction_type == "emoji":
@@ -143,10 +143,10 @@ def _normalized_reactions(value: object) -> list[dict[str, str]]:
 
 def _telegram_reaction_message(payload: Mapping[str, Any]) -> CommsMessage | None:
     reaction_update = payload.get("message_reaction")
-    if not isinstance(reaction_update, dict):
+    if not isinstance(reaction_update, Mapping):
         return None
     chat = reaction_update.get("chat")
-    if not isinstance(chat, dict):
+    if not isinstance(chat, Mapping):
         return None
     raw_chat_id = chat.get("id")
     raw_message_id = reaction_update.get("message_id")
@@ -154,9 +154,9 @@ def _telegram_reaction_message(payload: Mapping[str, Any]) -> CommsMessage | Non
         return None
 
     actor = reaction_update.get("user")
-    if not isinstance(actor, dict):
+    if not isinstance(actor, Mapping):
         actor = reaction_update.get("actor_chat")
-    if not isinstance(actor, dict):
+    if not isinstance(actor, Mapping):
         return None
     raw_user_id = actor.get("id")
     if raw_user_id is None:
@@ -209,12 +209,12 @@ def _telegram_reaction_message(payload: Mapping[str, Any]) -> CommsMessage | Non
 
 def _telegram_reaction_count_message(payload: Mapping[str, Any]) -> CommsMessage | None:
     count_update = payload.get("message_reaction_count")
-    if not isinstance(count_update, dict):
+    if not isinstance(count_update, Mapping):
         return None
     chat = count_update.get("chat")
     raw_message_id = count_update.get("message_id")
     reactions = count_update.get("reactions")
-    if not isinstance(chat, dict) or raw_message_id is None or not isinstance(reactions, list):
+    if not isinstance(chat, Mapping) or raw_message_id is None or not isinstance(reactions, list):
         return None
     raw_chat_id = chat.get("id")
     if raw_chat_id is None:
@@ -222,7 +222,7 @@ def _telegram_reaction_count_message(payload: Mapping[str, Any]) -> CommsMessage
 
     counts: list[dict[str, str | int]] = []
     for item in reactions:
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             continue
         normalized = _normalized_reaction(item.get("type"))
         total_count = item.get("total_count")
@@ -269,7 +269,13 @@ def parse_telegram_update(
 ) -> list[CommsMessage]:
     """Normalize an inbound Telegram update."""
     if isinstance(payload, bytes):
-        payload_dict = json.loads(payload)
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(decoded, Mapping):
+            return []
+        payload_dict = decoded
     else:
         payload_dict = payload
 
@@ -287,6 +293,8 @@ def parse_telegram_update(
         return []
 
     msg_data = payload_dict["message"]
+    if not isinstance(msg_data, Mapping):
+        return []
     raw_text = msg_data.get("text")
     text = raw_text if isinstance(raw_text, str) else ""
     raw_caption = msg_data.get("caption")
@@ -299,7 +307,9 @@ def parse_telegram_update(
     if not text and attachment is None and sticker is None:
         return []
 
-    chat = msg_data.get("chat", {})
+    chat = msg_data.get("chat")
+    if not isinstance(chat, Mapping):
+        chat = {}
     raw_chat_id = chat.get("id")
     chat_id = str(raw_chat_id) if raw_chat_id is not None else ""
     raw_conversation_type = chat.get("type")
@@ -310,7 +320,9 @@ def parse_telegram_update(
     message_id = str(raw_msg_id) if raw_msg_id is not None else ""
     platform_thread_id = _message_thread_id(msg_data)
 
-    from_user = msg_data.get("from", {})
+    from_user = msg_data.get("from")
+    if not isinstance(from_user, Mapping):
+        from_user = {}
     raw_user_id = from_user.get("id")
     user_id = str(raw_user_id) if raw_user_id is not None else ""
     username = from_user.get("username")

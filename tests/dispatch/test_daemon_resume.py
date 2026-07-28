@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -422,6 +424,13 @@ async def test_clean_daemon_stop_resume_failure_retries_without_fresh_spawn(
         lambda action, **_kwargs: spawned.append(action.task_id)
         or "c38b3e6b-098a-5a5b-b4a6-ce24b9a6e0bd",
     )
+    call_later = MagicMock()
+    scheduled_tick = MagicMock()
+    monkeypatch.setattr(asyncio.get_running_loop(), "call_later", call_later)
+    monkeypatch.setattr(
+        "gobby.build.dispatch_tick.schedule_dispatcher_tick_for_task",
+        scheduled_tick,
+    )
 
     result = await dispatcher.run_heartbeat(
         db=temp_db,
@@ -436,6 +445,15 @@ async def test_clean_daemon_stop_resume_failure_retries_without_fresh_spawn(
     assert mutex is None
     assert updated.dispatch_failure_count == 0
     assert "### Agent resume after daemon restart failed" not in (updated.description or "")
+    delay_seconds, retry_callback = call_later.call_args.args
+    assert delay_seconds == 1
+    scheduled_tick.assert_not_called()
+    retry_callback()
+    scheduled_tick.assert_called_once_with(
+        temp_db,
+        task_id=task.id,
+        reason="daemon_resume_retry",
+    )
 
 
 @pytest.mark.asyncio

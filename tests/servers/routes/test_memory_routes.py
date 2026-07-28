@@ -856,7 +856,7 @@ class TestEntityGraph:
     def test_entity_graph_passes_limits_through(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
-        """Explicit limit/relationship_limit query params reach the manager (#19157)."""
+        """Zero uses the configured/default ceiling while bounded values pass through."""
         mock_server.memory_manager._falkor_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(
             return_value={"entities": [], "relationships": []}
@@ -864,7 +864,28 @@ class TestEntityGraph:
         response = client.get("/api/memories/graph/entities?limit=0&relationship_limit=12")
         assert response.status_code == 200
         mock_server.memory_manager.get_entity_graph.assert_awaited_once_with(
-            limit=0, relationship_limit=12, project_id=None
+            limit=500, relationship_limit=12, project_id=None
+        )
+
+    def test_entity_graph_caps_requests_at_operator_configured_limits(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_server.services.config.ui = SimpleNamespace(
+            knowledge_graph_limit=7,
+            knowledge_graph_relationship_limit=13,
+        )
+        mock_server.memory_manager._falkor_client = MagicMock()
+        mock_server.memory_manager.get_entity_graph = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
+
+        response = client.get("/api/memories/graph/entities?limit=99&relationship_limit=0")
+
+        assert response.status_code == 200
+        mock_server.memory_manager.get_entity_graph.assert_awaited_once_with(
+            limit=7,
+            relationship_limit=13,
+            project_id=None,
         )
 
     def test_entity_graph_rejects_negative_limits(

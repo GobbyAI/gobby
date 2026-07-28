@@ -90,11 +90,19 @@ async def _gather_github_access(
     checks: list[tuple[GitHubIssueSyncService, Project, GitHubTriageConfig, MCPClientManager]],
 ) -> list[tuple[tuple[str, ...] | None, str | None]]:
     """Run enabled project readiness checks concurrently in one event loop."""
-    return list(
-        await asyncio.gather(
-            *(_check_github_access_result(*check) for check in checks),
-        )
+    results = await asyncio.gather(
+        *(_check_github_access_result(*check) for check in checks),
+        return_exceptions=True,
     )
+    normalized: list[tuple[tuple[str, ...] | None, str | None]] = []
+    for result in results:
+        if isinstance(result, BaseException):
+            if isinstance(result, Exception):
+                normalized.append((None, str(result)))
+                continue
+            raise result
+        normalized.append(result)
+    return normalized
 
 
 @click.group()

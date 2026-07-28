@@ -72,6 +72,10 @@ def create_lifespan(
                         gcode_gateway=gcode_gateway,
                         daemon_config_breaker=code_indexer.daemon_config_breaker,
                     )
+                else:
+                    logger.warning(
+                        "CodeIndexTrigger unavailable because the gcode gateway is not configured"
+                    )
             except Exception as e:
                 logger.warning("Failed to create CodeIndexTrigger: %s", e)
 

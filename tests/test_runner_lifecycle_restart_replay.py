@@ -236,6 +236,7 @@ class TestAgentRestartReconciliation:
         )
         runner = self._runner(run_storage)
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
+        resolved_run_ids: set[str] = set()
 
         with (
             patch(
@@ -247,9 +248,13 @@ class TestAgentRestartReconciliation:
                 new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
             ) as resume,
         ):
-            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                runner,
+                resolved_run_ids=resolved_run_ids,
+            )
 
         assert reconciled == 2
+        assert resolved_run_ids == {run.id}
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             run.id,
             terminal_reason="daemon_stop",
@@ -415,7 +420,7 @@ class TestAgentRestartReconciliation:
             )
 
         mutex = mutexes.get_mutex(task.id)
-        assert reconciled == 2
+        assert reconciled == 1
         assert mutex is not None
         assert mutex.lease_until is not None
         assert mutex.lease_until < datetime.now(UTC)
@@ -549,8 +554,14 @@ class TestReclassifyReconciliationPendingRuns:
         )
         runner = self._runner(run_storage)
 
-        async def reconcile(target: Any, *, include_fenced: bool) -> int:
+        async def reconcile(
+            target: Any,
+            *,
+            include_fenced: bool,
+            resolved_run_ids: set[str],
+        ) -> int:
             order.append(f"reconcile:include_fenced={include_fenced}")
+            resolved_run_ids.update({self._RUN_ID, self._OTHER_RUN_ID})
             return 2
 
         barrier = AsyncMock(return_value=True)
@@ -570,7 +581,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         assert reclassified == 2
         barrier.assert_awaited_once()
-        reconcile_mock.assert_awaited_once_with(runner, include_fenced=True)
+        reconcile_mock.assert_awaited_once_with(
+            runner,
+            include_fenced=True,
+            resolved_run_ids={self._RUN_ID, self._OTHER_RUN_ID},
+        )
         assert order == [
             "reconcile:include_fenced=True",
             f"clear:{self._RUN_ID}",
@@ -580,6 +595,47 @@ class TestReclassifyReconciliationPendingRuns:
             call(self._RUN_ID, {"reconciliation_pending": False}),
             call(self._OTHER_RUN_ID, {"reconciliation_pending": False}),
         ]
+
+    @pytest.mark.asyncio
+    async def test_settled_barrier_keeps_unresolved_runs_fenced(self) -> None:
+        pending = [
+            SimpleNamespace(id=self._RUN_ID),
+            SimpleNamespace(id=self._OTHER_RUN_ID),
+        ]
+        run_storage = SimpleNamespace(
+            list_reconciliation_pending=MagicMock(return_value=pending),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+
+        async def reconcile(
+            target: Any,
+            *,
+            include_fenced: bool,
+            resolved_run_ids: set[str],
+        ) -> int:
+            assert target is runner
+            assert include_fenced is True
+            resolved_run_ids.add(self._RUN_ID)
+            return 1
+
+        with (
+            patch(
+                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                new=AsyncMock(side_effect=reconcile),
+            ),
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        assert reclassified == 1
+        run_storage.merge_resume_metadata.assert_called_once_with(
+            self._RUN_ID,
+            {"reconciliation_pending": False},
+        )
 
     @pytest.mark.asyncio
     async def test_unsettled_barrier_leaves_fences_and_skips_reconcile(self) -> None:

@@ -450,8 +450,6 @@ def install(
         and not config_only_flag
     ):
         all_flag = True
-    is_full_install = all_flag
-
     clis_to_install: list[str] = []
 
     install_hooks = hooks_flag
@@ -492,6 +490,8 @@ def install(
             clis_to_install.append("codex")
         if droid_flag:
             clis_to_install.append("droid")
+
+    is_full_install = all_flag and bool(clis_to_install)
 
     # Get install directory info
     install_dir = get_install_dir()

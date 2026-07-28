@@ -25,6 +25,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 500
+_DEFAULT_ENTITY_GRAPH_LIMIT = 500
+_DEFAULT_RELATIONSHIP_GRAPH_LIMIT = 2000
+
+
+def _bounded_graph_limit(requested: int, configured: object, *, default: int) -> int:
+    """Apply the positive operator-configured ceiling; zero requests use that ceiling."""
+    ceiling = configured if isinstance(configured, int) and not isinstance(configured, bool) else 0
+    if ceiling <= 0:
+        ceiling = default
+    return ceiling if requested == 0 else min(requested, ceiling)
 
 
 def _fetch_all_memories(server: "HTTPServer", project_id: str | None = None) -> list[Memory]:
@@ -346,14 +356,35 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/graph/entities")
     async def entity_graph(
-        limit: int = Query(500, ge=0, description="Maximum entities to fetch (0 = no limit)"),
+        limit: int = Query(
+            _DEFAULT_ENTITY_GRAPH_LIMIT,
+            ge=0,
+            description="Maximum entities to fetch (0 = configured ceiling)",
+        ),
         relationship_limit: int = Query(
-            2000, ge=0, description="Maximum relationships to fetch (0 = no limit)"
+            _DEFAULT_RELATIONSHIP_GRAPH_LIMIT,
+            ge=0,
+            description="Maximum relationships to fetch (0 = configured ceiling)",
         ),
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
         """Get FalkorDB knowledge graph entities and relationships, most recent first."""
         memory_manager = _require_falkordb_memory_manager(server)
+        ui_config = getattr(
+            getattr(getattr(server, "services", None), "config", None),
+            "ui",
+            None,
+        )
+        limit = _bounded_graph_limit(
+            limit,
+            getattr(ui_config, "knowledge_graph_limit", None),
+            default=_DEFAULT_ENTITY_GRAPH_LIMIT,
+        )
+        relationship_limit = _bounded_graph_limit(
+            relationship_limit,
+            getattr(ui_config, "knowledge_graph_relationship_limit", None),
+            default=_DEFAULT_RELATIONSHIP_GRAPH_LIMIT,
+        )
         try:
             result: dict[str, Any] | None = await memory_manager.get_entity_graph(
                 limit=limit,

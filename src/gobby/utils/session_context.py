@@ -468,15 +468,15 @@ def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
     if tokens.agent_run_token is not None:
         try:
             reset_current_agent_run_id(tokens.agent_run_token)
-        except Exception as exc:
+        except (RuntimeError, TypeError, ValueError) as exc:
             logger.debug("reset_current_agent_run_id failed: %s", exc)
     if tokens.session_token is not None:
         try:
             reset_session_context(tokens.session_token)
-        except Exception as exc:
+        except (RuntimeError, TypeError, ValueError) as exc:
             logger.debug("reset_session_context failed: %s", exc)
     if tokens.project_token is not None:
         try:
             reset_project_context(tokens.project_token)
-        except Exception as exc:
+        except (RuntimeError, TypeError, ValueError) as exc:
             logger.debug("reset_project_context failed: %s", exc)

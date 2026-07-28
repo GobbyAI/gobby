@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.registry_manager import InternalToolRegistryManager
     from gobby.servers.http import HTTPServer
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +259,7 @@ async def _bind_agent_run_context(
     request: Request | None,
     tokens: SeededContextTokens,
     *,
-    db: Any,
+    db: HubDatabase | None,
 ) -> None:
     if request is None or db is None:
         return
