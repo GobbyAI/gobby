@@ -24,6 +24,7 @@ import { Settings } from "./components/Settings";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
+import { Button } from "./components/ui/Button";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Badge } from "./components/ui/Badge";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
@@ -504,9 +505,12 @@ export default function App() {
               />
             )}
             <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
-            <button
+            <Button
               type="button"
-              className="btn btn-accent btn-sm btn-icon app-settings-cog"
+              variant="accent"
+              size="icon"
+              dense
+              className="app-settings-cog"
               onClick={() => settingsOverlay.open()}
               aria-label="Open settings"
               aria-haspopup="dialog"
@@ -514,17 +518,20 @@ export default function App() {
               title="Settings"
             >
               <SettingsCogIcon />
-            </button>
+            </Button>
             {authRequired && authenticated && (
-              <button
+              <Button
                 type="button"
-                className="btn btn-accent btn-sm btn-icon app-logout-btn"
+                variant="accent"
+                size="icon"
+                dense
+                className="app-logout-btn"
                 onClick={() => logout()}
                 aria-label="Log out"
                 title="Log out"
               >
                 <LogoutIcon />
-              </button>
+              </Button>
             )}
           </div>
         </header>

@@ -1,6 +1,7 @@
 import { LightbulbIcon, MoonIcon } from "./icons";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { Theme } from "../hooks/useSettings";
+import { Button } from "./ui/Button";
 
 interface ThemeToggleProps {
   /** Current theme setting ('dark' | 'light' | 'system'). */
@@ -12,8 +13,8 @@ interface ThemeToggleProps {
 
 /**
  * Dual-state theme toggle for the header. Glyph-only, sized to match the
- * collapsed New Chat / Toggle Panel buttons via the shared
- * `btn btn-accent btn-sm` system. The icon shows the *destination*:
+ * collapsed New Chat / Toggle Panel buttons via the shared accent icon
+ * Button. The icon shows the *destination*:
  * dark mode shows a light bulb (click → light), light mode a moon (click → dark).
  * It reads the resolved theme so a `system` setting still flips to an
  * explicit choice, and persists through the settings store rather than
@@ -29,9 +30,12 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
   const label = isDark ? "Switch to light theme" : "Switch to dark theme";
 
   return (
-    <button
+    <Button
       type="button"
-      className="btn btn-accent btn-sm btn-icon app-theme-toggle"
+      variant="accent"
+      size="icon"
+      dense
+      className="app-theme-toggle"
       disabled={disabled}
       aria-label={label}
       title={label}
@@ -41,6 +45,6 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
       }}
     >
       {isDark ? <LightbulbIcon /> : <MoonIcon />}
-    </button>
+    </Button>
   );
 }

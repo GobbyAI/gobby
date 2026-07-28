@@ -10,9 +10,7 @@
 // `btn`/`btn-*` class tokens per file (string literals in ts/tsx). Zeroed by
 // the C6 migration; once empty this becomes a pure ban.
 export const BTN_CLASS_ALLOWLIST: Record<string, number> = {
-  'src/App.tsx': 8,
   'src/components/FilesPage.tsx': 10,
-  'src/components/ThemeToggle.tsx': 4,
   'src/components/chat/AgentStatusBar.tsx': 15,
   'src/components/chat/CommandBar.tsx': 3,
 }
@@ -23,11 +21,10 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 // primitives have to render the real element).
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
-    'src/App.tsx': 3,
+    'src/App.tsx': 1,
     'src/components/FilesPage.tsx': 11,
     'src/components/ProjectSelector.tsx': 2,
     'src/components/Settings.tsx': 4,
-    'src/components/ThemeToggle.tsx': 1,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityFilterDropdown.tsx': 1,
     'src/components/activity/ActivityMcpTab.tsx': 4,

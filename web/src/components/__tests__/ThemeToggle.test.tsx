@@ -18,7 +18,9 @@ describe('ThemeToggle', () => {
     render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} />)
 
     const button = screen.getByRole('button', { name: 'Switch to light theme' })
-    expect(button).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    // Tinted-accent icon Button in the header cluster, sized by app-shell.css
+    // via the hook class.
+    expect(button).toHaveClass('bg-accent-tint', 'w-8', 'app-theme-toggle')
 
     fireEvent.click(button)
     expect(onThemeChange).toHaveBeenCalledWith('light')
