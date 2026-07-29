@@ -240,7 +240,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="bind_evidence_run",
-        description="Attach a spawned agent run to prepared evidence exactly once.",
+        description=(
+            "Attach a spawned agent run to prepared evidence exactly once; "
+            "replaying the same run_id is idempotent."
+        ),
         input_schema={
             "type": "object",
             "properties": {

@@ -74,6 +74,28 @@ def test_snapshot_expected_failures_return_structured_error(
     assert result == expected
 
 
+@pytest.mark.asyncio
+async def test_bound_round_prepare_returns_structured_error() -> None:
+    service = MagicMock()
+    error = ReviewEvidenceError(
+        "review_round_bound",
+        "plan review evidence evidence-1 is already bound to agent run run-1",
+        retryable=True,
+        details={"evidence_id": "evidence-1", "run_id": "run-1"},
+    )
+    service.prepare_plan_review_round.side_effect = error
+    registry = _registry(service)
+
+    tool = registry.get_tool("prepare_plan_review_round")
+    assert tool is not None
+    result = await tool(plan_path=".gobby/plans/example.md", round_number=1)
+
+    assert result == error.to_dict()
+    metadata = registry.get_tool_metadata("bind_evidence_run")
+    assert metadata is not None
+    assert "replaying the same run_id is idempotent" in metadata.description
+
+
 @pytest.mark.parametrize(
     ("tool_name", "service_method", "arguments", "fallback"),
     [

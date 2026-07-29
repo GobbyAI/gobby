@@ -163,6 +163,19 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     ):
+                        if active.dispatch_run_id is not None:
+                            raise ReviewEvidenceError(
+                                "review_round_bound",
+                                (
+                                    f"plan review evidence {active.evidence_id} is already "
+                                    f"bound to agent run {active.dispatch_run_id}"
+                                ),
+                                retryable=True,
+                                details={
+                                    "evidence_id": active.evidence_id,
+                                    "run_id": active.dispatch_run_id,
+                                },
+                            )
                         context = prepare_review_round_context(
                             db=self.db,
                             project_id=project_id,

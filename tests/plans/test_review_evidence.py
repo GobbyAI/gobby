@@ -779,6 +779,7 @@ def test_pending_manifest_drift_revokes_intent(
 
 def test_two_phase_run_binding(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
     prepared = service.prepare_plan_review_round(
@@ -792,6 +793,31 @@ def test_two_phase_run_binding(
     bound = service.bind_evidence_run(prepared.evidence_id, run.id)
     assert bound.dispatch_run_id == run.id
     assert bound.lease_expires_at is None
+
+    def fail_preparation(*_args: object, **_kwargs: object) -> Never:
+        raise AssertionError("bound evidence must refuse before preparation work")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            "gobby.plans.review_evidence.prepare_review_round_context",
+            fail_preparation,
+        )
+        scoped.setattr(service, "_assemble_requirements_bundle", fail_preparation)
+        scoped.setattr(service.store, "write_preparation_context", fail_preparation)
+        with pytest.raises(ReviewEvidenceError) as bound_attempt:
+            service.prepare_plan_review_round(
+                project_id=project_id,
+                plan_path=plan_path,
+                round_number=1,
+                session_id=session_id,
+            )
+    assert bound_attempt.value.code == "review_round_bound"
+    assert bound_attempt.value.retryable is True
+    assert bound_attempt.value.details == {
+        "evidence_id": prepared.evidence_id,
+        "run_id": run.id,
+    }
+
     assert service.bind_evidence_run(prepared.evidence_id, run.id).dispatch_run_id == run.id
 
     other = manager.create(parent_session_id=session_id, provider="codex", prompt="other")
