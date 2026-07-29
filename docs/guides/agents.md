@@ -242,6 +242,7 @@ Run tools:
 - `dispatch_batch`
 - `apply_persona`
 - `get_agent_result`
+- `get_agent_capture`
 - `list_agent_runs`
 - `list_running_agents`
 - `get_running_agent`

@@ -38,6 +38,20 @@ def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
     assert result.has_behavioral_delta
 
 
+@pytest.mark.parametrize("skill_name", ["plan", "merge-expert", "goal"])
+def test_coordinator_skills_page_bounded_terminal_captures(skill_name: str) -> None:
+    """Verify coordinators retrieve complete captures before consuming terminal reports."""
+    result = run_recorded_skill_scenario(SCENARIOS / skill_name / "page-terminal-capture.yaml")
+
+    assert "trust_bounded_excerpt" in result.baseline.action_names
+    assert "get_agent_capture_pages" in result.loaded.action_names
+    capture_action = next(
+        action for action in result.loaded.actions if action["action"] == "get_agent_capture_pages"
+    )
+    assert capture_action["tool"] == "get_agent_capture"
+    assert result.has_behavioral_delta
+
+
 def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
     """Verify the loaded build coordinator scenario replaces manual waits with build fixes."""
     result = run_recorded_skill_scenario(

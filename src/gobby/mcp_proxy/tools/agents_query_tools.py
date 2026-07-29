@@ -30,7 +30,12 @@ from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_runs_live_activity,
 )
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
-from gobby.mcp_proxy.tools.agents_payloads import _agent_result_payload
+from gobby.mcp_proxy.tools.agents_payloads import (
+    _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
+    _AGENT_CAPTURE_PAGE_MAX_CHARS,
+    _agent_capture_parts,
+    _agent_result_payload,
+)
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.wait_tools import (
@@ -170,6 +175,87 @@ def register_agent_query_tools(
             "recovery_pending": recovery_pending,
             **_agent_result_payload(run),
         }
+
+    async def get_agent_capture(
+        run_id: str,
+        offset: int = 0,
+        limit: int = _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
+    ) -> dict[str, Any]:
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            return {
+                "success": False,
+                "error": "offset must be a non-negative integer",
+                "error_code": "invalid_arguments",
+            }
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= _AGENT_CAPTURE_PAGE_MAX_CHARS
+        ):
+            return {
+                "success": False,
+                "error": (
+                    f"limit must be an integer between 1 and {_AGENT_CAPTURE_PAGE_MAX_CHARS}"
+                ),
+                "error_code": "invalid_arguments",
+            }
+
+        run = ctx.runner.get_run(run_id)
+        if run is None:
+            return {"success": False, "error": f"Agent run {run_id} not found"}
+        capture = _agent_capture_parts(run)
+        if capture is None:
+            return {
+                "success": False,
+                "error": f"Agent run {run_id} has no terminal capture",
+                "error_code": "capture_not_found",
+            }
+
+        total_chars = len(capture.content)
+        content = capture.content[offset : offset + limit]
+        next_offset_value = offset + len(content)
+        next_offset = next_offset_value if next_offset_value < total_chars else None
+        page = {
+            "run_id": run.id,
+            "capture_id": capture.capture_id,
+            "total_chars": total_chars,
+            "offset": offset,
+            "limit": limit,
+            "content": content,
+            "next_offset": next_offset,
+        }
+        if capture.malformed:
+            return {
+                "success": False,
+                "error": "Agent capture start marker is missing",
+                "error_code": "capture_corrupt",
+                "malformed": True,
+                **page,
+            }
+        return {"success": True, **page}
+
+    registry.register(
+        name="get_agent_capture",
+        description=(
+            "Read one Unicode-character page from a terminal capture referenced by "
+            "get_agent_result or wait_for_agent capture metadata."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": _AGENT_CAPTURE_PAGE_MAX_CHARS,
+                    "default": _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
+                },
+            },
+            "required": ["run_id"],
+        },
+        func=get_agent_capture,
+    )
 
     @registry.tool(
         name="wait_for_agent",

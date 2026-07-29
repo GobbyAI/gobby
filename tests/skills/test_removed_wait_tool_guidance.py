@@ -25,6 +25,11 @@ REVIEW_DISPATCH_GUIDANCE = (
     pytest.param(WORKFLOWS_DIR / "agents/epic-reviewer.yaml", id="epic-reviewer"),
     pytest.param(WORKFLOWS_DIR / "review.yaml", id="review-workflow"),
 )
+CAPTURE_GUIDANCE = (
+    pytest.param(SKILLS_DIR / "goal/SKILL.md", id="goal"),
+    pytest.param(SKILLS_DIR / "merge-expert/SKILL.md", id="merge-expert"),
+    pytest.param(SKILLS_DIR / "plan/SKILL.md", id="plan"),
+)
 
 
 @pytest.mark.parametrize("skill_name", UPDATED_SKILLS)
@@ -45,6 +50,15 @@ def test_wait_guidance_is_wake_driven(path: Path) -> None:
     assert "daemon wake" in body
     assert "re-call" in body
     assert "sweep" in body
+
+
+@pytest.mark.parametrize("path", CAPTURE_GUIDANCE)
+def test_terminal_result_guidance_pages_capture_metadata(path: Path) -> None:
+    body = path.read_text()
+
+    assert "capture metadata" in body
+    assert "get_agent_capture" in body
+    assert "complete" in body
 
 
 @pytest.mark.parametrize("path", REVIEW_DISPATCH_GUIDANCE)

@@ -1,0 +1,33 @@
+skill: merge-expert
+agent: default
+description: Merge coordinator re-reads a terminal worker result and is tempted to treat its bounded terminal excerpt as the complete report.
+prompt: |
+  The merge worker is terminal. Re-read its result and finish the sweep now.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: get_agent_result
+      - action: trust_bounded_excerpt
+      - action: finish_sweep
+  loaded:
+    loaded_skills:
+      - merge-expert
+    actions:
+      - action: get_agent_result
+      - action: inspect_capture_metadata
+      - action: get_agent_capture_pages
+        tool: get_agent_capture
+      - action: reconstruct_final_report
+      - action: finish_sweep
+assertions:
+  baseline_action_order:
+    - get_agent_result
+    - trust_bounded_excerpt
+    - finish_sweep
+  loaded_action_order:
+    - get_agent_result
+    - inspect_capture_metadata
+    - get_agent_capture_pages
+    - reconstruct_final_report
+    - finish_sweep

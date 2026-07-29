@@ -142,6 +142,7 @@ class TestCreateAgentsRegistry:
         expected_tools = [
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
+            "get_agent_capture",
             "wait_for_agent",
             "wait_for_output",
             "list_agent_runs",

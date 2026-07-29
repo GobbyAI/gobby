@@ -198,7 +198,9 @@ leaves.
    finished worker into unwanted extra work.
 5. **Harvest** — verify by task state; run status is advisory. For each
    dispatched leaf, `get_task` must show it closed and the work landed;
-   use `get_agent_result` on runs that reached terminal status. A worker
+   use `get_agent_result` on runs that reached terminal status. When its
+   payload includes capture metadata, page `get_agent_capture` until
+   `next_offset` is null before consuming the complete advisory result. A worker
    whose leaf is verified closed but whose run is still `running` (idling
    at its prompt) is harvested — reclaim its slot with `stop_agent` rather
    than waiting on it. First failure on a leaf → respawn once with the

@@ -191,9 +191,10 @@ Iterate the plan in order. For each step:
    successful run id, end the turn, then process the woken id first and sweep
    every outstanding id after each wake. Do not inspect merge state or spawn
    replacements until the outstanding batch is empty. Call
-   `gobby-agents:get_agent_result` only to
-   re-read a final report. Do not use Bash sleep loops, tmux polling loops, or
-   provider Monitor for worker waits.
+   `gobby-agents:get_agent_result` only to re-read a final report. When its
+   payload includes capture metadata, page `gobby-agents:get_agent_capture`
+   until `next_offset` is null before consuming the complete report. Do not use
+   Bash sleep loops, tmux polling loops, or provider Monitor for worker waits.
 4. **Verify.** Prefer worker-side verification: pass the step's
    `verify_command` to the merge-worker and require it to run
    `gobby-merge:verify_in_worktree` before `record_merge_result`. Treat exit

@@ -326,7 +326,9 @@ mandatory post-launch `gobby-sessions:compact_self` call:
 3. On the daemon wake, re-call `gobby-agents:wait_for_agent(run_id)` first to
    retrieve the terminal snapshot, then perform a full status and health sweep.
    Call `gobby-agents:get_agent_result(run_id)` only if you need to re-read the
-   final report.
+   final report. When its payload includes capture metadata, page
+   `gobby-agents:get_agent_capture` until `next_offset` is null before consuming
+   the complete report.
 
 The mandatory compaction immediately after each launch takes priority over
 independent work and waiting. A run already known to be

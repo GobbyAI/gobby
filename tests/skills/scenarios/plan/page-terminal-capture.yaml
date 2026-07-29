@@ -1,0 +1,39 @@
+skill: plan
+agent: default
+description: Coordinator re-reads a terminal adversary result and is tempted to treat its bounded terminal excerpt as the complete report.
+prompt: |
+  The adversary run is terminal. Re-read its result and continue immediately.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: get_agent_result
+      - action: trust_bounded_excerpt
+      - action: respond
+        text: Continued from the visible terminal excerpt.
+  loaded:
+    loaded_skills:
+      - plan
+    actions:
+      - action: get_agent_result
+      - action: inspect_capture_metadata
+      - action: get_agent_capture_pages
+        tool: get_agent_capture
+      - action: reconstruct_final_report
+      - action: respond
+        text: Continued from the complete paged capture.
+assertions:
+  baseline_action_order:
+    - get_agent_result
+    - trust_bounded_excerpt
+    - respond
+  loaded_action_order:
+    - get_agent_result
+    - inspect_capture_metadata
+    - get_agent_capture_pages
+    - reconstruct_final_report
+    - respond
+  baseline_text_contains:
+    - visible terminal excerpt
+  loaded_text_contains:
+    - complete paged capture

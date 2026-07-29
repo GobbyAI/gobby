@@ -724,7 +724,8 @@ registry is the runtime side.
 
 | Tool | Description |
 | :--- | :--- |
-| `get_agent_result` | Final result of a completed run. |
+| `get_agent_result` | Final result of a completed run. Terminal-capture results are bounded and include capture metadata. |
+| `get_agent_capture` | Read the complete raw terminal capture in bounded Unicode-character pages. |
 | `wait_for_agent` | Return the current status immediately. Active runs register a durable completion notification delivered through the parent inbox plus a live wake nudge. |
 | `list_agent_runs` | Runs for a parent session. |
 | `list_running_agents` | All currently running agents. |
