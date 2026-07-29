@@ -58,6 +58,33 @@ from gobby.tasks.transcript_evidence import (
 logger = logging.getLogger(__name__)
 
 
+def _apply_escalated_close_gate(
+    evaluation: CloseEvaluation,
+    override_justification: str | None,
+) -> None:
+    """Gate 10 for an escalated task: require justification, then skip review."""
+    if not (override_justification or "").strip():
+        evaluation.fail(
+            10,
+            "criteria_review",
+            "task_escalated",
+            "Escalated tasks require override_justification for deliberate closure.",
+            action=(
+                "Provide override_justification to close deliberately, "
+                "or use de_escalate_task/reopen_task."
+            ),
+            extra={"escalated": True},
+        )
+        return
+    evaluation.validation_reset_reason = "escalated_deliberate_close"
+    evaluation.pass_gate(
+        10,
+        "criteria_review",
+        "Skipped for a justified deliberate close of an escalated task.",
+        skipped=True,
+    )
+
+
 def _children_state(
     ctx: RegistryContext,
     task_id: str,
@@ -213,7 +240,6 @@ async def _evaluate_close(
             (7, "linked_commits"),
             (8, "uncommitted_task_edits"),
             (9, "validation_commands"),
-            (10, "criteria_review"),
         ):
             evaluation.pass_gate(
                 item,
@@ -221,6 +247,15 @@ async def _evaluate_close(
                 "Skipped for an epic or structural parent.",
                 skipped=True,
             )
+        if task.is_escalated:
+            _apply_escalated_close_gate(evaluation, override_justification)
+            return evaluation
+        evaluation.pass_gate(
+            10,
+            "criteria_review",
+            "Skipped for an epic or structural parent.",
+            skipped=True,
+        )
         return evaluation
 
     if not (task.validation_criteria or "").strip():
@@ -377,25 +412,7 @@ async def _evaluate_close(
         return evaluation
 
     if task.is_escalated:
-        if not (override_justification or "").strip():
-            return evaluation.fail(
-                10,
-                "criteria_review",
-                "task_escalated",
-                "Escalated tasks require override_justification for deliberate closure.",
-                action=(
-                    "Provide override_justification to close deliberately, "
-                    "or use de_escalate_task/reopen_task."
-                ),
-                extra={"escalated": True},
-            )
-        evaluation.validation_reset_reason = "escalated_deliberate_close"
-        evaluation.pass_gate(
-            10,
-            "criteria_review",
-            "Skipped for a justified deliberate close of an escalated task.",
-            skipped=True,
-        )
+        _apply_escalated_close_gate(evaluation, override_justification)
         return evaluation
 
     if ctx.task_validator is None:

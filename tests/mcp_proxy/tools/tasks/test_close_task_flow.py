@@ -626,6 +626,109 @@ async def test_escalated_close_without_justification_converges_on_actionable_blo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("override_justification", [None, "   "])
+async def test_escalated_structural_parent_requires_justification(
+    override_justification: str | None,
+) -> None:
+    task = replace(
+        _task(),
+        task_type="epic",
+        is_escalated=True,
+        escalated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        escalation_reason="Needs human review",
+    )
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary=None,
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+            override_justification=override_justification,
+        )
+
+    assert evaluation.error == "task_escalated"
+    assert "override_justification" in (evaluation.action or "")
+    review.assert_not_awaited()
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_justified_escalated_structural_parent_closes_and_persists_override() -> None:
+    task = replace(
+        _task(),
+        task_type="epic",
+        is_escalated=True,
+        escalated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        escalation_reason="Needs human review",
+        validation_fail_count=5,
+    )
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary=None,
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+            override_justification="Reviewed: obsolete escalation, closing deliberately.",
+        )
+
+    assert evaluation.ready is True
+    assert evaluation.validation_reset_reason == "escalated_deliberate_close"
+    assert evaluation.gates[-1].status == "skipped"
+    review.assert_not_awaited()
+
+    with (
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(lifecycle, "notify_parent_on_task_state_change"),
+        patch.object(lifecycle, "_cleanup_closed_claim"),
+        patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification="Reviewed: obsolete escalation, closing deliberately.",
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    cast(MagicMock, ctx.task_manager.close_task).assert_called_once_with(
+        task.id,
+        reason="completed",
+        closed_in_session_id=task.claimed_by_session_id,
+        closed_commit_sha=None,
+        validation_override_reason="Reviewed: obsolete escalation, closing deliberately.",
+        expected_updated_at=task.updated_at,
+        reset_validation_fail_count=True,
+        validation_status="valid",
+        validation_feedback=None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
