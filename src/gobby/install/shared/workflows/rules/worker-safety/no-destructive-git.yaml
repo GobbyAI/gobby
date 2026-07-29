@@ -11,7 +11,7 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "git\\s+stash(?!\\s+(?:list|show|--help|-h)(?=\\s|$|&&|;|\\|))(?=\\s|$|&&|;|\\|)"
-        reason: "Call gobby-agents.send_message to coordinate with the file owner when shared-worktree changes conflict. Git stash mutations are blocked; use scoped staging or an isolated worktree."
+        reason: "Call gobby-agents.send_message to coordinate with the file owner when shared-worktree changes conflict. Preserve changes with scoped staging or an isolated worktree."
 
   no-destructive-git:
     description: "Block destructive git operations."
