@@ -355,7 +355,13 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
 
     skills = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skills == ["loading-skills", "python", "tasks", "development-discipline"]
+    assert skills == [
+        "loading-skills",
+        "python",
+        "tasks",
+        "development-discipline",
+        "code-index",
+    ]
     variables = sv_mgr.get_variables(SESSION_ID)
     assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skills
 
@@ -363,7 +369,7 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
 def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill(
     session_db: HubDatabase,
 ) -> None:
-    """A skill the active workflow asked for survives compaction; history does not."""
+    """Workflow-requested skills and the session's loaded-skill ledger both resume."""
     db = session_db
     sv_mgr = SessionVariableManager(db)
     sv_mgr.merge_variables(
@@ -377,9 +383,14 @@ def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill
 
     skills = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skills == ["loading-skills", "python", "plan", "elicit"]
-    assert "code-index" not in skills
-    assert "brevity" not in skills
+    assert skills == [
+        "loading-skills",
+        "python",
+        "plan",
+        "elicit",
+        "code-index",
+        "brevity",
+    ]
 
 
 def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() -> None:

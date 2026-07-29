@@ -45,16 +45,19 @@ _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
 LOADING_SKILLS_NAME = "loading-skills"
 # Written by the workflow engine's load_skill effect: the skills the session's
-# active workflow actually asked for. Distinct from `loaded_skills`, which is an
-# unbounded history of every get_skill call and is the wrong source for a reload
-# list — reloading it wholesale would spend the context that compaction reclaimed.
+# active workflow asked for, whether or not the agent got to them yet.
 WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
+# Compaction is an in-place handoff on the same session row, so `loaded_skills` —
+# the runtime ledger of successful agent-visible get_skill calls — survives it and
+# describes exactly what this session had in context. Skills loaded before
+# compaction must be reloaded after it, so the ledger is part of the resume set.
 COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
     "required_skills",
     "additional_skills",
     "claimed_task_required_skills",
     "claimed_task_additional_skills",
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+    "loaded_skills",
 )
 
 
