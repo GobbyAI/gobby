@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -375,6 +376,37 @@ class TestWaitForAgent:
         assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [_WAIT_CALLER_SESSION_ID]
         assert CompletionSubscriberManager(temp_db).get_completion_subscribers(_WAIT_RUN_ID) == [
             _WAIT_CALLER_SESSION_ID
+        ]
+
+    @pytest.mark.asyncio
+    async def test_repeated_active_wait_is_idempotent_and_quiet(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run()
+        completion_registry = CompletionEventRegistry()
+        registry = self._registry(runner, temp_db, completion_registry)
+
+        with (
+            session_context_for_test(_WAIT_CALLER_SESSION_ID),
+            caplog.at_level(logging.WARNING, logger="gobby.events.completion_registry"),
+        ):
+            first_result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+            second_result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert first_result["success"] is True
+        assert second_result["success"] is True
+        assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [_WAIT_CALLER_SESSION_ID]
+        assert CompletionSubscriberManager(temp_db).get_completion_subscribers(_WAIT_RUN_ID) == [
+            _WAIT_CALLER_SESSION_ID
+        ]
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "gobby.events.completion_registry"
+            and record.levelno >= logging.WARNING
         ]
 
     @pytest.mark.asyncio

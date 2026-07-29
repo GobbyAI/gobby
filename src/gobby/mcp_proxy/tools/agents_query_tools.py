@@ -144,7 +144,10 @@ def register_agent_query_tools(
 ) -> None:
     @registry.tool(
         name="get_agent_result",
-        description="Get the result of a completed agent run.",
+        description=(
+            "Look up an agent run's current status and result. Safe for explicit polling; "
+            "creates no completion subscription."
+        ),
     )
     async def get_agent_result(run_id: str) -> dict[str, Any]:
         run = ctx.runner.get_run(run_id)
@@ -171,8 +174,9 @@ def register_agent_query_tools(
     @registry.tool(
         name="wait_for_agent",
         description=(
-            "Subscribe to an agent run once, then end the turn. The daemon wakes this session "
-            "with the result when the run completes; no polling or timeout is needed."
+            "Create a one-shot durable subscription to an agent run, then end the turn. "
+            "The daemon wakes this session with the result when the run completes. "
+            "Repeated calls are idempotent recovery behavior."
         ),
     )
     async def wait_for_agent(run_id: str) -> dict[str, Any]:

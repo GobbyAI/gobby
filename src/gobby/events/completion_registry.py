@@ -68,17 +68,31 @@ class CompletionEventRegistry:
             ``True`` for a new entry and ``False`` when merging an existing entry.
         """
         if completion_id in self._events:
-            logger.warning("Merging existing completion registration: %s", completion_id)
             registered_subscribers = self._subscribers.setdefault(completion_id, [])
             seen = set(registered_subscribers)
+            added_subscriber_count = 0
             for session_id in subscribers:
                 if session_id not in seen:
                     registered_subscribers.append(session_id)
                     seen.add(session_id)
+                    added_subscriber_count += 1
+            if added_subscriber_count:
+                logger.debug(
+                    "Merged %d new subscriber(s) into completion registration %s (%d total)",
+                    added_subscriber_count,
+                    completion_id,
+                    len(registered_subscribers),
+                )
             if continuation_prompt and completion_id not in self._continuation_prompts:
                 self._continuation_prompts[completion_id] = continuation_prompt
-            elif continuation_prompt:
-                logger.debug("Ignoring duplicate continuation prompt for %s", completion_id)
+            elif (
+                continuation_prompt
+                and continuation_prompt != self._continuation_prompts[completion_id]
+            ):
+                logger.warning(
+                    "Ignoring conflicting continuation prompt for completion registration %s",
+                    completion_id,
+                )
             return False
 
         self._events[completion_id] = asyncio.Event()

@@ -129,6 +129,28 @@ class TestSubscribers:
     """Subscriber management."""
 
     @pytest.mark.asyncio
+    async def test_exact_duplicate_registration_is_quiet(
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        registry.register(COMPLETION_ID, subscribers=[PRIMARY_SUBSCRIBER_ID])
+        original_event = registry._events[COMPLETION_ID]
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            created_fresh = registry.register(
+                COMPLETION_ID,
+                subscribers=[PRIMARY_SUBSCRIBER_ID],
+            )
+
+        completion_logs = [
+            record for record in caplog.records if record.name == "gobby.events.completion_registry"
+        ]
+        assert created_fresh is False
+        assert registry._events[COMPLETION_ID] is original_event
+        assert completion_logs == []
+
+    @pytest.mark.asyncio
     async def test_register_with_subscribers(self, registry: CompletionEventRegistry) -> None:
         created_fresh = registry.register(
             COMPLETION_ID,
@@ -146,7 +168,9 @@ class TestSubscribers:
 
     @pytest.mark.asyncio
     async def test_register_merges_existing_subscribers_and_preserves_event(
-        self, registry: CompletionEventRegistry
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         registry.register(
             COMPLETION_ID,
@@ -158,14 +182,16 @@ class TestSubscribers:
         )
         original_event = registry._events[COMPLETION_ID]
 
-        created_fresh = registry.register(
-            COMPLETION_ID,
-            subscribers=[
-                SECONDARY_SUBSCRIBER_ID,
-                TERTIARY_SUBSCRIBER_ID,
-            ],
-            continuation_prompt="second prompt",
-        )
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            created_fresh = registry.register(
+                COMPLETION_ID,
+                subscribers=[
+                    SECONDARY_SUBSCRIBER_ID,
+                    TERTIARY_SUBSCRIBER_ID,
+                    TERTIARY_SUBSCRIBER_ID,
+                ],
+                continuation_prompt="first prompt",
+            )
 
         assert created_fresh is False
         assert registry._events[COMPLETION_ID] is original_event
@@ -175,6 +201,64 @@ class TestSubscribers:
             TERTIARY_SUBSCRIBER_ID,
         ]
         assert registry.get_continuation_prompt(COMPLETION_ID) == "first prompt"
+        completion_logs = [
+            record for record in caplog.records if record.name == "gobby.events.completion_registry"
+        ]
+        assert [record.levelno for record in completion_logs] == [logging.DEBUG]
+        assert "Merged 1 new subscriber(s)" in completion_logs[0].getMessage()
+        assert "(3 total)" in completion_logs[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_identical_continuation_prompt_replay_is_quiet(
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        registry.register(
+            COMPLETION_ID,
+            subscribers=[PRIMARY_SUBSCRIBER_ID],
+            continuation_prompt="continue with validation",
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            registry.register(
+                COMPLETION_ID,
+                subscribers=[PRIMARY_SUBSCRIBER_ID],
+                continuation_prompt="continue with validation",
+            )
+
+        assert [
+            record for record in caplog.records if record.name == "gobby.events.completion_registry"
+        ] == []
+
+    @pytest.mark.asyncio
+    async def test_conflicting_continuation_prompt_warns_once_and_preserves_first(
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        registry.register(
+            COMPLETION_ID,
+            subscribers=[PRIMARY_SUBSCRIBER_ID],
+            continuation_prompt="original secret prompt",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.events.completion_registry"):
+            registry.register(
+                COMPLETION_ID,
+                subscribers=[PRIMARY_SUBSCRIBER_ID],
+                continuation_prompt="conflicting secret prompt",
+            )
+
+        completion_logs = [
+            record for record in caplog.records if record.name == "gobby.events.completion_registry"
+        ]
+        assert registry.get_continuation_prompt(COMPLETION_ID) == "original secret prompt"
+        assert len(completion_logs) == 1
+        assert completion_logs[0].levelno == logging.WARNING
+        assert COMPLETION_ID in completion_logs[0].getMessage()
+        assert "original secret prompt" not in completion_logs[0].getMessage()
+        assert "conflicting secret prompt" not in completion_logs[0].getMessage()
 
     @pytest.mark.asyncio
     async def test_reregister_preserves_waiter_until_notify(
