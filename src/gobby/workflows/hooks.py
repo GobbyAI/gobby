@@ -512,7 +512,10 @@ class WorkflowHookHandler:
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
-        from .observer_context_usage import detect_context_compact_guidance
+        from .observer_context_usage import (
+            detect_context_compact_guidance,
+            detect_mid_turn_context_compact_guidance,
+        )
         from .observer_plan_mode import resolve_plan_mode
         from .observers import (
             detect_bash_commit,
@@ -569,6 +572,13 @@ class WorkflowHookHandler:
             run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
             run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
             run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
+            run_observer(
+                "detect_mid_turn_context_compact_guidance",
+                detect_mid_turn_context_compact_guidance,
+                variables,
+                session_id,
+                self._session_manager,
+            )
 
         # Plan mode detection on the semantic start-of-turn boundary
         if _is_turn_start_event(event.event_type):

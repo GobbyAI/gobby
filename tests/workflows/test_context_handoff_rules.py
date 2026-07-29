@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -36,6 +37,7 @@ CONTEXT_HANDOFF_RULES = {
     "inject-wiki-overview",
     "preserve-context-on-compact",
     "nudge-compact-on-context-pressure",
+    "nudge-compact-on-context-pressure-mid-turn",
     "auto-compact-after-task-close",
 }
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
@@ -52,7 +54,7 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -62,20 +64,19 @@ def _sync_bundled(db):
     return result
 
 
+class _SessionWithContextRatio:
+    def __init__(self, ratio: float | None) -> None:
+        self.context_usage_ratio: object = ratio
+        self.context_used_tokens: object = None
+        self.context_window: object = None
+
+
 class _SessionManagerWithContextRatio:
     def __init__(self, ratio: float | None) -> None:
         self.ratio = ratio
 
-    def get(self, _session_id: str) -> object:
-        return type(
-            "SessionStub",
-            (),
-            {
-                "context_usage_ratio": self.ratio,
-                "context_used_tokens": None,
-                "context_window": None,
-            },
-        )()
+    def get(self, _session_id: str) -> _SessionWithContextRatio:
+        return _SessionWithContextRatio(self.ratio)
 
 
 class TestContextHandoffSync:
@@ -352,13 +353,13 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_five_effects(self, db, manager) -> None:
-        """Should have 5 set_variable effects."""
+    def test_has_six_effects(self, db, manager) -> None:
+        """Should have 6 set_variable effects."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 5
+        assert len(effects) == 6
         assert all(e.type == "set_variable" for e in effects)
 
     def test_resets_injected_memory_ids(self, db, manager) -> None:
@@ -408,10 +409,17 @@ class TestPreserveContextOnCompact:
         turns_since = [
             e for e in effects if e.type == "set_variable" and e.variable == "turns_since_compact"
         ]
+        mid_turn_band = [
+            e
+            for e in effects
+            if e.type == "set_variable" and e.variable == "context_compact_mid_turn_pressure_band"
+        ]
         assert len(compacted_turn) == 1
         assert compacted_turn[0].value == "variables.get('parent_turn_seq') or 0"
         assert len(turns_since) == 1
         assert turns_since[0].value == 0
+        assert len(mid_turn_band) == 1
+        assert mid_turn_band[0].value == "none"
 
 
 class TestNudgeCompactOnContextPressure:
@@ -426,6 +434,13 @@ class TestNudgeCompactOnContextPressure:
         assert body.when == "variables.get('context_compact_guidance_message')"
         assert body.effects[0].type == "inject_context"
         assert "context_compact_guidance_message" in (body.effects[0].template or "")
+
+        mid_turn_row = manager.get_by_name("nudge-compact-on-context-pressure-mid-turn")
+        assert mid_turn_row is not None
+        mid_turn_body = RuleDefinitionBody.model_validate_json(mid_turn_row.definition_json)
+        assert mid_turn_body.event.value == "after_tool"
+        assert mid_turn_body.when == body.when
+        assert mid_turn_body.effects == body.effects
 
     async def test_turn_start_observer_sets_guidance_and_rule_injects_context(
         self,
@@ -455,6 +470,51 @@ class TestNudgeCompactOnContextPressure:
         assert "Context pressure is 65%" in guidance
         assert response.context is not None
         assert guidance in response.context
+
+    async def test_mid_turn_threshold_crossings_inject_once_each(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _sync_bundled(db)
+        session_manager = _SessionManagerWithContextRatio(0.39)
+        handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db),
+            session_manager=session_manager,
+        )
+        variable_manager = SessionVariableManager(db)
+        variable_manager.merge_variables(
+            SESSION_ID,
+            {"parent_turn_seq": 15, "chat_mode": "normal"},
+        )
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "functions.exec_command",
+                "tool_input": {"cmd": "true"},
+                "tool_output": {"exit_code": 0},
+            },
+            cwd=".",
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        injections: list[str] = []
+        for ratio in (0.39, 0.40, 0.55, 0.60, 0.65, 0.80):
+            session_manager.ratio = ratio
+            response = await handler._evaluate_rules(event)
+            if response.context is not None:
+                injections.append(response.context)
+
+        assert len(injections) == 2
+        assert "Context pressure is 40%" in injections[0]
+        assert "Context pressure is 60%" in injections[1]
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert variables["parent_turn_seq"] == 15
+        assert variables["context_compact_mid_turn_pressure_band"] == "strong"
 
     def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}

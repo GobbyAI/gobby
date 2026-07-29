@@ -11,3 +11,14 @@ rules:
       - type: inject_context
         template: |
           {{ variables.get('context_compact_guidance_message') }}
+
+  nudge-compact-on-context-pressure-mid-turn:
+    description: "Remind non-plan agents when context pressure crosses a threshold mid-turn"
+    event: after_tool
+    enabled: true
+    priority: 30
+    when: "variables.get('context_compact_guidance_message')"
+    effects:
+      - type: inject_context
+        template: |
+          {{ variables.get('context_compact_guidance_message') }}

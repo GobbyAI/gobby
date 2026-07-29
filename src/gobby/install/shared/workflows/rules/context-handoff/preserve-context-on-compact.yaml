@@ -23,3 +23,6 @@ rules:
       - type: set_variable
         variable: turns_since_compact
         value: 0
+      - type: set_variable
+        variable: context_compact_mid_turn_pressure_band
+        value: "none"

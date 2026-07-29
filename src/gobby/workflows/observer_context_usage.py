@@ -69,6 +69,11 @@ def detect_context_compact_guidance(
         return
 
     soft_ratio, strong_ratio = _thresholds_from_session(session)
+    variables["context_compact_mid_turn_pressure_band"] = _pressure_band(
+        ratio,
+        soft_ratio,
+        strong_ratio,
+    )
 
     if ratio >= strong_ratio:
         if _cooldown_elapsed(variables, turn_seq, STRONG_NUDGE_COOLDOWN_TURNS):
@@ -93,6 +98,54 @@ def detect_context_compact_guidance(
                 "Plan a `gobby-sessions:compact_self` call for the next clean boundary."
             ),
         )
+
+
+def detect_mid_turn_context_compact_guidance(
+    variables: dict[str, Any],
+    session_id: str,
+    session_manager: _SessionManager | None,
+) -> None:
+    """Populate compact guidance when context crosses a pressure band within a turn."""
+    variables["context_compact_guidance_kind"] = ""
+    variables["context_compact_guidance_message"] = ""
+
+    if _is_plan_mode(variables):
+        return
+
+    session = _load_session(session_manager, session_id)
+    ratio = _ratio_from_session(session)
+    if ratio is None:
+        return
+
+    soft_ratio, strong_ratio = _thresholds_from_session(session)
+    previous_band = str(variables.get("context_compact_mid_turn_pressure_band") or "none")
+    current_band = _pressure_band(ratio, soft_ratio, strong_ratio)
+    variables["context_compact_mid_turn_pressure_band"] = current_band
+    if _pressure_band_rank(current_band) <= _pressure_band_rank(previous_band):
+        return
+
+    turn_seq = _next_turn_seq(variables)
+    if current_band == "strong":
+        _set_guidance(
+            variables,
+            turn_seq,
+            "strong",
+            (
+                f"Context pressure is {_percent(ratio)}. "
+                "Call `gobby-sessions:compact_self` at the next clean boundary."
+            ),
+        )
+        return
+
+    _set_guidance(
+        variables,
+        turn_seq,
+        "soft",
+        (
+            f"Context pressure is {_percent(ratio)}. "
+            "Plan a `gobby-sessions:compact_self` call for the next clean boundary."
+        ),
+    )
 
 
 def _load_session(
@@ -161,6 +214,18 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
 def _cooldown_elapsed(variables: dict[str, Any], turn_seq: int, cooldown: int) -> bool:
     last = _int_or_none(variables.get("last_compact_nudge_turn_seq"))
     return last is None or turn_seq - last >= cooldown
+
+
+def _pressure_band(ratio: float, soft_ratio: float, strong_ratio: float) -> str:
+    if ratio >= strong_ratio:
+        return "strong"
+    if ratio >= soft_ratio:
+        return "soft"
+    return "none"
+
+
+def _pressure_band_rank(band: str) -> int:
+    return {"none": 0, "soft": 1, "strong": 2}.get(band, 0)
 
 
 def _int_or_none(value: Any, default: int | None = None) -> int | None:
