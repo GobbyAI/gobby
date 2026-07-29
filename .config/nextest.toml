@@ -2,6 +2,7 @@ nextest-version = { required = "0.9.133" }
 
 [profile.default]
 fail-fast = false
+leak-timeout = { period = "500ms", result = "fail" }
 
 [profile.ci]
 inherits = "default"
