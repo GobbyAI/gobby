@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -13,7 +16,11 @@ from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.review_coverage import REVIEW_LANES
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import PlanReviewEvidence
+from gobby.plans.review_evidence_models import (
+    PlanReviewEvidence,
+    SectionHash,
+    validate_round_result,
+)
 from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -22,6 +29,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from tests.review_telemetry_helpers import enriched_telemetry
 from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 
@@ -288,6 +296,204 @@ def hold_dispatch_mutex(
 def manifest_digest(entries: Sequence[Mapping[str, object]]) -> str:
     """Return the canonical digest used by the review manifest service."""
     return canonical_json_sha256(list(entries))
+
+
+def ledger_finding(
+    finding_id: str,
+    *,
+    check_key: str = "consumer-parity",
+    category: str = "unhandled-edge",
+    section_ids: Sequence[str] = ("1.1",),
+    description: str = "Consumer misses the new field.",
+    repair_scope: str = "existing_sections",
+) -> dict[str, object]:
+    primary, *participating = section_ids
+    finding: dict[str, object] = {
+        "finding_id": finding_id,
+        "section_id": primary,
+        "check_key": check_key,
+        "severity": "major",
+        "category": category,
+        "location": "src/consumer.py:10",
+        "description": description,
+        "minimal_repair": "Read the new field.",
+        "repair_scope": repair_scope,
+        "prevention": "Audit every consumer.",
+    }
+    if participating:
+        finding["participating_section_ids"] = list(participating)
+    return finding
+
+
+def ledger_round_result(
+    *,
+    findings: Sequence[Mapping[str, object]] = (),
+    dispositions: Sequence[Mapping[str, object]] = (),
+    counts: Mapping[str, int] | None = None,
+) -> dict[str, object]:
+    records = [dict(record) for record in dispositions]
+    emitted = sum(record["disposition"] == "emitted_finding" for record in records)
+    dismissed = sum(record["disposition"] == "dismissed" for record in records)
+    canonical_counts = dict(
+        counts
+        or {
+            "total": len(records),
+            "emitted_findings": emitted,
+            "dismissed": dismissed,
+        }
+    )
+    attestation = coverage_attestation(
+        evidence_id="evidence-1",
+        manifest_entries=[{"source_section": "1.1"}],
+    )
+    lanes = attestation["lanes"]
+    assert isinstance(lanes, list)
+    assert isinstance(lanes[0], dict)
+    lanes[0]["candidate_count"] = canonical_counts["total"]
+    attestation["disposition_counts"] = canonical_counts
+    record_bundle = attestation["record_bundle"]
+    assert isinstance(record_bundle, dict)
+    record_bundle["candidate_dispositions"] = records
+    record_bundle["adjacent_variant_sweeps"] = [
+        {
+            "check_key": record["check_key"],
+            "seed_candidate_id": record["candidate_id"],
+            "query_evidence": [f"gcode search {record['candidate_id']}"],
+            "sites_checked": ["src/consumer.py"],
+            "resulting_candidate_ids": [],
+        }
+        for record in records
+    ]
+    unsigned = {key: value for key, value in attestation.items() if key != "attestation_digest"}
+    attestation["attestation_digest"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return validate_round_result(
+        {
+            "verdict": "needs_review",
+            "convergence_telemetry": enriched_telemetry(),
+            "findings": [dict(finding) for finding in findings],
+            "candidate_dispositions": records,
+            "coverage_attestation": attestation,
+        }
+    )
+
+
+def round_diff_finding(
+    finding_id: str,
+    *,
+    severity: str = "blocking",
+    participating: list[str] | None = None,
+    causal: list[str] | None = None,
+    causal_finding_id: str | None = None,
+    introduced_in_round: int | None = None,
+    principle: str | None = "Review the complete invariant.",
+) -> dict[str, object]:
+    finding: dict[str, object] = {
+        "finding_id": finding_id,
+        "section_id": "A",
+        "check_key": f"check-{finding_id.lower()}",
+        "severity": severity,
+        "category": "unhandled-edge",
+        "location": "§ A",
+        "description": f"Finding {finding_id}",
+        "minimal_repair": f"Fix {finding_id}",
+        "repair_scope": "existing_sections",
+        "prevention": f"Prevent {finding_id}",
+    }
+    if severity == "blocking":
+        finding["failure_trace"] = {
+            "preconditions": "The original plan is otherwise unchanged.",
+            "action": f"The reviewer exercises {finding_id}.",
+            "wrong_outcome": f"Finding {finding_id} remains reachable.",
+            "violated_obligation": "The reviewed plan must close blocking failure paths.",
+            "citation": [{"path": "plan.md", "sha256": "0" * 64}],
+        }
+    if principle is not None:
+        finding["principle"] = principle
+    if participating is not None:
+        finding["participating_section_ids"] = participating
+    if causal is not None:
+        finding["causal_section_ids"] = causal
+    if causal_finding_id is not None:
+        finding["causal_finding_id"] = causal_finding_id
+    if introduced_in_round is not None:
+        finding["introduced_in_round"] = introduced_in_round
+    return finding
+
+
+def review_evidence_row(
+    round_number: int,
+    hashes: dict[str, str],
+    findings: list[dict[str, object]],
+    *,
+    task_id: str = "task-lineage",
+    stage: str = "planning",
+    project_id: str = "project",
+    plan_path: str = ".gobby/plans/review.md",
+    finalized: bool = True,
+    verdict: str = "needs_review",
+    evidence_id: str | None = None,
+) -> PlanReviewEvidence:
+    created_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=round_number)
+    round_result: dict[str, object] = {
+        "verdict": verdict,
+        "findings": findings,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
+            shadow_valid=verdict == "approved",
+            manifest_entries=[{"source_section": "A"}] if verdict == "approved" else None,
+        ),
+        "convergence_telemetry": enriched_telemetry(),
+    }
+    if verdict == "approved":
+        round_result["manifest_entries"] = [{"source_section": "A"}]
+        round_result["routing_decisions"] = {}
+    return PlanReviewEvidence(
+        evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
+        project_id=project_id,
+        plan_path=plan_path,
+        plan_hash=f"plan-{round_number}",
+        section_manifest=tuple(
+            SectionHash(section_id=section_id, section_hash=section_hash)
+            for section_id, section_hash in hashes.items()
+        ),
+        snapshot=f"snapshot-{round_number}".encode(),
+        round_number=round_number,
+        session_id=None,
+        task_id=task_id,
+        stage=stage,
+        dispatch_run_id=f"run-{round_number}",
+        lease_expires_at=None,
+        finalized_at=created_at if finalized else None,
+        expired_at=None,
+        round_result=round_result,
+        approval_result=round_result if verdict == "approved" and finalized else None,
+        approved_at=created_at if verdict == "approved" and finalized else None,
+        lesson_mint_status="pending" if verdict == "approved" and finalized else None,
+        lesson_mint_detail=None,
+        manifest_digest=None,
+        manifest_payload=None,
+        manifest_state=None,
+        manifest_result=None,
+        manifest_applied_at=None,
+        quality_ledger=None,
+        repair_attestations=None,
+        prior_round_context=None,
+        created_at=created_at,
+    )
+
+
+class StubReviewLearningService:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[dict[str, Any]] = []
+
+    async def record(self, **kwargs: Any) -> dict[str, object]:
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("recorder unavailable")
+        return {"lesson_id": "lesson-1"}
 
 
 def coverage_attestation(

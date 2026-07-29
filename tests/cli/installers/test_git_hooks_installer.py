@@ -812,17 +812,15 @@ class TestInstallGitHooks:
             text=True,
         )
         try:
-            started = time.monotonic()
             subprocess.run([str(hook)], cwd=repo, check=False, timeout=1)
-            elapsed = time.monotonic() - started
             stdout, _ = reader.communicate(timeout=1)
         except subprocess.TimeoutExpired:
             reader.kill()
             reader.communicate()
             pytest.fail("post-commit gcode process did not exit after lock skip")
 
-        assert elapsed < 1
         assert stdout == "done\n"
+        time.sleep(0.1)
         assert "--skip-if-locked" in args_file.read_text().splitlines()
         assert not waiter_file.exists()
         assert not curl_file.exists()

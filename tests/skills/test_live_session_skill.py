@@ -17,7 +17,7 @@ BRIDGE_SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/bridge/SKILL.md
 
 
 def test_live_session_skill_parses_with_root_interactive_metadata() -> None:
-    parsed = SkillLoader().load_skill(LIVE_SKILL_DIR, validate=False)
+    parsed = SkillLoader().load_skill(LIVE_SKILL_DIR, validate=True)
     frontmatter, content = parse_frontmatter(
         (LIVE_SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     )

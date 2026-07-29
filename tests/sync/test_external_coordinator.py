@@ -279,6 +279,7 @@ async def test_wait_for_idle_drains_dispatched_work() -> None:
         await coordinator.refresh()
         await asyncio.wait_for(entered.wait(), timeout=1.0)
         draining = asyncio.create_task(coordinator.wait_for_idle())
+        await asyncio.sleep(0)
         assert not draining.done()
 
         release.set()
@@ -289,6 +290,7 @@ async def test_wait_for_idle_drains_dispatched_work() -> None:
 @pytest.mark.asyncio
 async def test_run_survives_recoverable_refresh_failure() -> None:
     coordinator, _ = _coordinator([])
+    coordinator.refresh_interval_seconds = 0.01
     shutdown = asyncio.Event()
     attempts = 0
 
@@ -300,7 +302,7 @@ async def test_run_survives_recoverable_refresh_failure() -> None:
         shutdown.set()
 
     with patch.object(coordinator, "refresh", new=AsyncMock(side_effect=refresh)):
-        await coordinator.run(shutdown)
+        await asyncio.wait_for(coordinator.run(shutdown), timeout=1.0)
 
     assert attempts == 2
 

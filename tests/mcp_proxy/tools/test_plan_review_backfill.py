@@ -13,9 +13,9 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
+from tests.review_coverage_helpers import StubReviewLearningService
 from tests.review_learning.test_round_diff import (
     DurableLineage,
-    StubReviewLearningService,
     _create_durable_lineage,
     _persist_round,
     _plan_text,

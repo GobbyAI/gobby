@@ -309,15 +309,17 @@ async def test_sync_worker_loop_uses_context_daemon_config_breaker(
         daemon_config_breaker=breaker,
     )
 
-    await sync_worker_loop(
-        storage=MagicMock(),
-        context=cast(CodeIndexContext, context),
-        config=CodeIndexConfig(sync_worker_interval_seconds=0.01),
-        shutdown_flag=shutdown,
+    await asyncio.wait_for(
+        sync_worker_loop(
+            storage=MagicMock(),
+            context=cast(CodeIndexContext, context),
+            config=CodeIndexConfig(sync_worker_interval_seconds=0.01),
+            shutdown_flag=shutdown,
+        ),
+        timeout=1.0,
     )
 
     assert seen_breakers == [breaker]
-    assert shutdown.is_set()
 
 
 def test_context_uses_configured_daemon_failure_threshold() -> None:

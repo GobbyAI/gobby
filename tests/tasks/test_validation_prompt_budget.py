@@ -84,6 +84,43 @@ async def test_prompt_between_legacy_and_default_limits_reaches_llm_intact(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("configured_limit", [None, 8_000])
+async def test_prompt_at_exact_limit_reaches_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_limit: int | None,
+) -> None:
+    config = (
+        TaskValidationConfig()
+        if configured_limit is None
+        else TaskValidationConfig(close_review_prompt_max_chars=configured_limit)
+    )
+    expected_limit = config.close_review_prompt_max_chars
+
+    def render_at_limit(
+        _path: str,
+        context: dict[str, Any] | None = None,
+        strict: bool = False,
+    ) -> str:
+        del context, strict
+        return "x" * expected_limit
+
+    validator, llm_service = _validator(config)
+    monkeypatch.setattr(validator._loader, "render", render_at_limit)
+
+    await validator.validate_task(
+        task_id="task-1",
+        title="Use the exact prompt budget",
+        changes_summary="Implemented.",
+        validation_criteria="The exact configured limit is accepted.",
+        diff_text=None,
+        checklist_facts={},
+    )
+
+    llm_service.call_json_feature.assert_awaited_once()
+    assert llm_service.call_json_feature.await_args.args[1] == "x" * expected_limit
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("configured_limit", "prompt_chars"),
     [(None, 32_001), (8_000, 8_001)],

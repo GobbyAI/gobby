@@ -320,7 +320,7 @@
     "workflows/agents/qa-dev.yaml": "3066bf5abb804e13c2dbe0e9bdb3f53b94fdc0d6ab8fbc52a8f1ef029c6cf5f6",
     "workflows/agents/qa-reviewer.yaml": "df78bae3907a60e1d405972acb9c07c1f1df7e75c2700d1e5af5893bee7ab347",
     "workflows/agents/researcher.yaml": "f465476cca2c406bdda7943b69271a77164c51238d00dbdac94f5fd9429767ec",
-    "workflows/agents/tech-writer.yaml": "5ae856a3a9e56b3b917abc198839a24f3ffd2ea5f8c5ba8239471c50942d1e39",
+    "workflows/agents/tech-writer.yaml": "9337df91b0ed934dd649c59b1ca10c259464c3024283d67089ccdc755103cff4",
     "workflows/agents/trajectory-monitor.yaml": "a908ae8e087197ae3331f33d598d8cacde37764dc89e0ad7c25c6e366e67dc58",
     "workflows/agents/triage-agent.yaml": "4351666c34152569d4118e92a11cc59f2c7e114ab19536097a1536d0d9e1e7dd",
     "workflows/agents/wiki-researcher.yaml": "0e2134c8755544726870524178e4311528cc8c438f5c2b3c512d985704efa357",

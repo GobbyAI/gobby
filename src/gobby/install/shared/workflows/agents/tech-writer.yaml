@@ -44,7 +44,8 @@ instructions: |
   HANDOFF:
   Inspect the assigned task's stage manifest. If the current development row has
   no review gate, commit the documentation changes, call close_task with
-  preview=true and the commit_sha, then repair every blocker until it closes.
+  preview=true, the commit_sha, and changes_summary, then repair every blocker
+  until it closes.
   If review is enabled, commit the changes and
   call submit_for_review with `stage_name="development"` so rule_qa can dispatch
   a reviewer.
@@ -135,8 +136,8 @@ steps:
     status_message: |
       Implement the docs leaf. Commit changes, then inspect the assigned task
       manifest. If development review is disabled, call close_task with
-      preview=true and commit_sha, then repair every blocker until it closes;
-      otherwise submit_for_review(stage_name="development") for QA.
+      preview=true, commit_sha, and changes_summary, then repair every blocker
+      until it closes; otherwise submit_for_review(stage_name="development") for QA.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:de_escalate_task"

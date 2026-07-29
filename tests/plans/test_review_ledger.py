@@ -1,47 +1,22 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 
 import pytest
 
-from gobby.plans.review_evidence_models import ReviewEvidenceError, validate_round_result
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_findings import CHECK_KEY_RE, FINDING_CATEGORIES
 from gobby.plans.review_ledger import (
     inject_dismissed_ledger_context,
     merge_quality_ledger,
     validate_quality_ledger,
 )
-from tests.review_coverage_helpers import coverage_attestation
-from tests.review_telemetry_helpers import enriched_telemetry
-
-
-def _finding(
-    finding_id: str,
-    *,
-    check_key: str = "consumer-parity",
-    category: str = "unhandled-edge",
-    section_ids: Sequence[str] = ("1.1",),
-    description: str = "Consumer misses the new field.",
-    repair_scope: str = "existing_sections",
-) -> dict[str, object]:
-    primary, *participating = section_ids
-    finding: dict[str, object] = {
-        "finding_id": finding_id,
-        "section_id": primary,
-        "check_key": check_key,
-        "severity": "major",
-        "category": category,
-        "location": "src/consumer.py:10",
-        "description": description,
-        "minimal_repair": "Read the new field.",
-        "repair_scope": repair_scope,
-        "prevention": "Audit every consumer.",
-    }
-    if participating:
-        finding["participating_section_ids"] = list(participating)
-    return finding
+from tests.review_coverage_helpers import (
+    ledger_finding as _finding,
+)
+from tests.review_coverage_helpers import (
+    ledger_round_result as _round_result,
+)
 
 
 def _disposition(
@@ -61,60 +36,6 @@ def _disposition(
     if finding_id is not None:
         record["finding_id"] = finding_id
     return record
-
-
-def _round_result(
-    *,
-    findings: Sequence[Mapping[str, object]] = (),
-    dispositions: Sequence[Mapping[str, object]] = (),
-    counts: Mapping[str, int] | None = None,
-) -> dict[str, object]:
-    records = [dict(record) for record in dispositions]
-    emitted = sum(record["disposition"] == "emitted_finding" for record in records)
-    dismissed = sum(record["disposition"] == "dismissed" for record in records)
-    canonical_counts = dict(
-        counts
-        or {
-            "total": len(records),
-            "emitted_findings": emitted,
-            "dismissed": dismissed,
-        }
-    )
-    attestation = coverage_attestation(
-        evidence_id="evidence-1",
-        manifest_entries=[{"source_section": "1.1"}],
-    )
-    lanes = attestation["lanes"]
-    assert isinstance(lanes, list)
-    assert isinstance(lanes[0], dict)
-    lanes[0]["candidate_count"] = canonical_counts["total"]
-    attestation["disposition_counts"] = canonical_counts
-    record_bundle = attestation["record_bundle"]
-    assert isinstance(record_bundle, dict)
-    record_bundle["candidate_dispositions"] = records
-    record_bundle["adjacent_variant_sweeps"] = [
-        {
-            "check_key": record["check_key"],
-            "seed_candidate_id": record["candidate_id"],
-            "query_evidence": [f"gcode search {record['candidate_id']}"],
-            "sites_checked": ["src/consumer.py"],
-            "resulting_candidate_ids": [],
-        }
-        for record in records
-    ]
-    unsigned = {key: value for key, value in attestation.items() if key != "attestation_digest"}
-    attestation["attestation_digest"] = hashlib.sha256(
-        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return validate_round_result(
-        {
-            "verdict": "needs_review",
-            "convergence_telemetry": enriched_telemetry(),
-            "findings": [dict(finding) for finding in findings],
-            "candidate_dispositions": records,
-            "coverage_attestation": attestation,
-        }
-    )
 
 
 def _carry(*finding_ids: str) -> dict[str, object]:

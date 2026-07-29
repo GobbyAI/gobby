@@ -136,6 +136,7 @@ def test_manifest_parser_and_encoder_are_public() -> None:
     parser.feed(b"M\x00src/example.py\x00")
     parser.finish()
 
+    assert len(emitted) == 1
     assert emitted[0][1] == b"src/example.py"
     assert emitted[0][0]["path"] == {"encoding": "utf-8", "text": "src/example.py"}
     assert encode_bytes(b"\xff") == {"encoding": "base64", "data": "/w=="}

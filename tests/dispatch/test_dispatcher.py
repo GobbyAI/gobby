@@ -845,6 +845,8 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
         wait_call_count += 1
         if wait_call_count == 1:
             assert await asyncio.to_thread(registration_started.wait, 2)
+            if inspect.iscoroutine(awaitable):
+                awaitable.close()
             raise TimeoutError
         release_registration.set()
         return await real_wait_for(awaitable, timeout=timeout)

@@ -420,8 +420,11 @@ CSS files and fails on any addition. New styling goes in Tailwind utilities at
 the call site, `cva` definitions for variants, or a `components/ui` primitive.
 
 The existing sheets (feature-scoped modules for integrations, agents,
-workflows, and chat tabs; global sheets under `web/src/styles/`) are legacy
-debt under a total line ceiling that only shrinks. When editing one:
+workflows, and chat tabs; global sheets under `web/src/styles/`, including
+the allowlisted `src/styles/dropdown-caret.css`) are tracked exceptions. They
+remain in the exact allowlist and do not permit new stylesheets.
+This legacy debt remains under a total line ceiling that only shrinks. When
+editing one:
 
 - Keep to its established BEM-style naming (`.my-feature__item--active`).
 - Prefer deleting rules by migrating the styled markup onto primitives and
@@ -596,7 +599,6 @@ web/src/
 │   ├── app/                # App shell helpers, navigation, lazy pages
 │   ├── auth/               # Login and auth surfaces
 │   ├── chat/               # Chat page, input, messages, chat-specific styles
-│   │   └── ui/             # Shared UI primitives
 │   ├── code/               # Code graph/code page surfaces
 │   ├── code-graph/         # Code knowledge-graph visualization
 │   ├── command-browser/    # Slash command and tool/skill browser modals

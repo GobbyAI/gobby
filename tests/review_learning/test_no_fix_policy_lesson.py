@@ -12,21 +12,24 @@ from gobby.review_learning import recorders
 from gobby.review_learning.recorders import mint_plan_review_lessons
 from gobby.review_learning.round_diff import classify_plan_review_rounds
 from gobby.storage.hub.protocol import HubDatabase
-from tests.plans.test_review_ledger import (
-    _finding as _ledger_finding,
-)
-from tests.plans.test_review_ledger import (
-    _round_result,
-)
-from tests.review_learning.test_round_diff import (
-    STAGE,
-    TASK_ID,
+from tests.review_coverage_helpers import (
     StubReviewLearningService,
-    _row,
 )
-from tests.review_learning.test_round_diff import (
-    _finding as _round_finding,
+from tests.review_coverage_helpers import (
+    ledger_finding as _ledger_finding,
 )
+from tests.review_coverage_helpers import (
+    ledger_round_result as _round_result,
+)
+from tests.review_coverage_helpers import (
+    review_evidence_row as _row,
+)
+from tests.review_coverage_helpers import (
+    round_diff_finding as _round_finding,
+)
+
+TASK_ID = "task-lineage"
+STAGE = "planning"
 
 
 def _carried_ledger(rounds_carried: int = 3) -> list[dict[str, object]]:

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import pytest
 
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
+from gobby.plans.review_evidence_models import PlanReviewEvidence
+from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
 from gobby.review_learning.recorders import mint_plan_review_lessons
 from gobby.review_learning.round_diff import (
@@ -24,8 +24,15 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import (
     StageReviewSetup,
+    StubReviewLearningService,
     coverage_attestation,
     prepare_bound_review,
+)
+from tests.review_coverage_helpers import (
+    review_evidence_row as _row,
+)
+from tests.review_coverage_helpers import (
+    round_diff_finding as _finding,
 )
 from tests.review_coverage_helpers import (
     stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
@@ -38,117 +45,13 @@ STAGE = "planning"
 _SWEEP_SCOPE_DIGEST = "a" * 64
 
 
-def _finding(
-    finding_id: str,
-    *,
-    severity: str = "blocking",
-    participating: list[str] | None = None,
-    causal: list[str] | None = None,
-    causal_finding_id: str | None = None,
-    introduced_in_round: int | None = None,
-    principle: str | None = "Review the complete invariant.",
-) -> dict[str, object]:
-    finding: dict[str, object] = {
-        "finding_id": finding_id,
-        "section_id": "A",
-        "check_key": f"check-{finding_id.lower()}",
-        "severity": severity,
-        "category": "unhandled-edge",
-        "location": "§ A",
-        "description": f"Finding {finding_id}",
-        "minimal_repair": f"Fix {finding_id}",
-        "repair_scope": "existing_sections",
-        "prevention": f"Prevent {finding_id}",
-    }
-    if severity == "blocking":
-        finding["failure_trace"] = {
-            "preconditions": "The original plan is otherwise unchanged.",
-            "action": f"The reviewer exercises {finding_id}.",
-            "wrong_outcome": f"Finding {finding_id} remains reachable.",
-            "violated_obligation": "The reviewed plan must close blocking failure paths.",
-            "citation": [{"path": "plan.md", "sha256": "0" * 64}],
-        }
-    if principle is not None:
-        finding["principle"] = principle
-    if participating is not None:
-        finding["participating_section_ids"] = participating
-    if causal is not None:
-        finding["causal_section_ids"] = causal
-    if causal_finding_id is not None:
-        finding["causal_finding_id"] = causal_finding_id
-    if introduced_in_round is not None:
-        finding["introduced_in_round"] = introduced_in_round
-    return finding
-
-
 def test_findings_use_canonical_remedy_field() -> None:
-    finding = _finding("F1")
+    evidence = _row(1, {"A": "a" * 64}, [])
+    finding = validate_plan_review_findings([_finding("F1")], evidence=evidence)[0]
 
     assert finding["minimal_repair"] == "Fix F1"
     assert "fix" not in finding
     assert "failure_trace" in finding
-
-
-def _row(
-    round_number: int,
-    hashes: dict[str, str],
-    findings: list[dict[str, object]],
-    *,
-    task_id: str = TASK_ID,
-    stage: str = STAGE,
-    project_id: str = "project",
-    plan_path: str = PLAN_PATH,
-    finalized: bool = True,
-    verdict: str = "needs_review",
-    evidence_id: str | None = None,
-) -> PlanReviewEvidence:
-    created_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=round_number)
-    round_result: dict[str, object] = {
-        "verdict": verdict,
-        "findings": findings,
-        "coverage_attestation": coverage_attestation(
-            evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
-            shadow_valid=verdict == "approved",
-            manifest_entries=[{"source_section": "A"}] if verdict == "approved" else None,
-        ),
-        "convergence_telemetry": enriched_telemetry(),
-    }
-    if verdict == "approved":
-        round_result["manifest_entries"] = [{"source_section": "A"}]
-        round_result["routing_decisions"] = {}
-    return PlanReviewEvidence(
-        evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
-        project_id=project_id,
-        plan_path=plan_path,
-        plan_hash=f"plan-{round_number}",
-        section_manifest=tuple(
-            SectionHash(section_id=section_id, section_hash=section_hash)
-            for section_id, section_hash in hashes.items()
-        ),
-        snapshot=f"snapshot-{round_number}".encode(),
-        round_number=round_number,
-        session_id=None,
-        task_id=task_id,
-        stage=stage,
-        dispatch_run_id=f"run-{round_number}",
-        lease_expires_at=None,
-        finalized_at=created_at if finalized else None,
-        expired_at=None,
-        round_result=round_result,
-        approval_result=round_result if verdict == "approved" and finalized else None,
-        approved_at=created_at if verdict == "approved" and finalized else None,
-        lesson_mint_status="pending" if verdict == "approved" and finalized else None,
-        lesson_mint_detail=None,
-        manifest_digest=None,
-        manifest_payload=None,
-        manifest_state=None,
-        manifest_result=None,
-        manifest_applied_at=None,
-        quality_ledger=None,
-        repair_attestations=None,
-        prior_round_context=None,
-        created_at=created_at,
-    )
 
 
 def _classes(rows: list[PlanReviewEvidence], finding_id: str) -> set[str]:
@@ -364,18 +267,6 @@ class DurableLineage:
     session_id: str
     plan_path: Path
     approval_evidence_id: str
-
-
-class StubReviewLearningService:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.calls: list[dict[str, Any]] = []
-
-    async def record(self, **kwargs: Any) -> dict[str, object]:
-        self.calls.append(kwargs)
-        if self.fail:
-            raise RuntimeError("recorder unavailable")
-        return {"lesson_id": "lesson-1"}
 
 
 def _plan_text(body: str = "Stable requirement.") -> str:

@@ -33,6 +33,14 @@ from gobby.sync.linear_task_ops import (
 
 pytestmark = pytest.mark.unit
 
+_TEST_MONKEYPATCH = pytest.MonkeyPatch()
+
+
+@pytest.fixture(autouse=True)
+def _restore_test_replacements() -> Iterator[None]:
+    yield
+    _TEST_MONKEYPATCH.undo()
+
 
 @pytest.mark.parametrize(
     ("gobby_priority", "linear_priority"),
@@ -112,7 +120,7 @@ def _set_task_state(task: MagicMock, state: str) -> None:
 
 def _replace_for_test(target: object, name: str, replacement: object) -> None:
     """Replace a concrete service attribute with an explicit test double."""
-    object.__setattr__(target, name, replacement)
+    _TEST_MONKEYPATCH.setattr(target, name, replacement)
 
 
 def _cron_job() -> CronJob:

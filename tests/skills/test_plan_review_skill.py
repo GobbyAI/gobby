@@ -194,6 +194,7 @@ class TestPlanReviewContent:
         assert "**new_deliverable_justification**" in body
 
     def test_three_lane_coverage_and_complexity_thresholds(self, body: str) -> None:
+        normalized_body = " ".join(body.lower().split())
         for lane in (
             "requirements_traceability",
             "repository_blast_radius",
@@ -202,8 +203,11 @@ class TestPlanReviewContent:
             assert lane in body
         for threshold in ("8 deliverables", "24 acceptance", "12 distinct target", "4 sections"):
             assert threshold in body
-        assert "one read-only provider-native internal subagent per lane" in body.lower()
-        assert "run all three concurrently" in " ".join(body.lower().split())
+        assert (
+            "parallel fanout is limited to one read-only provider-native internal "
+            "subagent per lane" in normalized_body
+        )
+        assert "run all three concurrently." in normalized_body
         assert "plan-review-researcher-taskless" not in body
         assert "`gobby-agents:spawn_agent` for lane research" in body
         assert "15 minutes" in body

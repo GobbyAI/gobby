@@ -19,7 +19,8 @@ These are enforced by hooks, rules and workflows.
    that session or agent with the exact failing command, diagnostics, and affected
    paths. If no holder can be resolved, notify the user or project operator.
    Failures confined to excluded dirty paths do not block your task's validation or
-   close gates. The only exception for an owned path is something that genuinely
+   close gates after a passing scoped rerun against owned or clean paths demonstrates
+   that confinement. The only exception for an owned path is something that genuinely
    requires multi-session architectural planning; even then, investigate thoroughly
    and attempt the fix before filing a task to defer it.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.

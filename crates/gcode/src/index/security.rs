@@ -145,12 +145,17 @@ pub fn has_secret_extension(path: &Path) -> bool {
         return true;
     }
 
+    let plaintext_name = name.strip_prefix('.').unwrap_or(name.as_str());
+    let plaintext_stem = if suffix.is_empty() {
+        plaintext_name
+    } else {
+        plaintext_name
+            .strip_suffix(&suffix)
+            .unwrap_or(plaintext_name)
+    };
+
     PLAINTEXT_SECRET_EXTENSIONS.contains(&suffix.as_str())
-        && is_plaintext_secret_name(if suffix.is_empty() {
-            name.as_str()
-        } else {
-            name.strip_suffix(&suffix).unwrap_or(name.as_str())
-        })
+        && is_plaintext_secret_name(plaintext_stem)
 }
 
 fn is_plaintext_secret_name(stem: &str) -> bool {
@@ -213,6 +218,11 @@ mod tests {
             ("credentials.yaml", true),
             ("api_key.cfg", true),
             ("apikey.xml", true),
+            (".token", true),
+            (".token.txt", true),
+            (".credentials", true),
+            (".api_key", true),
+            (".apikey", true),
             (".env", true),
             (".env.local", true),
             ("settings.env", true),

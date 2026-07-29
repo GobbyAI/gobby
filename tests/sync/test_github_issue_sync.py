@@ -291,7 +291,9 @@ async def test_sync_issue_offloads_synchronous_storage_and_manager_calls(
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        offloaded.append(getattr(func, "_mock_name", None) or func.__name__)
+        mock_name = getattr(func, "_mock_name", None)
+        fallback_name = getattr(func, "__name__", type(func).__name__)
+        offloaded.append(mock_name if isinstance(mock_name, str) else str(fallback_name))
         return func(*args, **kwargs)
 
     with patch("gobby.sync.github_issue_sync.asyncio.to_thread", side_effect=record_to_thread):

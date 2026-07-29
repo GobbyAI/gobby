@@ -8,6 +8,7 @@ use crate::commands::index::{
 };
 use crate::ingest::{self, session_archive};
 use crate::progress::ProgressOptions;
+use crate::search::SearchScope;
 use crate::support::counts::{IndexCounts, index_counts};
 use crate::support::env::database_url_for;
 use crate::support::scope::{
@@ -20,6 +21,12 @@ use crate::{
 };
 
 const COMMAND: &str = "gwiki sync-sessions";
+
+struct SessionSyncPhaseContext<'a, 'progress> {
+    conn: &'a mut postgres::Client,
+    search_scope: &'a SearchScope,
+    progress: &'a mut ProgressOptions<'progress>,
+}
 
 /// Machine-global topic scope that daemon-synthesized session wikis are ingested
 /// into. The daemon writes session pages to one flat global directory
@@ -88,11 +95,15 @@ fn execute_with_database_url(
     if let Some(database_url) = database_url()? {
         let mut conn = connect_postgres_index(&database_url, COMMAND)?;
         let search_scope = search_scope_for_resolved(&scope);
-        let mut phase_context = (&mut conn, &search_scope, &mut progress);
+        let mut phase_context = SessionSyncPhaseContext {
+            conn: &mut conn,
+            search_scope: &search_scope,
+            progress: &mut progress,
+        };
         let result = run_persistent_write_phases(
             &mut phase_context,
-            |(conn, search_scope, progress)| {
-                let mut store = postgres_store_for_search(conn, search_scope);
+            |context| {
+                let mut store = postgres_store_for_search(&mut *context.conn, context.search_scope);
                 session_archive::sync_session_transcript_archives(
                     scope.root(),
                     &mut store,
@@ -104,16 +115,26 @@ fn execute_with_database_url(
                         enrich: options.enrich,
                         fetched_at: &fetched_at,
                     },
-                    progress,
+                    &mut *context.progress,
                 )
             },
             |result| result.has_changes(),
-            |(conn, search_scope, progress)| {
-                sync_qdrant_vectors(conn, search_scope, COMMAND, progress)?;
+            |context| {
+                sync_qdrant_vectors(
+                    &mut *context.conn,
+                    context.search_scope,
+                    COMMAND,
+                    &mut *context.progress,
+                )?;
                 Ok(())
             },
-            |(conn, search_scope, progress)| {
-                sync_falkor_graph(conn, search_scope, COMMAND, progress)?;
+            |context| {
+                sync_falkor_graph(
+                    &mut *context.conn,
+                    context.search_scope,
+                    COMMAND,
+                    &mut *context.progress,
+                )?;
                 Ok(())
             },
         )?;

@@ -235,7 +235,7 @@ class TestMCPConfigManagerLoadServers:
 
     def test_load_servers_skips_without_name(
         self,
-        tmp_path,
+        tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test that servers without name are skipped."""
