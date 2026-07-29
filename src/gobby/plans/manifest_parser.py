@@ -71,7 +71,15 @@ def resolve_manifest(
 
     if not manifest_sections:
         if parse_mode in ("expansion", "strict"):
-            errors.append((max(len(lines), 1), "missing manifest"))
+            errors.append(
+                (
+                    max(len(lines), 1),
+                    f'missing manifest (parse_mode="{parse_mode}" requires a '
+                    '"## M1 Task Manifest" section; pre-expansion drafts parse '
+                    'under parse_mode="draft", which is what `gobby plans '
+                    "validate` uses)",
+                )
+            )
         return ()
 
     manifest_section = manifest_sections[0]

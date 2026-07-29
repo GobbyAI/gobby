@@ -18,130 +18,49 @@ universal frontend renderer for the Watching panel and ChatPage, and one new
 provider — Cursor CLI — integrated as validation that the architecture
 handles non-JSONL (SQLite-backed) sources.
 
-## Requirements
-`kind: framing`
-
-This section and `## Constraints`, `## Success Criteria`, and `## Decision Log`
-are the confirmed Decision Record for this plan — the authoritative requirement
-universe adversarial review measures the deliverables against. Owner: josh.
-Confirmed 2026-07-28, amended 2026-07-29 (see `## Decision Log`). Each labeled
-item (`R<n>`, `C<n>`, `S<n>`) is a citable requirement.
-
-**Problem.** Gobby parses five AI-coding-CLI transcript formats through one
-Python engine, but provider knowledge is dispersed and the wire contract leaks
-provider-native shapes into the web renderer. Concretely, as of 2026-07-28:
-
-- Provider knowledge lives in roughly twelve independent lists across
-  `src/gobby/sessions/transcript_paths.py`, `transcript_source.py`,
-  `transcript_tool_metadata.py`, `src/gobby/agents/watchdog/registry.py`, and
-  three TypeScript copies under `web/src/`.
-- Three parser dispatchers disagree: `get_parser`
-  (`src/gobby/sessions/transcripts/__init__.py:33`), the private `_get_parser`
-  clone (`src/gobby/sessions/transcript_parsing.py:27`), and an inlined
-  source chain in `src/gobby/sessions/transcript_processing.py` that **defaults
-  unknown sources to the Claude parser**, silently mis-parsing any new provider.
-- The renderer boundary leaks: Codex argv-array commands render blank
-  summaries, Codex `read` calls fall back to generic JSON dumps, the
-  `<gobby-*>` protocol grammar is reimplemented in ~400 lines of TypeScript
-  that must be fixed in lockstep with Python, and diffs are reverse-engineered
-  client-side from `old_string`/`new_string`.
-
-**Requirements.**
-
-- **R1 — One canonical normalized message contract.** A single normalized
-  transcript message shape, authored language-neutrally as a JSON Schema plus
-  golden fixtures under `docs/contracts/`, versioned with an explicit policy.
-  Every consumer reads that shape and no provider-native shape.
-- **R2 — One declarative provider registry.** A single `ProviderSpec` source of
-  per-provider knowledge (paths, sniffing, parser, watchdog reader, tool
-  aliases, argument key maps, render suppression, usage source), with
-  import-time parity guards against `SessionSource`, the parser registry, and
-  the watchdog registry, so a provider cannot be half-registered.
-- **R3 — One fail-closed parser dispatch.** Exactly one dispatch function
-  driven by the registry. An unknown source raises rather than falling back to
-  Claude.
-- **R4 — A renderer contract with zero provider knowledge in TypeScript.**
-  Canonical tool arguments, a closed content-block enum, a closed tool-type
-  enum, typed tool results, server-resolved protocol tags, first-class diff
-  blocks, server-authoritative roles, one stable message-ID scheme, and
-  per-message completeness on both transports.
-- **R5 — One universal frontend renderer.** The Watching panel and ChatPage
-  share one message pipeline and one virtualized list, and render identical
-  output for identical payloads. Per-message provenance (model, token usage)
-  reaches the UI.
-- **R6 — Drift fails loudly.** Version-pinned raw fixtures with committed
-  expected normalized output for every provider, validated in CI against the
-  schema; TypeScript types are generated from the schema and a staleness check
-  fails when the schema moves without regeneration.
-- **R7 — Cursor CLI as provider six.** Cursor is integrated end to end —
-  provider spec, transcript source, parser, hooks adapter, watchdog reader,
-  spawn support, feature-tier registration — as proof that a non-JSONL,
-  SQLite-backed source works through the new architecture rather than around it.
-
 ## Constraints
 `kind: framing`
 
-- **C1 — Normalization is never persisted.** It is produced on demand. No
-  normalized artifact on disk and no new Postgres tables. The `sessions`
-  aggregate model, `token_events`, and file-based window rendering remain the
-  storage story.
-- **C2 — Raw transcripts stay byte-exact.** CLI-owned live transcripts are
-  read-only, and `~/.gobby/session_transcripts/{external_id}.jsonl.gz` archives
-  remain unmodified raw copies used by resume/restore. One deliberate,
-  Cursor-scoped exception: Cursor archives are produced by the §5.2 import
-  bridge as a message-level JSONL export of the decoded store content — each
-  message's provider-native AI-SDK JSON, unmodified, in root order — riding the
-  same archive path. The CLI artifact is a database schema Gobby doesn't own,
-  so Gobby archives the extracted messages rather than the container.
-- **C3 — Gobby never modifies Cursor-owned state.** No copy or restore of
-  Cursor's live WAL database, and no write-back into `~/.cursor`. Read access
-  is read-only snapshot reads. One measured exception is inherent to SQLite
-  rather than to Gobby: opening a WAL database read-only when its `-shm` member
-  is absent causes SQLite to create that 32 KiB WAL index alongside the
-  database, where it survives connection close. `-shm` is a regenerable
-  shared-memory index carrying no transcript content, and `.db`/`-wal` bytes and
-  mtimes are unchanged (verified 2026-07-29). Resume stays Cursor-side via
-  `--resume <chatId>` against Cursor's own store, which makes native resume
-  same-machine-only by design; cross-machine handoff is transcript/summary
-  handoff, as with any provider.
-- **C4 — One bounded Rust change.** `crates/gwiki` keeps its current
-  per-provider adapters; migration to the normalized contract is out of scope
-  (§D1). `crates/ghook` gets exactly one required change: a `cursor` arm in
-  `CliConfig::for_cli` (`crates/ghook/src/cli_config.rs:21`) plus its test.
+- **One bounded Rust change.** `crates/gwiki` keeps its current per-provider
+  adapters; migration to the normalized contract is deferred to task #19207
+  (section D1). `crates/ghook` gets exactly one required change: a `cursor` arm
+  in `CliConfig::for_cli` (`crates/ghook/src/cli_config.rs:21`) plus its test.
   This is not conditional — `for_cli` matches a fixed CLI set and falls to
   `_ => None` for `cursor`, and `crates/ghook/src/dispatch.rs:25` answers `None`
   with `emit_empty_json()` and exit code 2, so without the arm every Cursor hook
   event dies before reaching the daemon. The arm's `critical_hooks` set comes
   from the §5.1 fired-event inventory. No other Rust change is permitted.
-- **C5 — Internal-first.** The contract is authored language-neutrally
+- **Raw transcripts stay byte-exact.** CLI-owned live transcripts are
+  read-only, and `~/.gobby/session_transcripts/{external_id}.jsonl.gz` archives
+  remain unmodified raw copies used by resume/restore. No persisted normalized
+  artifact: normalization is produced on demand. **Cursor refinement:** Gobby
+  never copies or restores Cursor's live WAL database, and never modifies
+  Cursor's database or WAL or writes any transcript state into Cursor-owned
+  paths. One measured exception is inherent to SQLite rather than to Gobby:
+  opening a WAL database read-only when its `-shm` member is absent causes
+  SQLite to create that 32 KiB WAL index alongside the database, where it
+  survives connection close. `-shm` is a regenerable shared-memory index
+  carrying no transcript content, and `.db`/`-wal` bytes and mtimes are
+  unchanged (verified 2026-07-29). Resume stays Cursor-side via
+  `--resume <chatId>`
+  against Cursor's own store, which makes native resume same-machine-only by
+  design (cross-machine handoff is transcript/summary handoff). Cursor
+  archives are produced by the §5.2 import bridge: a message-level JSONL
+  export of the decoded store content — each message's provider-native
+  AI-SDK JSON, unmodified, in root order — riding the same archive path.
+  This is a deliberate, Cursor-scoped exception to byte-exactness: the CLI
+  artifact is a database schema Gobby doesn't own, so Gobby archives the
+  extracted messages rather than the container.
+- **No new Postgres tables.** The `sessions` aggregate model, `token_events`,
+  and file-based window rendering remain the storage story.
+- **Internal-first.** The contract is authored language-neutrally
   (JSON Schema + fixtures under `docs/contracts/`) so the post-0.5.0 public
-  Rust crate port (§D3) is a port, not a redesign. No public API, bindings, or
-  crates.io work in this epic.
-- **C6 — No backward compatibility.** 0.5.0 has not shipped; existing wire
-  shapes, frontend types, and fixture layouts may change freely.
-- **C7 — Design gate.** Frontend deliverables must read `.impeccable.md` before
-  producing UI output.
-- requirement-source: .gobby/plans/universal-transcript-format.md
-
-## Success Criteria
-`kind: framing`
-
-- **S1** — Adding a new provider requires a spec entry, a parser, a watchdog
-  reader, and a fixture corpus, with no edits to discovery, dispatch, or any
-  frontend file.
-- **S2** — Every provider's golden fixtures parse, render, validate against the
-  schema, and byte-compare to committed expected output, with zero `unknown`
-  blocks for pinned fixtures.
-- **S3** — No tool-name allowlist, protocol-tag parser, role reclassifier, or
-  block-suppression set remains anywhere under `web/src`.
-- **S4** — The same normalized payload renders identically in the Watching panel
-  and ChatPage.
-- **S5** — The committed-snapshot bugs are closed: Codex shell calls show real
-  command summaries, Codex reads render file cards, diffs come from the server,
-  and Claude image content renders instead of vanishing.
-- **S6** — A Cursor session is discovered, parsed with full fidelity (thinking,
-  tool calls, complete tool results, diff metadata), rendered, archived, and
-  spawnable.
+  Rust crate port (#19209, section D3) is a port, not a redesign. No public
+  API, bindings, or crates.io work in this epic.
+- **No backward compatibility.** 0.5.0 has not shipped; existing wire shapes,
+  frontend types, and fixture layouts may change freely.
+- Frontend deliverables must read `.impeccable.md` before producing UI output.
+- requirement-source: .gobby/plans/universal-transcript-format.requirements.md
 
 ## P1: Contract and ProviderSpec Foundation
 `kind: framing`
@@ -560,7 +479,7 @@ The normalized format is never persisted — consumers request it:
   message JSONL (contract §1.1 shape), reading the live transcript or gzip
   archive via the existing `TranscriptReader` path.
 - `uv run gobby transcripts normalize <session-ref|path> [--out FILE]` — CLI
-  wrapper over the same code path, for gwiki's future consumption (§D1)
+  wrapper over the same code path, for gwiki's future consumption (#19207)
   and offline debugging.
 - Both surfaces validate output against the JSON Schema in tests; this is the
   executable proof of the contract and the seam the deferred gwiki migration
@@ -1050,91 +969,58 @@ Full integration means Gobby can spawn cursor agents, not just observe them
 - 5.7.3 - Cursor models present in feature-tier candidate defaults.
   file: `src/gobby/config/feature_candidate_defaults.py`.
 
-## D1 Out of scope: gwiki migration to the normalized contract
-`kind: framing`
+## D1 Deferred: gwiki migration to the normalized contract
+`kind: deferred`
 
-Owner: josh. The Rust wiki-ingest layer (`crates/gwiki/src/ingest/session*.rs`,
-five per-provider adapters with an order-dependent selection chain) keeps
-parsing raw archives unchanged during this epic. Once the contract stabilizes
-and the gwiki refactor is underway, gwiki consumes §2.7's normalize-on-demand
-surface through a single reader and the per-provider adapters are deleted.
-Cursor CLI wiki ingest intentionally waits for that migration.
+The Rust wiki-ingest layer (`crates/gwiki/src/ingest/session*.rs`, five
+per-provider adapters with an order-dependent selection chain) keeps parsing
+raw archives unchanged during this epic. Once the contract stabilizes and the
+gwiki refactor is underway, gwiki consumes §2.7's normalize-on-demand surface
+through a single reader and the per-provider adapters are deleted. Cursor CLI
+wiki ingest intentionally waits for that migration.
 
-Rationale: gwiki is entering its own monorepo refactor; migrating it against an
-unproven contract would churn Rust twice. The contract must stabilize through
-this epic's fixture gauntlet first.
+```yaml
+deferral:
+  task_ref: "#19207"
+  reason: "gwiki is entering its own monorepo refactor; migrating it against an unproven contract would churn Rust twice. The contract must stabilize through this epic's fixture gauntlet first."
+  owner: "josh"
+  original_acceptance_items:
+    - D1.1
+    - D1.2
+```
 
-## D2 Out of scope: OpenTelemetry GenAI export projection
-`kind: framing`
+## D2 Deferred: OpenTelemetry GenAI export projection
+`kind: deferred`
 
-Owner: josh. Observability-standard export (OTel GenAI spans/events) is a
-projection over the normalized format, not a storage schema. It waits for the
-OTel GenAI agent conventions to stabilize and for this epic's contract to ship.
+Observability-standard export (OTel GenAI spans/events) is a projection over
+the normalized format, not a storage schema. It waits for the OTel GenAI agent
+conventions to stabilize and for this epic's contract to ship.
 
-Rationale: the OTel GenAI agent conventions are still in Development status;
-exporting an unstable projection of a brand-new contract compounds two moving
-targets.
+```yaml
+deferral:
+  task_ref: "#19208"
+  reason: "OTel GenAI agent conventions are still in Development status; exporting an unstable projection of a brand-new contract compounds two moving targets."
+  owner: "josh"
+  original_acceptance_items:
+    - D2.1
+```
 
-## D3 Out of scope: public Rust crate port
-`kind: framing`
+## D3 Deferred: public Rust crate port
+`kind: deferred`
 
-Owner: josh. The post-0.5.0 port of the canonical parsing layer to a standalone
-public Rust crate ("serde for agent CLI transcripts"), implementing the
+The post-0.5.0 port of the canonical parsing layer to a standalone public
+Rust crate ("serde for agent CLI transcripts"), implementing the
 language-neutral contract with provable fixture parity. Internal-first was an
-explicit scope decision for this epic (C5).
+explicit scope decision for this epic.
 
-Rationale: pre-0.5.0 the pain is internal dispersion and the renderer contract;
-a public API freeze now buys nothing and slows the refactor. The
-language-neutral contract and fixtures built here make the port mechanical
-later.
-
-## D4 Out of scope: native cross-machine Cursor resume
-`kind: framing`
-
-Owner: josh. Cursor resume takes only a `chatId` against Cursor's own store, so
-native resume is same-machine-only by design. Gobby does not reconstruct a
-database schema it does not own, and never writes transcript state into
-Cursor-owned paths (C3). Cross-machine handoff of a Cursor session is
-transcript/summary handoff, as with every other provider.
-
-## Decision Log
-`kind: framing`
-
-Decisions taken during elicitation, enhancement, and review, with the reasoning
-that settled them. These are closed; reopening any of them is a scope change.
-
-- **Python is the canonical parsing layer this epic; Rust is deferred.**
-  Migrating gwiki against an unproven contract would churn Rust twice (§D1).
-- **Hybrid ProviderSpec** — declarative surface knowledge plus code parsers.
-  Fully declarative parsing cannot express the per-provider pairing logic.
-- **Cursor's SQLite store is the only content source.** The
-  `~/.cursor/projects/*/agent-transcripts/*.jsonl` surface is invocation-only —
-  user/assistant text and `tool_use` calls, no tool results, no reasoning
-  (verified on both the CLI and IDE writers) — so it is not a declared
-  transcript surface and is never read for content. A fallback read would
-  produce a gutted transcript that looks complete.
-- **Archive format is a message-level JSONL export**, not a database copy and
-  not a logical dump: a decoded-meta header record followed by each message's
-  provider-native AI-SDK JSON, unmodified, in root-blob order. Byte-for-byte
-  database preservation was rejected because Gobby does not own the schema and
-  will not reconstruct it.
-- **No restore tool.** Resume is Cursor's job via `--resume <chatId>`, which is
-  why native cross-machine resume is explicitly out of scope (§D4).
-- **No truncation anywhere.** The normalized format always carries full result
-  payloads; collapsing long output is a renderer display concern.
-- **Read-through is empirically validated** (2026-07-29, SQLite 3.50.4):
-  `mode=ro` reads WAL-only committed rows with a concurrent holder, correctly
-  hides an uncommitted transaction, and reads an abandoned session with no
-  `-shm`. `immutable=1` is prohibited — it reports `journal_mode: delete` and
-  ignores the WAL, silently dropping the newest messages.
-- **Reader kind is provider-level**, not per-surface. Every provider declares
-  content surfaces of exactly one kind, so a per-surface attribute would be
-  mechanism without a present-day justification.
-- **Out-of-scope sections carry no task refs.** `§D1`–`§D4` are `kind: framing`
-  rather than `kind: deferred` because the typed deferral object requires an
-  open task carrying `deferred-from:` provenance
-  (`docs/contracts/plan-coverage.md`), and this plan creates no deferral tasks
-  before it is finalized. Follow-on tasks, if any, are cut at expansion time.
+```yaml
+deferral:
+  task_ref: "#19209"
+  reason: "Pre-0.5.0 the pain is internal dispersion and the renderer contract; a public API freeze now buys nothing and slows the refactor. The language-neutral contract and fixtures built here make the port mechanical later."
+  owner: "josh"
+  original_acceptance_items:
+    - D3.1
+```
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1224,13 +1110,3 @@ that settled them. These are closed; reopening any of them is a scope change.
   state" constraint was corrected to match measured behavior: a read-only WAL
   open creates the ephemeral 32 KiB `-shm` index when absent, while `.db` and
   `-wal` bytes and mtimes stay unchanged.
-  Consolidation (2026-07-29): the separate Decision Record
-  (`universal-transcript-format.requirements.md`) was folded into this document
-  as `## Requirements`, `## Constraints`, `## Success Criteria`, and
-  `## Decision Log`, and deleted. This plan file is now the sole artifact for
-  enhancement and adversarial review, and the `requirement-source:` marker
-  designates it. §D1–§D4 moved from `kind: deferred` to `kind: framing` because
-  the typed deferral object requires an open task with `deferred-from:`
-  provenance and this plan creates no deferral tasks before finalization. Their
-  three task refs pointed at deleted tasks and were removed with them; §2.7 and
-  the constraints now cross-reference the out-of-scope sections instead.

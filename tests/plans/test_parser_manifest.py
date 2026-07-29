@@ -254,6 +254,25 @@ def test_strict_default_rejects_missing_manifest(tmp_path: Path) -> None:
         parse_plan(plan, parse_mode="strict")
 
 
+def test_missing_manifest_error_names_the_parse_mode(tmp_path: Path) -> None:
+    """The library default is strict, so its error must explain why draft accepts."""
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml="",
+    )
+    for mode, expected in (
+        ("strict", 'parse_mode="strict"'),
+        ("expansion", 'parse_mode="expansion"'),
+    ):
+        with pytest.raises(PlanParseError) as excinfo:
+            parse_plan(plan, parse_mode=mode)
+        message = str(excinfo.value)
+        assert expected in message
+        assert 'parse_mode="draft"' in message
+        assert "gobby plans validate" in message
+
+
 def test_manifest_invariants_enforced_in_all_modes(tmp_path: Path) -> None:
     """2.21.3d — when manifest present, schema/1:1/covers/orphan invariants enforced in all modes."""
     orphan_yaml = """
