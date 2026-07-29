@@ -978,6 +978,17 @@ class TestCompactSelfTerminalPath:
             result = asyncio.run(compact_self())
             assert session_manager.get(session_id).status == "handoff_ready"
 
+            # Lifecycle status can be transiently stale before SessionStart consumes
+            # the persisted compact continuation marker.
+            temp_db.execute(
+                "UPDATE sessions SET status = 'expired' WHERE id = %s",
+                (session_id,),
+            )
+            sweep_stale_claims(temp_db, project_id=sample_project["id"])
+            compacting_task = task_manager.get_task(task.id)
+            assert compacting_task is not None
+            assert compacting_task.claimed_by_session_id == session_id
+
             assert session_manager.update_session_status(
                 session_id,
                 "active",

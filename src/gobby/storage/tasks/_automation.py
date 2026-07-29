@@ -1,7 +1,12 @@
 """Task automation candidate and stale-claim helpers."""
 
+from datetime import timedelta
 from typing import Any
 
+from gobby.sessions.compact_continuation import (
+    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    COMPACT_SELF_CONTINUE_VARIABLE,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
@@ -115,6 +120,17 @@ def sweep_stale_claims(
         "live-session",
     )
     params.extend(live_session_params)
+    compact_cutoff = now - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS)
+    params.extend(
+        (
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            compact_cutoff.isoformat(),
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            now.isoformat(),
+        )
+    )
     project_filter = ""
     if project_id is not None:
         project_filter = "AND project_id = %s"
@@ -135,6 +151,19 @@ def sweep_stale_claims(
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
                       AND s.status IN ('active', 'paused', 'handoff_ready')
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM session_variables sv
+                    WHERE sv.session_id = tasks.claimed_by_session_id
+                      AND jsonb_typeof(
+                          sv.variables -> %s
+                      ) = 'object'
+                      AND jsonb_typeof(
+                          sv.variables -> %s -> 'created_at'
+                      ) = 'string'
+                      AND sv.variables -> %s ->> 'created_at' >= %s
+                      AND sv.variables -> %s ->> 'created_at' <= %s
                )
                {project_filter}
             """,  # nosec B608 # project_filter is static SQL selected above.

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
 
+from gobby.sessions.compact_continuation import (
+    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    mark_compact_self_continuation_pending,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
@@ -152,6 +156,41 @@ def test_sweep_keeps_task_claimed_by_live_session(
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
     assert task.id not in candidate_ids
+
+
+def test_sweep_keeps_claim_during_pending_compact_continuation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    assert mark_compact_self_continuation_pending(temp_db, session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 0
+    assert _claim(temp_db, task.id) == session_id
+
+
+def test_sweep_reclaims_claim_after_compact_continuation_marker_expires(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    stale_time = datetime.now(UTC) - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS + 1)
+    assert mark_compact_self_continuation_pending(
+        temp_db,
+        session_id,
+        now=stale_time,
+    )
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 1
+    assert _claim(temp_db, task.id) is None
 
 
 def test_sweep_skips_closed_and_escalated_tasks(
