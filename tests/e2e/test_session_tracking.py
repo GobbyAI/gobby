@@ -81,7 +81,7 @@ class TestHookEvents:
         result = cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
 
         # Hook should execute and return a decision
@@ -97,7 +97,7 @@ class TestHookEvents:
         cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
 
         result = cli_events.session_end(
@@ -119,7 +119,7 @@ class TestHookEvents:
         cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
 
         result = cli_events.tool_use(
@@ -146,7 +146,7 @@ class TestSessionState:
         cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
 
         # Sessions endpoint should still work
@@ -166,7 +166,7 @@ class TestSessionState:
             cli_events.session_start(
                 session_id=session_id,
                 machine_id="test-machine",
-                source="claude",
+                cli_source="claude",
             )
 
         # Sessions endpoint should still work

@@ -101,7 +101,7 @@ class TestFullWorkflowIntegration:
                 result = cli_events.session_start(
                     session_id=session_id,
                     machine_id="test-machine",
-                    source="claude",
+                    cli_source="claude",
                 )
                 assert "continue" in result or "decision" in result, (
                     "Phase 2 FAILED: Session start hook should execute"
@@ -237,7 +237,7 @@ class TestFullWorkflowIntegration:
                     result = cli_events2.session_start(
                         session_id=new_session_id,
                         machine_id="test-machine",
-                        source="claude",
+                        cli_source="claude",
                     )
                     assert "continue" in result or "decision" in result, (
                         "Phase 7c FAILED: Hooks should work after restart"
@@ -281,7 +281,7 @@ class TestFullWorkflowIntegration:
         result = cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
         assert "continue" in result or "decision" in result
 
@@ -342,7 +342,7 @@ class TestFullWorkflowIntegration:
         cli_events.session_start(
             session_id=session_id,
             machine_id="test-machine",
-            source="claude",
+            cli_source="claude",
         )
 
         # Trigger an error in MCP (invalid server)

@@ -48,6 +48,8 @@ class DaemonInstance:
     error_log_file: Path
     db_path: Path
     config_path: Path
+    command: list[str]
+    env: dict[str, str]
 
     @property
     def http_url(self) -> str:
@@ -79,6 +81,56 @@ class DaemonInstance:
         if self.error_log_file.exists():
             return self.error_log_file.read_text()
         return ""
+
+    def stop(self) -> None:
+        """Stop the daemon and wait for its health endpoint to disappear."""
+        if self.is_alive():
+            terminate_process_tree(self.pid)
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if daemon_health_unavailable(self.http_port):
+                return
+            time.sleep(0.05)
+        pytest.fail(f"Daemon health endpoint on port {self.http_port} remained available")
+
+    def restart(self) -> None:
+        """Restart the daemon with the fixture's original process configuration."""
+        if self.is_alive():
+            raise RuntimeError("Cannot restart a running daemon")
+
+        with self.log_file.open("ab") as log_f, self.error_log_file.open("ab") as err_f:
+            process = subprocess.Popen(
+                self.command,
+                stdout=log_f,
+                stderr=err_f,
+                stdin=subprocess.DEVNULL,
+                cwd=str(self.project_dir),
+                env=self.env,
+                start_new_session=True,
+            )
+
+        self.process = process
+        self.pid = process.pid
+
+        time.sleep(0.5)
+        if process.poll() is not None:
+            pytest.fail(
+                f"Daemon subprocess died immediately with exit code {process.poll()}.\n"
+                f"Logs:\n{self.read_logs()}\nError output:\n{self.read_error_logs()}"
+            )
+        if not wait_for_daemon_health(self.http_port, timeout=30.0):
+            terminate_process_tree(process.pid)
+            pytest.fail(
+                f"Daemon failed to restart within timeout.\n"
+                f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
+            )
+        if not wait_for_port(self.ws_port, timeout=10.0):
+            terminate_process_tree(process.pid)
+            pytest.fail(
+                f"Daemon WebSocket port {self.ws_port} did not become ready within timeout.\n"
+                f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
+            )
 
 
 def prepare_daemon_env(
@@ -205,7 +257,7 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
                 f"http://localhost:{port}/api/admin/startup-progress",
                 timeout=2.0,
             )
-            if response.status_code == 200:
+            if response.status_code == 200 and response.json().get("done") is True:
                 return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
             time.sleep(0.5)
@@ -489,10 +541,12 @@ def daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
+    command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
         process = subprocess.Popen(
-            [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+            command,
             stdout=log_f,
             stderr=err_f,
             stdin=subprocess.DEVNULL,
@@ -522,6 +576,8 @@ def daemon_instance(
         error_log_file=error_log_file,
         db_path=gobby_home / "hub-postgres.db",
         config_path=config_path,
+        command=command,
+        env=env,
     )
 
     # Wait for daemon to be healthy (longer timeout for when running with full test suite)
@@ -707,7 +763,8 @@ class CLIEventSimulator:
         self,
         session_id: str,
         machine_id: str = "test-machine",
-        source: str = "claude",
+        cli_source: str = "claude",
+        session_start_source: str = "startup",
         project_id: str | None = None,
         cwd: str | None = None,
         terminal_context: dict[str, Any] | None = None,
@@ -716,6 +773,7 @@ class CLIEventSimulator:
         input_data: dict[str, Any] = {
             "session_id": session_id,
             "machine_id": machine_id,
+            "source": session_start_source,
         }
         if project_id:
             input_data["project_id"] = project_id
@@ -724,13 +782,23 @@ class CLIEventSimulator:
         if terminal_context:
             input_data["terminal_context"] = terminal_context
 
+        hook_type = {
+            "claude": "session-start",
+            "grok": "session_start",
+        }.get(cli_source, "SessionStart")
         payload = {
-            "hook_type": "session-start",
-            "source": source,
+            "critical": True,
+            "hook_type": hook_type,
+            "source": cli_source,
             "input_data": input_data,
         }
 
-        response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
+        headers = {"X-Gobby-Project-Id": project_id} if project_id else None
+        response = self.client.post(
+            "/api/hooks/execute",
+            json=self._hook_envelope(**payload),
+            headers=headers,
+        )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
@@ -773,6 +841,41 @@ class CLIEventSimulator:
         }
 
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def post_tool_use(
+        self,
+        session_id: str,
+        *,
+        cli_source: str,
+        input_data: dict[str, Any],
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Simulate a provider-native post-tool hook via /hooks/execute."""
+        event_data = {
+            **input_data,
+            "session_id": session_id,
+            "machine_id": "test-machine",
+        }
+        if project_id:
+            event_data["project_id"] = project_id
+
+        hook_type = {
+            "claude": "post-tool-use",
+            "grok": "post_tool_use",
+        }.get(cli_source, "PostToolUse")
+        payload = {
+            "hook_type": hook_type,
+            "source": cli_source,
+            "input_data": event_data,
+        }
+        headers = {"X-Gobby-Project-Id": project_id} if project_id else None
+        response = self.client.post(
+            "/api/hooks/execute",
+            json=self._hook_envelope(**payload),
+            headers=headers,
+        )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
