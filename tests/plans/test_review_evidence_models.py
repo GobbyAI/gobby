@@ -6,8 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from gobby.plans.review_evidence_models import validate_round_result
 from tests.review_telemetry_helpers import delivered_telemetry, unavailable_telemetry
+
+pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[2]
 UNION_START = "TERMINAL_RESULT_UNION_V1_START"

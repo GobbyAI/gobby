@@ -43,6 +43,9 @@ from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import enriched_telemetry
 
+ROOT = Path(__file__).resolve().parents[2]
+TEST_SHA256 = "a" * 64
+
 pytestmark = pytest.mark.unit
 
 
@@ -145,7 +148,7 @@ def _finding(
             "action": "The missing behavior is exercised.",
             "wrong_outcome": "The plan omits the required behavior.",
             "violated_obligation": "Every blocking path must be covered.",
-            "citation": [{"path": "src/example.py", "sha256": "a" * 64}],
+            "citation": [{"path": "src/example.py", "sha256": TEST_SHA256}],
         }
     return finding
 
@@ -240,7 +243,7 @@ def _attestation(
         "adjacent_variants_swept": ["src/example.py:adjacent"],
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
-        "sweep_scope_digest": "a" * 64,
+        "sweep_scope_digest": TEST_SHA256,
         "sweep_query_evidence": ["gcode usages gobby.example.repaired_behavior"],
         "repair_bundle_interactions": [],
     }
@@ -959,7 +962,7 @@ async def test_taskless_producer_builds_records(
     assert prepared["ok"] is True
     stored = service.get_evidence(str(prepared["evidence_id"]))
     assert stored.repair_attestations == attestations
-    skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
+    skill = (ROOT / "src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
     assert "prior_finding_resolutions" in skill
     assert "repair_attestations" in skill
 
@@ -1033,7 +1036,7 @@ def test_staged_submission_payload_round_trip(
     )
     assert receipt.to_dict() == submission.to_dict()
     assert receipt.consumed_evidence_id == "evidence-2"
-    planner = Path("src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
+    planner = (ROOT / "src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
         encoding="utf-8"
     )
     assert "repair_submission" in planner
@@ -1169,8 +1172,8 @@ async def test_universe_visible_before_attestation(
     assert result["sweep_scope"] == universe.to_dict()
     assert result["sweep_scope_digest"] == universe.digest
     assert "index_token" not in result
-    skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
-    planner = Path("src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
+    skill = (ROOT / "src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
+    planner = (ROOT / "src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
         encoding="utf-8"
     )
     for producer_contract in (skill, planner):

@@ -20,6 +20,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
 
+pytestmark = pytest.mark.unit
+
 
 def _plan(*markers: str) -> bytes:
     return (
@@ -106,9 +108,9 @@ def test_requirement_marker_grammar(
     )
 
     assert parse_requirement_source_paths(snapshot) == ("docs/canonical.md",)
-    assert parse_requirement_source_paths(
-        _plan("  - requirement-source: docs/canonical.md")
-    ) == ("docs/canonical.md",)
+    assert parse_requirement_source_paths(_plan("  - requirement-source: docs/canonical.md")) == (
+        "docs/canonical.md",
+    )
     bundle = assemble_requirements_bundle(
         project_root=tmp_path,
         plan_snapshot=snapshot,
@@ -226,7 +228,7 @@ def test_reviewer_contracts_consume_bundle_ids() -> None:
     staged = contracts[1].read_text(encoding="utf-8")
     taskless = contracts[2].read_text(encoding="utf-8")
     assert "do not fetch the live parent task" in staged
-    assert "never substitute the\n  live initiating request" in taskless
+    assert "never substitute the live initiating request" in " ".join(taskless.split())
 
 
 def test_bundle_representation_properties(tmp_path: Path) -> None:

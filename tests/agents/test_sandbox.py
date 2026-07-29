@@ -1020,8 +1020,8 @@ class TestComputeSandboxPaths:
             workspace_path=str(workspace),
         )
 
-        assert str(missing_dir) not in paths.read_paths
-        assert str(regular_file) not in paths.read_paths
+        assert str(missing_dir.resolve()) not in paths.read_paths
+        assert str(regular_file.resolve()) not in paths.read_paths
 
 
 class TestSharedTempRootsAreNotGranted:

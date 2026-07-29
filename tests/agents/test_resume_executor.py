@@ -15,6 +15,8 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
+pytestmark = pytest.mark.unit
+
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
 

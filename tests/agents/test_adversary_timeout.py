@@ -3,18 +3,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from tests.agents.test_terminal_paths import _bound_review
+from tests.review_telemetry_helpers import bound_review
+
+pytestmark = pytest.mark.unit
 
 
 def test_timeout_classification_retention_and_wake_isolation(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    bound = _bound_review(temp_db, tmp_path, suffix="-timeout")
+    bound = bound_review(temp_db, tmp_path, suffix="-timeout")
     manager = LocalAgentRunManager(temp_db)
 
     outcome = terminalize_plan_review_run(

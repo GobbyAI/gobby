@@ -350,18 +350,40 @@ def test_citation_union_repository_and_requirement(tmp_path: Path) -> None:
         shadow,
         prior_round_context=prior_context,
     )
-    assert attestation["source_digest"]
+    requirement_digest = attestation["source_digest"]
 
     repository_document, repository_lanes, repository_dispositions, repository_shadow = (
         _coverage_case(tmp_path)
     )
-    assert _validate(
+    repository_attestation = _validate(
         tmp_path,
         repository_document,
         repository_lanes,
         repository_dispositions,
         repository_shadow,
-    )["source_digest"]
+    )
+    repository_digest = repository_attestation["source_digest"]
+
+    mixed_document, mixed_lanes, mixed_dispositions, mixed_shadow = _coverage_case(tmp_path)
+    mixed_lane = mixed_lanes[0]
+    assert isinstance(mixed_lane, dict)
+    mixed_citations = mixed_lane["source_citations"]
+    assert isinstance(mixed_citations, list)
+    mixed_citations.append(requirement_citation)
+    mixed_attestation = _validate(
+        tmp_path,
+        mixed_document,
+        mixed_lanes,
+        mixed_dispositions,
+        mixed_shadow,
+        prior_round_context=prior_context,
+    )
+    mixed_digest = mixed_attestation["source_digest"]
+
+    assert isinstance(repository_digest, str)
+    assert isinstance(requirement_digest, str)
+    assert isinstance(mixed_digest, str)
+    assert len({repository_digest, requirement_digest, mixed_digest}) == 3
 
     mismatched = copy.deepcopy(lanes)
     for lane in mismatched:
@@ -421,7 +443,31 @@ def test_unreferenced_candidate_rejected(tmp_path: Path) -> None:
     assert error.value.code == "unreferenced_candidate"
 
 
-def test_sweep_universe_fixtures(tmp_path: Path) -> None:
+def _repair_sweep_context() -> tuple[dict[str, object], dict[str, object]]:
+    repair_attestation: dict[str, object] = {
+        "prior_finding_id": "finding-prior",
+        "changed_section_ids": ["1.1"],
+    }
+    repair_requirement: dict[str, object] = {
+        "prior_finding_id": "finding-prior",
+        "changed_section_ids": ["1.1"],
+        "changed_contracts": ["contracts/review.json"],
+        "required_consumer_site_ids": ["consumer-1"],
+    }
+    prior_context: dict[str, object] = {
+        "prior_finding_resolutions": [{"prior_finding_id": "finding-prior", "decision": "repair"}],
+        "repair_attestations": [repair_attestation],
+        "consumer_site_inventory": {
+            "changed_contracts": ["contracts/review.json"],
+            "sites": [{"site_id": "consumer-1"}],
+        },
+        "current_sweep_scope": {"requirements": [repair_requirement]},
+        "dismissed_ledger_entries": [],
+    }
+    return prior_context, repair_requirement
+
+
+def test_empty_sweep_universe_is_complete(tmp_path: Path) -> None:
     empty_document, empty_lanes, empty_records, empty_shadow = _coverage_case(
         tmp_path,
         candidate_count=0,
@@ -436,16 +482,22 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
     assert empty["cross_lane_interaction_complete"] is True
     assert empty["adjacent_variant_complete"] is True
 
+
+def test_adjacent_sweep_requires_query_evidence(tmp_path: Path) -> None:
     document, lanes, records, shadow = _coverage_case(tmp_path)
-    assert _validate(tmp_path, document, lanes, records, shadow)
     adjacent = records["adjacent_variant_sweeps"]
     assert isinstance(adjacent, list)
     assert isinstance(adjacent[0], dict)
     adjacent[0]["query_evidence"] = []
+
     with pytest.raises(ReviewEvidenceError, match="query evidence"):
         _validate(tmp_path, document, lanes, records, shadow)
 
-    adjacent[0]["query_evidence"] = ["gcode search candidate-1"]
+
+def test_adjacent_sweep_rejects_out_of_universe_check(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    adjacent = records["adjacent_variant_sweeps"]
+    assert isinstance(adjacent, list)
     adjacent.append(
         {
             "check_key": "extra-check",
@@ -458,27 +510,11 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
     with pytest.raises(ReviewEvidenceError, match="outside the required universe"):
         _validate(tmp_path, document, lanes, records, shadow)
 
-    adjacent.pop()
-    repair_attestation: dict[str, object] = {
-        "prior_finding_id": "finding-prior",
-        "changed_section_ids": ["1.1"],
-    }
-    repair_requirement: dict[str, object] = {
-        "prior_finding_id": "finding-prior",
-        "changed_section_ids": ["1.1"],
-        "changed_contracts": ["contracts/review.json"],
-        "required_consumer_site_ids": ["consumer-1"],
-    }
-    prior_context = {
-        "prior_finding_resolutions": [{"prior_finding_id": "finding-prior", "decision": "repair"}],
-        "repair_attestations": [repair_attestation],
-        "consumer_site_inventory": {
-            "changed_contracts": ["contracts/review.json"],
-            "sites": [{"site_id": "consumer-1"}],
-        },
-        "current_sweep_scope": {"requirements": [repair_requirement]},
-        "dismissed_ledger_entries": [],
-    }
+
+def test_causal_repair_sweep_requires_matching_record(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    prior_context, _repair_requirement = _repair_sweep_context()
+
     with pytest.raises(ReviewEvidenceError, match="finding-prior"):
         _validate(
             tmp_path,
@@ -488,6 +524,9 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
             shadow,
             prior_context,
         )
+
+
+def _add_valid_causal_repair_sweep(records: dict[str, object]) -> None:
     records["causal_repair_sweeps"] = [
         {
             "prior_finding_id": "finding-prior",
@@ -498,6 +537,13 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
             "disposition": "validated",
         }
     ]
+
+
+def test_causal_repair_scope_requires_consumer_sites(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    prior_context, repair_requirement = _repair_sweep_context()
+    _add_valid_causal_repair_sweep(records)
+
     required_site_ids = repair_requirement.pop("required_consumer_site_ids")
     with pytest.raises(ReviewEvidenceError, match="required_consumer_site_ids"):
         _validate(
@@ -509,6 +555,13 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
             prior_context,
         )
     repair_requirement["required_consumer_site_ids"] = required_site_ids
+
+
+def test_complete_causal_repair_sweep_is_valid(tmp_path: Path) -> None:
+    document, lanes, records, shadow = _coverage_case(tmp_path)
+    prior_context, _repair_requirement = _repair_sweep_context()
+    _add_valid_causal_repair_sweep(records)
+
     assert _validate(
         tmp_path,
         document,

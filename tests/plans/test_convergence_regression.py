@@ -213,18 +213,28 @@ class _GitProcess:
 @pytest.mark.asyncio
 async def test_compaction_isolation_under_concurrent_editors() -> None:
     own_path = str(_PLAN_PATH)
+    absolute_own_path = str(_PLAN_PATH.resolve())
     other_path = str(_OTHER_PLAN_PATH)
-    handoff_ctx = HandoffContext(files_modified=[own_path])
+    suffix_collision_path = f"vendor/{own_path}"
+    handoff_ctx = HandoffContext(files_modified=[absolute_own_path])
 
     async def create_subprocess_exec(*args: object, **_kwargs: object) -> _GitProcess:
         scoped = "--" in args and own_path in args
         if "status" in args:
-            output = f" M {own_path}" if scoped else f" M {own_path}\n M {other_path}"
+            output = (
+                f" M {own_path}"
+                if scoped
+                else f" M {own_path}\n M {other_path}\n M {suffix_collision_path}"
+            )
         else:
             output = (
                 f"own-hash|update {own_path}"
                 if scoped
-                else f"own-hash|update {own_path}\nother-hash|update {other_path}"
+                else (
+                    f"own-hash|update {own_path}\n"
+                    f"other-hash|update {other_path}\n"
+                    f"suffix-hash|update {suffix_collision_path}"
+                )
             )
         return _GitProcess(output)
 
@@ -239,7 +249,7 @@ async def test_compaction_isolation_under_concurrent_editors() -> None:
         **_kwargs: object,
     ) -> subprocess.CompletedProcess[str]:
         scoped = args[-2:] == ["--", own_path]
-        paths = [own_path] if scoped else [own_path, other_path]
+        paths = [own_path] if scoped else [own_path, other_path, suffix_collision_path]
         if "--name-status" in args:
             stdout = "\n".join(f"M\t{path}" for path in paths)
         elif "ls-files" in args:
@@ -269,3 +279,4 @@ async def test_compaction_isolation_under_concurrent_editors() -> None:
     rendered = json.dumps(context, sort_keys=True)
     assert own_path in rendered
     assert other_path not in rendered
+    assert suffix_collision_path not in rendered

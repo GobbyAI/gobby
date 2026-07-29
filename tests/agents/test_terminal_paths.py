@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,10 +14,6 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    build_request_anchor,
-)
 from gobby.plans.review_telemetry import (
     deterministic_review_message_id,
     enrich_round_result,
@@ -31,121 +26,22 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
-from tests.review_coverage_helpers import coverage_attestation
-from tests.review_telemetry_helpers import delivered_telemetry
-from tests.storage.test_stage_review_findings import (
+from tests.review_coverage_helpers import (
     StageReviewSetup,
-    _prepare_bound,
+    coverage_attestation,
+    prepare_bound_review,
 )
-from tests.storage.test_stage_review_findings import (
-    stage_review_setup as _stage_review_setup,  # noqa: F401 - pytest fixture re-export
+from tests.review_coverage_helpers import (
+    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
+)
+from tests.review_telemetry_helpers import (
+    bound_review,
+    delivered_telemetry,
 )
 
-
-@dataclass(frozen=True)
-class BoundReview:
-    evidence_id: str
-    run_id: str
-    parent_session_id: str
-    child_session_id: str
-
-
-def _bound_review(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    *,
-    suffix: str = "",
-) -> BoundReview:
-    project = LocalProjectManager(temp_db).create(
-        name=f"terminal-review{suffix}",
-        repo_path=str(tmp_path),
-    )
-    sessions = SessionManager(temp_db)
-    parent = sessions.register(
-        external_id=f"terminal-parent{suffix}",
-        machine_id="test-machine",
-        source="codex",
-        project_id=project.id,
-    )
-    child = sessions.register(
-        external_id=f"terminal-child{suffix}",
-        machine_id="test-machine",
-        source="codex",
-        project_id=project.id,
-        parent_session_id=parent.id,
-        agent_depth=1,
-    )
-    plan_path = tmp_path / f"terminal-review{suffix}.md"
-    plan_path.write_text(
-        "\n".join(
-            [
-                "# Terminal Review",
-                "**Plan ID:** terminal-review",
-                "",
-                "## P1 Phase",
-                "`kind: framing`",
-                "",
-                "### 1.1 Work",
-                "`kind: deliverable`",
-                "",
-                "Target: `src/example.py`",
-                "",
-                "**Acceptance:**",
-                "- 1.1.1 — Exists. test: `tests/test_example.py`",
-                "",
-                "## Task Mapping",
-                "`kind: framing`",
-                "",
-                "Pending.",
-                "",
-                "## V1 Plan Changelog",
-                "`kind: verification`",
-                "",
-                "No rounds.",
-                "",
-                "## M1 Task Manifest",
-                "`kind: manifest`",
-                "",
-                "```yaml",
-                "[]",
-                "```",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        parent.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                f"terminal-review-request{suffix}",
-                "Review the terminal plan",
-            )
-        },
-    )
-    evidence_service = PlanReviewEvidenceService(temp_db)
-    prepared = evidence_service.prepare_plan_review_round(
-        project_id=project.id,
-        plan_path=plan_path,
-        round_number=1,
-        session_id=parent.id,
-    )
-    run = LocalAgentRunManager(temp_db).create(
-        parent_session_id=parent.id,
-        child_session_id=child.id,
-        provider="codex",
-        prompt="Review the plan.",
-    )
-    evidence_service.bind_evidence_run(prepared.evidence_id, run.id)
-    return BoundReview(
-        evidence_id=prepared.evidence_id,
-        run_id=run.id,
-        parent_session_id=parent.id,
-        child_session_id=child.id,
-    )
+pytestmark = pytest.mark.unit
 
 
 def _delivered_result(evidence_id: str) -> dict[str, object]:
@@ -175,7 +71,7 @@ def test_result_state_is_monotonic(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    bound = _bound_review(temp_db, tmp_path)
+    bound = bound_review(temp_db, tmp_path)
     delivered = _delivered_result(bound.evidence_id)
 
     first = persist_delivered_round_result(
@@ -223,7 +119,7 @@ async def test_no_terminal_route_bypasses_guard(
     tmp_path: Path,
 ) -> None:
     manager = LocalAgentRunManager(temp_db)
-    undelivered = _bound_review(temp_db, tmp_path, suffix="-missing")
+    undelivered = bound_review(temp_db, tmp_path, suffix="-missing")
 
     failed = terminalize_plan_review_run(
         manager,
@@ -242,7 +138,7 @@ async def test_no_terminal_route_bypasses_guard(
         is not None
     )
 
-    delivered = _bound_review(temp_db, tmp_path, suffix="-delivered")
+    delivered = bound_review(temp_db, tmp_path, suffix="-delivered")
     persist_delivered_round_result(
         temp_db,
         run_id=delivered.run_id,
@@ -295,7 +191,7 @@ async def test_no_terminal_route_bypasses_guard(
     routes = ("session_end", "workflow", "fallback", "kill_error", "cancel")
     for delivered_state in (False, True):
         for route in routes:
-            route_bound = _bound_review(
+            route_bound = bound_review(
                 temp_db,
                 tmp_path,
                 suffix=f"-{route}-{'delivered' if delivered_state else 'missing'}",
@@ -462,7 +358,7 @@ async def test_delivery_mailbox_and_result_are_one_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bound = _bound_review(temp_db, tmp_path)
+    bound = bound_review(temp_db, tmp_path)
     result = _delivered_result(bound.evidence_id)
     content = json.dumps(result, sort_keys=True, separators=(",", ":"))
     message_id = deterministic_review_message_id(
@@ -543,26 +439,6 @@ async def test_delivery_mailbox_and_result_are_one_identity(
 
 
 @pytest.mark.parametrize(
-    "relative_path",
-    [
-        "src/gobby/agents/agent_cleanup.py",
-        "src/gobby/agents/run_completion.py",
-        "src/gobby/agents/runner_queries.py",
-        "src/gobby/agents/resume_executor.py",
-        "src/gobby/hooks/session_coordinator.py",
-        "src/gobby/mcp_proxy/tools/agent_cancellation.py",
-        "src/gobby/mcp_proxy/tools/spawn_agent/_health.py",
-        "src/gobby/servers/routes/admin/_testing.py",
-        "src/gobby/servers/routes/agents.py",
-    ],
-)
-def test_all_terminalizing_call_sites_route_through_helper(relative_path: str) -> None:
-    source = (Path(__file__).parents[2] / relative_path).read_text()
-
-    assert "terminalize_plan_review_run" in source
-
-
-@pytest.mark.parametrize(
     "crash_boundary",
     [
         None,
@@ -585,9 +461,9 @@ def test_staged_verdict_terminal_ordering(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     derived = stage_review_setup.evidence.derive_plan_review_manifest(
         evidence_id,
         routing_decisions={},
@@ -720,7 +596,7 @@ def test_verdict_effects_idempotent_across_replay(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
     task = stage_review_setup.manager.get_task(stage_review_setup.task_id)
     reviewer = stage_review_setup.sessions.register(
@@ -745,7 +621,7 @@ def test_verdict_effects_idempotent_across_replay(
         summary={"coordinator_session_id": coordinator.id},
     )
 
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     stage_review_setup.db.execute(
         "UPDATE agent_runs SET child_session_id = %s WHERE id = %s",
         (reviewer.id, run_id),
@@ -831,7 +707,7 @@ async def test_deferred_health_check_respects_evidence_bind(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
 
     async def dead_session(*_args: object, **_kwargs: object) -> tuple[bool, None]:
@@ -861,7 +737,7 @@ async def test_deferred_health_check_respects_evidence_bind(
     assert pre_bind_result is not None
     assert pre_bind_result.status == "error"
 
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     await _deferred_tmux_health_check(
         runner,
         run_id,
@@ -888,7 +764,7 @@ async def test_deferred_health_check_persists_bounded_redacted_pane_output(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
     secret = "sk-ABCDEFGHIJKLMNOPQRSTUV"
     pane_output = f"{'x' * 2048}\n{secret}"

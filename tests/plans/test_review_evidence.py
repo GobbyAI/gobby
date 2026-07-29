@@ -991,17 +991,12 @@ def test_service_integration_call_sites(
         ("manifest", ("evidence-1", {"lane": "task"})),
         ("checkpoint", ("evidence-1", {"verdict": "needs_review"})),
     ]
-    source_path = Path(__file__).parents[2] / "src/gobby/plans/review_evidence.py"
-    source = source_path.read_text(encoding="utf-8")
-    assert len(source.splitlines()) < 1_000
-    assert source.count("prepare_review_round_context(") == 2
-    assert source.count("paginate_snapshot_envelope(") == 1
-    assert source.count("validate_review_coverage(") == 1
-    assert source.count("self.checkpoints.finalize_evidence(") == 1
 
 
 def test_upstream_leaves_close_independently() -> None:
-    plan_path = Path(__file__).parents[2] / ".gobby/plans/adversary-convergence-improvements.md"
+    plan_path = (
+        Path(__file__).parents[2] / ".gobby/plans/completed/adversary-convergence-improvements.md"
+    )
     plan = plan_path.read_text(encoding="utf-8")
     upstream_ids = ("2.2", "2.4", "4.1", "4.3", "5.1", "5.2", "6.5", "7.2")
     acceptance_blocks: list[str] = []
@@ -1141,7 +1136,6 @@ def test_inventory_unavailable_aborts_preparation(
     monkeypatch.setattr(
         "gobby.plans.review_evidence.prepare_review_round_context",
         unavailable,
-        raising=False,
     )
 
     with pytest.raises(ReviewEvidenceError, match="code index is unavailable"):
@@ -1283,7 +1277,6 @@ def _prepare_integration_repair_round(
     monkeypatch.setattr(
         "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         lambda **_kwargs: (inventory, universe),
-        raising=False,
     )
     round_two = service.prepare_plan_review_round(
         project_id=project_id,

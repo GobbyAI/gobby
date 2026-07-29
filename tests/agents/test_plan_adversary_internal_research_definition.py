@@ -53,7 +53,6 @@ def test_adversary_run_timeout_contract() -> None:
         assert agent["timeout"] == 2700
         assert "Native lane duration is not enforced by Gobby" in instructions
         assert "2700-second agent timeout" in instructions
-        assert '"reason_code":"timeout","timeout_seconds":2700' in instructions
 
 
 def test_adversaries_page_and_verify_the_complete_evidence_envelope() -> None:

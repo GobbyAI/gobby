@@ -173,6 +173,7 @@ async def test_debounce_timer_resets(harness: TriggerHarness, tmp_path: Path) ->
     assert harness.gateway.calls == []
 
     await harness.trigger._flush(root_key, "proj-1")
+    assert second_timer.cancelled()
     assert harness.gateway.calls[0][1] == ("src/a.py", "src/b.py")
 
 

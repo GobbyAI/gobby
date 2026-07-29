@@ -9,6 +9,7 @@ All tests are DB-driven with no in-memory registry dependency.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import threading
@@ -477,6 +478,19 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
     assert mutexes.get_mutex(task.id) is None
 
 
+def _link_child_session_to_run(
+    agent_run_manager: LocalAgentRunManager,
+    *,
+    run_id: str,
+    child_session_id: str | None,
+) -> None:
+    if child_session_id is not None:
+        agent_run_manager.db.execute(
+            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
+            (run_id, child_session_id),
+        )
+
+
 def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict,
@@ -498,11 +512,11 @@ def _make_terminal_run(
         timeout_seconds=timeout_seconds,
         requested_reasoning_effort=requested_reasoning_effort,
     )
-    if child_session_id is not None:
-        agent_run_manager.db.execute(
-            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
-            (run.id, child_session_id),
-        )
+    _link_child_session_to_run(
+        agent_run_manager,
+        run_id=run.id,
+        child_session_id=child_session_id,
+    )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(
         run.id,
@@ -553,9 +567,10 @@ def _make_dispatched_stage_run(
         run_id=run_id,
         task_id=task.id,
     )
-    temp_db.execute(
-        "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
-        (run.id, child_session_id),
+    _link_child_session_to_run(
+        agent_run_manager,
+        run_id=run.id,
+        child_session_id=child_session_id,
     )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
@@ -595,11 +610,11 @@ def _make_autonomous_run(
         run_id=run_id,
         child_session_id=child_session_id,
     )
-    if child_session_id is not None:
-        agent_run_manager.db.execute(
-            "UPDATE sessions SET agent_run_id = %s WHERE id = %s",
-            (run.id, child_session_id),
-        )
+    _link_child_session_to_run(
+        agent_run_manager,
+        run_id=run.id,
+        child_session_id=child_session_id,
+    )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(
         run.id,
@@ -4588,23 +4603,13 @@ class TestNonTaskResumeCallback:
             "reconcile_pending_terminations",
             record_pending_terminations,
         )
-        for name in (
-            "check_trust_prompts",
-            "check_loop_prompts",
-            "check_approval_prompts",
-            "check_queued_continuation_prompts",
-            "check_periodic_enters",
-            "check_attention_agents",
-            "check_unhealthy_agents",
-            "check_agent_memory",
-            "reap_daemon_stop_orphans",
-            "expire_terminal_run_sessions",
-            "check_initialization_timeout",
-            "check_idle_agents",
-            "check_provider_stalls",
-            "check_autonomous_stuck_agents",
-            "refresh_active_run_dispatch_mutexes",
-        ):
+        check_names = (
+            name
+            for name in AgentLifecycleMonitor._check_loop.__code__.co_names
+            if name != "reconcile_pending_terminations"
+            and inspect.iscoroutinefunction(getattr(AgentLifecycleMonitor, name, None))
+        )
+        for name in check_names:
             monkeypatch.setattr(monitor, name, AsyncMock(return_value=0))
 
         real_sleep = asyncio.sleep

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -105,6 +106,16 @@ def test_failure_trace_accepts_bound_requirement_citation(tmp_path: Path) -> Non
     )
 
     assert validated[0]["failure_trace"] == trace
+
+    tampered = deepcopy(finding)
+    tampered_trace = cast(dict[str, object], tampered["failure_trace"])
+    tampered_citations = cast(list[dict[str, object]], tampered_trace["citation"])
+    tampered_citations[0]["content_sha256"] = "f" * 64
+    with pytest.raises(ReviewEvidenceError):
+        validate_plan_review_findings(
+            [tampered],
+            evidence=_evidence({"requirements_bundle": bundle}),
+        )
 
 
 def test_blocking_requires_failure_trace() -> None:

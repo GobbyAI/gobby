@@ -140,7 +140,9 @@ class CodeIndexTrigger:
     async def _flush(self, root_key: str, project_id: str) -> None:
         """Flush pending files for a root through the shared gcode gateway."""
         files = self._pending_by_root.pop(root_key, set())
-        self._flush_timers_by_root.pop(root_key, None)
+        timer = self._flush_timers_by_root.pop(root_key, None)
+        if timer is not None:
+            timer.cancel()
 
         if not files:
             return

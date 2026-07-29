@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -25,14 +25,6 @@ class _ReviewHarness:
     service: PlanReviewEvidenceService
     project_id: str
     plan_path: Path
-
-
-@dataclass
-class _SpawnProbe:
-    evidence_ids: list[str] = field(default_factory=list)
-
-    def spawn(self, evidence_id: str) -> None:
-        self.evidence_ids.append(evidence_id)
 
 
 @pytest.fixture
@@ -252,19 +244,18 @@ def _mark_plan_repaired(plan_path: Path) -> None:
     )
 
 
-def _prepare_round_two_then_spawn(
+def _prepare_round_two(
     harness: _ReviewHarness,
     *,
     resolutions: list[dict[str, object]],
     attestations: list[dict[str, object]],
-    spawn_probe: _SpawnProbe,
 ) -> None:
     repair_ids = [str(resolution["prior_finding_id"]) for resolution in resolutions]
     _inventory, scope = _settled_repair_inputs(repair_finding_ids=repair_ids)
     for attestation in attestations:
         if "sweep_scope_digest" in attestation:
             attestation["sweep_scope_digest"] = scope.digest
-    prepared = harness.service.prepare_plan_review_round(
+    harness.service.prepare_plan_review_round(
         project_id=harness.project_id,
         plan_path=harness.plan_path,
         round_number=2,
@@ -275,7 +266,6 @@ def _prepare_round_two_then_spawn(
         sweep_scope=scope.to_dict(),
         sweep_scope_digest=scope.digest,
     )
-    spawn_probe.spawn(prepared.evidence_id)
 
 
 def test_omitted_consumer_refuses_round_two(review_harness: _ReviewHarness) -> None:
@@ -283,18 +273,15 @@ def test_omitted_consumer_refuses_round_two(review_harness: _ReviewHarness) -> N
     omitted = _finding("consumer-two", severity="minor")
     _finalize_round_one(review_harness, [first, omitted])
     _mark_plan_repaired(review_harness.plan_path)
-    spawn_probe = _SpawnProbe()
 
     with pytest.raises(ReviewEvidenceError, match="consumer-two") as refused:
-        _prepare_round_two_then_spawn(
+        _prepare_round_two(
             review_harness,
             resolutions=[_resolution("consumer-one"), _resolution("consumer-two")],
             attestations=[_attestation(first)],
-            spawn_probe=spawn_probe,
         )
 
     assert refused.value.code == "missing_repair_attestation"
-    assert spawn_probe.evidence_ids == []
 
 
 def test_omitted_resolution_refuses_round_two(review_harness: _ReviewHarness) -> None:
@@ -302,36 +289,30 @@ def test_omitted_resolution_refuses_round_two(review_harness: _ReviewHarness) ->
     omitted = _finding("finding-two", severity="minor")
     _finalize_round_one(review_harness, [first, omitted])
     _mark_plan_repaired(review_harness.plan_path)
-    spawn_probe = _SpawnProbe()
 
     with pytest.raises(ReviewEvidenceError, match="finding-two") as refused:
-        _prepare_round_two_then_spawn(
+        _prepare_round_two(
             review_harness,
             resolutions=[_resolution("finding-one")],
             attestations=[_attestation(first)],
-            spawn_probe=spawn_probe,
         )
 
     assert refused.value.code == "missing_finding_resolution"
-    assert spawn_probe.evidence_ids == []
 
 
 def test_subset_attestation_refuses_before_spawn(review_harness: _ReviewHarness) -> None:
     finding = _finding("subset")
     _finalize_round_one(review_harness, [finding])
     _mark_plan_repaired(review_harness.plan_path)
-    spawn_probe = _SpawnProbe()
 
     with pytest.raises(
         ReviewEvidenceError,
         match="consumer:subset:secondary",
     ) as refused:
-        _prepare_round_two_then_spawn(
+        _prepare_round_two(
             review_harness,
             resolutions=[_resolution("subset")],
             attestations=[_attestation(finding)],
-            spawn_probe=spawn_probe,
         )
 
     assert refused.value.code == "repair_sweep_scope_mismatch"
-    assert spawn_probe.evidence_ids == []

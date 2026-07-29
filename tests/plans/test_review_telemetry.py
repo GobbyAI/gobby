@@ -30,16 +30,18 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.review_coverage_helpers import coverage_attestation
-from tests.review_telemetry_helpers import delivered_telemetry
-from tests.storage.test_stage_review_findings import (
+from tests.review_coverage_helpers import (
     StageReviewSetup,
-    _findings,
-    _prepare_bound,
+    coverage_attestation,
+    prepare_bound_review,
+    review_findings,
 )
-from tests.storage.test_stage_review_findings import (
-    stage_review_setup as _stage_review_setup,  # noqa: F401 - pytest fixture re-export
+from tests.review_coverage_helpers import (
+    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
 )
+from tests.review_telemetry_helpers import delivered_telemetry
+
+pytestmark = pytest.mark.unit
 
 
 def test_classification_provenance() -> None:
@@ -295,9 +297,9 @@ def test_staged_path_carries_telemetry(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     telemetry = delivered_telemetry()
 
     if verdict == "approved":
@@ -326,7 +328,7 @@ def test_staged_path_carries_telemetry(
         stage_review_setup.manager.reject_review(
             stage_review_setup.task_id,
             "planning",
-            findings=_findings(),
+            findings=review_findings(),
             coverage_attestation=coverage_attestation(
                 evidence_id=evidence_id,
                 shadow_valid=False,

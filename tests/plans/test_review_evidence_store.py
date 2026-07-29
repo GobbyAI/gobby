@@ -12,6 +12,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def evidence_store_row(

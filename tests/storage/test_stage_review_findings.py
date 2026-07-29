@@ -3,8 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Never, cast
 
@@ -13,19 +11,20 @@ import pytest
 from gobby.agents.sync import sync_bundled_agents
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
-from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_findings import validate_plan_review_findings
-from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
-from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from tests.review_coverage_helpers import coverage_attestation
+from tests.review_coverage_helpers import (
+    StageReviewSetup,
+    coverage_attestation,
+    hold_dispatch_mutex,
+    prepare_bound_review,
+    review_findings,
+    settled_repair_inputs,
+    stage_review_setup,
+)
 from tests.review_telemetry_helpers import enriched_telemetry
 from tests.storage.tasks._stage_test_helpers import (
     lifecycle_events,
@@ -33,175 +32,14 @@ from tests.storage.tasks._stage_test_helpers import (
     stage_row,
 )
 
+__all__ = ["stage_review_setup"]
+
 _SWEEP_SCOPE_DIGEST = "a" * 64
-
-
-@dataclass(frozen=True)
-class StageReviewSetup:
-    db: HubDatabase
-    manager: LocalTaskManager
-    evidence: PlanReviewEvidenceService
-    runs: LocalAgentRunManager
-    sessions: SessionManager
-    project_id: str
-    task_id: str
-    plan_path: Path
-    plan_relative_path: str
-    parent_session_id: str
-
-
-@pytest.fixture
-def stage_review_setup(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> StageReviewSetup:
-    monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
-        _settled_repair_inputs,
-    )
-    project = LocalProjectManager(temp_db).create(
-        name="stage-review-findings",
-        repo_path=str(tmp_path),
-    )
-    sessions = SessionManager(temp_db)
-    parent = sessions.register(
-        external_id="stage-review-launcher",
-        machine_id="test-machine",
-        source="codex",
-        project_id=project.id,
-    )
-    plan_path = tmp_path / ".gobby" / "plans" / "review.md"
-    plan_path.parent.mkdir(parents=True)
-    plan_path.write_text(
-        "\n".join(
-            [
-                "# Review",
-                "**Plan ID:** review",
-                "",
-                "## P1 Foundation",
-                "`kind: framing`",
-                "",
-                "### 1.1 Implement",
-                "`kind: deliverable`",
-                "",
-                "Target: `src/example.py`",
-                "",
-                "**Acceptance:**",
-                "- 1.1.1 — Implemented. test: `tests/test_example.py`",
-                "",
-                "## Task Mapping",
-                "`kind: framing`",
-                "",
-                "Pending.",
-                "",
-                "## V1 Plan Changelog",
-                "`kind: verification`",
-                "",
-                "No rounds.",
-                "",
-                "## M1 Task Manifest",
-                "`kind: manifest`",
-                "",
-                "```yaml",
-                "- title: Implement",
-                "  source_section: '1.1'",
-                "  covers: [1.1.1]",
-                "  category: code",
-                "  implementation_domain: backend",
-                "  priority: 2",
-                "  task_type: feature",
-                "  tdd: false",
-                "  labels: [covers:review:1.1:1.1.1]",
-                "  description: Implement.",
-                "  validation_criteria: Tested.",
-                "```",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(
-        project.id,
-        "Plan review anchor",
-        task_type="review_anchor",
-        category="planning",
-        isolation="none",
-        validation_criteria="Test task completion is observable.",
-    )
-    manager.initialize_task_manifest(task.id, stage_names=["planning"])
-    set_stage_state(temp_db, task.id, "planning", "needs_review")
-    TaskArtifactManager(temp_db).set_artifacts_atomic(
-        task.id,
-        plan_file_path=str(plan_path),
-    )
-    return StageReviewSetup(
-        db=temp_db,
-        manager=manager,
-        evidence=PlanReviewEvidenceService(temp_db),
-        runs=LocalAgentRunManager(temp_db),
-        sessions=sessions,
-        project_id=project.id,
-        task_id=task.id,
-        plan_path=plan_path,
-        plan_relative_path=".gobby/plans/review.md",
-        parent_session_id=parent.id,
-    )
-
-
-def _findings() -> list[dict[str, object]]:
-    return [
-        {
-            "finding_id": "F1",
-            "section_id": "1.1",
-            "check_key": "failure-atomicity",
-            "severity": "blocking",
-            "category": "unhandled-edge",
-            "location": "§ 1.1",
-            "description": "The failure path can leave partial state.",
-            "minimal_repair": "Specify rollback before retry.",
-            "repair_scope": "existing_sections",
-            "root_cause": "Only the successful write was modeled.",
-            "prevention": "Walk every write failure boundary.",
-            "participating_section_ids": ["1.1"],
-            "failure_trace": {
-                "preconditions": "The first durable write succeeds.",
-                "action": "The second durable write fails.",
-                "wrong_outcome": "The first write remains visible.",
-                "violated_obligation": "The operation must commit atomically.",
-                "citation": [{"path": "plan.md", "sha256": "0" * 64}],
-            },
-        },
-        {
-            "finding_id": "F2",
-            "section_id": "1.1",
-            "check_key": "cross-round-causality",
-            "severity": "blocking",
-            "category": "bad-sequencing",
-            "location": "§ 1.1",
-            "description": "The prior fix created a conflicting order.",
-            "minimal_repair": "Restore the prerequisite before the new write.",
-            "repair_scope": "existing_sections",
-            "principle": "Causal fixes preserve established prerequisites.",
-            "prevention": "Recheck all sections changed by a causal fix.",
-            "introduced_in_round": 1,
-            "causal_finding_id": "F1",
-            "causal_section_ids": ["1.1"],
-            "failure_trace": {
-                "preconditions": "The prior repair is present.",
-                "action": "The new write executes before its prerequisite.",
-                "wrong_outcome": "The prerequisite is observed too late.",
-                "violated_obligation": "Causal repairs must preserve prerequisite order.",
-                "citation": [{"path": "plan.md", "sha256": "0" * 64}],
-            },
-        },
-    ]
 
 
 def _repair_submission() -> dict[str, object]:
     attestations = []
-    for finding in _findings():
+    for finding in review_findings():
         attestations.append(
             {
                 "prior_finding_id": finding["finding_id"],
@@ -223,64 +61,10 @@ def _repair_submission() -> dict[str, object]:
         "round_number": 2,
         "prior_finding_resolutions": [
             {"prior_finding_id": finding["finding_id"], "decision": "repair"}
-            for finding in _findings()
+            for finding in review_findings()
         ],
         "repair_attestations": attestations,
     }
-
-
-def _settled_repair_inputs(
-    *,
-    prior_evidence: PlanReviewEvidence,
-    repair_finding_ids: list[str] | tuple[str, ...],
-    **_kwargs: object,
-) -> tuple[CandidateSiteInventory, SweepScope]:
-    assert prior_evidence.round_result is not None
-    findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
-    finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
-    consumer_site = "src/example.py:consumer"
-    adjacent_site = "src/example.py:retry"
-    sites = tuple(
-        CandidateSite(
-            site_id=site_id,
-            path="src/example.py",
-            source_kind="symbol_call",
-            source_ref="gobby.example.rollback",
-            status="resolved",
-            language="python",
-            section_ids=("1.1",),
-        )
-        for site_id in (consumer_site, adjacent_site)
-    )
-    inventory = CandidateSiteInventory(
-        changed_acceptance_item_ids=("1.1.1",),
-        changed_targets=("src/example.py",),
-        changed_symbols=("gobby.example.rollback",),
-        changed_contracts=(),
-        targets_by_section={"1.1": ("src/example.py",)},
-        contracts_by_section={},
-        resolved_languages=("python",),
-        unsupported_targets=(),
-        sites=sites,
-    )
-    universe = SweepScope(
-        candidate_sites=sites,
-        requirements=tuple(
-            SweepRequirement(
-                prior_finding_id=finding_id,
-                check_key=cast(str, finding_map[finding_id]["check_key"]),
-                changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
-                changed_contracts=(),
-                changed_targets=("src/example.py",),
-                required_consumer_site_ids=(consumer_site,),
-                adjacent_variant_ids=(adjacent_site,),
-                interaction_edge_ids=(),
-            )
-            for finding_id in repair_finding_ids
-        ),
-        interaction_edges=(),
-    )
-    return inventory, universe
 
 
 def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
@@ -304,7 +88,7 @@ def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
         project_id=setup.project_id,
         plan_path=setup.plan_relative_path,
     )
-    _inventory, scope = _settled_repair_inputs(
+    _inventory, scope = settled_repair_inputs(
         prior_evidence=setup.evidence.get_evidence(rows[-1].evidence_id),
         repair_finding_ids=repair_ids,
     )
@@ -316,49 +100,6 @@ def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
     submission["sweep_scope"] = scope.to_dict()
     submission["sweep_scope_digest"] = scope.digest
     return submission
-
-
-def _prepare_bound(
-    setup: StageReviewSetup,
-    *,
-    round_number: int = 1,
-    task_id: str | None = None,
-    plan_path: Path | None = None,
-) -> tuple[str, str]:
-    target_task_id = task_id or setup.task_id
-    prepared = setup.evidence.prepare_plan_review_round(
-        project_id=setup.project_id,
-        plan_path=plan_path or setup.plan_path,
-        round_number=round_number,
-        task_id=target_task_id,
-        stage="planning",
-    )
-    run = setup.runs.create(
-        parent_session_id=setup.parent_session_id,
-        provider="codex",
-        prompt="review",
-        task_id=target_task_id,
-    )
-    setup.evidence.bind_evidence_run(prepared.evidence_id, run.id)
-    _hold_dispatch_mutex(setup, task_id=target_task_id, run_id=run.id)
-    return prepared.evidence_id, run.id
-
-
-def _hold_dispatch_mutex(
-    setup: StageReviewSetup,
-    *,
-    task_id: str,
-    run_id: str,
-) -> None:
-    mutexes = TaskDispatchMutexManager(setup.db)
-    mutexes.ensure_table()
-    assert mutexes.acquire_mutex(
-        task_id,
-        holder=f"test:{run_id}",
-        kind="spawn_agent",
-        ttl_seconds=600,
-        run_id=run_id,
-    )
 
 
 def _fence(description: str) -> dict[str, object]:
@@ -382,8 +123,8 @@ def test_finding_markdown_structure_is_rejected(
     field: str,
     value: str,
 ) -> None:
-    evidence_id, _run_id = _prepare_bound(stage_review_setup)
-    finding = _findings()[0]
+    evidence_id, _run_id = prepare_bound_review(stage_review_setup)
+    finding = review_findings()[0]
     finding[field] = value
 
     with pytest.raises(ReviewEvidenceError, match="unsafe Markdown structure"):
@@ -394,8 +135,8 @@ def test_finding_markdown_structure_is_rejected(
 
 
 def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
-    findings = _findings()
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
+    findings = review_findings()
     invalid = [dict(finding) for finding in findings]
     invalid[0]["section_id"] = "missing"
     with pytest.raises(ReviewEvidenceError, match="absent from the evidence manifest"):
@@ -447,14 +188,14 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
 
 def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -> None:
     original_snapshot = stage_review_setup.plan_path.read_bytes()
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     stored = stage_review_setup.evidence.get_evidence(evidence_id)
     stage_review_setup.plan_path.write_text("# Mutated live plan\n", encoding="utf-8")
 
     updated = stage_review_setup.manager.reject_review(
         stage_review_setup.task_id,
         "planning",
-        findings=_findings(),
+        findings=review_findings(),
         coverage_attestation=coverage_attestation(
             evidence_id=evidence_id,
             shadow_valid=False,
@@ -477,7 +218,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         stage_review_setup.manager.reject_review(
             stage_review_setup.task_id,
             "planning",
-            findings=_findings(),
+            findings=review_findings(),
             coverage_attestation=coverage_attestation(
                 evidence_id=evidence_id,
                 shadow_valid=False,
@@ -507,7 +248,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         stage_review_setup.manager.reject_review(
             other_task.id,
             "planning",
-            findings=_findings(),
+            findings=review_findings(),
             coverage_attestation=coverage_attestation(
                 evidence_id=evidence_id,
                 shadow_valid=False,
@@ -574,7 +315,7 @@ async def test_staged_prompt_uses_evidence_handle(
             stage_review_setup.manager.reject_review(
                 stage_review_setup.task_id,
                 "planning",
-                findings=_findings(),
+                findings=review_findings(),
                 coverage_attestation=coverage_attestation(
                     evidence_id=prepared.evidence_id,
                     shadow_valid=False,
@@ -626,7 +367,7 @@ async def test_staged_prompt_uses_evidence_handle(
     assert prepared.dispatch_run_id == run_id
     assert prepared.evidence_id in prompt
 
-    _hold_dispatch_mutex(
+    hold_dispatch_mutex(
         stage_review_setup,
         task_id=stage_review_setup.task_id,
         run_id=run_id,
@@ -634,7 +375,7 @@ async def test_staged_prompt_uses_evidence_handle(
     stage_review_setup.manager.reject_review(
         stage_review_setup.task_id,
         "planning",
-        findings=_findings(),
+        findings=review_findings(),
         coverage_attestation=coverage_attestation(
             evidence_id=prepared.evidence_id,
             shadow_valid=False,
@@ -721,7 +462,7 @@ def test_rejection_finalizes_evidence(
     stage_review_setup: StageReviewSetup,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     original_finalize = PlanReviewEvidenceService.finalize_plan_review_evidence
 
     def crash_finalize(
@@ -741,7 +482,7 @@ def test_rejection_finalizes_evidence(
         stage_review_setup.manager.reject_review(
             stage_review_setup.task_id,
             "planning",
-            findings=_findings(),
+            findings=review_findings(),
             coverage_attestation=coverage_attestation(
                 evidence_id=evidence_id,
                 shadow_valid=False,
@@ -768,7 +509,7 @@ def test_rejection_finalizes_evidence(
     first = stage_review_setup.manager.reject_review(
         stage_review_setup.task_id,
         "planning",
-        findings=_findings(),
+        findings=review_findings(),
         coverage_attestation=coverage_attestation(
             evidence_id=evidence_id,
             shadow_valid=False,
@@ -788,7 +529,7 @@ def test_rejection_finalizes_evidence(
     replay = stage_review_setup.manager.reject_review(
         stage_review_setup.task_id,
         "planning",
-        findings=_findings(),
+        findings=review_findings(),
         coverage_attestation=coverage_attestation(
             evidence_id=evidence_id,
             shadow_valid=False,
@@ -808,7 +549,7 @@ def test_rejection_finalizes_evidence(
         stage_review_setup.manager.reject_review(
             stage_review_setup.task_id,
             "planning",
-            findings=_findings(),
+            findings=review_findings(),
             coverage_attestation=coverage_attestation(
                 evidence_id=evidence_id,
                 shadow_valid=False,
@@ -828,7 +569,7 @@ def test_rejection_finalizes_evidence(
         )
         if resolution["decision"] == "repair"
     ]
-    _inventory, scope = _settled_repair_inputs(
+    _inventory, scope = settled_repair_inputs(
         prior_evidence=stage_review_setup.evidence.get_evidence(evidence_id),
         repair_finding_ids=repair_ids,
     )
@@ -871,14 +612,14 @@ def test_approval_ledger_is_server_derived(
     ):
         assert "quality_ledger" not in inspect.signature(method).parameters
 
-    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    evidence_id, run_id = prepare_bound_review(stage_review_setup)
     derived = stage_review_setup.evidence.derive_plan_review_manifest(
         evidence_id,
         routing_decisions={},
     )
     manifest_entries = derived["manifest_entries"]
     assert isinstance(manifest_entries, list)
-    major = dict(_findings()[0])
+    major = dict(review_findings()[0])
     major["severity"] = "major"
     major.pop("failure_trace")
     approval_attestation = coverage_attestation(

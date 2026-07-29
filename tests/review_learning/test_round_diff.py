@@ -22,15 +22,15 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from tests.review_coverage_helpers import coverage_attestation
-from tests.review_telemetry_helpers import enriched_telemetry
-from tests.storage.test_stage_review_findings import (
+from tests.review_coverage_helpers import (
     StageReviewSetup,
-    _prepare_bound,
+    coverage_attestation,
+    prepare_bound_review,
 )
-from tests.storage.test_stage_review_findings import (
-    stage_review_setup as _stage_review_setup,  # noqa: F401 - pytest fixture re-export
+from tests.review_coverage_helpers import (
+    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
 )
+from tests.review_telemetry_helpers import enriched_telemetry
 
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
@@ -734,9 +734,9 @@ def test_approval_evidence_finalization(
 
     setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("_stage_review_setup"),
+        request.getfixturevalue("stage_review_setup_fixture"),
     )
-    evidence_id, run_id = _prepare_bound(setup)
+    evidence_id, run_id = prepare_bound_review(setup)
     derived = setup.evidence.derive_plan_review_manifest(
         evidence_id,
         routing_decisions={},

@@ -274,7 +274,8 @@ async def test_dead_session_triggers_callback() -> None:
     assert event.session_id == "ext-dead"
     assert event.metadata["_platform_session_id"] == "sess-dead"
     assert event.metadata["_tmux_pane_death"] is True
-    assert callback_thread_ids != [event_loop_thread_id]
+    assert len(callback_thread_ids) == 1
+    assert callback_thread_ids[0] != event_loop_thread_id
 
 
 @pytest.mark.asyncio

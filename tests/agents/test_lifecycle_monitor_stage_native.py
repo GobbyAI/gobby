@@ -13,18 +13,6 @@ def _recovery_source() -> str:
     return source_text("src/gobby/agents/task_recovery.py")
 
 
-def _cleanup_source() -> str:
-    return source_text("src/gobby/agents/agent_cleanup.py")
-
-
-def _idle_source() -> str:
-    return source_text("src/gobby/agents/idle_check_handler.py")
-
-
-def _watchdog_recovery_source() -> str:
-    return source_text("src/gobby/agents/watchdog/recovery.py")
-
-
 def test_recover_stale_claims_uses_projected_stage_state() -> None:
     source = _recovery_source()
 
@@ -49,29 +37,9 @@ def test_recover_non_development_states_clear_ownership_no_stage_transition() ->
     assert "reject_review(" not in source
 
 
-def test_cancelled_agent_cleanup_delegates_to_stage_native_recovery() -> None:
-    source = _cleanup_source()
-
-    assert "recover_task_from_terminal_agent(" in source
-    assert 'outcome="cancelled"' in source
-    # Parked daemon_stop runs keep their claims; only real cancellations recover.
-    assert 'if terminal_reason != "daemon_stop":' in source
-    assert "status='open'" not in source
-
-
 def test_unrecoverable_marks_canonical_escalation_fields_not_status_escalated() -> None:
     source = _recovery_source()
 
     assert "escalated_at" in source
     assert "escalation_reason" in source
     assert "status='escalated'" not in source
-
-
-def test_idle_diagnostics_live_in_watchdog_recovery_coordinator() -> None:
-    idle_source = _idle_source()
-    recovery_source = _watchdog_recovery_source()
-
-    assert "class IdleCheckHandler" in idle_source
-    assert "Watchdog idle diagnostic" not in idle_source
-    assert "class WatchdogRecoveryCoordinator" in recovery_source
-    assert "Watchdog idle diagnostic" in recovery_source

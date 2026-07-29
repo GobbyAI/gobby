@@ -396,11 +396,18 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("resolution", ["missing", "broken"])
+@pytest.mark.parametrize(
+    ("resolution", "expected_match"),
+    [
+        ("missing", "claude executable"),
+        ("broken", "Failed to resolve"),
+    ],
+)
 async def test_prepare_srt_launch_fails_before_policy_for_unresolved_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     resolution: str,
+    expected_match: str,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -417,11 +424,13 @@ async def test_prepare_srt_launch_fails_before_policy_for_unresolved_provider(
     monkeypatch.setattr(
         shutil,
         "which",
-        lambda command, path=None: resolved if command == "claude" else None,
+        lambda command, mode=os.F_OK | os.X_OK, path=None: (
+            resolved if command == "claude" else None
+        ),
     )
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verify)
 
-    with pytest.raises(SrtRuntimeError, match="claude executable|Failed to resolve"):
+    with pytest.raises(SrtRuntimeError, match=expected_match):
         await prepare_sandbox_launch(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             provider="claude",
