@@ -105,10 +105,15 @@ def _strip_injected_context_from_value(value: Any) -> Any:
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:
-    """Bound prompt context without splitting through the fallback plumbing."""
+    """Bound prompt context while keeping an explicit truncation marker."""
+    if max_chars <= 0:
+        return ""
     if len(value) <= max_chars:
         return value
-    return f"{value[:max_chars].rstrip()}\n..."
+    marker = "\n... [truncated]"
+    if max_chars <= len(marker):
+        return "..."[:max_chars]
+    return f"{value[: max_chars - len(marker)].rstrip()}{marker}"
 
 
 def _format_transcript_fallback_summary(

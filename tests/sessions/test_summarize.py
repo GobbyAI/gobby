@@ -1775,8 +1775,8 @@ class TestGenerateSessionSummaries:
             "\n\n## Current State",
             maxsplit=1,
         )[0]
-        assert len(transcript_summary) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
-        assert transcript_summary.endswith("...")
+        assert len(transcript_summary) <= TRANSCRIPT_FALLBACK_MAX_CHARS
+        assert transcript_summary.endswith("... [truncated]")
 
     @pytest.mark.asyncio
     async def test_full_summary_uses_secondary_candidate_after_validation_rejection(

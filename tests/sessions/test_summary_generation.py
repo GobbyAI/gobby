@@ -118,6 +118,7 @@ async def test_generate_summary_reserves_unresolved_errors_within_context_cap(
     assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS
     if len(expected_block) > TRANSCRIPT_FALLBACK_MAX_CHARS:
         assert structured_context.startswith("Unresolved Tool Errors:")
+        assert structured_context.endswith("... [truncated]")
         assert "a" * 100 not in structured_context
     else:
         assert structured_context.endswith(expected_block)
@@ -447,8 +448,14 @@ class TestGenerateSummary:
         transcript_context, structured_context = mock_llm_service.call_feature.await_args.args[
             1
         ].split("|", maxsplit=1)
-        assert len(transcript_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
-        assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 80
+        assert len(transcript_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS
+        assert transcript_context.endswith("... [truncated]")
+        bounded_structured_context = structured_context.split(
+            "\n\n## Current State",
+            maxsplit=1,
+        )[0]
+        assert len(bounded_structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS
+        assert bounded_structured_context.endswith("... [truncated]")
 
     @pytest.mark.parametrize("llm_output", ["", "   \n"])
     async def test_generate_summary_rejects_invalid_llm_output(
