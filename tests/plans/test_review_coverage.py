@@ -476,7 +476,7 @@ def test_sweep_universe_fixtures(tmp_path: Path) -> None:
             "changed_contracts": ["contracts/review.json"],
             "sites": [{"site_id": "consumer-1"}],
         },
-        "repair_universe": {"requirements": [repair_requirement]},
+        "current_sweep_scope": {"requirements": [repair_requirement]},
         "dismissed_ledger_entries": [],
     }
     with pytest.raises(ReviewEvidenceError, match="finding-prior"):

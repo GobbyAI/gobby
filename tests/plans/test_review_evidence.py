@@ -20,13 +20,13 @@ from gobby.plans.review_evidence_io import (
     manifest_key,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_repair import RepairUniverse, derive_repair_universe
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     build_request_anchor,
     requirements_bundle_from_context,
     validate_source_citation,
 )
+from gobby.plans.review_sweep_scope import SweepScope, derive_sweep_scope
 from gobby.plans.review_telemetry import persist_delivered_round_result
 from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage.agents import LocalAgentRunManager
@@ -1200,7 +1200,7 @@ def _finalize_integration_round(
 
 def _integration_inventory_and_universe() -> tuple[
     CandidateSiteInventory,
-    RepairUniverse,
+    SweepScope,
 ]:
     site = CandidateSite(
         site_id="site-consumer",
@@ -1222,7 +1222,7 @@ def _integration_inventory_and_universe() -> tuple[
         unsupported_targets=(),
         sites=(site,),
     )
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[_integration_finding()],
         inventory=inventory,
         repair_finding_ids=["integration-finding"],
@@ -1230,7 +1230,7 @@ def _integration_inventory_and_universe() -> tuple[
     return inventory, universe
 
 
-def _integration_attestation(universe: RepairUniverse) -> dict[str, object]:
+def _integration_attestation(universe: SweepScope) -> dict[str, object]:
     requirement = universe.requirements[0]
     return {
         "prior_finding_id": "integration-finding",
@@ -1243,7 +1243,7 @@ def _integration_attestation(universe: RepairUniverse) -> dict[str, object]:
         "adjacent_variants_swept": list(requirement.adjacent_variant_ids),
         "validation_evidence": ["focused integration test passed"],
         "deferred_sites": [],
-        "repair_universe_digest": universe.digest,
+        "sweep_scope_digest": universe.digest,
         "sweep_query_evidence": ["gcode callers example-contract"],
         "repair_bundle_interactions": [],
     }
@@ -1257,7 +1257,7 @@ def _prepare_integration_repair_round(
     str,
     Path,
     CandidateSiteInventory,
-    RepairUniverse,
+    SweepScope,
 ]:
     service, project_id, session_id, plan_path = review_setup
     round_one = service.prepare_plan_review_round(
@@ -1281,7 +1281,7 @@ def _prepare_integration_repair_round(
     )
     inventory, universe = _integration_inventory_and_universe()
     monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         lambda **_kwargs: (inventory, universe),
         raising=False,
     )
@@ -1294,6 +1294,8 @@ def _prepare_integration_repair_round(
             {"prior_finding_id": "integration-finding", "decision": "repair"}
         ],
         repair_attestations=[_integration_attestation(universe)],
+        sweep_scope=universe.to_dict(),
+        sweep_scope_digest=universe.digest,
     )
     return service, round_two.evidence_id, plan_path, inventory, universe
 
@@ -1309,7 +1311,13 @@ def test_inventory_first_call_succeeds(
     context = service.get_evidence(evidence_id).prior_round_context
     assert context is not None
     assert context["consumer_site_inventory"] == inventory.to_dict()
-    assert context["repair_universe_digest"] == universe.digest
+    assert context["submitted_sweep_scope_digest"] == universe.digest
+    assert context["current_sweep_scope"] == universe.to_dict()
+    assert context["required_scope_delta"] == {
+        "requirements": {"added": [], "removed": [], "changed": []},
+        "candidate_sites": {"added": [], "removed": [], "changed": []},
+        "interaction_edges": {"added": [], "removed": [], "changed": []},
+    }
 
 
 def test_round_context_records_no_index_generation(
@@ -1642,7 +1650,7 @@ def test_approval_surfaces_carried_ledger(
     assert any(entry["kind"] == "dismissed" for entry in derived_ledger)
 
 
-def test_repair_universe_production_sequence(
+def test_sweep_scope_production_sequence(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1679,16 +1687,37 @@ def test_repair_universe_production_sequence(
         encoding="utf-8",
     )
     inventory, universe = _integration_inventory_and_universe()
-    monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
-        lambda **_kwargs: (inventory, universe),
+    current_site = CandidateSite(
+        site_id="site-consumer",
+        path="src/current-consumer.py",
+        source_kind="file_consumer",
+        source_ref="src/example.py",
+        status="resolved",
+        language="python",
+        section_ids=("1.1",),
     )
-    drifted_attestation = {
-        **_integration_attestation(universe),
-        "repair_universe_digest": "d" * 64,
-    }
+    current_inventory = CandidateSiteInventory(
+        changed_acceptance_item_ids=inventory.changed_acceptance_item_ids,
+        changed_targets=inventory.changed_targets,
+        changed_symbols=inventory.changed_symbols,
+        changed_contracts=inventory.changed_contracts,
+        targets_by_section=inventory.targets_by_section,
+        contracts_by_section=inventory.contracts_by_section,
+        resolved_languages=inventory.resolved_languages,
+        unsupported_targets=inventory.unsupported_targets,
+        sites=(current_site,),
+    )
+    current_scope = derive_sweep_scope(
+        prior_findings=[_integration_finding()],
+        inventory=current_inventory,
+        repair_finding_ids=["integration-finding"],
+    )
+    monkeypatch.setattr(
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
+        lambda **_kwargs: (current_inventory, current_scope),
+    )
 
-    with pytest.raises(ReviewEvidenceError) as drifted:
+    with pytest.raises(ReviewEvidenceError) as inconsistent:
         service.prepare_plan_review_round(
             project_id=project_id,
             plan_path=staged_path,
@@ -1698,16 +1727,11 @@ def test_repair_universe_production_sequence(
             prior_finding_resolutions=[
                 {"prior_finding_id": "integration-finding", "decision": "repair"}
             ],
-            repair_attestations=[drifted_attestation],
+            repair_attestations=[_integration_attestation(universe)],
+            sweep_scope=universe.to_dict(),
+            sweep_scope_digest="d" * 64,
         )
-    assert drifted.value.code == "repair_universe_drift"
-    assert [
-        row.round_number
-        for row in service.store.list_for_path(
-            project_id=project_id,
-            plan_path=".gobby/plans/staged-repair.md",
-        )
-    ] == [1]
+    assert inconsistent.value.code == "sweep_scope_digest_mismatch"
 
     staged_round_two = service.prepare_plan_review_round(
         project_id=project_id,
@@ -1719,10 +1743,32 @@ def test_repair_universe_production_sequence(
             {"prior_finding_id": "integration-finding", "decision": "repair"}
         ],
         repair_attestations=[_integration_attestation(universe)],
+        sweep_scope=universe.to_dict(),
+        sweep_scope_digest=universe.digest,
     )
+    assert [
+        row.round_number
+        for row in service.store.list_for_path(
+            project_id=project_id,
+            plan_path=".gobby/plans/staged-repair.md",
+        )
+    ] == [1, 2]
     staged_context = service.get_evidence(staged_round_two.evidence_id).prior_round_context
     assert staged_context is not None
-    assert staged_context["repair_universe_digest"] == universe.digest
+    assert staged_context["submitted_sweep_scope_digest"] == universe.digest
+    site_delta = staged_context["required_scope_delta"]
+    assert isinstance(site_delta, dict)
+    assert site_delta["candidate_sites"] == {
+        "added": [],
+        "removed": [],
+        "changed": [
+            {
+                "id": "site-consumer",
+                "submitted": universe.candidate_sites[0].to_dict(),
+                "current": current_site.to_dict(),
+            }
+        ],
+    }
 
     taskless_service, taskless_evidence_id, *_rest = _prepare_integration_repair_round(
         review_setup,

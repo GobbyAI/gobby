@@ -515,23 +515,23 @@ def _repair_requirements(
             allow_empty=True,
         )
     )
-    universe = payload.get("repair_universe")
-    universe_requirements: dict[str, dict[str, object]] = {}
-    if universe is not None:
-        if not isinstance(universe, Mapping):
-            raise _invalid("prior_round_context.repair_universe must be an object")
+    current_scope = payload.get("current_sweep_scope")
+    scope_requirements: dict[str, dict[str, object]] = {}
+    if current_scope is not None:
+        if not isinstance(current_scope, Mapping):
+            raise _invalid("prior_round_context.current_sweep_scope must be an object")
         for record in _object_array(
-            universe.get("requirements", []),
-            owner="repair_universe.requirements",
+            current_scope.get("requirements", []),
+            owner="current_sweep_scope.requirements",
         ):
             finding_id = _required_string(record, "prior_finding_id", "repair requirement")
-            universe_requirements[finding_id] = record
-        if repair_ids and set(universe_requirements) != repair_ids:
-            raise _invalid("repair_universe requirements disagree with repair resolutions")
-        repair_ids.update(universe_requirements)
+            scope_requirements[finding_id] = record
+        if repair_ids and set(scope_requirements) != repair_ids:
+            raise _invalid("current_sweep_scope requirements disagree with repair resolutions")
+        repair_ids.update(scope_requirements)
     result: dict[str, _RepairRequirement] = {}
     for finding_id in sorted(repair_ids):
-        requirement = universe_requirements.get(finding_id)
+        requirement = scope_requirements.get(finding_id)
         attestation = attestations.get(finding_id)
         if requirement is None and attestation is None:
             raise _invalid(f"repair context is missing changed surfaces for {finding_id}")

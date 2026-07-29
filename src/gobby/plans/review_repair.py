@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import combinations
 from typing import cast
 
-from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence_io import build_inter_round_diff, reviewed_section_hashes
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -19,6 +16,7 @@ from gobby.plans.review_evidence_models import (
 )
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_ledger import inject_dismissed_ledger_context
+from gobby.plans.review_sweep_scope import SweepScope, canonicalize_sweep_scope
 from gobby.utils.hashing import is_sha256
 
 REPAIR_SUBMISSION_ARTIFACT_KEY = "plan_review_repair_submission"
@@ -47,14 +45,14 @@ _ATTESTATION_REQUIRED_FIELDS = frozenset(
         "deferred_sites",
     }
 )
-_ATTESTATION_UNIVERSE_FIELDS = frozenset(
+_ATTESTATION_SCOPE_FIELDS = frozenset(
     {
-        "repair_universe_digest",
+        "sweep_scope_digest",
         "sweep_query_evidence",
         "repair_bundle_interactions",
     }
 )
-_ATTESTATION_FIELDS = _ATTESTATION_REQUIRED_FIELDS | _ATTESTATION_UNIVERSE_FIELDS
+_ATTESTATION_FIELDS = _ATTESTATION_REQUIRED_FIELDS | _ATTESTATION_SCOPE_FIELDS
 _ATTESTATION_LIST_FIELDS = (
     "changed_section_ids",
     "changed_symbols",
@@ -67,6 +65,8 @@ _SUBMISSION_FIELDS = frozenset(
         "round_number",
         "prior_finding_resolutions",
         "repair_attestations",
+        "sweep_scope",
+        "sweep_scope_digest",
         "consumed_evidence_id",
     }
 )
@@ -79,16 +79,22 @@ class RepairSubmission:
     round_number: int
     prior_finding_resolutions: tuple[dict[str, object], ...]
     repair_attestations: tuple[dict[str, object], ...]
+    sweep_scope: dict[str, object] | None
+    sweep_scope_digest: str | None
     consumed_evidence_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "round_number": self.round_number,
             "prior_finding_resolutions": [
                 dict(record) for record in self.prior_finding_resolutions
             ],
             "repair_attestations": [dict(attestation) for attestation in self.repair_attestations],
         }
+        if self.sweep_scope is not None:
+            payload["sweep_scope"] = dict(self.sweep_scope)
+            payload["sweep_scope_digest"] = self.sweep_scope_digest
+        return payload
 
 
 @dataclass(frozen=True)
@@ -99,221 +105,48 @@ class RepairPreparation:
     prior_round_context: dict[str, object]
 
 
-@dataclass(frozen=True)
-class RepairInteractionEdge:
-    """One server-derived obligation to check two repairs together."""
-
-    edge_id: str
-    repair_ids: tuple[str, str]
-    shared_sections: tuple[str, ...]
-    shared_check_keys: tuple[str, ...]
-    shared_contracts: tuple[str, ...]
-    shared_targets: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "edge_id": self.edge_id,
-            "repair_ids": list(self.repair_ids),
-            "shared_sections": list(self.shared_sections),
-            "shared_check_keys": list(self.shared_check_keys),
-            "shared_contracts": list(self.shared_contracts),
-            "shared_targets": list(self.shared_targets),
-        }
-
-
-@dataclass(frozen=True)
-class RepairSweepRequirement:
-    """Required site, variant, and interaction coverage for one repair."""
-
-    prior_finding_id: str
-    check_key: str
-    changed_section_ids: tuple[str, ...]
-    changed_contracts: tuple[str, ...]
-    changed_targets: tuple[str, ...]
-    required_consumer_site_ids: tuple[str, ...]
-    adjacent_variant_ids: tuple[str, ...]
-    interaction_edge_ids: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "prior_finding_id": self.prior_finding_id,
-            "check_key": self.check_key,
-            "changed_section_ids": list(self.changed_section_ids),
-            "changed_contracts": list(self.changed_contracts),
-            "changed_targets": list(self.changed_targets),
-            "required_consumer_site_ids": list(self.required_consumer_site_ids),
-            "adjacent_variant_ids": list(self.adjacent_variant_ids),
-            "interaction_edge_ids": list(self.interaction_edge_ids),
-        }
-
-
-@dataclass(frozen=True)
-class RepairUniverse:
-    """Canonical server-owned repair sweep graph exposed before attestation."""
-
-    digest: str
-    candidate_sites: tuple[CandidateSite, ...]
-    requirements: tuple[RepairSweepRequirement, ...]
-    interaction_edges: tuple[RepairInteractionEdge, ...]
-
-    def graph_dict(self) -> dict[str, object]:
-        return {
-            "version": 1,
-            "candidate_sites": [site.to_dict() for site in self.candidate_sites],
-            "requirements": [requirement.to_dict() for requirement in self.requirements],
-            "interaction_edges": [edge.to_dict() for edge in self.interaction_edges],
-        }
-
-    def to_dict(self) -> dict[str, object]:
-        return {**self.graph_dict(), "digest": self.digest}
-
-
-def derive_repair_universe(
+def validate_sweep_scope_attestations(
     *,
-    prior_findings: Sequence[Mapping[str, object]],
-    inventory: CandidateSiteInventory,
-    repair_finding_ids: Sequence[str] | None = None,
-) -> RepairUniverse:
-    """Derive one deterministic repair graph from server-owned findings and sites."""
-    findings = _finding_identity_map(prior_findings)
-    repair_ids = (
-        tuple(sorted(findings)) if repair_finding_ids is None else tuple(sorted(repair_finding_ids))
-    )
-    if len(repair_ids) != len(set(repair_ids)):
-        raise _invalid("repair_finding_ids must be unique")
-    unknown_repair_ids = sorted(set(repair_ids) - set(findings))
-    if unknown_repair_ids:
-        raise _invalid(
-            f"repair_finding_ids reference unknown prior findings: {', '.join(unknown_repair_ids)}"
-        )
-    sites = tuple(
-        sorted(
-            inventory.sites,
-            key=lambda site: (site.site_id, site.path, site.source_kind, site.source_ref),
-        )
-    )
-    identities: dict[str, tuple[str, str]] = {}
-    for finding_id in repair_ids:
-        finding = findings[finding_id]
-        identities[finding_id] = (
-            _required_string(finding, "section_id", f"prior finding {finding_id}"),
-            cast(str, finding["check_key"]),
-        )
-
-    interaction_edges: list[RepairInteractionEdge] = []
-    for first_id, second_id in combinations(sorted(identities), 2):
-        first_section, first_check_key = identities[first_id]
-        second_section, second_check_key = identities[second_id]
-        shared_sections = (first_section,) if first_section == second_section else ()
-        shared_check_keys = (first_check_key,) if first_check_key == second_check_key else ()
-        shared_contracts = tuple(
-            sorted(
-                set(inventory.contracts_by_section.get(first_section, ()))
-                & set(inventory.contracts_by_section.get(second_section, ()))
-            )
-        )
-        shared_targets = tuple(
-            sorted(
-                set(inventory.targets_by_section.get(first_section, ()))
-                & set(inventory.targets_by_section.get(second_section, ()))
-            )
-        )
-        if not (shared_sections or shared_check_keys or shared_contracts or shared_targets):
-            continue
-        edge_payload: dict[str, object] = {
-            "repair_ids": [first_id, second_id],
-            "shared_sections": list(shared_sections),
-            "shared_check_keys": list(shared_check_keys),
-            "shared_contracts": list(shared_contracts),
-            "shared_targets": list(shared_targets),
-        }
-        interaction_edges.append(
-            RepairInteractionEdge(
-                edge_id=_canonical_digest(edge_payload),
-                repair_ids=(first_id, second_id),
-                shared_sections=shared_sections,
-                shared_check_keys=shared_check_keys,
-                shared_contracts=shared_contracts,
-                shared_targets=shared_targets,
-            )
-        )
-
-    requirements_list: list[RepairSweepRequirement] = []
-    for finding_id, (section_id, check_key) in sorted(identities.items()):
-        section_site_ids = tuple(site.site_id for site in sites if section_id in site.section_ids)
-        section_contracts = inventory.contracts_by_section.get(section_id, ())
-        section_targets = inventory.targets_by_section.get(section_id, ())
-        requirements_list.append(
-            RepairSweepRequirement(
-                prior_finding_id=finding_id,
-                check_key=check_key,
-                changed_section_ids=(section_id,),
-                changed_contracts=section_contracts,
-                changed_targets=section_targets,
-                required_consumer_site_ids=section_site_ids,
-                adjacent_variant_ids=tuple(
-                    _canonical_digest(
-                        {
-                            "prior_finding_id": finding_id,
-                            "check_key": check_key,
-                            "site_id": site_id,
-                        }
-                    )
-                    for site_id in section_site_ids
-                ),
-                interaction_edge_ids=tuple(
-                    edge.edge_id for edge in interaction_edges if finding_id in edge.repair_ids
-                ),
-            ),
-        )
-    requirements = tuple(requirements_list)
-    provisional = RepairUniverse(
-        digest="",
-        candidate_sites=sites,
-        requirements=requirements,
-        interaction_edges=tuple(interaction_edges),
-    )
-    return RepairUniverse(
-        digest=_canonical_digest(provisional.graph_dict()),
-        candidate_sites=sites,
-        requirements=requirements,
-        interaction_edges=tuple(interaction_edges),
-    )
-
-
-def validate_repair_universe_attestations(
-    *,
-    universe: RepairUniverse,
+    scope: SweepScope,
     attestations: Sequence[Mapping[str, object]],
+    repair_finding_ids: set[str],
 ) -> tuple[dict[str, object], ...]:
-    """Refuse caller proof that does not discharge the server-derived graph."""
+    """Validate caller proof against the submitted sweep graph."""
     requirement_map = {
-        requirement.prior_finding_id: requirement for requirement in universe.requirements
+        requirement.prior_finding_id: requirement for requirement in scope.requirements
     }
+    unknown_requirements = sorted(set(requirement_map) - repair_finding_ids)
+    if unknown_requirements:
+        raise ReviewEvidenceError(
+            "repair_sweep_scope_mismatch",
+            f"sweep scope has requirements outside repair resolutions: {unknown_requirements}",
+        )
     canonical = tuple(
         _canonical_attestation(record, owner=f"repair_attestations[{index}]")
         for index, record in enumerate(attestations)
     )
     attestation_map = _unique_records(
         canonical,
-        known_ids=set(requirement_map),
+        known_ids=repair_finding_ids,
         owner="repair attestation",
     )
     for finding_id, attestation in attestation_map.items():
-        requirement = requirement_map[finding_id]
-        missing_fields = sorted(_ATTESTATION_UNIVERSE_FIELDS - set(attestation))
+        missing_fields = sorted(_ATTESTATION_SCOPE_FIELDS - set(attestation))
         if missing_fields:
             raise ReviewEvidenceError(
-                "missing_repair_universe_proof",
-                f"repair attestation is missing universe proof for {finding_id}: "
+                "missing_sweep_scope_proof",
+                f"repair attestation is missing sweep-scope proof for {finding_id}: "
                 f"{', '.join(missing_fields)}",
             )
-        if attestation.get("repair_universe_digest") != universe.digest:
+        if attestation.get("sweep_scope_digest") != scope.digest:
             raise ReviewEvidenceError(
-                "repair_universe_drift",
-                f"repair attestation digest does not match current universe: {finding_id}",
-                details={"expected_digest": universe.digest},
+                "sweep_scope_digest_mismatch",
+                f"repair attestation digest does not match submitted scope: {finding_id}",
+                details={"expected_digest": scope.digest},
             )
+        requirement = requirement_map.get(finding_id)
+        if requirement is None:
+            continue
         deferred = {
             cast(str, record["site_id"])
             for record in cast(list[dict[str, object]], attestation["deferred_sites"])
@@ -339,8 +172,8 @@ def validate_repair_universe_attestations(
         extra_deferred = sorted(deferred - required_consumers - required_variants)
         if extra_deferred:
             raise ReviewEvidenceError(
-                "repair_sweep_universe_mismatch",
-                f"deferred sites are outside the universe for {finding_id}: {extra_deferred}",
+                "repair_sweep_scope_mismatch",
+                f"deferred sites are outside the scope for {finding_id}: {extra_deferred}",
             )
         if not required_consumers and not cast(list[str], attestation["sweep_query_evidence"]):
             raise ReviewEvidenceError(
@@ -360,7 +193,7 @@ def validate_repair_universe_attestations(
         if missing_edges or extra_edges:
             raise ReviewEvidenceError(
                 "repair_bundle_interaction_mismatch",
-                f"repair interaction records do not match universe for {finding_id}: "
+                f"repair interaction records do not match scope for {finding_id}: "
                 f"missing={missing_edges}, extra={extra_edges}",
             )
     return canonical
@@ -372,6 +205,8 @@ def build_repair_submission(
     prior_findings: Sequence[Mapping[str, object]],
     recorded_votes: Sequence[Mapping[str, object]],
     edit_diff: Mapping[str, Mapping[str, object]],
+    sweep_scope: Mapping[str, object] | None = None,
+    sweep_scope_digest: str | None = None,
 ) -> RepairSubmission:
     """Build taskless repair records from votes and the applied edit evidence."""
     findings = _finding_identity_map(prior_findings)
@@ -437,10 +272,22 @@ def build_repair_submission(
             _canonical_attestation(derived, owner=f"repair_attestations[{finding_id}]")
         )
 
+    repair_ids = {
+        cast(str, resolution["prior_finding_id"])
+        for resolution in resolutions
+        if resolution["decision"] == "repair"
+    }
+    canonical_scope, canonical_digest = _submission_scope(
+        sweep_scope=sweep_scope,
+        sweep_scope_digest=sweep_scope_digest,
+        repair_finding_ids=repair_ids,
+    )
     return RepairSubmission(
         round_number=_positive_round(round_number),
         prior_finding_resolutions=tuple(resolutions),
         repair_attestations=tuple(attestations),
+        sweep_scope=canonical_scope,
+        sweep_scope_digest=canonical_digest,
     )
 
 
@@ -461,18 +308,50 @@ def canonicalize_repair_submission(raw: Mapping[str, object]) -> RepairSubmissio
     consumed = payload.get("consumed_evidence_id")
     if consumed is not None and (not isinstance(consumed, str) or not consumed.strip()):
         raise _invalid("repair submission consumed_evidence_id must be a non-empty string")
+    canonical_resolutions = tuple(
+        _canonical_resolution(record, owner=f"prior_finding_resolutions[{index}]")
+        for index, record in enumerate(resolutions)
+    )
+    repair_ids = {
+        cast(str, resolution["prior_finding_id"])
+        for resolution in canonical_resolutions
+        if resolution["decision"] == "repair"
+    }
+    canonical_attestations = tuple(
+        _canonical_attestation(record, owner=f"repair_attestations[{index}]")
+        for index, record in enumerate(attestations)
+    )
+    canonical_scope, canonical_digest = _submission_scope(
+        sweep_scope=cast(Mapping[str, object] | None, payload.get("sweep_scope")),
+        sweep_scope_digest=cast(str | None, payload.get("sweep_scope_digest")),
+        repair_finding_ids=repair_ids,
+    )
     return RepairSubmission(
         round_number=_positive_round(payload.get("round_number")),
-        prior_finding_resolutions=tuple(
-            _canonical_resolution(record, owner=f"prior_finding_resolutions[{index}]")
-            for index, record in enumerate(resolutions)
-        ),
-        repair_attestations=tuple(
-            _canonical_attestation(record, owner=f"repair_attestations[{index}]")
-            for index, record in enumerate(attestations)
-        ),
+        prior_finding_resolutions=canonical_resolutions,
+        repair_attestations=canonical_attestations,
+        sweep_scope=canonical_scope,
+        sweep_scope_digest=canonical_digest,
         consumed_evidence_id=consumed,
     )
+
+
+def _submission_scope(
+    *,
+    sweep_scope: object,
+    sweep_scope_digest: object,
+    repair_finding_ids: set[str],
+) -> tuple[dict[str, object] | None, str | None]:
+    if sweep_scope is None and sweep_scope_digest is None:
+        if repair_finding_ids:
+            raise _invalid("repair submission requires sweep_scope and sweep_scope_digest")
+        return None, None
+    if not repair_finding_ids:
+        raise _invalid("repair submission sweep_scope requires a repair resolution")
+    if not isinstance(sweep_scope, Mapping) or not isinstance(sweep_scope_digest, str):
+        raise _invalid("repair submission sweep_scope and sweep_scope_digest must be paired")
+    canonical = canonicalize_sweep_scope(sweep_scope, digest=sweep_scope_digest)
+    return canonical.to_dict(), canonical.digest
 
 
 def encode_repair_submission(raw: Mapping[str, object] | RepairSubmission) -> str:
@@ -533,6 +412,8 @@ def consumed_repair_submission(raw: str, *, evidence_id: str) -> str:
             round_number=submission.round_number,
             prior_finding_resolutions=submission.prior_finding_resolutions,
             repair_attestations=submission.repair_attestations,
+            sweep_scope=submission.sweep_scope,
+            sweep_scope_digest=submission.sweep_scope_digest,
             consumed_evidence_id=evidence_id,
         )
     )
@@ -545,9 +426,12 @@ def validate_repair_preparation(
     current_snapshot: bytes,
     prior_finding_resolutions: Sequence[Mapping[str, object]] | None,
     repair_attestations: Sequence[Mapping[str, object]] | None,
-    repair_universe: RepairUniverse | None = None,
+    submitted_sweep_scope: SweepScope | None = None,
+    current_sweep_scope: SweepScope | None = None,
+    required_scope_delta: Mapping[str, object] | None = None,
+    inventory_churn: Mapping[str, object] | None = None,
 ) -> RepairPreparation:
-    """Validate proof coverage against the server-owned prior finding universe."""
+    """Validate repair proof and preserve submitted/current sweep ownership."""
     round_result = prior_evidence.round_result
     if round_result is None:
         raise _invalid("prior evidence must have a finalized round result")
@@ -604,10 +488,21 @@ def validate_repair_preparation(
             "missing_repair_attestation",
             f"missing repair attestation for prior finding: {', '.join(missing_attestations)}",
         )
-    if repair_universe is not None:
-        validate_repair_universe_attestations(
-            universe=repair_universe,
+    if repair_ids and submitted_sweep_scope is None:
+        raise ReviewEvidenceError(
+            "missing_sweep_scope",
+            "repair attestations require sweep_scope and sweep_scope_digest",
+        )
+    if not repair_ids and submitted_sweep_scope is not None:
+        raise ReviewEvidenceError(
+            "unexpected_sweep_scope",
+            "sweep_scope requires at least one repair resolution",
+        )
+    if submitted_sweep_scope is not None:
+        validate_sweep_scope_attestations(
+            scope=submitted_sweep_scope,
             attestations=attestations,
+            repair_finding_ids=repair_ids,
         )
 
     changed_sections = _changed_section_ids(prior_evidence, current_sections)
@@ -634,7 +529,10 @@ def validate_repair_preparation(
             attestations=attestations,
             current_sections=current_sections,
             current_snapshot=current_snapshot,
-            repair_universe=repair_universe,
+            submitted_sweep_scope=submitted_sweep_scope,
+            current_sweep_scope=current_sweep_scope,
+            required_scope_delta=required_scope_delta,
+            inventory_churn=inventory_churn,
         ),
     )
 
@@ -647,7 +545,10 @@ def build_prior_round_context(
     attestations: Sequence[Mapping[str, object]],
     current_sections: Sequence[SectionHash],
     current_snapshot: bytes,
-    repair_universe: RepairUniverse | None = None,
+    submitted_sweep_scope: SweepScope | None = None,
+    current_sweep_scope: SweepScope | None = None,
+    required_scope_delta: Mapping[str, object] | None = None,
+    inventory_churn: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Assemble durable causal routing context from consecutive round inputs."""
     round_diff = build_inter_round_diff(prior_evidence.snapshot, current_snapshot)
@@ -665,9 +566,15 @@ def build_prior_round_context(
         "changed_acceptance_item_ids": list(round_diff.acceptance_item_ids),
         "changed_section_targets": list(round_diff.section_targets),
     }
-    if repair_universe is not None:
-        context["repair_universe"] = repair_universe.to_dict()
-        context["repair_universe_digest"] = repair_universe.digest
+    if submitted_sweep_scope is not None:
+        context["submitted_sweep_scope"] = submitted_sweep_scope.to_dict()
+        context["submitted_sweep_scope_digest"] = submitted_sweep_scope.digest
+    if current_sweep_scope is not None:
+        context["current_sweep_scope"] = current_sweep_scope.to_dict()
+    if required_scope_delta is not None:
+        context["required_scope_delta"] = dict(required_scope_delta)
+    if inventory_churn is not None:
+        context["inventory_churn"] = dict(inventory_churn)
     return inject_dismissed_ledger_context(
         prior_round_context=context,
         prior_ledger=prior_evidence.quality_ledger or (),
@@ -685,7 +592,10 @@ def repair_preparation_for_round(
     current_snapshot: bytes,
     prior_finding_resolutions: Sequence[Mapping[str, object]] | None,
     repair_attestations: Sequence[Mapping[str, object]] | None,
-    repair_universe: RepairUniverse | None = None,
+    submitted_sweep_scope: SweepScope | None = None,
+    current_sweep_scope: SweepScope | None = None,
+    required_scope_delta: Mapping[str, object] | None = None,
+    inventory_churn: Mapping[str, object] | None = None,
 ) -> RepairPreparation | None:
     """Resolve the canonical prior row, then validate caller repair proof."""
     prior_rows = [
@@ -696,7 +606,7 @@ def repair_preparation_for_round(
         and row.round_number < round_number
     ]
     if not prior_rows:
-        if prior_finding_resolutions or repair_attestations:
+        if prior_finding_resolutions or repair_attestations or submitted_sweep_scope is not None:
             raise ReviewEvidenceError(
                 "unexpected_repair_context",
                 "repair context requires a finalized prior review round",
@@ -708,7 +618,10 @@ def repair_preparation_for_round(
         current_snapshot=current_snapshot,
         prior_finding_resolutions=prior_finding_resolutions,
         repair_attestations=repair_attestations,
-        repair_universe=repair_universe,
+        submitted_sweep_scope=submitted_sweep_scope,
+        current_sweep_scope=current_sweep_scope,
+        required_scope_delta=required_scope_delta,
+        inventory_churn=inventory_churn,
     )
 
 
@@ -769,9 +682,9 @@ def _canonical_attestation(
         attestation["deferred_sites"],
         owner=f"{owner}.deferred_sites",
     )
-    digest = attestation.get("repair_universe_digest")
+    digest = attestation.get("sweep_scope_digest")
     if digest is not None and not is_sha256(digest):
-        raise _invalid(f"{owner}.repair_universe_digest must be lowercase SHA-256")
+        raise _invalid(f"{owner}.sweep_scope_digest must be lowercase SHA-256")
     if "sweep_query_evidence" in attestation:
         attestation["sweep_query_evidence"] = _string_array(
             attestation["sweep_query_evidence"],
@@ -909,15 +822,9 @@ def _validate_sweep_set(
     extra = sorted(swept - required)
     if missing or extra:
         raise ReviewEvidenceError(
-            "repair_sweep_universe_mismatch",
-            f"{label} do not match universe for {finding_id}: missing={missing}, extra={extra}",
+            "repair_sweep_scope_mismatch",
+            f"{label} do not match scope for {finding_id}: missing={missing}, extra={extra}",
         )
-
-
-def _canonical_digest(payload: Mapping[str, object]) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def _required_string(payload: Mapping[str, object], field: str, owner: str) -> str:

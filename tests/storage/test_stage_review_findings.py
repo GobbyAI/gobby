@@ -17,7 +17,7 @@ from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_findings import validate_plan_review_findings
-from gobby.plans.review_repair import RepairSweepRequirement, RepairUniverse
+from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -33,7 +33,7 @@ from tests.storage.tasks._stage_test_helpers import (
     stage_row,
 )
 
-_REPAIR_UNIVERSE_DIGEST = "a" * 64
+_SWEEP_SCOPE_DIGEST = "a" * 64
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def stage_review_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> StageReviewSetup:
     monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         _settled_repair_inputs,
     )
     project = LocalProjectManager(temp_db).create(
@@ -214,7 +214,7 @@ def _repair_submission() -> dict[str, object]:
                 "adjacent_variants_swept": ["src/example.py:retry"],
                 "validation_evidence": ["pytest tests/test_example.py"],
                 "deferred_sites": [],
-                "repair_universe_digest": _REPAIR_UNIVERSE_DIGEST,
+                "sweep_scope_digest": _SWEEP_SCOPE_DIGEST,
                 "sweep_query_evidence": [],
                 "repair_bundle_interactions": [],
             }
@@ -234,7 +234,7 @@ def _settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     repair_finding_ids: list[str] | tuple[str, ...],
     **_kwargs: object,
-) -> tuple[CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, SweepScope]:
     assert prior_evidence.round_result is not None
     findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
     finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
@@ -263,11 +263,10 @@ def _settled_repair_inputs(
         unsupported_targets=(),
         sites=sites,
     )
-    universe = RepairUniverse(
-        digest=_REPAIR_UNIVERSE_DIGEST,
+    universe = SweepScope(
         candidate_sites=sites,
         requirements=tuple(
-            RepairSweepRequirement(
+            SweepRequirement(
                 prior_finding_id=finding_id,
                 check_key=cast(str, finding_map[finding_id]["check_key"]),
                 changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
@@ -292,7 +291,31 @@ def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
         ),
         encoding="utf-8",
     )
-    return _repair_submission()
+    submission = _repair_submission()
+    repair_ids = [
+        cast(str, resolution["prior_finding_id"])
+        for resolution in cast(
+            list[dict[str, object]],
+            submission["prior_finding_resolutions"],
+        )
+        if resolution["decision"] == "repair"
+    ]
+    rows = setup.evidence.store.list_for_path(
+        project_id=setup.project_id,
+        plan_path=setup.plan_relative_path,
+    )
+    _inventory, scope = _settled_repair_inputs(
+        prior_evidence=setup.evidence.get_evidence(rows[-1].evidence_id),
+        repair_finding_ids=repair_ids,
+    )
+    for attestation in cast(
+        list[dict[str, object]],
+        submission["repair_attestations"],
+    ):
+        attestation["sweep_scope_digest"] = scope.digest
+    submission["sweep_scope"] = scope.to_dict()
+    submission["sweep_scope_digest"] = scope.digest
+    return submission
 
 
 def _prepare_bound(
@@ -797,6 +820,24 @@ def test_rejection_finalizes_evidence(
         )
 
     repair_submission = _apply_round_one_repairs(stage_review_setup)
+    repair_ids = [
+        cast(str, resolution["prior_finding_id"])
+        for resolution in cast(
+            list[dict[str, object]],
+            repair_submission["prior_finding_resolutions"],
+        )
+        if resolution["decision"] == "repair"
+    ]
+    _inventory, scope = _settled_repair_inputs(
+        prior_evidence=stage_review_setup.evidence.get_evidence(evidence_id),
+        repair_finding_ids=repair_ids,
+    )
+    repair_attestations = cast(
+        list[dict[str, object]],
+        repair_submission["repair_attestations"],
+    )
+    for attestation in repair_attestations:
+        attestation["sweep_scope_digest"] = scope.digest
     next_round = stage_review_setup.evidence.prepare_plan_review_round(
         project_id=stage_review_setup.project_id,
         plan_path=stage_review_setup.plan_path,
@@ -807,10 +848,9 @@ def test_rejection_finalizes_evidence(
             list[dict[str, object]],
             repair_submission["prior_finding_resolutions"],
         ),
-        repair_attestations=cast(
-            list[dict[str, object]],
-            repair_submission["repair_attestations"],
-        ),
+        repair_attestations=repair_attestations,
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
     assert next_round.evidence_id != evidence_id
     assert stage_review_setup.evidence.get_evidence(evidence_id).finalized_at is not None

@@ -83,11 +83,12 @@ instructions: |
     exactly one `prior_finding_resolutions` record (`prior_finding_id`,
     `decision: repair | carry`) for every Round N finding; and include one
     `repair_attestations` record for every `repair` decision. Apply the accepted
-    plan edits first, then call `derive_plan_review_repair_universe` with the
+    plan edits first, then call `derive_plan_review_sweep_scope` with the
     finalized prior evidence, edited plan path, and `repair_finding_ids`
-    containing exactly the findings whose recorded decision is `repair`. Do not
-    edit again before submission. Each attestation carries the returned
-    `repair_universe_digest`, `prior_finding_id`, `check_key`, `changed_section_ids`,
+    containing exactly the findings whose recorded decision is `repair`. Submit
+    the returned `sweep_scope` and `sweep_scope_digest` at top level. Each
+    attestation carries that `sweep_scope_digest`, `prior_finding_id`, `check_key`,
+    `changed_section_ids`,
     `accepted_resolution`, `deviation_from_minimal_repair`, `changed_symbols`,
     `consumer_sites_swept`, `adjacent_variants_swept`, `validation_evidence`,
     `deferred_sites`, `sweep_query_evidence`, and
@@ -96,8 +97,10 @@ instructions: |
     includes the query that returned no sites. Emit one interaction record per
     required graph edge with `edge_id`, `disposition`, and non-empty
     `validation_evidence`. Derive its evidence from the actual plan edit and
-    validation sweep. Submission preparation rederives the graph and refuses
-    digest drift. Set `deviation_from_minimal_repair` to `null` when
+    validation sweep. Review the resulting `required_scope_delta` and
+    `inventory_churn` as adversary inputs. Submission preparation validates the
+    submitted graph and derives the current graph; repository drift remains
+    adversary input. Set `deviation_from_minimal_repair` to `null` when
     following the minimal repair. For a deviation, use one closed object with
     exactly `violated_invariant`, `original_counterexample`,
     `how_alternative_closes_it`, `validation_evidence`, and `accepted_risk`.

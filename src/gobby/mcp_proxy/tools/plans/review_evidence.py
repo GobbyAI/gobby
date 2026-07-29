@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.plans.review_evidence_schemas import (
     REPAIR_ATTESTATIONS_SCHEMA,
     ROUND_RESULT_SCHEMA,
     ROUTING_DECISIONS_SCHEMA,
+    SWEEP_SCOPE_SCHEMA,
 )
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import (
@@ -29,8 +30,8 @@ from gobby.plans.review_evidence_io import (
     normalize_plan_path,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_evidence_preparation import derive_settled_repair_inputs
-from gobby.plans.review_repair import RepairUniverse
+from gobby.plans.review_evidence_preparation import derive_settled_sweep_inputs
+from gobby.plans.review_sweep_scope import SweepScope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 
@@ -41,7 +42,7 @@ _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
 }
 
 
-def _derive_settled_repair_universe(
+def _derive_settled_sweep_scope(
     *,
     db: HubDatabase,
     project_id: str,
@@ -49,21 +50,21 @@ def _derive_settled_repair_universe(
     prior_evidence_id: str,
     plan_path: str,
     repair_finding_ids: list[str],
-) -> RepairUniverse:
+) -> SweepScope:
     service = PlanReviewEvidenceService(db)
     prior_evidence = service.get_evidence(prior_evidence_id)
     if prior_evidence.project_id != project_id:
         raise ReviewEvidenceError(
-            "repair_universe_project_mismatch",
+            "sweep_scope_project_mismatch",
             "prior evidence belongs to a different project",
         )
     if prior_evidence.finalized_at is None or prior_evidence.round_result is None:
         raise ReviewEvidenceError(
-            "repair_universe_prior_unfinalized",
-            "repair universe requires finalized prior evidence",
+            "sweep_scope_prior_unfinalized",
+            "sweep scope requires finalized prior evidence",
         )
     resolved_plan_path = normalize_plan_path(project_root, plan_path)
-    _inventory, universe = derive_settled_repair_inputs(
+    _inventory, scope = derive_settled_sweep_inputs(
         db=db,
         project_id=project_id,
         project_root=project_root,
@@ -71,7 +72,7 @@ def _derive_settled_repair_universe(
         current_snapshot=resolved_plan_path.read_bytes(),
         repair_finding_ids=repair_finding_ids,
     )
-    return universe
+    return scope
 
 
 def register_review_evidence_tools(
@@ -84,7 +85,7 @@ def register_review_evidence_tools(
     service = PlanReviewEvidenceService(db)
     projects = LocalProjectManager(db)
 
-    def derive_plan_review_repair_universe(
+    def derive_plan_review_sweep_scope(
         prior_evidence_id: str,
         plan_path: str,
         repair_finding_ids: list[str],
@@ -98,7 +99,7 @@ def register_review_evidence_tools(
                     "inventory_unavailable",
                     f"project has no local repository: {project_id}",
                 )
-            universe = _derive_settled_repair_universe(
+            scope = _derive_settled_sweep_scope(
                 db=db,
                 project_id=project_id,
                 project_root=Path(record.repo_path),
@@ -109,18 +110,17 @@ def register_review_evidence_tools(
         except IndexInventoryError as exc:
             return exc.to_dict()
         except (ReviewEvidenceError, OSError, RuntimeError, ValueError) as exc:
-            return _error_payload(exc, "repair_universe_unavailable")
+            return _error_payload(exc, "sweep_scope_unavailable")
         return {
             "ok": True,
-            "repair_universe": universe.to_dict(),
-            "repair_universe_digest": universe.digest,
+            "sweep_scope": scope.to_dict(),
+            "sweep_scope_digest": scope.digest,
         }
 
     registry.register(
-        name="derive_plan_review_repair_universe",
+        name="derive_plan_review_sweep_scope",
         description=(
-            "Derive the settled read-only repair site graph and canonical digest "
-            "before attestation."
+            "Derive the settled read-only sweep graph and canonical digest before attestation."
         ),
         input_schema={
             "type": "object",
@@ -136,7 +136,7 @@ def register_review_evidence_tools(
             },
             "required": ["prior_evidence_id", "plan_path", "repair_finding_ids"],
         },
-        func=derive_plan_review_repair_universe,
+        func=derive_plan_review_sweep_scope,
     )
 
     async def prepare_plan_review_round(
@@ -148,6 +148,8 @@ def register_review_evidence_tools(
         stage: str | None = None,
         prior_finding_resolutions: list[dict[str, object]] | None = None,
         repair_attestations: list[dict[str, object]] | None = None,
+        sweep_scope: dict[str, object] | None = None,
+        sweep_scope_digest: str | None = None,
     ) -> dict[str, object]:
         try:
             prepared = await asyncio.to_thread(
@@ -160,6 +162,8 @@ def register_review_evidence_tools(
                 stage=stage,
                 prior_finding_resolutions=prior_finding_resolutions,
                 repair_attestations=repair_attestations,
+                sweep_scope=sweep_scope,
+                sweep_scope_digest=sweep_scope_digest,
             )
         except (ReviewEvidenceError, ValueError, OSError) as exc:
             return _error_payload(exc, "prepare_plan_review_round_failed")
@@ -181,6 +185,8 @@ def register_review_evidence_tools(
                 **_BINDING_PROPERTIES,
                 "prior_finding_resolutions": PRIOR_FINDING_RESOLUTIONS_SCHEMA,
                 "repair_attestations": REPAIR_ATTESTATIONS_SCHEMA,
+                "sweep_scope": SWEEP_SCOPE_SCHEMA,
+                "sweep_scope_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
             "required": ["plan_path", "round_number"],
             "additionalProperties": False,

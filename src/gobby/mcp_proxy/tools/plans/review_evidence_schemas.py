@@ -336,6 +336,100 @@ _REPAIR_INTERACTION_SCHEMA = {
     "additionalProperties": False,
 }
 
+_SWEEP_CANDIDATE_SITE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "site_id": _NONEMPTY_STRING,
+        "path": _NONEMPTY_STRING,
+        "source_kind": _NONEMPTY_STRING,
+        "source_ref": _NONEMPTY_STRING,
+        "status": _NONEMPTY_STRING,
+        "language": _NONEMPTY_STRING,
+        "section_ids": _STRING_ARRAY,
+    },
+    "required": [
+        "site_id",
+        "path",
+        "source_kind",
+        "source_ref",
+        "status",
+        "language",
+        "section_ids",
+    ],
+    "additionalProperties": False,
+}
+
+_SWEEP_REQUIREMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prior_finding_id": _NONEMPTY_STRING,
+        "check_key": _CHECK_KEY,
+        "changed_section_ids": _STRING_ARRAY,
+        "changed_contracts": _STRING_ARRAY,
+        "changed_targets": _STRING_ARRAY,
+        "required_consumer_site_ids": _STRING_ARRAY,
+        "adjacent_variant_ids": _STRING_ARRAY,
+        "interaction_edge_ids": _STRING_ARRAY,
+    },
+    "required": [
+        "prior_finding_id",
+        "check_key",
+        "changed_section_ids",
+        "changed_contracts",
+        "changed_targets",
+        "required_consumer_site_ids",
+        "adjacent_variant_ids",
+        "interaction_edge_ids",
+    ],
+    "additionalProperties": False,
+}
+
+_SWEEP_SCOPE_EDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "edge_id": _NONEMPTY_STRING,
+        "repair_ids": {
+            **_STRING_ARRAY,
+            "minItems": 2,
+            "maxItems": 2,
+        },
+        "shared_sections": _STRING_ARRAY,
+        "shared_check_keys": _STRING_ARRAY,
+        "shared_contracts": _STRING_ARRAY,
+        "shared_targets": _STRING_ARRAY,
+    },
+    "required": [
+        "edge_id",
+        "repair_ids",
+        "shared_sections",
+        "shared_check_keys",
+        "shared_contracts",
+        "shared_targets",
+    ],
+    "additionalProperties": False,
+}
+
+SWEEP_SCOPE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "version": {"type": "integer", "const": 1},
+        "candidate_sites": {
+            "type": "array",
+            "items": _SWEEP_CANDIDATE_SITE_SCHEMA,
+        },
+        "requirements": {
+            "type": "array",
+            "items": _SWEEP_REQUIREMENT_SCHEMA,
+        },
+        "interaction_edges": {
+            "type": "array",
+            "items": _SWEEP_SCOPE_EDGE_SCHEMA,
+        },
+    },
+    "required": ["version", "candidate_sites", "requirements", "interaction_edges"],
+    "additionalProperties": False,
+}
+
 REPAIR_ATTESTATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -355,7 +449,7 @@ REPAIR_ATTESTATION_SCHEMA = {
             "type": "array",
             "items": _DEFERRED_SITE_SCHEMA,
         },
-        "repair_universe_digest": _SHA256,
+        "sweep_scope_digest": _SHA256,
         "sweep_query_evidence": _STRING_ARRAY,
         "repair_bundle_interactions": {
             "type": "array",

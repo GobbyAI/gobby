@@ -4,11 +4,14 @@ import hashlib
 import json
 import textwrap
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from gobby.dispatch import spawn as dispatch_spawn
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.mcp_proxy.tools.plans import review_evidence as review_evidence_tools
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
@@ -20,15 +23,19 @@ from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import (
     DEVIATION_PROOF_FIELDS,
     REPAIR_SUBMISSION_ARTIFACT_KEY,
-    RepairSweepRequirement,
-    RepairUniverse,
     build_repair_submission,
     canonicalize_repair_submission,
     decode_repair_submission,
-    derive_repair_universe,
     encode_repair_submission,
     validate_repair_preparation,
-    validate_repair_universe_attestations,
+    validate_sweep_scope_attestations,
+)
+from gobby.plans.review_sweep_scope import (
+    SweepRequirement,
+    SweepScope,
+    compute_scope_deltas,
+    derive_sweep_scope,
+    empty_scope_delta,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -51,7 +58,7 @@ def repair_setup(
     )
     plan_path = _write_plan(tmp_path)
     monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         _settled_repair_inputs,
     )
     return PlanReviewEvidenceService(temp_db), project.id, plan_path
@@ -233,7 +240,7 @@ def _attestation(
         "adjacent_variants_swept": ["src/example.py:adjacent"],
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
-        "repair_universe_digest": "a" * 64,
+        "sweep_scope_digest": "a" * 64,
         "sweep_query_evidence": ["gcode usages gobby.example.repaired_behavior"],
         "repair_bundle_interactions": [],
     }
@@ -277,7 +284,7 @@ def _settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     repair_finding_ids: Sequence[str],
     **_kwargs: object,
-) -> tuple[CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, SweepScope]:
     assert prior_evidence.round_result is not None
     raw_findings = prior_evidence.round_result.get("findings")
     assert isinstance(raw_findings, list)
@@ -291,11 +298,10 @@ def _settled_repair_inputs(
         "src/example.py:consumer",
         changed_targets=(),
     )
-    universe = RepairUniverse(
-        digest="a" * 64,
-        candidate_sites=(),
+    universe = SweepScope(
+        candidate_sites=inventory.sites,
         requirements=tuple(
-            RepairSweepRequirement(
+            SweepRequirement(
                 prior_finding_id=finding_id,
                 check_key=cast(str, finding_map[finding_id]["check_key"]),
                 changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
@@ -314,7 +320,7 @@ def _settled_repair_inputs(
 
 def _universe_attestation(
     finding: dict[str, object],
-    universe: RepairUniverse,
+    universe: SweepScope,
 ) -> dict[str, object]:
     requirement = next(
         requirement
@@ -332,7 +338,7 @@ def _universe_attestation(
     attestation = _attestation(finding)
     attestation.update(
         {
-            "repair_universe_digest": universe.digest,
+            "sweep_scope_digest": universe.digest,
             "consumer_sites_swept": list(requirement.required_consumer_site_ids),
             "adjacent_variants_swept": list(requirement.adjacent_variant_ids),
             "deferred_sites": [],
@@ -357,12 +363,18 @@ def _submission_payload(
     finding: dict[str, object],
     deviation: object,
 ) -> dict[str, object]:
-    attestation = _attestation(finding)
+    scope = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+    )
+    attestation = _universe_attestation(finding, scope)
     attestation["deviation_from_minimal_repair"] = deviation
     return {
         "round_number": 2,
         "prior_finding_resolutions": [_resolution(str(finding["finding_id"]), "repair")],
         "repair_attestations": [attestation],
+        "sweep_scope": scope.to_dict(),
+        "sweep_scope_digest": scope.digest,
     }
 
 
@@ -373,8 +385,32 @@ def _prepare_round_two(
     *,
     resolutions: list[dict[str, object]],
     attestations: list[dict[str, object]],
+    scope: SweepScope | None = None,
 ) -> PlanReviewEvidence:
     task_id = _new_task_id(service, project_id)
+    repair_ids = [
+        cast(str, resolution["prior_finding_id"])
+        for resolution in resolutions
+        if resolution["decision"] == "repair"
+    ]
+    if repair_ids:
+        if scope is None:
+            project = service.projects.get(project_id)
+            assert project is not None and project.repo_path is not None
+            relative_path = (
+                plan_path.resolve().relative_to(Path(project.repo_path).resolve()).as_posix()
+            )
+            prior = service.store.list_for_path(
+                project_id=project_id,
+                plan_path=relative_path,
+            )[-1]
+            _inventory, scope = _settled_repair_inputs(
+                prior_evidence=prior,
+                repair_finding_ids=repair_ids,
+            )
+        for attestation in attestations:
+            if "sweep_scope_digest" in attestation:
+                attestation["sweep_scope_digest"] = scope.digest
     prepared = service.prepare_plan_review_round(
         project_id=project_id,
         plan_path=plan_path,
@@ -383,6 +419,8 @@ def _prepare_round_two(
         stage="planning",
         prior_finding_resolutions=resolutions,
         repair_attestations=attestations,
+        sweep_scope=scope.to_dict() if scope is not None else None,
+        sweep_scope_digest=scope.digest if scope is not None else None,
     )
     return service.get_evidence(prepared.evidence_id)
 
@@ -531,8 +569,11 @@ def test_mixed_repair_carry_preparation(
         "changed_section_targets": [],
         "dismissed_ledger_entries": [],
         "consumer_site_inventory": context["consumer_site_inventory"],
-        "repair_universe": context["repair_universe"],
-        "repair_universe_digest": context["repair_universe_digest"],
+        "submitted_sweep_scope": context["submitted_sweep_scope"],
+        "submitted_sweep_scope_digest": context["submitted_sweep_scope_digest"],
+        "current_sweep_scope": context["current_sweep_scope"],
+        "required_scope_delta": context["required_scope_delta"],
+        "inventory_churn": context["inventory_churn"],
     }
 
 
@@ -578,8 +619,11 @@ def test_prior_round_context_structure(
         "changed_section_targets": ["src/example.py", "src/repaired.py"],
         "dismissed_ledger_entries": [],
         "consumer_site_inventory": context["consumer_site_inventory"],
-        "repair_universe": context["repair_universe"],
-        "repair_universe_digest": context["repair_universe_digest"],
+        "submitted_sweep_scope": context["submitted_sweep_scope"],
+        "submitted_sweep_scope_digest": context["submitted_sweep_scope_digest"],
+        "current_sweep_scope": context["current_sweep_scope"],
+        "required_scope_delta": context["required_scope_delta"],
+        "inventory_churn": context["inventory_churn"],
     }
     assert context == expected
     assert service.snapshot_payload(current.evidence_id)["prior_round_context"] == expected
@@ -672,6 +716,10 @@ def test_remedy_vocabulary_round_trip(
     prior = _finalize_prior_round(service, project_id, plan_path, [finding])
 
     canonical_finding = validate_plan_review_findings([finding], evidence=prior)[0]
+    scope = derive_sweep_scope(
+        prior_findings=[canonical_finding],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+    )
     submission = build_repair_submission(
         round_number=2,
         prior_findings=[canonical_finding],
@@ -682,7 +730,9 @@ def test_remedy_vocabulary_round_trip(
                 "accepted_resolution": canonical_finding["minimal_repair"],
             }
         ],
-        edit_diff={"finding-1": _attestation(canonical_finding)},
+        edit_diff={"finding-1": _universe_attestation(canonical_finding, scope)},
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
     attestation = submission.repair_attestations[0]
 
@@ -801,6 +851,10 @@ def test_deviation_schema_parity_across_surfaces(
                 attestations=attestations,
             )
 
+    scope = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+    )
     submission = build_repair_submission(
         round_number=2,
         prior_findings=[finding],
@@ -813,10 +867,12 @@ def test_deviation_schema_parity_across_surfaces(
         ],
         edit_diff={
             "finding-1": {
-                **_attestation(finding),
+                **_universe_attestation(finding, scope),
                 "deviation_from_minimal_repair": proof,
             }
         },
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
     rendered = submission.to_dict()
     canonical = canonicalize_repair_submission(rendered)
@@ -830,6 +886,7 @@ def test_deviation_schema_parity_across_surfaces(
         plan_path,
         resolutions=list(submission.prior_finding_resolutions),
         attestations=list(submission.repair_attestations),
+        scope=scope,
     )
 
     for surface in (submission, canonical, decoded):
@@ -854,11 +911,18 @@ async def test_taskless_producer_builds_records(
         },
         {"prior_finding_id": "finding-2", "decision": "carry"},
     ]
+    scope = derive_sweep_scope(
+        prior_findings=[repaired, carried],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+        repair_finding_ids=["finding-1"],
+    )
     submission = build_repair_submission(
         round_number=2,
         prior_findings=[repaired, carried],
         recorded_votes=votes,
-        edit_diff={"finding-1": _attestation(repaired)},
+        edit_diff={"finding-1": _universe_attestation(repaired, scope)},
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
 
     assert submission.prior_finding_resolutions == (
@@ -875,6 +939,9 @@ async def test_taskless_producer_builds_records(
 
     registry = create_plan_registry(service.db, default_project_id=project_id)
     task_id = _new_task_id(service, project_id)
+    attestations = [dict(record) for record in submission.repair_attestations]
+    assert submission.sweep_scope is not None
+    assert submission.sweep_scope_digest is not None
     prepared = await registry.call(
         "prepare_plan_review_round",
         {
@@ -883,13 +950,15 @@ async def test_taskless_producer_builds_records(
             "task_id": task_id,
             "stage": "planning",
             "prior_finding_resolutions": list(submission.prior_finding_resolutions),
-            "repair_attestations": list(submission.repair_attestations),
+            "repair_attestations": attestations,
+            "sweep_scope": submission.sweep_scope,
+            "sweep_scope_digest": submission.sweep_scope_digest,
         },
     )
 
     assert prepared["ok"] is True
     stored = service.get_evidence(str(prepared["evidence_id"]))
-    assert stored.repair_attestations == list(submission.repair_attestations)
+    assert stored.repair_attestations == attestations
     skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
     assert "prior_finding_resolutions" in skill
     assert "repair_attestations" in skill
@@ -900,6 +969,10 @@ def test_staged_submission_payload_round_trip(
     sample_project: dict[str, Any],
 ) -> None:
     finding = _finding("finding-1")
+    scope = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+    )
     submission = build_repair_submission(
         round_number=2,
         prior_findings=[finding],
@@ -910,7 +983,9 @@ def test_staged_submission_payload_round_trip(
                 "accepted_resolution": finding["minimal_repair"],
             }
         ],
-        edit_diff={"finding-1": _attestation(finding)},
+        edit_diff={"finding-1": _universe_attestation(finding, scope)},
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
@@ -964,6 +1039,70 @@ def test_staged_submission_payload_round_trip(
     assert "repair_submission" in planner
 
 
+def test_staged_dispatch_forwards_submitted_sweep_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    finding = _finding("finding-1")
+    scope = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("src/example.py:consumer"),
+    )
+    submission = build_repair_submission(
+        round_number=2,
+        prior_findings=[finding],
+        recorded_votes=[
+            {
+                "prior_finding_id": "finding-1",
+                "decision": "repair",
+                "accepted_resolution": finding["minimal_repair"],
+            }
+        ],
+        edit_diff={"finding-1": _universe_attestation(finding, scope)},
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeService:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def prepare_plan_review_round(self, **kwargs: object) -> SimpleNamespace:
+            captured.update(kwargs)
+            return SimpleNamespace(evidence_id="evidence-2")
+
+    monkeypatch.setattr(dispatch_spawn, "PlanReviewEvidenceService", FakeService)
+    monkeypatch.setattr(
+        dispatch_spawn,
+        "attach_plan_review_evidence",
+        lambda prompt, **_kwargs: prompt,
+    )
+    stage = SimpleNamespace(
+        stage_name="planning",
+        review_round_count=1,
+        artifact_refs={
+            REPAIR_SUBMISSION_ARTIFACT_KEY: encode_repair_submission(submission),
+        },
+    )
+    action = SimpleNamespace(
+        agent_slug="plan-adversary",
+        initial_variables={"stage_name": "planning"},
+        task_id="task-1",
+    )
+
+    dispatch_spawn._prepare_plan_adversary_evidence(
+        db=cast(Any, object()),
+        action=cast(Any, action),
+        task=SimpleNamespace(id="task-1", stages=[stage]),
+        artifacts=SimpleNamespace(plan_file_path=".gobby/plans/plan.md"),
+        project_id="project-1",
+        prompt="review",
+    )
+
+    assert captured["sweep_scope"] == scope.to_dict()
+    assert captured["sweep_scope_digest"] == scope.digest
+
+
 def test_sweep_universe_subset_refused(
     repair_setup: tuple[PlanReviewEvidenceService, str, Path],
 ) -> None:
@@ -977,7 +1116,7 @@ def test_sweep_universe_subset_refused(
     )
     _mark_plan_repaired(plan_path)
     current_snapshot = plan_path.read_bytes()
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[finding],
         inventory=_candidate_inventory("consumer-a", "consumer-b"),
     )
@@ -991,7 +1130,7 @@ def test_sweep_universe_subset_refused(
             current_snapshot=current_snapshot,
             prior_finding_resolutions=[_resolution("finding-1", "repair")],
             repair_attestations=[attestation],
-            repair_universe=universe,
+            submitted_sweep_scope=universe,
         )
 
 
@@ -1006,19 +1145,19 @@ async def test_universe_visible_before_attestation(
         repo_path=str(tmp_path),
     )
     finding = _finding("finding-1")
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[finding],
         inventory=_candidate_inventory("consumer-a"),
     )
     monkeypatch.setattr(
         review_evidence_tools,
-        "_derive_settled_repair_universe",
+        "_derive_settled_sweep_scope",
         lambda **_kwargs: universe,
     )
     registry = create_plan_registry(temp_db, default_project_id=project.id)
 
     result = await registry.call(
-        "derive_plan_review_repair_universe",
+        "derive_plan_review_sweep_scope",
         {
             "prior_evidence_id": "prior-evidence",
             "plan_path": str(tmp_path / ".gobby" / "plans" / "plan.md"),
@@ -1027,8 +1166,8 @@ async def test_universe_visible_before_attestation(
     )
 
     assert result["ok"] is True
-    assert result["repair_universe"] == universe.to_dict()
-    assert result["repair_universe_digest"] == universe.digest
+    assert result["sweep_scope"] == universe.to_dict()
+    assert result["sweep_scope_digest"] == universe.digest
     assert "index_token" not in result
     skill = Path("src/gobby/install/shared/skills/plan/SKILL.md").read_text(encoding="utf-8")
     planner = Path("src/gobby/install/shared/workflows/agents/planner.yaml").read_text(
@@ -1036,22 +1175,23 @@ async def test_universe_visible_before_attestation(
     )
     for producer_contract in (skill, planner):
         normalized_contract = " ".join(producer_contract.split())
-        assert "derive_plan_review_repair_universe" in normalized_contract
-        assert "repair_universe_digest" in normalized_contract
-        assert "Do not edit" in normalized_contract
+        assert "derive_plan_review_sweep_scope" in normalized_contract
+        assert "sweep_scope_digest" in normalized_contract
+        assert "required_scope_delta" in normalized_contract
 
     stale = _universe_attestation(finding, universe)
-    stale["repair_universe_digest"] = "b" * 64
+    stale["sweep_scope_digest"] = "b" * 64
     with pytest.raises(ReviewEvidenceError, match="digest"):
-        validate_repair_universe_attestations(
-            universe=universe,
+        validate_sweep_scope_attestations(
+            scope=universe,
             attestations=[stale],
+            repair_finding_ids={"finding-1"},
         )
 
 
 def test_zero_result_requires_query_evidence() -> None:
     finding = _finding("finding-1")
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[finding],
         inventory=_candidate_inventory(),
     )
@@ -1059,13 +1199,33 @@ def test_zero_result_requires_query_evidence() -> None:
     attestation["sweep_query_evidence"] = []
 
     with pytest.raises(ReviewEvidenceError, match="query evidence"):
-        validate_repair_universe_attestations(
-            universe=universe,
+        validate_sweep_scope_attestations(
+            scope=universe,
             attestations=[attestation],
+            repair_finding_ids={"finding-1"},
         )
 
 
-def test_repair_universe_scopes_sites_by_finding_section() -> None:
+def test_structurally_incomplete_sweep_attestation_refuses() -> None:
+    finding = _finding("finding-1")
+    scope = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("consumer-a"),
+    )
+    attestation = _universe_attestation(finding, scope)
+    del attestation["repair_bundle_interactions"]
+
+    with pytest.raises(ReviewEvidenceError) as refused:
+        validate_sweep_scope_attestations(
+            scope=scope,
+            attestations=[attestation],
+            repair_finding_ids={"finding-1"},
+        )
+
+    assert refused.value.code == "missing_sweep_scope_proof"
+
+
+def test_sweep_scope_scopes_sites_by_finding_section() -> None:
     first = _finding("finding-first", check_key="repair.first")
     same_section = _finding("finding-same", check_key="repair.same")
     second = _finding("finding-second", check_key="repair.second")
@@ -1083,7 +1243,7 @@ def test_repair_universe_scopes_sites_by_finding_section() -> None:
         },
     )
 
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[first, same_section, second, empty],
         inventory=inventory,
     )
@@ -1109,14 +1269,20 @@ def test_repair_universe_scopes_sites_by_finding_section() -> None:
     empty_attestation = _universe_attestation(empty, universe)
     empty_attestation["sweep_query_evidence"] = []
     with pytest.raises(ReviewEvidenceError, match="query evidence"):
-        validate_repair_universe_attestations(
-            universe=universe,
+        validate_sweep_scope_attestations(
+            scope=universe,
             attestations=[
                 _universe_attestation(first, universe),
                 _universe_attestation(same_section, universe),
                 _universe_attestation(second, universe),
                 empty_attestation,
             ],
+            repair_finding_ids={
+                "finding-first",
+                "finding-same",
+                "finding-second",
+                "finding-empty",
+            },
         )
 
 
@@ -1124,7 +1290,7 @@ def test_repair_bundle_interaction_edges() -> None:
     first = _finding("finding-1", check_key="repair.first")
     second = _finding("finding-2", check_key="repair.second")
     second["section_id"] = "2.1"
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[first, second],
         inventory=_candidate_inventory(
             "consumer-a",
@@ -1150,19 +1316,20 @@ def test_repair_bundle_interaction_edges() -> None:
         ReviewEvidenceError,
         match=universe.interaction_edges[0].edge_id,
     ):
-        validate_repair_universe_attestations(
-            universe=universe,
+        validate_sweep_scope_attestations(
+            scope=universe,
             attestations=[
                 first_attestation,
                 _universe_attestation(second, universe),
             ],
+            repair_finding_ids={"finding-1", "finding-2"},
         )
 
 
 def test_adjacent_variant_ids_include_finding_identity() -> None:
     first = _finding("finding-1", check_key="repair.shared")
     second = _finding("finding-2", check_key="repair.shared")
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[first, second],
         inventory=_candidate_inventory("consumer-a"),
     )
@@ -1178,7 +1345,7 @@ def test_unscoped_inventory_globals_do_not_create_interaction_edges() -> None:
     first = _finding("finding-1", check_key="repair.first")
     second = _finding("finding-2", check_key="repair.second")
     second["section_id"] = "2.1"
-    universe = derive_repair_universe(
+    universe = derive_sweep_scope(
         prior_findings=[first, second],
         inventory=_candidate_inventory(
             changed_targets=("src/global.py",),
@@ -1189,3 +1356,82 @@ def test_unscoped_inventory_globals_do_not_create_interaction_edges() -> None:
     assert universe.interaction_edges == ()
     assert universe.requirements[1].changed_targets == ()
     assert universe.requirements[1].changed_contracts == ()
+
+
+def test_scope_delta_partitions_unrelated_inventory_churn() -> None:
+    finding = _finding("finding-1")
+    submitted = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory(
+            "required",
+            "unrelated-old",
+            section_ids_by_site={"unrelated-old": ("9.9",)},
+        ),
+    )
+    current = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory(
+            "required",
+            "unrelated-new",
+            section_ids_by_site={"unrelated-new": ("9.9",)},
+        ),
+    )
+
+    required_delta, inventory_churn = compute_scope_deltas(
+        submitted=submitted,
+        current=current,
+    )
+
+    assert required_delta == empty_scope_delta()
+    assert inventory_churn["candidate_sites"] == {
+        "added": [current.candidate_sites[1].to_dict()],
+        "removed": [submitted.candidate_sites[1].to_dict()],
+        "changed": [],
+    }
+
+
+def test_scope_delta_keeps_removed_required_consumer_in_union() -> None:
+    finding = _finding("finding-1")
+    submitted = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("required-old"),
+    )
+    current = derive_sweep_scope(
+        prior_findings=[finding],
+        inventory=_candidate_inventory("required-new"),
+    )
+
+    required_delta, inventory_churn = compute_scope_deltas(
+        submitted=submitted,
+        current=current,
+    )
+
+    assert required_delta["requirements"] != empty_scope_delta()["requirements"]
+    assert required_delta["candidate_sites"] == {
+        "added": [current.candidate_sites[0].to_dict()],
+        "removed": [submitted.candidate_sites[0].to_dict()],
+        "changed": [],
+    }
+    assert inventory_churn == empty_scope_delta()
+
+
+def test_scope_delta_exposes_hand_shrunk_submission() -> None:
+    first = _finding("finding-1")
+    second = _finding("finding-2")
+    current = derive_sweep_scope(
+        prior_findings=[first, second],
+        inventory=_candidate_inventory("required"),
+    )
+    submitted = SweepScope(
+        candidate_sites=current.candidate_sites,
+        requirements=(replace(current.requirements[0], interaction_edge_ids=()),),
+        interaction_edges=(),
+    )
+
+    required_delta, _inventory_churn = compute_scope_deltas(
+        submitted=submitted,
+        current=current,
+    )
+
+    requirement_delta = cast(dict[str, object], required_delta["requirements"])
+    assert requirement_delta["added"] == [current.requirements[1].to_dict()]

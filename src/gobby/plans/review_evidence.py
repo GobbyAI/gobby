@@ -82,6 +82,8 @@ class PlanReviewEvidenceService:
         stage: str | None = None,
         prior_finding_resolutions: Sequence[Mapping[str, object]] | None = None,
         repair_attestations: Sequence[Mapping[str, object]] | None = None,
+        sweep_scope: Mapping[str, object] | None = None,
+        sweep_scope_digest: str | None = None,
     ) -> PreparedReviewEvidence:
         """Capture one immutable round snapshot under a per-plan mutation lock."""
         if round_number <= 0:
@@ -190,6 +192,8 @@ class PlanReviewEvidenceService:
                             current_snapshot=active.snapshot,
                             prior_finding_resolutions=prior_finding_resolutions,
                             repair_attestations=repair_attestations,
+                            sweep_scope=sweep_scope,
+                            sweep_scope_digest=sweep_scope_digest,
                         )
                         requirements_bundle = requirements_bundle_from_context(
                             active.prior_round_context
@@ -247,6 +251,8 @@ class PlanReviewEvidenceService:
                         current_snapshot=snapshot,
                         prior_finding_resolutions=prior_finding_resolutions,
                         repair_attestations=repair_attestations,
+                        sweep_scope=sweep_scope,
+                        sweep_scope_digest=sweep_scope_digest,
                     )
                     requirements_bundle = self._assemble_requirements_bundle(
                         project_id=project_id,

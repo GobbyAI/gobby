@@ -135,6 +135,8 @@ def _prepare_plan_adversary_evidence(
             submission.prior_finding_resolutions if submission is not None else None
         ),
         repair_attestations=(submission.repair_attestations if submission is not None else None),
+        sweep_scope=(submission.sweep_scope if submission is not None else None),
+        sweep_scope_digest=(submission.sweep_scope_digest if submission is not None else None),
     )
     try:
         transport = attach_plan_review_evidence(

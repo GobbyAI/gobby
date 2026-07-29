@@ -10,7 +10,7 @@ import pytest
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
-from gobby.plans.review_repair import RepairSweepRequirement, RepairUniverse
+from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
 from gobby.review_learning.recorders import mint_plan_review_lessons
 from gobby.review_learning.round_diff import (
     PlanReviewLessonCandidate,
@@ -35,7 +35,7 @@ from tests.storage.test_stage_review_findings import (
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
 STAGE = "planning"
-_REPAIR_UNIVERSE_DIGEST = "a" * 64
+_SWEEP_SCOPE_DIGEST = "a" * 64
 
 
 def _finding(
@@ -435,6 +435,25 @@ def _persist_round(
     prior_finding_resolutions: list[dict[str, object]] | None = None,
     repair_attestations: list[dict[str, object]] | None = None,
 ) -> str:
+    repair_ids = [
+        str(resolution["prior_finding_id"])
+        for resolution in prior_finding_resolutions or []
+        if resolution["decision"] == "repair"
+    ]
+    scope: SweepScope | None = None
+    if repair_ids:
+        project_id = lineage.manager.get_task(lineage.task_id).project_id
+        prior = lineage.service.store.list_for_path(
+            project_id=project_id,
+            plan_path=PLAN_PATH,
+        )[-1]
+        _inventory, scope = _settled_repair_inputs(
+            prior_evidence=prior,
+            repair_finding_ids=repair_ids,
+        )
+        for attestation in repair_attestations or []:
+            if "sweep_scope_digest" in attestation:
+                attestation["sweep_scope_digest"] = scope.digest
     prepared = lineage.service.prepare_plan_review_round(
         project_id=lineage.manager.get_task(lineage.task_id).project_id,
         plan_path=lineage.plan_path,
@@ -443,6 +462,8 @@ def _persist_round(
         stage=lineage.stage,
         prior_finding_resolutions=prior_finding_resolutions,
         repair_attestations=repair_attestations,
+        sweep_scope=scope.to_dict() if scope is not None else None,
+        sweep_scope_digest=scope.digest if scope is not None else None,
     )
     run = LocalAgentRunManager(lineage.db).create(
         parent_session_id=lineage.session_id,
@@ -481,7 +502,7 @@ def _repair_attestation(finding_id: str) -> dict[str, object]:
         "adjacent_variants_swept": ["src/gobby/review_learning/lessons.py"],
         "validation_evidence": ["pytest tests/review_learning/test_round_diff.py"],
         "deferred_sites": [],
-        "repair_universe_digest": _REPAIR_UNIVERSE_DIGEST,
+        "sweep_scope_digest": _SWEEP_SCOPE_DIGEST,
         "sweep_query_evidence": [],
         "repair_bundle_interactions": [],
     }
@@ -492,7 +513,7 @@ def _settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     repair_finding_ids: list[str] | tuple[str, ...],
     **_kwargs: object,
-) -> tuple[CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, SweepScope]:
     assert prior_evidence.round_result is not None
     findings = cast(list[dict[str, object]], prior_evidence.round_result["findings"])
     finding_map = {cast(str, finding["finding_id"]): finding for finding in findings}
@@ -521,11 +542,10 @@ def _settled_repair_inputs(
         unsupported_targets=(),
         sites=sites,
     )
-    universe = RepairUniverse(
-        digest=_REPAIR_UNIVERSE_DIGEST,
+    universe = SweepScope(
         candidate_sites=sites,
         requirements=tuple(
-            RepairSweepRequirement(
+            SweepRequirement(
                 prior_finding_id=finding_id,
                 check_key=cast(str, finding_map[finding_id]["check_key"]),
                 changed_section_ids=(cast(str, finding_map[finding_id]["section_id"]),),
@@ -548,7 +568,7 @@ def _create_durable_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> DurableLineage:
     monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         _settled_repair_inputs,
     )
     project = LocalProjectManager(temp_db).create(

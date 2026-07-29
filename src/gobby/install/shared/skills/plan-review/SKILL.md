@@ -356,6 +356,9 @@ adjacent sites checked, confidence, and citations. The parent must:
 5. Record `causal_repair_sweeps` for every repaired prior finding in
    `prior_round_context`, including the changed sections/contracts, consumer
    site ids, query evidence for zero-result sweeps, and disposition.
+6. Inspect `required_scope_delta` and `inventory_churn` from
+   `prior_round_context`. Treat stale sweeps or uncovered required consumers as
+   findings and dismiss unrelated inventory churn with evidence.
 
 Call `derive_plan_review_manifest` during every round, including rejection.
 Pass only `routing_decisions` to `validate_plan_review_coverage` with the three

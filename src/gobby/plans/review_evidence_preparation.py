@@ -25,15 +25,19 @@ from gobby.plans.review_evidence_models import (
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_repair import (
     RepairPreparation,
-    RepairUniverse,
-    derive_repair_universe,
     repair_preparation_for_round,
+)
+from gobby.plans.review_sweep_scope import (
+    SweepScope,
+    canonicalize_sweep_scope,
+    compute_scope_deltas,
+    derive_sweep_scope,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
 
-def derive_settled_repair_inputs(
+def derive_settled_sweep_inputs(
     *,
     db: HubDatabase,
     project_id: str,
@@ -41,8 +45,8 @@ def derive_settled_repair_inputs(
     prior_evidence: PlanReviewEvidence,
     current_snapshot: bytes,
     repair_finding_ids: Sequence[str],
-) -> tuple[CandidateSiteInventory, RepairUniverse]:
-    """Settle the index, then derive one inventory and repair universe."""
+) -> tuple[CandidateSiteInventory, SweepScope]:
+    """Settle the index, then derive one inventory and sweep scope."""
     raw_findings = (
         prior_evidence.round_result.get("findings")
         if prior_evidence.round_result is not None
@@ -65,18 +69,18 @@ def derive_settled_repair_inputs(
         stats = storage.get_project_stats(project_id)
         return stats.last_indexed_at.isoformat() if stats is not None else ""
 
-    def derive() -> tuple[CandidateSiteInventory, RepairUniverse]:
+    def derive() -> tuple[CandidateSiteInventory, SweepScope]:
         inventory = derive_candidate_site_inventory(
             diff=build_inter_round_diff(prior_evidence.snapshot, current_snapshot),
             project_id=project_id,
             storage=storage,
         )
-        universe = derive_repair_universe(
+        scope = derive_sweep_scope(
             prior_findings=findings,
             inventory=inventory,
             repair_finding_ids=repair_finding_ids,
         )
-        return inventory, universe
+        return inventory, scope
 
     return settle_indexed_value(
         project_root,
@@ -97,8 +101,14 @@ def prepare_review_round_context(
     current_snapshot: bytes,
     prior_finding_resolutions: Sequence[Mapping[str, object]] | None,
     repair_attestations: Sequence[Mapping[str, object]] | None,
+    sweep_scope: Mapping[str, object] | None,
+    sweep_scope_digest: str | None,
 ) -> RepairPreparation | None:
-    """Validate repair proof and attach the server-derived index universe."""
+    """Validate submitted proof and attach current scope plus drift deltas."""
+    submitted_scope = _submitted_scope(
+        sweep_scope=sweep_scope,
+        sweep_scope_digest=sweep_scope_digest,
+    )
     base = repair_preparation_for_round(
         evidence_rows=evidence_rows,
         round_number=round_number,
@@ -106,6 +116,7 @@ def prepare_review_round_context(
         current_snapshot=current_snapshot,
         prior_finding_resolutions=prior_finding_resolutions,
         repair_attestations=repair_attestations,
+        submitted_sweep_scope=submitted_scope,
     )
     if base is None:
         return None
@@ -122,6 +133,8 @@ def prepare_review_round_context(
     )
     if not repair_ids:
         return base
+    if submitted_scope is None:  # pragma: no cover - validated by repair preparation.
+        raise RuntimeError("repair preparation omitted its submitted sweep scope")
     prior_evidence_id = base.prior_round_context["prior_evidence_id"]
     prior_evidence = next(
         (row for row in evidence_rows if row.evidence_id == prior_evidence_id),
@@ -132,13 +145,17 @@ def prepare_review_round_context(
             "invalid_repair_context",
             f"prior evidence row is missing: {prior_evidence_id}",
         )
-    inventory, universe = derive_settled_repair_inputs(
+    inventory, current_scope = derive_settled_sweep_inputs(
         db=db,
         project_id=project_id,
         project_root=project_root,
         prior_evidence=prior_evidence,
         current_snapshot=current_snapshot,
         repair_finding_ids=repair_ids,
+    )
+    required_scope_delta, inventory_churn = compute_scope_deltas(
+        submitted=submitted_scope,
+        current=current_scope,
     )
     validated = repair_preparation_for_round(
         evidence_rows=evidence_rows,
@@ -147,12 +164,15 @@ def prepare_review_round_context(
         current_snapshot=current_snapshot,
         prior_finding_resolutions=prior_finding_resolutions,
         repair_attestations=repair_attestations,
-        repair_universe=universe,
+        submitted_sweep_scope=submitted_scope,
+        current_sweep_scope=current_scope,
+        required_scope_delta=required_scope_delta,
+        inventory_churn=inventory_churn,
     )
     if validated is None:
         raise ReviewEvidenceError(
             "invalid_repair_context",
-            "repair universe requires a prior evidence row",
+            "sweep scope requires a prior evidence row",
         )
     return RepairPreparation(
         repair_attestations=validated.repair_attestations,
@@ -161,6 +181,21 @@ def prepare_review_round_context(
             inventory=inventory.to_dict(),
         ),
     )
+
+
+def _submitted_scope(
+    *,
+    sweep_scope: Mapping[str, object] | None,
+    sweep_scope_digest: str | None,
+) -> SweepScope | None:
+    if sweep_scope is None and sweep_scope_digest is None:
+        return None
+    if sweep_scope is None or sweep_scope_digest is None:
+        raise ReviewEvidenceError(
+            "missing_sweep_scope",
+            "sweep_scope and sweep_scope_digest must be submitted together",
+        )
+    return canonicalize_sweep_scope(sweep_scope, digest=sweep_scope_digest)
 
 
 def _index_repository(project_root: Path) -> None:

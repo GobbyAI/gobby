@@ -10,7 +10,7 @@ import pytest
 from gobby.plans.consumer_sweep import CandidateSite, CandidateSiteInventory
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
-from gobby.plans.review_repair import RepairSweepRequirement, RepairUniverse
+from gobby.plans.review_sweep_scope import SweepRequirement, SweepScope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -46,7 +46,7 @@ def review_harness(
         repo_path=str(tmp_path),
     )
     monkeypatch.setattr(
-        "gobby.plans.review_evidence_preparation.derive_settled_repair_inputs",
+        "gobby.plans.review_evidence_preparation.derive_settled_sweep_inputs",
         _settled_repair_inputs,
     )
     return _ReviewHarness(
@@ -145,7 +145,7 @@ def _attestation(finding: dict[str, object]) -> dict[str, object]:
         "adjacent_variants_swept": [f"variant:{finding_id}"],
         "validation_evidence": ["pytest tests/test_example.py"],
         "deferred_sites": [],
-        "repair_universe_digest": "a" * 64,
+        "sweep_scope_digest": "a" * 64,
         "sweep_query_evidence": ["gcode usages gobby.example.repaired_behavior"],
         "repair_bundle_interactions": [],
     }
@@ -155,7 +155,7 @@ def _settled_repair_inputs(
     *,
     repair_finding_ids: Sequence[str],
     **_kwargs: object,
-) -> tuple[CandidateSiteInventory, RepairUniverse]:
+) -> tuple[CandidateSiteInventory, SweepScope]:
     site_ids = tuple(
         site_id
         for finding_id in repair_finding_ids
@@ -183,11 +183,10 @@ def _settled_repair_inputs(
             for site_id in site_ids
         ),
     )
-    universe = RepairUniverse(
-        digest="a" * 64,
-        candidate_sites=(),
+    universe = SweepScope(
+        candidate_sites=inventory.sites,
         requirements=tuple(
-            RepairSweepRequirement(
+            SweepRequirement(
                 prior_finding_id=finding_id,
                 check_key=f"repair.{finding_id}",
                 changed_section_ids=("1.1",),
@@ -260,6 +259,11 @@ def _prepare_round_two_then_spawn(
     attestations: list[dict[str, object]],
     spawn_probe: _SpawnProbe,
 ) -> None:
+    repair_ids = [str(resolution["prior_finding_id"]) for resolution in resolutions]
+    _inventory, scope = _settled_repair_inputs(repair_finding_ids=repair_ids)
+    for attestation in attestations:
+        if "sweep_scope_digest" in attestation:
+            attestation["sweep_scope_digest"] = scope.digest
     prepared = harness.service.prepare_plan_review_round(
         project_id=harness.project_id,
         plan_path=harness.plan_path,
@@ -268,6 +272,8 @@ def _prepare_round_two_then_spawn(
         stage="planning",
         prior_finding_resolutions=resolutions,
         repair_attestations=attestations,
+        sweep_scope=scope.to_dict(),
+        sweep_scope_digest=scope.digest,
     )
     spawn_probe.spawn(prepared.evidence_id)
 
@@ -327,5 +333,5 @@ def test_subset_attestation_refuses_before_spawn(review_harness: _ReviewHarness)
             spawn_probe=spawn_probe,
         )
 
-    assert refused.value.code == "repair_sweep_universe_mismatch"
+    assert refused.value.code == "repair_sweep_scope_mismatch"
     assert spawn_probe.evidence_ids == []
