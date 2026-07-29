@@ -1,0 +1,12 @@
+tags: [task-enforcement, enforcement, tasks, git, shared-worktree, default, guardrail]
+
+rules:
+  block-cross-session-foreign-staged-commit:
+    description: "Block commits that would capture paths owned by another active task session"
+    event: before_tool
+    enabled: true
+    priority: 25
+    when: foreign_staged_commit_conflict
+    effects:
+      - type: block
+        reason: "{{ foreign_staged_commit_conflict }}"

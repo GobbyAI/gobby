@@ -857,6 +857,24 @@ class WorkflowHookHandler:
                     "target_task_has_edits": target_task_had_edits,
                     "has_target_task_dirty_files": LazyBool(_check_target_task_dirty),
                 }
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and session_id
+                    and event.project_id
+                    and project_path
+                ):
+                    from gobby.workflows.commit_guard import foreign_staged_commit_conflict
+
+                    eval_context["foreign_staged_commit_conflict"] = await asyncio.to_thread(
+                        foreign_staged_commit_conflict,
+                        self.rule_engine.db,
+                        event,
+                        session_id=session_id,
+                        project_id=event.project_id,
+                        project_path=project_path,
+                    )
+                else:
+                    eval_context["foreign_staged_commit_conflict"] = ""
 
                 # Snapshot BEFORE observers to capture both observer and rule changes in the diff
                 pre_eval = deepcopy(variables)

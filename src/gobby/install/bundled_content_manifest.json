@@ -408,6 +408,7 @@
     "workflows/rules/stop-gates/require-step-completion.yaml": "6f756605a0e4613b26fdd315b61752ee710cc5cc0d00d5840f14228cb00f09bd",
     "workflows/rules/stop-gates/require-task-close.yaml": "dfe248be9ae4636efef5cc645dc9c457adb6618fd7da64bf96f31fc163299b5d",
     "workflows/rules/task-enforcement/block-ask-during-stop-compliance.yaml": "7b16c2815fc86668a7ed36500d417c18660af5e41cfb373cbda5f6b219fad11d",
+    "workflows/rules/task-enforcement/block-cross-session-foreign-staged-commit.yaml": "5ca48a5e4fac8f7b0002eeda1bcf9f512e97e67b3d1a7d3b80acd925f1f177bb",
     "workflows/rules/task-enforcement/block-gobby-tasks-cli.yaml": "24ad2bcd1369ab3c3cfad5cdb6a8b74cda7d1e97e5838e6c77ef290dd54d35df",
     "workflows/rules/task-enforcement/block-native-task-tools.yaml": "eca2aeff8537a5e82a13090fbbe310e5f1961a03121079deb7954212c9f9db5a",
     "workflows/rules/task-enforcement/block-needs-review-interactive.yaml": "15ab2e10b4d7c786447d27740ac7b3212cd7c53680c3837b7acc6fba9d63abdf",
