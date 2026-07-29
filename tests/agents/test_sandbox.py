@@ -1022,3 +1022,26 @@ class TestComputeSandboxPaths:
 
         assert str(missing_dir) not in paths.read_paths
         assert str(regular_file) not in paths.read_paths
+
+
+class TestSharedTempRootsAreNotGranted:
+    """Agent scratchpads are the per-run sandbox tmp, never a shared temp root."""
+
+    def test_shared_temp_roots_absent_from_computed_paths(self, tmp_path: Path) -> None:
+        import tempfile as _tempfile
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+        )
+
+        shared_roots = {
+            _normalize_sandbox_path("/tmp"),
+            _normalize_sandbox_path("/var/tmp"),
+            _normalize_sandbox_path(_tempfile.gettempdir()),
+        }
+        assert shared_roots.isdisjoint(paths.write_paths)
+        assert shared_roots.isdisjoint(paths.read_paths)

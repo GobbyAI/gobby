@@ -233,7 +233,10 @@ def _record_actual_sandbox_enforcement(
         )
 
 
-def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
+def _codex_mcp_config_overrides(
+    project_path: str | None,
+    sandbox_temp_dir: str | None = None,
+) -> list[str]:
     """Force Codex spawned in isolated workspaces to use the main repo MCP server."""
     if not project_path:
         return []
@@ -246,6 +249,14 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
         "mcp_servers.gobby.startup_timeout_sec=120",
         f"mcp_servers.gobby.tool_timeout_sec={_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}",
     ]
+    # Codex scrubs its own env before launching stdio MCP servers, so the
+    # sandbox TMPDIR set on the provider process never reaches this
+    # subprocess. Without this it falls back to the platform temp root and
+    # writes outside every granted path -- plan-review tools open a
+    # TemporaryDirectory here, so that write-then-read must land in the
+    # per-run scratchpad the policy actually allows.
+    if sandbox_temp_dir:
+        overrides.append(f"mcp_servers.gobby.env.TMPDIR={json.dumps(sandbox_temp_dir)}")
     # Dotted -c overrides replace enough of the spawned server table that Codex
     # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
     # tools required by worker contracts so unattended builds do not stop on MCP

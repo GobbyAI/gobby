@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -109,21 +108,22 @@ def sensitive_write_roots() -> list[str]:
 
 
 def gobby_write_exceptions() -> list[str]:
-    """Return Gobby-owned and shared-temp roots agents must write at runtime.
+    """Return Gobby-owned roots agents must write at runtime.
 
     Agents own their Gobby surface: hook spools, logs, personal project state,
-    and gcode/gwiki state all live under ~/.gobby. Shared temp roots give
-    agents scratchpads beyond their per-session sandbox tmp;
-    tempfile.gettempdir() covers the platform default (per-user /var/folders
-    on macOS, %TEMP% on Windows).
+    and gcode/gwiki state all live under ~/.gobby.
+
+    Shared temp roots are deliberately absent. An agent's scratchpad is the
+    per-run directory `srt_runtime` creates under the policy dir and grants
+    explicitly. Granting /tmp, /var/tmp, or tempfile.gettempdir() instead
+    exposes every concurrent agent's temp state plus the plan-review
+    snapshots the spawned `gobby mcp-server` writes, and leaves that
+    subprocess writing outside its own sandbox tmp.
     """
     home = Path.home()
     return canonical_paths(
         [
             str(get_gobby_home()),
-            "/tmp",  # noqa: S108 - policy root, not a file creation site
-            "/var/tmp",  # noqa: S108
-            tempfile.gettempdir(),
             # uv's default cache: MCP-server subprocesses run `uv run` with a
             # provider-scrubbed env, so the per-session UV_CACHE_DIR redirect
             # never reaches them and uv falls back to these roots.

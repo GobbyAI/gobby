@@ -1665,3 +1665,22 @@ class TestApplyExtraEnv:
         assert env[UV_CACHE_DIR] == "/tmp/gobby/uv-cache/gobby-sess-123"
         assert env[CARGO_HOME] == "/tmp/gobby/cargo-home/gobby-sess-123"
         assert env["CUSTOM_FLAG"] == "1"
+
+
+def test_codex_mcp_overrides_point_subprocess_tmpdir_at_sandbox_scratchpad() -> None:
+    """Codex scrubs env for stdio MCP servers, so TMPDIR must be an explicit override."""
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+
+    scratchpad = "/Users/dev/.gobby/run/sandbox/run-1/tmp"
+    overrides = _codex_mcp_config_overrides("/repo", scratchpad)
+
+    assert f'mcp_servers.gobby.env.TMPDIR="{scratchpad}"' in overrides
+
+
+def test_codex_mcp_overrides_omit_tmpdir_without_sandbox() -> None:
+    """An unsandboxed spawn has no per-run scratchpad to redirect into."""
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+
+    overrides = _codex_mcp_config_overrides("/repo", None)
+
+    assert not any(entry.startswith("mcp_servers.gobby.env.TMPDIR") for entry in overrides)

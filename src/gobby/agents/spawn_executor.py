@@ -569,7 +569,10 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     launch = sandbox_result
 
     config_overrides = [
-        *_codex_mcp_config_overrides(request.project_path),
+        *_codex_mcp_config_overrides(
+            request.project_path,
+            (launch.provider_env or {}).get("TMPDIR"),
+        ),
         *request.codex_config_overrides,
     ]
     if launch.enforced and launch.backend == "srt":
