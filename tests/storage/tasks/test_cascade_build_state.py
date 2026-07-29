@@ -319,6 +319,7 @@ def test_cascade_never_forces_merge_onto_an_expansion_only_parent(
         validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(epic.id, stage_names=["expansion"])
+    task_manager.initialize_task_manifest(child.id, stage_names=["development"])
 
     result = cascade_build_state_to_subtree(
         temp_db,

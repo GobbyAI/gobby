@@ -1623,6 +1623,33 @@ class TestLocalAgentRunManager:
         assert cleaned.turns_used == 4
         assert cleaned.completed_at is not None
 
+    def test_cleanup_stale_runs_reclaims_old_reconciliation_pending_run(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Old provisional run",
+        )
+        agent_manager.start(run.id)
+        agent_manager.db.execute(
+            """
+            UPDATE agent_runs
+            SET started_at = NOW() - INTERVAL '65 minutes',
+                updated_at = NOW() - INTERVAL '65 minutes',
+                resume_metadata_json = %s::jsonb
+            WHERE id = %s
+            """,
+            ('{"reconciliation_pending": true}', run.id),
+        )
+
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+
+        assert run_ids == [run.id]
+        assert agent_manager.get(run.id).status == "timeout"
+
     def test_cleanup_stale_runs_skips_runs_with_process_identity(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1831,6 +1858,32 @@ class TestLocalAgentRunManager:
         assert cleaned.error == "Pending run never started"
         assert cleaned.completed_at is not None
         assert cleaned.pid is None
+
+    def test_cleanup_stale_pending_runs_reclaims_old_reconciliation_pending_run(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        pending = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Old provisional pending run",
+        )
+        agent_manager.db.execute(
+            """
+            UPDATE agent_runs
+            SET created_at = NOW() - INTERVAL '65 minutes',
+                updated_at = NOW() - INTERVAL '65 minutes',
+                resume_metadata_json = %s::jsonb
+            WHERE id = %s
+            """,
+            ('{"reconciliation_pending": true}', pending.id),
+        )
+
+        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=30)
+
+        assert run_ids == [pending.id]
+        assert agent_manager.get(pending.id).status == "error"
 
     def test_cleanup_stale_pending_runs_no_stale(
         self,
@@ -2189,6 +2242,7 @@ class TestAgentRunEdgeCases:
         )
 
         retrieved = agent_manager.get(agent_run.id)
+        assert retrieved is not None
         assert retrieved.tool_calls_count == 999999
         assert retrieved.turns_used == 50000
 

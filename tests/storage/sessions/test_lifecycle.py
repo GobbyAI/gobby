@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.terminal_ownership import terminal_session_identity
 from gobby.workflows.definitions import WorkflowInstance
@@ -549,7 +551,7 @@ class TestSessionManagerLifecycle:
             (older.id,),
         )
         assert transcript_row is not None
-        assert transcript_row["transcript_processed"] == 0
+        assert transcript_row["transcript_processed"] == 1
         suppressed = [
             record
             for record in caplog.records
@@ -565,6 +567,7 @@ class TestSessionManagerLifecycle:
         session_manager: SessionManager,
         sample_project: dict[str, str],
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A false-expired newest session reclaims its terminal from an older row."""
         terminal_context = {
@@ -587,6 +590,12 @@ class TestSessionManagerLifecycle:
         )
         session_manager.update_status(newer.id, "expired")
         caplog.set_level("INFO", logger="gobby.storage.sessions")
+        notifications: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            session_manager,
+            "_notify_session_change",
+            lambda event, session_id: notifications.append((event, session_id)),
+        )
 
         revived = session_manager.revive_expired_terminal_session(newer.id)
 
@@ -604,6 +613,51 @@ class TestSessionManagerLifecycle:
         assert ownership_changes[0].levelname == "INFO"
         assert getattr(ownership_changes[0], "session_id", None) == older.id
         assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == newer.id
+        assert ("session_expired", older.id) in notifications
+
+    def test_terminal_revival_uses_locked_status_for_transcript_reset(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        current = session_manager.register(
+            external_id="active-after-stale-snapshot",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%155",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET transcript_processed = TRUE WHERE id = %s",
+            (current.id,),
+        )
+        original_get = session_manager.get
+        get_calls = 0
+
+        def stale_first_get(session_id: str) -> Session | None:
+            nonlocal get_calls
+            get_calls += 1
+            session = original_get(session_id)
+            if get_calls == 1 and session is not None:
+                return replace(session, status="expired")
+            return session
+
+        monkeypatch.setattr(session_manager, "get", stale_first_get)
+
+        revived = session_manager.revive_expired_terminal_session(current.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (current.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] == 1
 
     @pytest.mark.parametrize(
         ("newer_machine_id", "newer_socket_path"),

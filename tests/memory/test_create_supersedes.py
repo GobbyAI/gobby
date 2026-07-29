@@ -1171,7 +1171,7 @@ async def test_supersedes_row_lock_fencing(temp_db) -> None:
                 FROM pg_stat_activity
                 WHERE datname = current_database()
                   AND wait_event_type = 'Lock'
-                  AND query LIKE 'SELECT vector_needs_reindex FROM memories%'
+                  AND query LIKE 'SELECT vector_needs_reindex FROM memories%%'
                 LIMIT 1
                 """,
             )

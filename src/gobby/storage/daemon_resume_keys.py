@@ -17,15 +17,23 @@ REAP_STARTED_AT_KEY = "daemon_stop_orphan_reap_started_at"
 REAP_REQUESTED_AT_KEY = "daemon_stop_orphan_reap_requested_at"
 REAPED_AT_KEY = "daemon_stop_orphan_reaped_at"
 RECONCILIATION_PENDING_KEY = "reconciliation_pending"
+_RESUME_METADATA_COLUMNS = frozenset({"ar.resume_metadata_json"})
+
+
+def _validate_resume_metadata_column(column: str) -> None:
+    if column not in _RESUME_METADATA_COLUMNS:
+        raise ValueError(f"Unsupported daemon resume metadata column: {column}")
 
 
 def daemon_resume_unconsumed_condition(db: object, column: str) -> str:
     """SQL condition matching parked originals not yet consumed by a successor."""
+    _validate_resume_metadata_column(column)
     expr = json_text_expr(db, column, CONSUMED_AT_KEY)
     return f"({expr} IS NULL OR {expr} = '')"
 
 
 def daemon_resume_consumed_condition(db: object, column: str) -> str:
     """SQL condition matching originals already consumed by a successor."""
+    _validate_resume_metadata_column(column)
     expr = json_text_expr(db, column, CONSUMED_AT_KEY)
     return f"({expr} IS NOT NULL AND {expr} <> '')"

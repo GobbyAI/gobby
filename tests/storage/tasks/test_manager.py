@@ -86,3 +86,31 @@ def test_update_task_persists_normalized_validation_criteria(
     )
 
     assert updated.validation_criteria == "Updated observable criterion."
+
+
+def test_update_task_only_refetches_once_for_non_contract_fields(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Original title",
+        task_type="task",
+        validation_criteria="The title is updated.",
+    )
+    original_get_task = manager.get_task
+    get_calls = 0
+
+    def tracked_get_task(task_id: str) -> Any:
+        nonlocal get_calls
+        get_calls += 1
+        return original_get_task(task_id)
+
+    monkeypatch.setattr(manager, "get_task", tracked_get_task)
+
+    updated = manager.update_task(task.id, title="Updated title")
+
+    assert updated.title == "Updated title"
+    assert get_calls == 1

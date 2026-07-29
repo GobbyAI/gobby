@@ -191,6 +191,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                 WHERE machine_id = %s
                   AND session_type = 'terminal'
                   AND terminal_context ->> 'tmux_pane' = %s
+                  AND status != 'deleted'
                 ORDER BY created_at, id
                 FOR UPDATE
                 """,
@@ -201,41 +202,47 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                 for row in rows
                 if terminal_session_identity(candidate := Session.from_row(row)) == identity
             ]
-            if not matching:
-                return self.get(session_id)
-
-            owner = max(matching, key=terminal_session_creation_order)
-            reset_target_transcript = current.status == "expired"
-            for candidate in matching:
-                desired_status = candidate.status
-                if candidate.id == owner.id and candidate.status == "expired":
-                    desired_status = "active"
-                elif candidate.id != owner.id and candidate.status in {
-                    "active",
-                    "paused",
-                    "handoff_ready",
-                }:
-                    desired_status = "expired"
-
-                reset_transcript = reset_target_transcript and candidate.id == session_id
-                if desired_status == candidate.status and not reset_transcript:
-                    continue
-
-                conn.execute(
-                    """
-                    UPDATE sessions
-                    SET status = %s,
-                        transcript_processed = CASE
-                            WHEN %s THEN FALSE
-                            ELSE transcript_processed
-                        END,
-                        updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (desired_status, reset_transcript, now, candidate.id),
+            if matching:
+                owner = max(matching, key=terminal_session_creation_order)
+                locked_current = next(
+                    (candidate for candidate in matching if candidate.id == session_id),
+                    None,
                 )
-                if desired_status != candidate.status:
-                    status_changes.append((candidate, desired_status))
+                reset_target_transcript = (
+                    locked_current is not None
+                    and locked_current.status == "expired"
+                    and locked_current.id == owner.id
+                )
+                for candidate in matching:
+                    desired_status = candidate.status
+                    if candidate.id == owner.id and candidate.status == "expired":
+                        desired_status = "active"
+                    elif candidate.id != owner.id and candidate.status in {
+                        "active",
+                        "paused",
+                        "handoff_ready",
+                    }:
+                        desired_status = "expired"
+
+                    reset_transcript = reset_target_transcript and candidate.id == session_id
+                    if desired_status == candidate.status and not reset_transcript:
+                        continue
+
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                        SET status = %s,
+                            transcript_processed = CASE
+                                WHEN %s THEN FALSE
+                                ELSE transcript_processed
+                            END,
+                            updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (desired_status, reset_transcript, now, candidate.id),
+                    )
+                    if desired_status != candidate.status:
+                        status_changes.append((candidate, desired_status))
 
         if owner is None:
             return self.get(session_id)
@@ -257,7 +264,8 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             )
 
         for candidate, desired_status in status_changes:
-            self._notify_session_change("session_updated", candidate.id)
+            event = "session_expired" if desired_status == "expired" else "session_updated"
+            self._notify_session_change(event, candidate.id)
             if desired_status == "expired":
                 logger.info(
                     "Expired superseded terminal session %s; owner is %s",

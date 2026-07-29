@@ -295,15 +295,14 @@ def test_nested_lock_target_out_of_order_priority_raises(
     assert "WebChatSessionBootstrap" in message
 
 
-def test_transaction_immediate_inside_non_immediate_transaction_raises(
+def test_transaction_immediate_reuses_regular_postgres_transaction(
     postgres_db_factory: Callable[[], PostgresHubDatabase],
 ) -> None:
     db = postgres_db_factory()
     try:
-        with db.transaction():
-            with pytest.raises(RuntimeError, match="non-immediate"):
-                with db.transaction_immediate(SystemSessionBootstrap()):
-                    pass
+        with db.transaction() as outer:
+            with db.transaction_immediate(SystemSessionBootstrap()) as inner:
+                assert inner is outer
     finally:
         db.close()
 

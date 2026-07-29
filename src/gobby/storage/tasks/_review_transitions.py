@@ -31,7 +31,6 @@ from gobby.storage.tasks._review_round_result import (
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._updates import update_task
-from gobby.utils.datetime import utc_now
 
 
 def _stage_states(db: HubDatabase) -> StageStatesManager:
@@ -72,20 +71,8 @@ def submit_for_review(
         task_id,
         description=description,
         claimed_by_session_id=None,
+        remove_labels=("planning-current-verdict:rejected",),
     )
-    with db.transaction() as conn:
-        conn.execute(
-            """
-            UPDATE tasks
-               SET labels = COALESCE(labels, '[]'::jsonb)
-                            - 'planning-current-verdict:rejected',
-                   updated_at = %s
-             WHERE id = %s
-               AND COALESCE(labels, '[]'::jsonb)
-                   @> '["planning-current-verdict:rejected"]'::jsonb
-            """,
-            (utc_now(), task_id),
-        )
     return get_task(db, task_id)
 
 
@@ -315,7 +302,7 @@ def _recorded_approval_replay(
     if evidence.finalized_at is None:
         return None
     approval_result = dict(evidence.approval_result or {})
-    delivered_ledger = approval_result.pop("quality_ledger", None)
+    delivered_ledger = approval_result.pop("quality_ledger", None) or []
     if approval_result != round_result or delivered_ledger != (evidence.quality_ledger or []):
         raise ReviewEvidenceError(
             "approval_result_conflict",
@@ -396,14 +383,11 @@ def reject_review(
         # generic "## Review Rejection" heading is used for one-off rejections
         # without a round number and is allowed to stack.
         if normalized_round is not None:
-            pattern = re.compile(
-                rf"^{re.escape(heading)}$.*?(?=^## |\Z)",
-                re.DOTALL | re.MULTILINE,
+            description = _replace_round_section(
+                existing,
+                round_number=normalized_round,
+                section=section,
             )
-            if pattern.search(existing):
-                description = pattern.sub(section.rstrip() + "\n\n", existing).rstrip() or section
-            else:
-                description = f"{existing}\n\n{section}" if existing else section
         else:
             description = f"{existing}\n\n{section}" if existing else section
 

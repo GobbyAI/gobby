@@ -12,18 +12,31 @@ def committable_task_paths(paths: set[str], cwd: str) -> set[str]:
 
 def task_dirty_paths(paths: set[str], cwd: str) -> set[str] | None:
     """Return dirty attributed paths, or ``None`` when Git inspection fails."""
-    dirty_paths: set[str] = set()
-    for path in sorted(committable_task_paths(paths, cwd)):
-        status = run_git_command(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--", path],
-            cwd=cwd,
-            timeout=10,
-        )
-        if status is None:
-            return None
-        if status.strip():
-            dirty_paths.add(path)
-    return dirty_paths
+    scoped_paths = sorted(paths)
+    if not scoped_paths:
+        return set()
+    status = run_git_command(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            *scoped_paths,
+        ],
+        cwd=cwd,
+        timeout=10,
+    )
+    if status is None:
+        return None
+    return {_porcelain_path(line) for line in status.splitlines() if line.strip()}
+
+
+def _porcelain_path(line: str) -> str:
+    path = line[3:].strip() if len(line) > 3 else line.strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[1]
+    return path.strip('"')
 
 
 def has_committable_edits(paths: set[str], cwd: str) -> bool:

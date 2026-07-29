@@ -217,7 +217,7 @@ def release_task_claim_if_owned(
             """,
             (now, task_id, expected_owner),
         )
-    return get_task(db, task_id) if cursor.rowcount else None
+    return get_task(db, task_id) if cursor.rowcount == 1 else None
 
 
 def reopen_task(
@@ -342,7 +342,7 @@ def escalate_task_if_owned(
             """,
             (now, reason, now, task_id, expected_owner),
         )
-    return get_task(db, task_id) if cursor.rowcount else None
+    return get_task(db, task_id) if cursor.rowcount == 1 else None
 
 
 def increment_validation_failure(

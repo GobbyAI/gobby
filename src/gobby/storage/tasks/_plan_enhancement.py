@@ -128,6 +128,7 @@ def record_plan_enhancement(
     if normalized_round < 1:
         raise ValueError("round_number must be >= 1")
 
+    # Preserve the task-not-found contract before reporting stage-specific errors.
     get_task(db, task_id)
     stages = _stage_states(db)
     current = stages.current_stage(task_id)

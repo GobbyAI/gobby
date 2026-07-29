@@ -60,8 +60,10 @@ def test_status_upsert_round_trip(
 def test_status_from_row_handles_statistics_json(
     raw_statistics: str,
     expected: dict[str, int],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     now = datetime(2026, 7, 21, tzinfo=UTC)
+    caplog.set_level("WARNING", logger="gobby.storage.external_issue_sync")
 
     status = ExternalIssueSyncStatus.from_row(
         {
@@ -81,6 +83,26 @@ def test_status_from_row_handles_statistics_json(
     )
 
     assert status.last_statistics == expected
+    if raw_statistics == "{malformed":
+        assert "Ignoring malformed external issue sync statistics" in caplog.text
+
+
+def test_status_upsert_requires_returned_row(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = LocalProjectManager(temp_db).create(name="sync-status-no-row", repo_path=None)
+    store = ExternalIssueSyncStatusStore(temp_db)
+    monkeypatch.setattr(temp_db, "fetchone", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="upsert returned no row"):
+        store.upsert(
+            project_id=project.id,
+            provider="linear",
+            state="healthy",
+            linked_count=0,
+            pending_count=0,
+        )
 
 
 def test_provider_counts_are_project_scoped(temp_db: HubDatabase) -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from gobby.storage.agent_resume import (
     claim_daemon_stop_orphan_reap,
     finalize_daemon_resume,
@@ -466,3 +468,9 @@ def test_increment_failure_count_increments_numeric_value(
     assert merged is not None
 
     assert increment_daemon_resume_failure_count(temp_db, run_id=original.id) == 3
+
+
+def test_increment_failure_count_rejects_missing_run(temp_db: Any) -> None:
+    missing_run_id = "00000000-0000-0000-0000-000000000000"
+    with pytest.raises(ValueError, match=f"Agent run {missing_run_id} not found"):
+        increment_daemon_resume_failure_count(temp_db, run_id=missing_run_id)

@@ -57,7 +57,18 @@ def recover_expired_live_session_claims(
         owner = task.claimed_by_session_id
         if not owner:
             continue
-        session = session_manager.get(owner)
+        session_lookup_failed = False
+        try:
+            session = session_manager.get(owner)
+        except Exception:
+            logger.warning(
+                "Could not load owning session %s for live-session task %s",
+                owner,
+                task.id,
+                exc_info=True,
+            )
+            session = None
+            session_lookup_failed = True
         if session is not None and session.status in _LIVE_OWNER_STATUSES:
             continue
 
@@ -72,7 +83,9 @@ def recover_expired_live_session_claims(
             attributed_paths = None
 
         dirty_paths: set[str] | None
-        if attributed_paths == set():
+        if session_lookup_failed:
+            dirty_paths = None
+        elif attributed_paths == set():
             dirty_paths = set()
         elif attributed_paths is None:
             dirty_paths = None
@@ -111,13 +124,19 @@ def _load_attributed_paths(
     owner: str,
     task_id: str,
 ) -> set[str] | None:
-    row = db.fetchone(
-        "SELECT session_id FROM session_variables WHERE session_id = %s",
-        (owner,),
-    )
-    if row is None:
+    if not _session_variables_exist(db, owner):
         return None
     return task_edited_file_set(variable_manager.get_variables(owner), task_id)
+
+
+def _session_variables_exist(db: HubDatabase, session_id: str) -> bool:
+    return (
+        db.fetchone(
+            "SELECT session_id FROM session_variables WHERE session_id = %s",
+            (session_id,),
+        )
+        is not None
+    )
 
 
 def _resolve_workspace(
@@ -158,11 +177,7 @@ def _clear_claim_variables(
     task_id: str,
 ) -> None:
     try:
-        row = db.fetchone(
-            "SELECT session_id FROM session_variables WHERE session_id = %s",
-            (owner,),
-        )
-        if row is None:
+        if not _session_variables_exist(db, owner):
             return
         variables = variable_manager.get_variables(owner)
         variable_manager.merge_variables(owner, remove_claimed_task(variables, task_id))

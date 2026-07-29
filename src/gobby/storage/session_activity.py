@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase
 from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
@@ -20,6 +20,10 @@ class SessionActivityManager(Protocol):
     db: HubDatabase
 
     def get(self, session_id: str) -> Session | None: ...
+
+
+class _SessionChangeNotifier(Protocol):
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -102,7 +106,7 @@ def reconcile_compact_session_activity(
                 conflicting_session_ids=tuple(conflicts),
             )
 
-        conn.execute(
+        updated = conn.execute(
             """
             UPDATE sessions
             SET status = 'active',
@@ -113,6 +117,11 @@ def reconcile_compact_session_activity(
             """,
             (now, current.id),
         )
+        if not _updated_once(updated):
+            return SessionActivityResolution(
+                error_code="session_deleted",
+                error=f"Compact session {current.id} is deleted.",
+            )
         for competitor in competitors:
             conn.execute("DELETE FROM sessions WHERE id = %s", (competitor.id,))
             deleted_ids.append(competitor.id)
@@ -151,7 +160,7 @@ def _activate_without_competitors(
         """,
         (utc_now(), current.id),
     )
-    if updated.rowcount == 0:
+    if not _updated_once(updated):
         return SessionActivityResolution(
             error_code="session_deleted",
             error=f"Compact session {current.id} is deleted.",
@@ -195,6 +204,16 @@ def _notify_session_change(
     event: str,
     session_id: str,
 ) -> None:
-    callback = getattr(manager, "_notify_session_change", None)
-    if callable(callback):
-        callback(event, session_id)
+    try:
+        cast(_SessionChangeNotifier, manager)._notify_session_change(event, session_id)
+    except Exception:
+        logger.warning(
+            "Session change notification failed for %s (%s)",
+            session_id,
+            event,
+            exc_info=True,
+        )
+
+
+def _updated_once(cursor: Cursor) -> bool:
+    return cursor.rowcount == 1

@@ -145,7 +145,7 @@ def finalize_daemon_resume(
             _CONSUMED_AT_KEY: original_metadata.get(_CONSUMED_AT_KEY) or now.isoformat(),
             _CONSUMED_BY_KEY: successor_run_id,
         }
-        conn.execute(
+        successor_cursor = conn.execute(
             """
             UPDATE agent_runs
             SET resume_metadata_json =
@@ -214,6 +214,8 @@ def finalize_daemon_resume(
                 _RESUME_PHASE_KEY,
             ),
         )
+        if successor_cursor.rowcount != 1:
+            raise RuntimeError("Daemon resume successor finalization update did not apply")
         subscriber_rows = conn.execute(
             """
             SELECT session_id
@@ -446,4 +448,6 @@ def increment_daemon_resume_failure_count(
             """,
             (run_id,),
         ).fetchone()
-        return int(row["count"]) if row is not None else 0
+        if row is None:
+            raise ValueError(f"Agent run {run_id} not found")
+        return int(row["count"])

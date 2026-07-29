@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.storage import session_activity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions import SessionManager
@@ -96,6 +99,64 @@ def test_explicit_compact_activity_restores_canonical_row_and_deletes_empty_ghos
     assert restarted is not None
     assert restarted.id == canonical_id
     assert restarted.ref == resolution.session.ref
+
+
+def test_compact_reconciliation_preserves_ghost_when_owner_update_loses_race(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = SessionManager(temp_db)
+    canonical_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="canonical-raced-id",
+    )
+    ghost_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="observed-raced-ghost-id",
+    )
+    _mark_compact(temp_db, canonical_id, message_count=1838)
+    monkeypatch.setattr(session_activity, "_updated_once", lambda cursor: False)
+
+    resolution = reconcile_compact_session_activity(manager, canonical_id)
+
+    assert resolution.error_code == "session_deleted"
+    assert manager.get(ghost_id) is not None
+
+
+def test_compact_reconciliation_ignores_post_commit_notification_failure(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = SessionManager(temp_db)
+    canonical_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="canonical-notify-id",
+    )
+    ghost_id = _register(
+        manager,
+        project_id=sample_project["id"],
+        external_id="observed-notify-ghost-id",
+    )
+    _mark_compact(temp_db, canonical_id, message_count=1838)
+    caplog.set_level("WARNING", logger="gobby.storage.session_activity")
+
+    def fail_notification(event: str, session_id: str) -> None:
+        raise RuntimeError(f"{event}:{session_id}")
+
+    monkeypatch.setattr(manager, "_notify_session_change", fail_notification)
+
+    resolution = reconcile_compact_session_activity(manager, canonical_id)
+
+    assert resolution.success
+    assert resolution.deleted_ghost_ids == (ghost_id,)
+    assert manager.get(ghost_id) is None
+    assert "Session change notification failed" in caplog.text
 
 
 def test_populated_duplicate_blocks_compact_reconciliation_without_mutation(

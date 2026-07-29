@@ -1,6 +1,7 @@
 """Raw task update storage primitives."""
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -57,6 +58,7 @@ def update_task(
     task_type: MaybeUnset[str | None] = UNSET,
     claimed_by_session_id: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
+    remove_labels: Sequence[str] = (),
     parent_task_id: MaybeUnset[str | None] = UNSET,
     closed_reason: MaybeUnset[str | None] = UNSET,
     closed_at: MaybeUnset[str | None] = UNSET,
@@ -119,11 +121,16 @@ def update_task(
         updates.append("claimed_by_session_id = %s")
         params.append(claimed_by_session_id)
     if labels is not UNSET:
+        if remove_labels:
+            raise ValueError("labels and remove_labels cannot be updated together")
         updates.append("labels = %s")
         if labels is None:
             params.append("[]")
         else:
             params.append(json.dumps(labels))
+    elif remove_labels:
+        updates.append("labels = COALESCE(labels, '[]'::jsonb) - %s::text[]")
+        params.append(list(remove_labels))
     if parent_task_id is not UNSET:
         updates.append("parent_task_id = %s")
         params.append(parent_task_id)

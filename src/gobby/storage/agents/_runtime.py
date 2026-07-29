@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
+from gobby.storage.daemon_resume_keys import RESUME_PHASE_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
@@ -85,7 +86,7 @@ class _AgentRunRuntimeMixin:
     ) -> AgentRun | None:
         """Advance a provisional resume only from the expected durable phase."""
         patch = dict(updates or {})
-        patch["daemon_stop_resume_phase"] = new_phase
+        patch[RESUME_PHASE_KEY] = new_phase
         now = utc_now()
         cursor = self.db.execute(
             """
@@ -94,9 +95,9 @@ class _AgentRunRuntimeMixin:
                     COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
                 updated_at = %s
             WHERE id = %s
-              AND resume_metadata_json ->> 'daemon_stop_resume_phase' = %s
+              AND resume_metadata_json ->> %s = %s
             """,
-            (dump_resume_metadata(patch), now, run_id, expected_phase),
+            (dump_resume_metadata(patch), now, run_id, RESUME_PHASE_KEY, expected_phase),
         )
         if not _positive_rowcount(cursor):
             return None

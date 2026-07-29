@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from gobby.plans.review_evidence_models import PlanReviewEvidence
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._review_transitions import (
+    _recorded_approval_replay,
     approve_review,
     reject_review,
     submit_for_review,
@@ -34,6 +38,35 @@ pytestmark = pytest.mark.unit
 
 def _task_columns(temp_db) -> set[str]:
     return table_column_names(temp_db, "tasks")
+
+
+def test_recorded_approval_replay_accepts_omitted_empty_quality_ledger(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Replay empty ledger",
+        validation_criteria="An empty approval retry replays successfully.",
+    )
+    evidence = cast(
+        PlanReviewEvidence,
+        SimpleNamespace(
+            finalized_at=datetime.now(UTC),
+            approval_result={},
+            quality_ledger=None,
+        ),
+    )
+
+    replayed = _recorded_approval_replay(
+        temp_db,
+        task.id,
+        evidence=evidence,
+        round_result={},
+    )
+
+    assert replayed is not None
+    assert replayed.id == task.id
 
 
 def _assert_open_task(updated) -> None:

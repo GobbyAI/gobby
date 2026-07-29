@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
+
+logger = logging.getLogger(__name__)
 
 ExternalIssueProvider = Literal["linear", "github"]
 ExternalIssueSyncState = Literal[
@@ -47,6 +50,10 @@ class ExternalIssueSyncStatus:
             try:
                 raw_statistics = json.loads(raw_statistics)
             except json.JSONDecodeError:
+                logger.warning(
+                    "Ignoring malformed external issue sync statistics for project %s",
+                    row["project_id"],
+                )
                 raw_statistics = {}
         return cls(
             project_id=str(row["project_id"]),
@@ -118,10 +125,8 @@ class ExternalIssueSyncStatusStore:
         last_error: str | None = None,
     ) -> ExternalIssueSyncStatus:
         now = utc_now()
-        row = cast(
-            Mapping[str, Any],
-            self.db.fetchone(
-                """
+        row = self.db.fetchone(
+            """
             INSERT INTO external_issue_sync_status (
                 project_id, provider, state, last_attempt_at, last_success_at,
                 linked_count, pending_count, consecutive_failures, retry_at,
@@ -141,22 +146,23 @@ class ExternalIssueSyncStatusStore:
                 updated_at = excluded.updated_at
             RETURNING *
             """,
-                (
-                    project_id,
-                    provider,
-                    state,
-                    last_attempt_at,
-                    last_success_at,
-                    linked_count,
-                    pending_count,
-                    consecutive_failures,
-                    retry_at,
-                    json.dumps(dict(last_statistics or {}), sort_keys=True),
-                    last_error,
-                    now,
-                ),
+            (
+                project_id,
+                provider,
+                state,
+                last_attempt_at,
+                last_success_at,
+                linked_count,
+                pending_count,
+                consecutive_failures,
+                retry_at,
+                json.dumps(dict(last_statistics or {}), sort_keys=True),
+                last_error,
+                now,
             ),
         )
+        if row is None:
+            raise RuntimeError("External issue sync status upsert returned no row")
         return ExternalIssueSyncStatus.from_row(row)
 
     def counts(self, project_id: str, provider: ExternalIssueProvider) -> tuple[int, int]:

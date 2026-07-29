@@ -124,12 +124,17 @@ def cascade_build_state_to_subtree(
                     include_epic_qa=cast(str, row["task_type"]) == "epic",
                     include_merge_stage=include_merge_stage,
                 )
-                # A parent manifest with no work stage (an expansion-only build)
-                # derives nothing for its children. That is a build with no
-                # per-child lifecycle, not a failure: propagate build state and
-                # leave the child manifestless.
                 if specs:
                     stage_states.initialize_manifest(task_id, specs, by_session_id=None)
+                else:
+                    # The manifest API requires at least one stage. Reconcile an
+                    # expansion-only child through the guarded pristine-stage path.
+                    _remove_pristine_omitted_stages_for_build_cascade(
+                        db,
+                        stage_states,
+                        task_id,
+                        specs,
+                    )
             except DispatchMutexUnavailableError as exc:
                 failures.append(
                     CascadeBuildFailure(
@@ -222,7 +227,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
     ):
         existing_rows = stage_states.list_for_task(task_id)
         desired = sorted(desired_specs, key=lambda spec: spec.position)
-        if not existing_rows or not desired:
+        if not existing_rows:
             return False
 
         existing_names = [row.stage_name for row in existing_rows]
@@ -244,7 +249,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
         omitted_names = {row.stage_name for row in omitted_rows}
         removed_current = current is not None and current.stage_name in omitted_names
         remaining_rows = [row for row in existing_rows if row.stage_name in desired_name_set]
-        if removed_current and not any(row.state != "done" for row in remaining_rows):
+        if desired and removed_current and not any(row.state != "done" for row in remaining_rows):
             return False
 
         previous_shape = ",".join(existing_names)

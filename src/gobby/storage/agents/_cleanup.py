@@ -76,10 +76,12 @@ class _AgentRunCleanupMixin:
                 LEFT JOIN sessions child ON child.id = ar.child_session_id
                 LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
                 WHERE ar.status = 'running'
-                  AND COALESCE({pending_flag_sql}, 'false') != 'true'
                   AND (
-                        COALESCE({phase_sql}, '')
-                            NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                        (
+                            COALESCE({pending_flag_sql}, 'false') != 'true'
+                            AND COALESCE({phase_sql}, '')
+                                NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                        )
                         OR {provisional_stale_sql}
                   )
             )
@@ -174,10 +176,12 @@ class _AgentRunCleanupMixin:
                     completed_at = %s,
                     updated_at = %s
                 WHERE status = 'pending'
-                AND COALESCE({pending_flag_sql}, 'false') != 'true'
                 AND (
-                    COALESCE({phase_sql}, '')
-                        NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                    (
+                        COALESCE({pending_flag_sql}, 'false') != 'true'
+                        AND COALESCE({phase_sql}, '')
+                            NOT IN ('prepared', 'launch_requested', 'runtime_persisted')
+                    )
                     OR {provisional_stale_sql}
                 )
                 AND (

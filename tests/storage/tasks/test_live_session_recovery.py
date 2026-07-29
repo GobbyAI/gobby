@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 import uuid
 from pathlib import Path
+from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -192,6 +194,58 @@ def test_escalates_when_session_variable_state_is_missing(
     assert recovered.is_escalated
     assert "indeterminate dirty state" in (recovered.escalation_reason or "")
     assert "Task-attributed paths: (unavailable)" in (recovered.escalation_reason or "")
+
+
+def test_escalates_when_owner_session_lookup_fails(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = _project_id(temp_db, tmp_path)
+    session = _session(temp_db, project_id, tmp_path)
+    task = _live_task(temp_db, project_id, session.id, title="Unloaded owner task")
+    _set_claim_variables(temp_db, session.id, [task], task_edited_files={task.id: []})
+
+    def fail_get(self: SessionManager, session_id: str) -> Session | None:
+        raise RuntimeError(f"failed to load {session_id}")
+
+    monkeypatch.setattr(SessionManager, "get", fail_get)
+
+    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+
+    recovered = LocalTaskManager(temp_db).get_task(task.id)
+    assert result.escalated == 1
+    assert recovered.is_escalated
+    assert "indeterminate dirty state" in (recovered.escalation_reason or "")
+
+
+def test_release_owned_claim_rejects_unknown_rowcount() -> None:
+    db = MagicMock()
+    connection = db.transaction.return_value.__enter__.return_value
+    connection.execute.return_value.rowcount = -1
+
+    result = release_task_claim_if_owned(
+        cast(HubDatabase, db),
+        "task-id",
+        expected_owner="session-id",
+    )
+
+    assert result is None
+
+
+def test_escalate_owned_claim_rejects_unknown_rowcount() -> None:
+    db = MagicMock()
+    connection = db.transaction.return_value.__enter__.return_value
+    connection.execute.return_value.rowcount = -1
+
+    result = escalate_task_if_owned(
+        cast(HubDatabase, db),
+        "task-id",
+        reason="indeterminate",
+        expected_owner="session-id",
+    )
+
+    assert result is None
 
 
 def test_expected_owner_release_is_compare_and_set(
