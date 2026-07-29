@@ -27,6 +27,8 @@ REDIRECT_RULES = frozenset(
         "no-full-go-test",
         "no-full-pytest-suite",
         "no-full-vitest-suite",
+        "no-git-stash",
+        "no-git-stash-interactive",
         "no-invalid-git-flags",
         "prefer-gcode-for-code-search",
         "prefer-gcode-for-source-read",
