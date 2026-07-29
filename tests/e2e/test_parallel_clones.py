@@ -20,6 +20,8 @@ These tests verify the infrastructure (tools, workflows, clone management) is co
 """
 
 import uuid
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,9 +29,20 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    ValidationLLMServer,
+    configure_task_close_validation,
 )
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture
+def e2e_pre_daemon_setup(
+    e2e_config: tuple[Path, int, int],
+    validation_llm_server: ValidationLLMServer,
+    postgres_db: Any,
+) -> None:
+    configure_task_close_validation(e2e_config, validation_llm_server, postgres_db)
 
 
 def unwrap_result(result: dict) -> dict:
@@ -462,7 +475,7 @@ class TestParallelTaskProcessing:
         # Complete all tasks (simulating agents finishing)
         for task_id in subtask_ids:
             # Close as already implemented (simulating completed work)
-            mcp_client.call_tool(
+            raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
                 tool_name="close_task",
                 arguments={
@@ -471,6 +484,9 @@ class TestParallelTaskProcessing:
                     "changes_summary": "Task completed - no additional changes needed",
                 },
             )
+            result = unwrap_result(raw_result)
+            assert result.get("closed") is True, f"Close task {task_id} failed: {result}"
+            assert result.get("can_close") is True
 
         # Verify all are closed
         for task_id in subtask_ids:
@@ -495,7 +511,7 @@ class TestParallelTaskProcessing:
         assert len(ready_tasks) == 0, f"Should have no ready tasks after completion: {ready_tasks}"
 
         # Close the epic (all subtasks completed)
-        mcp_client.call_tool(
+        raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="close_task",
             arguments={
@@ -504,6 +520,9 @@ class TestParallelTaskProcessing:
                 "changes_summary": "All subtasks completed - epic closed",
             },
         )
+        result = unwrap_result(raw_result)
+        assert result.get("closed") is True, f"Close epic failed: {result}"
+        assert result.get("can_close") is True
 
         # Verify epic is closed
         raw_result = mcp_client.call_tool(

@@ -824,6 +824,7 @@ class TestWorktreeTaskLinking:
                 "title": "Test task for worktree",
                 "description": "Testing task-worktree linking",
                 "category": "manual",
+                "validation_criteria": "Created worktree reports this task ID.",
             },
         )
         task_result = extract_result(task_response)
@@ -871,7 +872,11 @@ class TestWorktreeTaskLinking:
         task_response = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="create_task",
-            arguments={"title": "Task for lookup test", "category": "manual"},
+            arguments={
+                "title": "Task for lookup test",
+                "category": "manual",
+                "validation_criteria": "Lookup by task ID returns the created worktree.",
+            },
         )
         task_result = extract_result(task_response)
         task_id = task_result.get("id")

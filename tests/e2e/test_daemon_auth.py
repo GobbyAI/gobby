@@ -121,15 +121,10 @@ def _assert_authenticated_http_matrix(
     for method, path, payload in _protected_requests(session_id):
         response = _request(client, method, path, payload)
         if path == "/memory/dream":
-            assert response.status_code == 500
+            assert response.status_code == 400
             assert response.json() == {
                 "success": False,
                 "error": "memory dream is disabled",
-                "targets": 0,
-                "completed": 0,
-                "failed": 0,
-                "mutations": 0,
-                "runs": [],
             }
             continue
         assert 200 <= response.status_code < 300, (path, response.status_code, response.text)

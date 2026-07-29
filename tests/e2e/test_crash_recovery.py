@@ -114,6 +114,9 @@ def _create_test_task(database_url: str, *, project_id: str, title: str) -> str:
             title=title,
             priority=2,
             task_type="task",
+            validation_criteria=(
+                "Task title and open state remain queryable after daemon restart or crash recovery."
+            ),
         )
         return task.id
     finally:

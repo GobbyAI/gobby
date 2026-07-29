@@ -18,20 +18,118 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
 import pytest
 import pytest_asyncio
+import yaml
 
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
 # Mark all tests in this directory as e2e tests
 pytestmark = pytest.mark.e2e
+
+
+class ValidationLLMServer(ThreadingHTTPServer):
+    """Deterministic local provider for bounded task-close criteria reviews."""
+
+    validation_calls: int
+    requests: list[dict[str, Any]]
+
+
+class _ValidationLLMHandler(BaseHTTPRequestHandler):
+    server: ValidationLLMServer
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
+        length = int(self.headers.get("Content-Length", "0"))
+        request = json.loads(self.rfile.read(length) or b"{}")
+        self.server.validation_calls += 1
+        self.server.requests.append(cast(dict[str, Any], request))
+        verdict = {
+            "status": "valid",
+            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+            "feedback": "The supplied evidence coherently satisfies the criterion.",
+        }
+        response = {
+            "id": "chatcmpl-e2e",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "e2e-validation",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(verdict),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        }
+        body = json.dumps(response).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        return
+
+
+@pytest.fixture
+def validation_llm_server() -> Generator[ValidationLLMServer]:
+    server = ValidationLLMServer(("127.0.0.1", 0), _ValidationLLMHandler)
+    server.validation_calls = 0
+    server.requests = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def configure_task_close_validation(
+    e2e_config: tuple[Path, int, int],
+    validation_llm_server: ValidationLLMServer,
+    postgres_db: Any,
+) -> None:
+    """Enable close validation against the deterministic local provider."""
+    from gobby.prompts.sync import sync_bundled_prompts
+
+    sync_bundled_prompts(postgres_db)
+    config_path, _http_port, _ws_port = e2e_config
+    config = cast(dict[str, Any], yaml.safe_load(config_path.read_text()))
+    validation = config["gobby_tasks"]["validation"]
+    validation["enabled"] = True
+    validation["candidates"] = ["endpoint:e2e/e2e-validation"]
+    config["ai"] = {
+        "generation": {
+            "timeout_seconds": 15,
+            "candidate_timeout_seconds": 5,
+            "cli_candidate_timeout_seconds": 5,
+            "endpoints": {
+                "e2e": {
+                    "protocol": "openai-compatible",
+                    "wire_api": "chat-completions",
+                    "api_base": f"http://127.0.0.1:{validation_llm_server.server_port}/v1",
+                    "model": "e2e-validation",
+                }
+            },
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
 
 
 @dataclass

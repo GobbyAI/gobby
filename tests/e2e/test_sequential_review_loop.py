@@ -15,6 +15,8 @@ Test scenario:
 """
 
 import uuid
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,9 +24,20 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    ValidationLLMServer,
+    configure_task_close_validation,
 )
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture
+def e2e_pre_daemon_setup(
+    e2e_config: tuple[Path, int, int],
+    validation_llm_server: ValidationLLMServer,
+    postgres_db: Any,
+) -> None:
+    configure_task_close_validation(e2e_config, validation_llm_server, postgres_db)
 
 
 def unwrap_result(result: dict) -> dict:
@@ -36,6 +49,11 @@ def unwrap_result(result: dict) -> dict:
 
 def assert_task_closed(result: dict, label: str) -> None:
     assert result.get("state", {}).get("is_closed") is True, f"{label} should be closed: {result}"
+
+
+def assert_close_succeeded(result: dict[str, Any], label: str) -> None:
+    assert result.get("closed") is True, f"{label} close failed: {result}"
+    assert result.get("can_close") is True
 
 
 class TestSequentialReviewLoopE2E:
@@ -147,7 +165,7 @@ class TestSequentialReviewLoopE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert "error" not in result, f"Close subtask 1 failed: {result}"
+        assert_close_succeeded(result, "Subtask 1")
 
         # 3d: Verify first subtask is closed
         raw_result = mcp_client.call_tool(
@@ -179,7 +197,7 @@ class TestSequentialReviewLoopE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert "error" not in result, f"Close subtask 2 failed: {result}"
+        assert_close_succeeded(result, "Subtask 2")
 
         # 4c: Verify second subtask is closed
         raw_result = mcp_client.call_tool(
@@ -215,7 +233,7 @@ class TestSequentialReviewLoopE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert "error" not in result, f"Close epic failed: {result}"
+        assert_close_succeeded(result, "Epic")
 
         # Verify epic is closed
         raw_result = mcp_client.call_tool(
@@ -349,7 +367,7 @@ class TestSequentialReviewLoopE2E:
             tool_name="claim_task",
             arguments={"task_id": subtask1_id},
         )
-        mcp_client.call_tool(
+        raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="close_task",
             arguments={
@@ -358,6 +376,8 @@ class TestSequentialReviewLoopE2E:
                 "changes_summary": "Subtask completed - no changes needed",
             },
         )
+        result = unwrap_result(raw_result)
+        assert_close_succeeded(result, "Subtask 1")
 
         # Verify subtask 1 is closed
         raw_result = mcp_client.call_tool(
@@ -533,6 +553,8 @@ class TestReviewStepE2E:
                 "changes_summary": "Task obsolete - skipped",
             },
         )
+        result = unwrap_result(raw_result)
+        assert_close_succeeded(result, "Task")
 
         # Verify task is closed
         raw_result = mcp_client.call_tool(
@@ -639,6 +661,7 @@ class TestReviewStepE2E:
             },
         )
         result = unwrap_result(raw_result)
+        assert_close_succeeded(result, "Task")
 
         # Verify task is now closed
         raw_result = mcp_client.call_tool(
