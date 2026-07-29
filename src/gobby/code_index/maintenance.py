@@ -157,7 +157,7 @@ async def _run_maintenance(
             except GcodeDaemonConfigUnavailableError:
                 daemon_config_breaker.record_failure()
             except Exception:
-                daemon_config_breaker.record_success()
+                daemon_config_breaker.record_inconclusive()
                 logger.exception("Maintenance reindex failed for %s", project.id)
 
             if purge_project:

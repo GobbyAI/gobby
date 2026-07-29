@@ -13,7 +13,13 @@ from gobby.storage.daemon_resume_keys import (
     CONSUMED_BY_KEY as _CONSUMED_BY_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
+    FINALIZED_AT_KEY as _FINALIZED_AT_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
     RESUME_PHASE_KEY as _RESUME_PHASE_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
+    RESUMED_FROM_RUN_ID_KEY as _RESUMED_FROM_RUN_ID_KEY,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
@@ -133,7 +139,7 @@ def finalize_daemon_resume(
             raise ValueError("Daemon resume cannot activate a terminal session")
         if original_metadata.get("daemon_stop_orphan_reap_started_at"):
             raise ValueError("Daemon resume original is owned by the orphan reaper")
-        resumed_from = successor_metadata.get("resumed_from_run_id")
+        resumed_from = successor_metadata.get(_RESUMED_FROM_RUN_ID_KEY)
         if resumed_from != original_run_id:
             raise ValueError("Daemon resume successor does not reference the original run")
         if consumed_by not in {None, successor_run_id}:
@@ -192,10 +198,7 @@ def finalize_daemon_resume(
         )
         successor_patch = {
             _RESUME_PHASE_KEY: "finalized",
-            "daemon_stop_resume_finalized_at": successor_metadata.get(
-                "daemon_stop_resume_finalized_at"
-            )
-            or now.isoformat(),
+            _FINALIZED_AT_KEY: successor_metadata.get(_FINALIZED_AT_KEY) or now.isoformat(),
         }
         conn.execute(
             """
@@ -322,7 +325,7 @@ def rollback_prepared_daemon_resume(
         if (
             successor["status"] != "pending"
             or metadata.get(_RESUME_PHASE_KEY) != "prepared"
-            or metadata.get("resumed_from_run_id") != original_run_id
+            or metadata.get(_RESUMED_FROM_RUN_ID_KEY) != original_run_id
         ):
             return False
         restored = conn.execute(

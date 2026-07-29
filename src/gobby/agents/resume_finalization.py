@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from concurrent.futures import Future
 from typing import Any
 
@@ -14,6 +15,7 @@ from gobby.storage.agent_resume import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +119,25 @@ def finalize_resume_handoff_threadsafe(
         else:
             completed.set_result(None)
 
-    registry_loop.call_soon_threadsafe(reconcile)
-    completed.result(timeout=timeout_seconds)
+    try:
+        registry_loop.call_soon_threadsafe(reconcile)
+    except RuntimeError:
+        logger.warning(
+            "Skipping in-memory completion-registry reconciliation for %s: "
+            "registry loop unavailable",
+            result.successor_run_id,
+        )
+        return result
+    try:
+        completed.result(timeout=timeout_seconds)
+    except TimeoutError:
+        if completed.done():
+            raise
+        logger.warning(
+            "Skipping in-memory completion-registry reconciliation for %s: "
+            "registry loop unavailable",
+            result.successor_run_id,
+        )
     return result
 
 
@@ -144,19 +163,31 @@ def notify_parent_of_recovery(
         metadata["dedupe_key"] = dedupe_key
     payload = json.dumps(metadata, sort_keys=True)
     if dedupe_key is not None:
-        existing = db.fetchone(
-            """
-            SELECT 1
-            FROM inter_session_messages
-            WHERE to_session = %s
-              AND message_type = 'agent_recovery'
-              AND metadata_json = %s
-            LIMIT 1
-            """,
-            (parent_session_id, payload),
+        message_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"gobby:agent-recovery:{parent_session_id}:{payload}",
+            )
         )
-        if existing is not None:
-            return False
+        inserted = db.execute(
+            """
+            INSERT INTO inter_session_messages
+            (id, from_session, to_session, content, priority, sent_at,
+             message_type, metadata_json)
+            VALUES (%s, %s, %s, %s, 'normal', %s, 'agent_recovery', %s)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            """,
+            (
+                message_id,
+                child_session_id,
+                parent_session_id,
+                content,
+                utc_now(),
+                payload,
+            ),
+        ).fetchone()
+        return inserted is not None
     InterSessionMessageManager(db).create_message(
         from_session=child_session_id,
         to_session=parent_session_id,

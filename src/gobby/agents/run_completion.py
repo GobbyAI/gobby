@@ -34,7 +34,11 @@ async def complete_and_notify_agent_run(
     """Mark an agent run complete, then wake any waiters registered on it."""
 
     async def complete_and_deliver() -> bool:
-        current_run = runner.get_run(run_id)
+        def read_terminal_run() -> Any:
+            with runner.run_storage.db.bounded_transaction():
+                return runner.get_run(run_id)
+
+        current_run = await run_terminal_delivery_offload(read_terminal_run)
         review_outcome = (
             await run_terminal_delivery_offload(
                 terminalize_plan_review_run,
@@ -56,10 +60,6 @@ async def complete_and_notify_agent_run(
                 run_id,
                 result=completion_result,
             )
-
-        def read_terminal_run() -> Any:
-            with runner.run_storage.db.bounded_transaction():
-                return runner.get_run(run_id)
 
         current = await run_terminal_delivery_offload(read_terminal_run)
         if current is None or current.status not in {"success", "error", "timeout", "cancelled"}:

@@ -130,6 +130,24 @@ class TestSyncCircuitBreakerUnit:
         breaker.record_failure()
         assert breaker.state is BreakerState.CLOSED
 
+    def test_inconclusive_probe_reopens_without_doubling_backoff(self) -> None:
+        clock = FakeClock()
+        breaker = make_breaker(
+            clock,
+            failure_threshold=1,
+            base_backoff_seconds=10.0,
+            max_backoff_seconds=40.0,
+        )
+        breaker.record_failure()
+        clock.now = 10.0
+        assert breaker.should_attempt() is True
+        assert breaker.state is BreakerState.HALF_OPEN
+
+        breaker.record_inconclusive()
+
+        assert_breaker_state(breaker, BreakerState.OPEN)
+        assert breaker.retry_after_seconds() == 10.0
+
     def test_logs_once_per_state_transition(self, caplog: pytest.LogCaptureFixture) -> None:
         clock = FakeClock()
         breaker = make_breaker(clock, failure_threshold=2)

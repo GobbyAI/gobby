@@ -4622,6 +4622,7 @@ class TestNonTaskResumeCallback:
         assert events == [
             "reconcile",
             "non_task",
+            "pending_terminations",
             "reconcile",
             "non_task",
             "pending_terminations",

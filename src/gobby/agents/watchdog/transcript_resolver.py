@@ -39,12 +39,18 @@ class WatchdogTranscriptResolver:
                 return False
 
         stored_path = session.transcript_path
-        if stored_path and stored_path != MISSING_TRANSCRIPT_PATH and is_current_file(stored_path):
+        if (
+            stored_path
+            and stored_path != MISSING_TRANSCRIPT_PATH
+            and await asyncio.to_thread(is_current_file, stored_path)
+        ):
             return stored_path
 
         cached_path = self._path_cache.get(cache_key)
-        if cached_path and is_current_file(cached_path):
-            return cached_path
+        if cached_path:
+            cached_is_current = await asyncio.to_thread(is_current_file, cached_path)
+            if cached_is_current:
+                return cached_path
         self._path_cache.pop(cache_key, None)
 
         if not source or not external_id:
@@ -54,7 +60,10 @@ class WatchdogTranscriptResolver:
             source,
             external_id,
         )
-        if not discovered_path or not os.path.isfile(discovered_path):
+        if not discovered_path:
+            return None
+        discovered_exists = await asyncio.to_thread(os.path.isfile, discovered_path)
+        if not discovered_exists:
             return None
 
         self._path_cache[cache_key] = discovered_path

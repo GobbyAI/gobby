@@ -53,10 +53,10 @@ _INHERITED_PROTOCOL_KEYS = (
     daemon_resume_keys.REAP_REQUESTED_AT_KEY,
     daemon_resume_keys.REAPED_AT_KEY,
     daemon_resume_keys.RECONCILIATION_PENDING_KEY,
-    "daemon_stop_resume_finalized_at",
-    "daemon_stop_resume_tmux_session_name",
-    "daemon_stop_resume_planned_tmux_title",
-    "resumed_from_run_id",
+    daemon_resume_keys.FINALIZED_AT_KEY,
+    daemon_resume_keys.TMUX_SESSION_NAME_KEY,
+    daemon_resume_keys.PLANNED_TMUX_TITLE_KEY,
+    daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY,
 )
 DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
@@ -176,10 +176,10 @@ async def resume_agent_run(
     metadata = dict(resume_metadata)
     for stale_key in _INHERITED_PROTOCOL_KEYS:
         metadata.pop(stale_key, None)
-    metadata["resumed_from_run_id"] = original_run.id
+    metadata[daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY] = original_run.id
     metadata["provider_native_session_id"] = native_session_id
-    metadata["daemon_stop_resume_phase"] = "prepared"
-    metadata["daemon_stop_resume_planned_tmux_title"] = planned_tmux_title
+    metadata[daemon_resume_keys.RESUME_PHASE_KEY] = "prepared"
+    metadata[daemon_resume_keys.PLANNED_TMUX_TITLE_KEY] = planned_tmux_title
 
     initial_variables = dict(resume_metadata.get("initial_variables") or {})
     initial_variables["daemon_stop_resume"] = True
@@ -398,7 +398,7 @@ async def resume_agent_run(
         {
             "tmux_socket_name": getattr(terminal_result, "tmux_socket_name", None),
             "tmux_socket_path": getattr(terminal_result, "tmux_socket_path", None),
-            "daemon_stop_resume_tmux_session_name": tmux_session_name,
+            daemon_resume_keys.TMUX_SESSION_NAME_KEY: tmux_session_name,
         },
     )
     try:
@@ -635,7 +635,7 @@ def _fire_resume_started(
             "agent_started",
             run_id,
             {
-                "resumed_from_run_id": original_run.id,
+                daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY: original_run.id,
                 "parent_session_id": parent_session_id,
                 "provider": provider,
                 "pid": terminal_result.pid,

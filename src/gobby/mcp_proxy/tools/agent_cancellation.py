@@ -116,7 +116,8 @@ async def terminalize_killed_agent_run(
 
     if effective_status == "error":
         error = "Agent self-reported error"
-        review_outcome = terminalize_plan_review_run(
+        review_outcome = await run_terminal_delivery_offload(
+            terminalize_plan_review_run,
             runner.run_storage,
             run_id=run_id,
             action="fail",

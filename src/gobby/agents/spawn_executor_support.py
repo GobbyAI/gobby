@@ -166,6 +166,7 @@ def _session_manager_validation_error(
         "create_child_session",
         "update_terminal_pickup_metadata",
         "update_sandbox_enabled",
+        "update_sandbox_policy_hash",
     )
     missing_methods = [
         method for method in required_methods if not callable(getattr(manager, method, None))

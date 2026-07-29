@@ -278,8 +278,23 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
+    untrusted_mcp_root = tmp_path / "untrusted-mcp-root"
     runtime = tmp_path / "runtime"
     workspace.mkdir()
+    untrusted_mcp_root.mkdir()
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "untrusted": {
+                        "command": "node",
+                        "args": [str(untrusted_mcp_root)],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     runtime.mkdir()
     node = runtime / "node"
     runner = runtime / "runner.mjs"
@@ -371,6 +386,7 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     allowed_reads = policy["filesystem"]["allowRead"]
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
+    assert str(untrusted_mcp_root.resolve()) not in allowed_reads
     assert str(provider_shim.absolute()) not in allowed_reads
     assert str(shim_dir.resolve()) not in allowed_reads
     wrapped = launch.wrap([provider, "--version"])

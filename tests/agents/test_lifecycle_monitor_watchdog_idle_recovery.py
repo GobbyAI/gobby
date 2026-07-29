@@ -1789,7 +1789,7 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
 
 
 @pytest.mark.asyncio
-async def test_watchdog_task_audit_failure_is_best_effort(
+async def test_watchdog_task_audit_programming_error_propagates(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -1811,7 +1811,10 @@ async def test_watchdog_task_audit_failure_is_best_effort(
     )
     run.task_id = "task-1"
 
-    with patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning:
+    with (
+        patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
+        pytest.raises(RuntimeError, match="audit unavailable"),
+    ):
         await monitor._idle_check_handler._recovery._record_watchdog_task_event(
             run,
             action="completed_turn_reprompt",
@@ -1819,11 +1822,7 @@ async def test_watchdog_task_audit_failure_is_best_effort(
             detail="latest_turn_kind=completed",
         )
 
-    assert any(
-        call_args.args
-        and call_args.args[0] == "Failed to record idle watchdog audit for run %s task %s"
-        for call_args in mock_warning.call_args_list
-    )
+    mock_warning.assert_not_called()
 
 
 @pytest.mark.asyncio

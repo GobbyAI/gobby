@@ -23,7 +23,6 @@ _VANISHED_TMUX_ERROR_MARKERS = (
     "can't find session",
     "failed to connect to server",
     "no server running on",
-    "no such file or directory",
 )
 
 
@@ -32,6 +31,8 @@ def _is_expected_prompt_probe_error(error: Exception) -> bool:
     if isinstance(error, TimeoutError):
         return True
     message = str(error).casefold()
+    if "no such file or directory" in message:
+        return any(marker in message for marker in ("tmux-", "tmux socket", ".sock"))
     return any(marker in message for marker in _VANISHED_TMUX_ERROR_MARKERS)
 
 

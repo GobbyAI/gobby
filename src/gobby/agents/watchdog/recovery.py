@@ -384,15 +384,13 @@ class WatchdogRecoveryCoordinator:
 
         try:
             task = await self._run_db(self._task_manager.get_task, run.task_id)
-        except Exception:
+        except (psycopg.Error, ValueError):
             logger.warning(
                 "Failed to load task %s for idle watchdog audit on run %s",
                 run.task_id,
                 run.id,
                 exc_info=True,
             )
-            return
-        if task is None:
             return
 
         try:
@@ -416,7 +414,7 @@ class WatchdogRecoveryCoordinator:
                 reason=reason,
                 by_actor=WATCHDOG_ACTOR,
             )
-        except Exception:
+        except (psycopg.Error, ValueError):
             logger.warning(
                 "Failed to record idle watchdog audit for run %s task %s",
                 run.id,

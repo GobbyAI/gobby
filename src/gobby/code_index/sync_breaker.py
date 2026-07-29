@@ -98,6 +98,19 @@ class SyncCircuitBreaker:
         self._consecutive_failures = 0
         self._current_backoff = self._base_backoff
 
+    def record_inconclusive(self) -> None:
+        """Release a half-open probe without treating an unrelated error as success."""
+        if self._state is not BreakerState.HALF_OPEN:
+            return
+        self._state = BreakerState.OPEN
+        self._open_until = self._monotonic() + self._current_backoff
+        logger.info(
+            "%s breaker probe inconclusive: retrying %s in %.0fs",
+            self._name,
+            self._probe_target,
+            self._current_backoff,
+        )
+
     def record_failure(self) -> None:
         """Record a transport-class failure (timeout/unavailable/embedding transport)."""
         if self._state is BreakerState.HALF_OPEN:

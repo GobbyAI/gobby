@@ -174,14 +174,15 @@ def mcp_config_read_exceptions(workspace: Path) -> list[str]:
     if not isinstance(servers, dict):
         return []
 
-    roots: list[str] = []
-    for server in servers.values():
-        args = server.get("args") if isinstance(server, dict) else None
-        if not isinstance(args, list):
-            continue
-        for arg in args:
-            if isinstance(arg, str) and Path(arg).is_absolute() and Path(arg).is_dir():
-                roots.append(arg)
+    server = servers.get("gobby")
+    args = server.get("args") if isinstance(server, dict) else None
+    if not isinstance(args, list):
+        return []
+    roots = [
+        arg
+        for arg in args
+        if isinstance(arg, str) and Path(arg).is_absolute() and Path(arg).is_dir()
+    ]
     return canonical_paths(roots)
 
 

@@ -976,6 +976,46 @@ class TestTmuxOutputReader:
         assert "…" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_run_logs_actual_tmux_subcommand(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        reader = TmuxOutputReader()
+        proc = MagicMock(returncode=1)
+        proc.communicate = AsyncMock(return_value=(b"", b"unexpected failure"))
+        caplog.set_level(logging.WARNING, logger=output_reader_mod.__name__)
+
+        with patch.object(
+            asyncio,
+            "create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            await reader._run("capture-pane", "-t", "pane")
+
+        assert "tmux capture-pane failed" in caplog.text
+        assert "tmux pipe-pane failed" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_run_bounds_post_kill_process_drain(self) -> None:
+        reader = TmuxOutputReader()
+        proc = MagicMock(returncode=None)
+        proc.communicate = AsyncMock(side_effect=[TimeoutError, TimeoutError])
+
+        with patch.object(
+            asyncio,
+            "create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=proc,
+        ):
+            result = await reader._run("capture-pane", "-t", "pane", timeout=0.01)
+
+        assert result.timed_out is True
+        assert result.stderr == ""
+        proc.kill.assert_called_once_with()
+        assert proc.communicate.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_stop_reader_not_running(self) -> None:
         reader = TmuxOutputReader()
         assert await reader.stop_reader("nonexistent") is False

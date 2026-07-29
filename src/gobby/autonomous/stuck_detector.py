@@ -289,6 +289,41 @@ class StuckDetector:
         if not recent_events:
             return StuckDetectionResult(is_stuck=False)
 
+        consecutive_passive_waits = 0
+        passive_wait_tool = "wait"
+        for event in recent_events:
+            if event.details.get("is_passive_wait") is not True:
+                break
+            effective_tool_name = event.details.get("effective_tool_name")
+            if isinstance(effective_tool_name, str) and effective_tool_name:
+                passive_wait_tool = effective_tool_name
+            elif event.tool_name:
+                passive_wait_tool = event.tool_name
+            if event.progress_type is not ProgressType.TOOL_STARTED:
+                consecutive_passive_waits += 1
+        if consecutive_passive_waits >= self.tool_loop_threshold:
+            logger.info(
+                "Session %s stuck in passive wait loop: %s called %s times",
+                session_id,
+                passive_wait_tool,
+                consecutive_passive_waits,
+            )
+            return StuckDetectionResult(
+                is_stuck=True,
+                reason=(
+                    f"Tool '{passive_wait_tool}' called "
+                    f"{consecutive_passive_waits} times consecutively"
+                ),
+                layer="tool_loop",
+                details={
+                    "tool_pattern": passive_wait_tool,
+                    "call_count": consecutive_passive_waits,
+                    "threshold": self.tool_loop_threshold,
+                    "passive_wait": True,
+                },
+                suggested_action="change_approach",
+            )
+
         # Count tool call patterns, once per invocation.
         #
         # A single tool call writes two rows: TOOL_STARTED when it goes in

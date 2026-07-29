@@ -108,13 +108,15 @@ class TmuxOutputReader:
     def _log_command_result(
         self,
         *,
+        subcommand: str,
         target: str,
         result: TmuxCommandResult,
     ) -> None:
         bounded_stderr = self._bounded_stderr(result.stderr) or "<empty>"
         if result.timed_out:
             logger.warning(
-                "tmux pipe-pane timed out: target=%s status=%s stderr=%s",
+                "tmux %s timed out: target=%s status=%s stderr=%s",
+                subcommand,
                 target,
                 result.returncode,
                 bounded_stderr,
@@ -123,7 +125,8 @@ class TmuxOutputReader:
         if result.returncode == 0:
             if result.stderr:
                 logger.warning(
-                    "tmux pipe-pane returned unexpected stderr: target=%s status=%s stderr=%s",
+                    "tmux %s returned unexpected stderr: target=%s status=%s stderr=%s",
+                    subcommand,
                     target,
                     result.returncode,
                     bounded_stderr,
@@ -131,14 +134,16 @@ class TmuxOutputReader:
             return
         if any(marker in result.stderr.casefold() for marker in _VANISHED_TMUX_ERROR_MARKERS):
             logger.debug(
-                "tmux pipe-pane target vanished: target=%s status=%s stderr=%s",
+                "tmux %s target vanished: target=%s status=%s stderr=%s",
+                subcommand,
                 target,
                 result.returncode,
                 bounded_stderr,
             )
             return
         logger.warning(
-            "tmux pipe-pane failed: target=%s status=%s stderr=%s",
+            "tmux %s failed: target=%s status=%s stderr=%s",
+            subcommand,
             target,
             result.returncode,
             bounded_stderr,
@@ -151,6 +156,7 @@ class TmuxOutputReader:
     ) -> TmuxCommandResult:
         """Run a tmux command and classify its structured result."""
         cmd = [*self._base_args(), *tmux_args]
+        subcommand = tmux_args[0] if tmux_args else "<unknown>"
         target = self._target_from_args(tmux_args)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -166,7 +172,10 @@ class TmuxOutputReader:
                 proc.kill()
             except ProcessLookupError:
                 pass
-            _, stderr = await proc.communicate()
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+            except TimeoutError:
+                stderr = b""
         returncode = proc.returncode
         if returncode is None:
             returncode = 1 if timed_out else 0
@@ -175,7 +184,7 @@ class TmuxOutputReader:
             stderr=stderr.decode(errors="replace").strip(),
             timed_out=timed_out,
         )
-        self._log_command_result(target=target, result=result)
+        self._log_command_result(subcommand=subcommand, target=target, result=result)
         return result
 
     # ------------------------------------------------------------------

@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess  # nosec B404 # fixed git argv for local exclude updates.
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -75,7 +76,13 @@ def repository_source_digest(
     *,
     source_files: Sequence[str] | None = None,
 ) -> RepositoryDigest:
-    """Hash exact Git-visible repository inputs, including missing-file markers."""
+    """Fingerprint Git-visible inputs from paths, symlink targets, and file metadata.
+
+    Regular files use one ``lstat`` each, keeping the cost proportional to the
+    inventory without reading every file body. Size, nanosecond mtime/ctime,
+    inode, device, and mode identify ordinary worktree changes. This is a
+    metadata fingerprint rather than a content hash.
+    """
     root = repository_root.resolve(strict=True)
     inputs = (
         tuple(sorted(set(source_files)))
@@ -92,12 +99,25 @@ def repository_source_digest(
         path = _repository_input_path(root, relative)
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        if path.is_symlink():
-            digest.update(os.readlink(path).encode("utf-8"))
-        elif path.is_file():
-            digest.update(path.read_bytes())
-        else:
+        try:
+            path_stat = path.lstat()
+        except FileNotFoundError:
             digest.update(b"<missing>")
+        else:
+            if stat.S_ISLNK(path_stat.st_mode):
+                digest.update(os.readlink(path).encode("utf-8"))
+            elif stat.S_ISREG(path_stat.st_mode):
+                identity = (
+                    path_stat.st_size,
+                    path_stat.st_mtime_ns,
+                    path_stat.st_ctime_ns,
+                    path_stat.st_ino,
+                    path_stat.st_dev,
+                    path_stat.st_mode,
+                )
+                digest.update(":".join(str(value) for value in identity).encode("ascii"))
+            else:
+                digest.update(b"<missing>")
         digest.update(b"\0")
     return RepositoryDigest(digest=digest.hexdigest(), source_files=inputs)
 
@@ -146,12 +166,20 @@ def settle_indexed_value[T](
             )
         after = repository_source_digest(
             repository_root,
-            source_files=before.source_files,
+            source_files=source_files,
         )
         if monotonic() > deadline:
             break
-        if before.digest == after.digest:
-            return derive()
+        if before.digest == after.digest and before.source_files == after.source_files:
+            try:
+                return derive()
+            except IndexInventoryError:
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise IndexInventoryError(
+                    "inventory_unavailable",
+                    f"code index derivation failed: {exc}",
+                ) from exc
         remaining = deadline - monotonic()
         if attempts < max_attempts and remaining > 0 and backoff_seconds > 0:
             sleeper(min(backoff_seconds, remaining))

@@ -156,6 +156,7 @@ _PASSIVE_WAIT_TOOL_LEAVES = (
     "wait_agent",
     "wait",
 )
+_PASSIVE_WAIT_TOOL_NAMESPACES = ("collaboration", "functions")
 
 
 def _normalize_tool_identity(tool_name: str) -> str:
@@ -165,12 +166,12 @@ def _normalize_tool_identity(tool_name: str) -> str:
 
 def _is_passive_wait_tool(tool_name: str) -> bool:
     normalized = _normalize_tool_identity(tool_name)
-    compact = normalized.replace("_", "")
     for leaf in _PASSIVE_WAIT_TOOL_LEAVES:
-        if normalized == leaf or normalized.endswith(f"_{leaf}"):
+        if normalized == leaf:
             return True
-        if leaf != "wait" and compact.endswith(leaf.replace("_", "")):
-            return True
+        for namespace in _PASSIVE_WAIT_TOOL_NAMESPACES:
+            if re.search(rf"(?:^|_){namespace}_?{re.escape(leaf)}$", normalized):
+                return True
     return False
 
 
@@ -305,6 +306,7 @@ class ProgressTracker:
         """
         self.db = db
         self._lock = threading.Lock()
+        self._consecutive_passive_waits: dict[str, int] = {}
         self.stagnation_threshold = stagnation_threshold or self.DEFAULT_STAGNATION_THRESHOLD
 
     def record_event(
@@ -326,15 +328,22 @@ class ProgressTracker:
             The created ProgressEvent
         """
         now = datetime.now(UTC)
-        event = ProgressEvent(
-            session_id=session_id,
-            progress_type=progress_type,
-            timestamp=now,
-            tool_name=tool_name,
-            details=details or {},
-        )
+        event_details = dict(details or {})
 
         with self._lock:
+            is_passive_wait = event_details.get("is_passive_wait") is True
+            if is_passive_wait:
+                count = self._consecutive_passive_waits.get(session_id, 0)
+                if progress_type is not ProgressType.TOOL_STARTED:
+                    count += 1
+                event_details["consecutive_passive_waits"] = count
+            event = ProgressEvent(
+                session_id=session_id,
+                progress_type=progress_type,
+                timestamp=now,
+                tool_name=tool_name,
+                details=event_details,
+            )
             self.db.execute(
                 """
                 INSERT INTO loop_progress (
@@ -345,11 +354,15 @@ class ProgressTracker:
                     session_id,
                     progress_type.value,
                     tool_name,
-                    json.dumps(details) if details else None,
+                    json.dumps(event_details) if event_details else None,
                     now.isoformat(),
                     event.is_high_value,
                 ),
             )
+            if is_passive_wait and progress_type is not ProgressType.TOOL_STARTED:
+                self._consecutive_passive_waits[session_id] = count
+            elif not is_passive_wait:
+                self._consecutive_passive_waits.pop(session_id, None)
 
         logger.debug(
             "Recorded progress for session %s: %s (high_value=%s)",
@@ -509,7 +522,7 @@ class ProgressTracker:
         # Get last event time
         last_event_result = self.db.fetchone(
             """
-            SELECT progress_type, recorded_at
+            SELECT progress_type, recorded_at, details
             FROM loop_progress
             WHERE session_id = %s
             ORDER BY recorded_at DESC, id DESC
@@ -523,10 +536,22 @@ class ProgressTracker:
         last_event_type = (
             ProgressType(last_event_result["progress_type"]) if last_event_result else None
         )
+        raw_last_details = last_event_result["details"] if last_event_result else None
+        if isinstance(raw_last_details, str):
+            parsed_last_details = json.loads(raw_last_details)
+        elif isinstance(raw_last_details, dict):
+            parsed_last_details = raw_last_details
+        else:
+            parsed_last_details = {}
+        last_event_is_passive_wait = parsed_last_details.get("is_passive_wait") is True
 
         # Calculate stagnation
         is_stagnant, stagnation_duration = self._check_stagnation(
-            session_id, total_events, last_event_at, last_event_type
+            session_id,
+            total_events,
+            last_event_at,
+            last_event_type,
+            last_event_is_passive_wait,
         )
 
         return ProgressSummary(
@@ -561,6 +586,7 @@ class ProgressTracker:
         total_events: int,
         last_event_at: datetime | None,
         last_event_type: ProgressType | None,
+        last_event_is_passive_wait: bool,
     ) -> tuple[bool, float]:
         """Check whether the session has gone quiet.
 
@@ -582,7 +608,7 @@ class ProgressTracker:
             return False, 0.0
 
         duration = (datetime.now(UTC) - last_event_at).total_seconds()
-        if last_event_type is ProgressType.TOOL_STARTED:
+        if last_event_type is ProgressType.TOOL_STARTED and not last_event_is_passive_wait:
             return False, duration
 
         if duration > self.stagnation_threshold:
@@ -603,6 +629,7 @@ class ProgressTracker:
             Number of records cleared
         """
         with self._lock:
+            self._consecutive_passive_waits.pop(session_id, None)
             result = self.db.execute(
                 "DELETE FROM loop_progress WHERE session_id = %s",
                 (session_id,),

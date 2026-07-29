@@ -25,6 +25,7 @@ def is_daemon_stop_parked(run: Any) -> bool:
         getattr(run, "status", None) == "cancelled"
         and getattr(run, "terminal_reason", None) == "daemon_stop"
         and not metadata.get("daemon_stop_resume_consumed_at")
+        and not metadata.get("daemon_stop_orphan_reap_started_at")
         and not metadata.get("daemon_stop_orphan_reaped_at")
     )
 

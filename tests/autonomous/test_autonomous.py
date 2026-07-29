@@ -477,6 +477,18 @@ class TestProgressTrackerToolCall:
         assert started.details["effective_tool_name"] == effective_tool_name
         assert started.details["is_passive_wait"] is True
 
+    @pytest.mark.parametrize("tool_name", ["no_wait_agent", "hardwaitagent"])
+    def test_passive_wait_matching_rejects_non_namespace_suffixes(
+        self,
+        progress_tracker: ProgressTracker,
+        session_id: str,
+        tool_name: str,
+    ) -> None:
+        event = progress_tracker.record_tool_call(session_id, tool_name, tool_args={})
+
+        assert event is not None
+        assert event.details["is_passive_wait"] is False
+
     def test_record_tool_call_mcp_failed_mutation_is_low_value(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:
@@ -1589,7 +1601,7 @@ class TestStuckDetectorToolLoop:
         ],
         ids=["direct", "namespaced", "compact-codex", "functions", "proxied-mcp"],
     )
-    def test_passive_wait_activity_never_triggers_tool_loop(
+    def test_repeated_passive_wait_activity_triggers_tool_loop(
         self,
         test_db: HubDatabase,
         session_id: str,
@@ -1609,8 +1621,33 @@ class TestStuckDetectorToolLoop:
 
         result = detector.detect_tool_loop(session_id)
 
-        assert result.is_stuck is False
+        assert result.is_stuck is True
+        assert result.details is not None
+        assert result.details["passive_wait"] is True
+        assert result.details["call_count"] == 5
         assert len(tracker.get_recent_events(session_id, limit=10)) == 5
+
+    def test_non_passive_progress_resets_passive_wait_streak(
+        self,
+        test_db: HubDatabase,
+        session_id: str,
+    ) -> None:
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+        for _ in range(3):
+            tracker.record_tool_call(session_id, "collaboration__wait_agent", tool_args={})
+        tracker.record_tool_call(session_id, "Read", tool_args={"file_path": "x"})
+        for _ in range(3):
+            tracker.record_tool_call(session_id, "collaboration__wait_agent", tool_args={})
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
 
     def test_tool_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test tool loop detection with repeated identical calls."""

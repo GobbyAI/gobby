@@ -17,6 +17,10 @@ REAP_STARTED_AT_KEY = "daemon_stop_orphan_reap_started_at"
 REAP_REQUESTED_AT_KEY = "daemon_stop_orphan_reap_requested_at"
 REAPED_AT_KEY = "daemon_stop_orphan_reaped_at"
 RECONCILIATION_PENDING_KEY = "reconciliation_pending"
+FINALIZED_AT_KEY = "daemon_stop_resume_finalized_at"
+TMUX_SESSION_NAME_KEY = "daemon_stop_resume_tmux_session_name"
+PLANNED_TMUX_TITLE_KEY = "daemon_stop_resume_planned_tmux_title"
+RESUMED_FROM_RUN_ID_KEY = "resumed_from_run_id"
 _RESUME_METADATA_COLUMNS = frozenset({"ar.resume_metadata_json"})
 
 

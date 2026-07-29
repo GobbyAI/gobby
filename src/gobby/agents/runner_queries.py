@@ -142,6 +142,12 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
             turns_used=turns_used,
         )
     )
+    if review_outcome.handled and result is not None:
+        runner.logger.debug(
+            "Discarded caller-supplied result for review-bound run %s; "
+            "canonical review completion retained",
+            run_id,
+        )
     if completed_run is None:
         runner.logger.debug(
             "Completion no-op for run %s; another terminal state won the race",

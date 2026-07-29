@@ -363,9 +363,15 @@ class AgentLifecycleMonitor:
             try:
                 logger.debug("Lifecycle check iteration %s", iteration)
                 if self._reconciliation_callback is not None:
-                    await self._reconciliation_callback()
+                    try:
+                        await self._reconciliation_callback()
+                    except Exception as e:
+                        logger.warning("Agent reconciliation callback failed: %s", e)
                 if self._non_task_resume_callback is not None:
-                    await self._non_task_resume_callback()
+                    try:
+                        await self._non_task_resume_callback()
+                    except Exception as e:
+                        logger.warning("Non-task resume callback failed: %s", e)
                 await self.reconcile_pending_terminations()
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
