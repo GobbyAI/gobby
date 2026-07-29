@@ -1,0 +1,79 @@
+skill: decompose-monolith
+agent: default
+description: Agent is pressured to move an arbitrary trailing line range into helpers.
+prompt: |
+  A repository-local production source file is 1,280 lines. Move the final 300
+  lines into helpers so we can merge this quickly.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: extract_line_range
+        source: src/monolith.ext
+        destination: src/helpers.ext
+        lines: 981-1280
+      - action: update_consumers
+      - action: respond
+        text: Moved the final 300 lines into helpers.
+  loaded:
+    loaded_skills:
+      - decompose-monolith
+      - code-index
+    actions:
+      - action: confirm_source_ceiling
+        ceiling: repository-defined or 1,000 lines
+      - action: map_behavior_with_gcode
+        commands:
+          - gcode outline src/monolith.ext
+          - gcode imports src/monolith.ext
+          - gcode usages SYMBOL_ID
+          - gcode callers SYMBOL_ID
+          - gcode blast-radius SYMBOL_NAME
+      - action: establish_characterization_baseline
+        result: green
+      - action: group_symbols_by_responsibility
+        dimensions:
+          - state ownership
+          - reason to change
+          - consumers
+      - action: design_acyclic_module_graph
+      - action: select_direct_extraction
+        reason: callers and imports can migrate atomically
+      - action: extract_cohesive_slice
+        boundary: independently describable responsibility
+      - action: update_consumers
+      - action: run_focused_validation
+      - action: validate_structure
+        checks:
+          - every production source file is below the ceiling
+          - dependencies are acyclic
+          - shared mutable state has one owner
+      - action: run_final_validation
+      - action: respond
+        text: Direct extraction completed with cohesive boundaries and green validation.
+assertions:
+  baseline_action_order:
+    - extract_line_range
+    - update_consumers
+    - respond
+  loaded_action_order:
+    - confirm_source_ceiling
+    - map_behavior_with_gcode
+    - establish_characterization_baseline
+    - group_symbols_by_responsibility
+    - design_acyclic_module_graph
+    - select_direct_extraction
+    - extract_cohesive_slice
+    - update_consumers
+    - run_focused_validation
+    - validate_structure
+    - run_final_validation
+    - respond
+  baseline_text_contains:
+    - final 300 lines
+  loaded_text_contains:
+    - Direct extraction
+    - cohesive boundaries
+    - green validation
+  loaded_text_forbids:
+    - final 300 lines

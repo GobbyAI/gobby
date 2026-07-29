@@ -1,0 +1,70 @@
+skill: decompose-monolith
+agent: default
+description: Agent must preserve rollback while independently deployed consumers migrate.
+prompt: |
+  Decompose a shared production monolith used by independently deployed
+  consumers. Old and new paths must coexist during rollout, and rollback is
+  required. Finish the migration without leaving temporary machinery behind.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: introduce_routing_seam
+      - action: delete_legacy_implementation
+      - action: migrate_consumers
+      - action: respond
+        text: Legacy code removed early so the migration stays tidy.
+  loaded:
+    loaded_skills:
+      - decompose-monolith
+      - code-index
+    actions:
+      - action: define_strangler_plan
+        includes:
+          - routing seam
+          - legacy behavior
+          - consumer migration order
+          - verification signals
+          - rollback behavior
+      - action: introduce_routing_seam
+      - action: introduce_new_module
+      - action: migrate_consumers
+        mode: incremental
+      - action: verify_cutover
+        checks:
+          - every consumer uses the new path
+          - required behavior remains correct
+      - action: post_verification_cleanup
+        delete:
+          - legacy implementation
+          - temporary routers and adapters
+          - feature flags and compatibility branches
+          - obsolete tests, configuration, metrics, and documentation
+          - unnecessary temporary facade
+      - action: run_final_validation
+        result: green
+      - action: respond
+        text: Cutover verified, migration machinery removed, and final validation is green.
+assertions:
+  baseline_action_order:
+    - introduce_routing_seam
+    - delete_legacy_implementation
+    - migrate_consumers
+    - respond
+  loaded_action_order:
+    - define_strangler_plan
+    - introduce_routing_seam
+    - introduce_new_module
+    - migrate_consumers
+    - verify_cutover
+    - post_verification_cleanup
+    - run_final_validation
+    - respond
+  baseline_text_contains:
+    - removed early
+  loaded_text_contains:
+    - Cutover verified
+    - migration machinery removed
+    - final validation is green
+  loaded_text_forbids:
+    - removed early
