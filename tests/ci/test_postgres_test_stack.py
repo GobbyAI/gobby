@@ -242,6 +242,41 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
     )
 
 
+def test_pre_push_records_manifest_and_checks_source_integrity(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert 'MANIFEST_PATH="$REPORTS_DIR/pre-push-$TIMESTAMP.json"' in script
+    assert 'python3 "$MANIFEST_TOOL" start --manifest "$MANIFEST_PATH" --repo-root .' in script
+    assert 'python3 "$MANIFEST_TOOL" record' in script
+    assert 'python3 "$MANIFEST_TOOL" finish' in script
+    assert 'record_command_result "pytest" "$PYTEST_EXIT" "$PYTEST_REPORT"' in script
+    assert "report manifest invalidated" in script
+
+
+def test_pre_push_exports_managed_falkordb_settings_before_home_isolation(
+    repo_root: Path,
+) -> None:
+    script = _load_pre_push_script(repo_root)
+    dream_e2e = (repo_root / "tests/e2e/test_memory_dream_gc_e2e.py").read_text()
+
+    assert "read_managed_falkordb_settings()" in script
+    assert "print(runtime.environment[name])" in script
+    for name in (
+        "GOBBY_FALKORDB_HOST",
+        "GOBBY_FALKORDB_PORT",
+        "GOBBY_FALKORDB_PASSWORD",
+    ):
+        assert f'"{name}"' in script
+        assert f'{name}="$PYTEST_FALKORDB_{name.removeprefix("GOBBY_FALKORDB_")}"' in script
+        assert f'"{name}"' in dream_e2e
+    assert "os.environ.get(name)" in dream_e2e
+    _assert_before(
+        script,
+        "elif ! load_pytest_falkordb_settings; then",
+        'HOME="$PYTEST_ISOLATION_DIR/home"',
+    )
+
+
 def test_pre_push_uses_canonical_logging_dir_for_pytest(repo_root: Path) -> None:
     script = _load_pre_push_script(repo_root)
 

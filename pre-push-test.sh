@@ -14,6 +14,8 @@ fi
 
 TIMESTAMP=$(date +%s)
 REPORTS_DIR="./reports"
+MANIFEST_TOOL="./pre-push-manifest.py"
+MANIFEST_PATH="$REPORTS_DIR/pre-push-$TIMESTAMP.json"
 mkdir -p "$REPORTS_DIR"
 rm -f "$REPORTS_DIR"/*.txt "$REPORTS_DIR"/*.md "$REPORTS_DIR"/*.log "$REPORTS_DIR"/*.json 2>/dev/null || true
 
@@ -23,7 +25,11 @@ echo ""
 
 # Track failures
 FAILED=0
+MANIFEST_FINALIZED=0
 PYTEST_ISOLATION_DIR=""
+PYTEST_FALKORDB_HOST=""
+PYTEST_FALKORDB_PORT=""
+PYTEST_FALKORDB_PASSWORD=""
 UV_EXTRA_FLAGS=()
 if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
     UV_EXTRA_FLAGS=(--all-extras)
@@ -73,9 +79,17 @@ uv_run() {
 
 # shellcheck disable=SC2329  # Invoked indirectly by the EXIT trap below.
 cleanup() {
+    local exit_code=$?
+    trap - EXIT
+    if [ "$MANIFEST_FINALIZED" -eq 0 ] && [ -f "$MANIFEST_PATH" ]; then
+        python3 "$MANIFEST_TOOL" finish \
+            --manifest "$MANIFEST_PATH" \
+            --status failed >/dev/null 2>&1 || true
+    fi
     if [ -n "${PYTEST_ISOLATION_DIR:-}" ] && [ -d "$PYTEST_ISOLATION_DIR" ]; then
         rm -rf "$PYTEST_ISOLATION_DIR"
     fi
+    exit "$exit_code"
 }
 trap cleanup EXIT
 
@@ -101,6 +115,91 @@ except BootstrapConfigError:
 if database_url:
     print(database_url)
 PY
+}
+
+read_managed_falkordb_settings() {
+    uv_run python - <<'PY'
+from pathlib import Path
+
+from gobby.cli.installers.compose_env import resolve_compose_runtime
+
+runtime = resolve_compose_runtime(
+    Path.home() / ".gobby",
+    profiles=("falkordb",),
+)
+for name in (
+    "GOBBY_FALKORDB_HOST",
+    "GOBBY_FALKORDB_PORT",
+    "GOBBY_FALKORDB_PASSWORD",
+):
+    print(runtime.environment[name])
+PY
+}
+
+load_pytest_falkordb_settings() {
+    {
+        IFS= read -r PYTEST_FALKORDB_HOST &&
+            IFS= read -r PYTEST_FALKORDB_PORT &&
+            IFS= read -r PYTEST_FALKORDB_PASSWORD
+    } < <(read_managed_falkordb_settings)
+    [ -n "$PYTEST_FALKORDB_HOST" ] &&
+        [ -n "$PYTEST_FALKORDB_PORT" ] &&
+        [ -n "$PYTEST_FALKORDB_PASSWORD" ]
+}
+
+record_command_result() {
+    local name="$1"
+    local exit_code="$2"
+    local report_path="$3"
+    local non_gating="${4:-}"
+    local gating_args=()
+    if [ "$non_gating" = "non-gating" ]; then
+        gating_args+=(--non-gating)
+    fi
+    local manifest_exit=0
+    if python3 "$MANIFEST_TOOL" record \
+        --manifest "$MANIFEST_PATH" \
+        --name "$name" \
+        --report "$report_path" \
+        --exit-code "$exit_code" \
+        "${gating_args[@]}"; then
+        return 0
+    else
+        manifest_exit=$?
+    fi
+    if [ "$manifest_exit" -eq 2 ]; then
+        MANIFEST_FINALIZED=1
+        echo "✗ Source changed during the pre-push run; report manifest invalidated"
+    else
+        echo "✗ Failed to update the pre-push report manifest"
+    fi
+    exit 1
+}
+
+record_skipped_command() {
+    local name="$1"
+    local non_gating="${2:-}"
+    local gating_args=()
+    if [ "$non_gating" = "non-gating" ]; then
+        gating_args+=(--non-gating)
+    fi
+    local manifest_exit=0
+    if python3 "$MANIFEST_TOOL" record \
+        --manifest "$MANIFEST_PATH" \
+        --name "$name" \
+        --status skipped \
+        "${gating_args[@]}"; then
+        return 0
+    else
+        manifest_exit=$?
+    fi
+    if [ "$manifest_exit" -eq 2 ]; then
+        MANIFEST_FINALIZED=1
+        echo "✗ Source changed during the pre-push run; report manifest invalidated"
+    else
+        echo "✗ Failed to update the pre-push report manifest"
+    fi
+    exit 1
 }
 
 start_docker_postgres_test_database() {
@@ -189,99 +288,138 @@ check_pytest_postgres_skip_guard() {
     return 0
 }
 
+python3 "$MANIFEST_TOOL" start --manifest "$MANIFEST_PATH" --repo-root .
+
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."
-if uv_run ruff check src/ --fix --no-unsafe-fixes 2>&1 | tee "$REPORTS_DIR/ruff-$TIMESTAMP.txt"; then
-    uv_run ruff format src/
+RUFF_REPORT="$REPORTS_DIR/ruff-$TIMESTAMP.txt"
+RUFF_EXIT=0
+if {
+    uv_run ruff check src/ --fix --no-unsafe-fixes &&
+        uv_run ruff format src/
+} 2>&1 | tee "$RUFF_REPORT"; then
     echo "✓ Ruff passed"
 else
+    RUFF_EXIT=$?
     echo "✗ Ruff failed"
     FAILED=1
 fi
+record_command_result "ruff" "$RUFF_EXIT" "$RUFF_REPORT"
 echo ""
 
 # Mypy - strict mode
 echo ">>> Running mypy (strict)..."
-if uv_run mypy src/ --no-incremental --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
+MYPY_REPORT="$REPORTS_DIR/mypy-$TIMESTAMP.txt"
+MYPY_EXIT=0
+if uv_run mypy src/ --no-incremental --strict 2>&1 | tee "$MYPY_REPORT"; then
     echo "✓ Mypy passed"
 else
+    MYPY_EXIT=$?
     echo "✗ Mypy failed"
     FAILED=1
 fi
+record_command_result "mypy" "$MYPY_EXIT" "$MYPY_REPORT"
 echo ""
 
 # TypeScript - frontend type checking
 echo ">>> Running TypeScript check..."
-if (cd web && npx tsc --noEmit) 2>&1 | tee "$REPORTS_DIR/tsc-$TIMESTAMP.txt"; then
+TSC_REPORT="$REPORTS_DIR/tsc-$TIMESTAMP.txt"
+TSC_EXIT=0
+if (cd web && npx tsc --noEmit) 2>&1 | tee "$TSC_REPORT"; then
     echo "✓ TypeScript passed"
 else
+    TSC_EXIT=$?
     echo "✗ TypeScript failed"
     FAILED=1
 fi
+record_command_result "typescript" "$TSC_EXIT" "$TSC_REPORT"
 echo ""
 
 # ESLint - frontend linting
 echo ">>> Running frontend lint..."
-if (cd web && npm run lint) 2>&1 | tee "$REPORTS_DIR/eslint-$TIMESTAMP.txt"; then
+ESLINT_REPORT="$REPORTS_DIR/eslint-$TIMESTAMP.txt"
+ESLINT_EXIT=0
+if (cd web && npm run lint) 2>&1 | tee "$ESLINT_REPORT"; then
     echo "✓ Frontend lint passed"
 else
+    ESLINT_EXIT=$?
     echo "✗ Frontend lint failed"
     FAILED=1
 fi
+record_command_result "frontend-lint" "$ESLINT_EXIT" "$ESLINT_REPORT"
 echo ""
 
 # Vitest - frontend tests with coverage
 echo ">>> Running vitest..."
-if (cd web && npx vitest run --coverage) 2>&1 | tee "$REPORTS_DIR/vitest-$TIMESTAMP.txt"; then
+VITEST_REPORT="$REPORTS_DIR/vitest-$TIMESTAMP.txt"
+VITEST_EXIT=0
+if (cd web && npx vitest run --coverage) 2>&1 | tee "$VITEST_REPORT"; then
     echo "✓ Vitest passed"
 else
+    VITEST_EXIT=$?
     echo "✗ Vitest failed"
     FAILED=1
 fi
+record_command_result "vitest" "$VITEST_EXIT" "$VITEST_REPORT"
 echo ""
 
 # Cargo - Rust workspace tests matching the canonical CI feature set
 echo ">>> Running Cargo workspace tests..."
 CARGO_REPORT="$REPORTS_DIR/cargo-$TIMESTAMP.txt"
+CARGO_EXIT=0
 if {
     cargo nextest run --profile ci --workspace --no-default-features &&
         cargo test --doc --workspace --no-default-features
 } 2>&1 | tee "$CARGO_REPORT"; then
     echo "✓ Cargo tests passed"
 else
+    CARGO_EXIT=$?
     echo "✗ Cargo tests failed"
     FAILED=1
 fi
+record_command_result "cargo" "$CARGO_EXIT" "$CARGO_REPORT"
 echo ""
 
 # Bandit - security linting
 echo ">>> Running bandit..."
-if uv_run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"; then
+BANDIT_REPORT="$REPORTS_DIR/bandit-$TIMESTAMP.txt"
+BANDIT_EXIT=0
+if uv_run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$BANDIT_REPORT"; then
     echo "✓ Bandit passed"
 else
+    BANDIT_EXIT=$?
     echo "✗ Bandit failed"
     FAILED=1
 fi
+record_command_result "bandit" "$BANDIT_EXIT" "$BANDIT_REPORT"
 echo ""
 
 # pip-audit - dependency CVE scanning
 echo ">>> Running pip-audit..."
-if uv_run pip-audit "${PIP_AUDIT_IGNORE_ARGS[@]}" 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"; then
+PIP_AUDIT_REPORT="$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"
+PIP_AUDIT_EXIT=0
+if uv_run pip-audit "${PIP_AUDIT_IGNORE_ARGS[@]}" 2>&1 | tee "$PIP_AUDIT_REPORT"; then
     echo "✓ pip-audit passed"
 else
+    PIP_AUDIT_EXIT=$?
     echo "✗ pip-audit failed"
     FAILED=1
 fi
+record_command_result "pip-audit" "$PIP_AUDIT_EXIT" "$PIP_AUDIT_REPORT"
 echo ""
 
 # Test quality - static audit against tracked baseline
 echo ">>> Running test-quality audit..."
-if uv_run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high 2>&1 | tee "$REPORTS_DIR/test-quality-$TIMESTAMP.txt"; then
+TEST_QUALITY_REPORT="$REPORTS_DIR/test-quality-$TIMESTAMP.txt"
+TEST_QUALITY_EXIT=0
+if uv_run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high 2>&1 | tee "$TEST_QUALITY_REPORT"; then
     echo "✓ Test-quality audit passed"
 else
+    TEST_QUALITY_EXIT=$?
     echo "✗ Test-quality audit failed"
     FAILED=1
 fi
+record_command_result "test-quality" "$TEST_QUALITY_EXIT" "$TEST_QUALITY_REPORT"
 echo ""
 
 # Pytest - tests with coverage report. Keep HOME/GOBBY_HOME isolated while
@@ -290,7 +428,9 @@ echo ""
 echo ">>> Running pytest with coverage..."
 PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
 PYTEST_REPORT="$REPORTS_DIR/pytest-$TIMESTAMP.txt"
+PYTEST_EXIT=0
 if ! PYTEST_DATABASE_URL=$(resolve_pytest_database_url); then
+    PYTEST_EXIT=1
     echo "✗ Failed to resolve PostgreSQL DATABASE_URL for pytest"
     echo "  Set DATABASE_URL, configure ~/.gobby/bootstrap.yaml database_url, or enable Docker"
     echo "  so docker-compose.test.yml can start postgres-test on port 60892."
@@ -300,11 +440,20 @@ elif ! mkdir -p \
     "$PYTEST_ISOLATION_DIR/gobby-home" \
     "$PYTEST_ISOLATION_DIR/logs" \
     "$PYTEST_ISOLATION_DIR/hooks"; then
+    PYTEST_EXIT=1
     echo "✗ Failed to create pytest isolation directories under PYTEST_ISOLATION_DIR=$PYTEST_ISOLATION_DIR"
     echo "  Check directory permissions and available disk space."
     FAILED=1
+elif ! load_pytest_falkordb_settings; then
+    PYTEST_EXIT=1
+    echo "✗ Failed to resolve managed FalkorDB settings for pytest"
+    echo "  Run gobby install to configure the managed FalkorDB host, port, and password."
+    FAILED=1
 elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_POSTGRES_TEST_DSN="$PYTEST_DATABASE_URL" \
+    GOBBY_FALKORDB_HOST="$PYTEST_FALKORDB_HOST" \
+    GOBBY_FALKORDB_PORT="$PYTEST_FALKORDB_PORT" \
+    GOBBY_FALKORDB_PASSWORD="$PYTEST_FALKORDB_PASSWORD" \
     GOBBY_TEST_PROTECT=1 \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
@@ -316,31 +465,68 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     if check_pytest_postgres_skip_guard "$PYTEST_REPORT"; then
         echo "✓ Pytest passed"
     else
+        PYTEST_EXIT=1
         echo "✗ Pytest failed"
         FAILED=1
     fi
 else
+    PYTEST_EXIT=$?
     echo "✗ Pytest failed"
     check_pytest_postgres_skip_guard "$PYTEST_REPORT" || true
     FAILED=1
 fi
+record_command_result "pytest" "$PYTEST_EXIT" "$PYTEST_REPORT"
 echo ""
 
 # CodeRabbit - AI code review report (informational, not a gate)
 echo ">>> Running coderabbit review..."
 if command -v coderabbit &> /dev/null; then
-    coderabbit review --agent --type all > "$REPORTS_DIR/coderabbit-$TIMESTAMP.md" 2>&1
-    echo "✓ CodeRabbit report saved to $REPORTS_DIR/coderabbit-$TIMESTAMP.md"
+    CODERABBIT_REPORT="$REPORTS_DIR/coderabbit-$TIMESTAMP.md"
+    CODERABBIT_EXIT=0
+    if coderabbit review --agent --type all > "$CODERABBIT_REPORT" 2>&1; then
+        echo "✓ CodeRabbit report saved to $CODERABBIT_REPORT"
+    else
+        CODERABBIT_EXIT=$?
+        echo "✗ CodeRabbit review failed; diagnostics saved to $CODERABBIT_REPORT"
+    fi
+    record_command_result \
+        "coderabbit" \
+        "$CODERABBIT_EXIT" \
+        "$CODERABBIT_REPORT" \
+        "non-gating"
 else
     echo "⊘ CodeRabbit not installed, skipping"
+    record_skipped_command "coderabbit" "non-gating"
 fi
 echo ""
 
 # Summary
 echo "=== Summary ==="
-echo "Reports saved to: $REPORTS_DIR/*-$TIMESTAMP.txt"
+echo "Reports saved to: $REPORTS_DIR/*-$TIMESTAMP.*"
+echo "Manifest saved to: $MANIFEST_PATH"
 
-if [ $FAILED -eq 0 ]; then
+REQUESTED_STATUS="passed"
+if [ "$FAILED" -ne 0 ]; then
+    REQUESTED_STATUS="failed"
+fi
+FINALIZE_EXIT=0
+if python3 "$MANIFEST_TOOL" finish \
+    --manifest "$MANIFEST_PATH" \
+    --status "$REQUESTED_STATUS"; then
+    MANIFEST_FINALIZED=1
+else
+    FINALIZE_EXIT=$?
+    MANIFEST_FINALIZED=1
+    FAILED=1
+fi
+
+if [ "$FINALIZE_EXIT" -eq 2 ]; then
+    echo "✗ Source changed during the pre-push run; report manifest invalidated"
+elif [ "$FINALIZE_EXIT" -ne 0 ]; then
+    echo "✗ Failed to finalize the pre-push report manifest"
+fi
+
+if [ "$FAILED" -eq 0 ]; then
     echo "✓ All checks passed!"
     exit 0
 else

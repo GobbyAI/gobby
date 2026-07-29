@@ -27,6 +27,8 @@ subsystem as healthy before the memory and dream/GC assertions run.
 
 import asyncio
 import hashlib
+import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -64,15 +66,38 @@ def e2e_pre_daemon_setup(
 ) -> None:
     """Require managed FalkorDB and configure an isolated authenticated graph."""
     config_path, _http_port, _ws_port = e2e_config
-    monkeypatch.delenv("GOBBY_FALKORDB_PASSWORD", raising=False)
     try:
-        runtime = resolve_compose_runtime(
-            Path.home() / ".gobby",
-            profiles=("falkordb",),
-        )
-        password = runtime.environment["GOBBY_FALKORDB_PASSWORD"]
-        port = int(runtime.environment["GOBBY_FALKORDB_PORT"])
-        asyncio.run(_verify_falkordb_prerequisite("127.0.0.1", port, password))
+        environment = {
+            name: os.environ.get(name)
+            for name in (
+                "GOBBY_FALKORDB_HOST",
+                "GOBBY_FALKORDB_PORT",
+                "GOBBY_FALKORDB_PASSWORD",
+            )
+        }
+        if any(environment.values()):
+            missing = [name for name, value in environment.items() if not value]
+            if missing:
+                raise ValueError(
+                    f"incomplete FalkorDB environment; missing {', '.join(sorted(missing))}"
+                )
+        else:
+            runtime = resolve_compose_runtime(
+                Path.home() / ".gobby",
+                profiles=("falkordb",),
+            )
+            environment = {
+                name: runtime.environment[name]
+                for name in (
+                    "GOBBY_FALKORDB_HOST",
+                    "GOBBY_FALKORDB_PORT",
+                    "GOBBY_FALKORDB_PASSWORD",
+                )
+            }
+        host = str(environment["GOBBY_FALKORDB_HOST"])
+        password = str(environment["GOBBY_FALKORDB_PASSWORD"])
+        port = int(str(environment["GOBBY_FALKORDB_PORT"]))
+        asyncio.run(_verify_falkordb_prerequisite(host, port, password))
     except Exception as exc:
         pytest.fail(
             "Memory dream/GC E2E requires a complete managed local install with "
@@ -85,7 +110,7 @@ def e2e_pre_daemon_setup(
     def cleanup_graph() -> None:
         asyncio.run(
             _delete_falkordb_graph(
-                host="127.0.0.1",
+                host=host,
                 port=port,
                 password=password,
                 graph_name=graph_name,
@@ -99,7 +124,7 @@ def e2e_pre_daemon_setup(
             "\ndatabases:\n"
             '  qdrant:\n    url: "http://127.0.0.1:6333"\n'
             "  falkordb:\n"
-            '    host: "127.0.0.1"\n'
+            f"    host: {json.dumps(host)}\n"
             f"    port: {port}\n"
             '    password: "${GOBBY_FALKORDB_PASSWORD}"\n'
             f'    graph_name: "{graph_name}"\n'

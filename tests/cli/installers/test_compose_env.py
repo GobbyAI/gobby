@@ -138,6 +138,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
     assert env == {
         "GOBBY_QDRANT_HTTP_PORT": "7333",
         "GOBBY_QDRANT_GRPC_PORT": "7334",
+        "GOBBY_FALKORDB_HOST": "127.0.0.1",
         "GOBBY_FALKORDB_PASSWORD": "falkor-secret",
         "GOBBY_FALKORDB_PORT": "17000",
     }
@@ -179,9 +180,30 @@ def test_service_environment_decrypts_falkor_secret_from_explicit_home(
     )
 
     assert opened_bootstrap_paths == [str(explicit_home / "bootstrap.yaml")]
+    assert env["GOBBY_FALKORDB_HOST"] == "127.0.0.1"
     assert env["GOBBY_FALKORDB_PASSWORD"] == "managed-secret"
     assert (explicit_home / ".secret_kek").exists()
     assert not (ambient_home / ".secret_kek").exists()
+
+
+def test_invalid_falkordb_host_is_actionable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _ConfigStore.values = {
+        "databases.falkordb.host": "",
+        "databases.falkordb.port": 16379,
+        "databases.falkordb.password": "$secret:falkor-test",
+    }
+    _SecretStore.values = {"falkor-test": "falkor-secret"}
+    monkeypatch.setattr(
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        lambda *_args, **_kwargs: _Db(),
+    )
+    monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
+    monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
+
+    with pytest.raises(compose_env.ComposeEnvironmentError, match="host must be"):
+        compose_env._service_environment(tmp_path, required_profiles=("falkordb",))
 
 
 def test_missing_falkordb_secret_is_actionable_without_generating(

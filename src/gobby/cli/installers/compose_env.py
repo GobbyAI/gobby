@@ -183,6 +183,10 @@ def _service_environment(
                 store.get("databases.falkordb.port"),
                 "databases.falkordb.port",
             )
+            falkor_host_value = store.get("databases.falkordb.host")
+            if not isinstance(falkor_host_value, str) or not falkor_host_value.strip():
+                raise ComposeEnvironmentError("databases.falkordb.host must be a non-empty string")
+            falkor_host = falkor_host_value.strip()
             password_ref = store.get("databases.falkordb.password")
             if not isinstance(password_ref, str) or not password_ref.startswith("$secret:"):
                 raise ComposeEnvironmentError(
@@ -198,6 +202,7 @@ def _service_environment(
                 raise ComposeEnvironmentError(
                     f"FalkorDB SecretStore entry {secret_name!r} is empty"
                 )
+            values["GOBBY_FALKORDB_HOST"] = falkor_host
             values["GOBBY_FALKORDB_PASSWORD"] = password
             values["GOBBY_FALKORDB_PORT"] = str(falkor_port)
 
