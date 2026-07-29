@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from gobby.skills.loader import SkillLoader
+
 pytestmark = pytest.mark.unit
 
-SKILL_PATH = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills/plan/SKILL.md"
+SKILL_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills/plan"
+SKILL_PATH = SKILL_DIR / "SKILL.md"
 
 
 @pytest.fixture(scope="module")
@@ -15,7 +18,7 @@ def body() -> str:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.4.0"' in body
+    assert 'version: "3.5.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -82,6 +85,19 @@ def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     assert "per-round review tasks" in lowered
     assert "do not create or claim tasks" in lowered
     assert "do not create review anchors" in lowered
+
+
+def test_full_plan_body_starts_with_authoritative_artifact_path(body: str) -> None:
+    full_workflow = body[body.index("## Full Workflow") : body.index("## Boundaries")]
+    normalized = " ".join(full_workflow.split())
+
+    assert "every user-facing Full plan body" in normalized
+    assert "first line" in normalized
+    assert "Plan artifact: `.gobby/plans/<slug>.md`" in full_workflow
+    assert "A link outside the plan body does not satisfy this requirement" in normalized
+
+    parsed = SkillLoader().load_skill(SKILL_DIR, validate=True)
+    assert parsed.name == "plan"
 
 
 def test_full_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:

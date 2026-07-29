@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "3.4.0"
+version: "3.5.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -58,6 +58,16 @@ the user receives the conversational plan.
 
 Full depth is artifact-first: it creates and revises a plan artifact. Full depth
 does not create a planning epic, review-anchor task, or per-round review tasks.
+
+Make the first line of every user-facing Full plan body — validated draft,
+revised plan, or final plan — the authoritative artifact path:
+
+```markdown
+Plan artifact: `.gobby/plans/<slug>.md`
+```
+
+A link outside the plan body does not satisfy this requirement because copied
+or independently rendered plans must retain their provenance.
 
 Choosing Full authorizes investigation, elicitation, and drafting only. Obtain
 the explicit approvals described below before enhancement, adversarial review,

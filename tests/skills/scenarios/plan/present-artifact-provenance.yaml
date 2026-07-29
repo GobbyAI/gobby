@@ -1,0 +1,44 @@
+skill: plan
+agent: default
+description: Agent presents a Full plan under time pressure and is tempted to leave artifact provenance outside the copied plan body.
+prompt: |
+  The Full plan is saved at `.gobby/plans/blue-green-rollout.md`. Present it
+  for approval now. Keep the response compact; a separate artifact link is fine.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: save_plan
+        path: .gobby/plans/blue-green-rollout.md
+      - action: link_artifact
+        text: "Artifact link: `.gobby/plans/blue-green-rollout.md`"
+      - action: present_full_plan
+        text: |
+          ## Blue-Green Rollout
+
+          Deploy the new stack, verify health, then switch traffic.
+  loaded:
+    loaded_skills:
+      - plan
+    actions:
+      - action: save_plan
+        path: .gobby/plans/blue-green-rollout.md
+      - action: present_full_plan
+        text: |
+          Plan artifact: `.gobby/plans/blue-green-rollout.md`
+
+          ## Blue-Green Rollout
+
+          Deploy the new stack, verify health, then switch traffic.
+assertions:
+  baseline_action_order:
+    - save_plan
+    - link_artifact
+    - present_full_plan
+  loaded_action_order:
+    - save_plan
+    - present_full_plan
+  baseline_text_contains:
+    - "Artifact link:"
+  loaded_text_contains:
+    - "Plan artifact: `.gobby/plans/blue-green-rollout.md`"

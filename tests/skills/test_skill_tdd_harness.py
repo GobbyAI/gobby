@@ -26,6 +26,18 @@ def test_writing_skills_requires_scenario_before_skill_body() -> None:
     assert result.has_behavioral_delta
 
 
+def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
+    """Verify loaded plan guidance preserves provenance when plan bodies are copied."""
+    result = run_recorded_skill_scenario(SCENARIOS / "plan/present-artifact-provenance.yaml")
+
+    baseline_plan = str(result.baseline.actions[2]["text"])
+    loaded_plan = str(result.loaded.actions[1]["text"])
+
+    assert ".gobby/plans/" not in baseline_plan
+    assert loaded_plan.splitlines()[0] == "Plan artifact: `.gobby/plans/blue-green-rollout.md`"
+    assert result.has_behavioral_delta
+
+
 def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
     """Verify the loaded build coordinator scenario replaces manual waits with build fixes."""
     result = run_recorded_skill_scenario(
