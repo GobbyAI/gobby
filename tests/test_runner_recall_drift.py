@@ -21,6 +21,7 @@ def _runner(*, memory_manager: object | None, memory_config: MemoryConfig | None
         bin_freshness=BinFreshnessConfig(enabled=False),
         logging=object(),
         chat=None,
+        get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
     )
     if memory_config is not None:
         config.memory = memory_config

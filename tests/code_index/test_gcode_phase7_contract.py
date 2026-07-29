@@ -87,7 +87,7 @@ def _assert_falkordb_config(config: str, context: str) -> None:
     _assert_field(context, "pub falkordb: Option<FalkorConfig>")
 
     assert re.search(r"let\s+falkordb\s*=\s*if\s+services\.falkordb", config)
-    assert "resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)" in config
+    assert "resolve_falkordb_config(conn, layers)?" in config
     graph_name_literal = re.search(r"graph_name:\s*\"gobby_code\"\.to_string\(\)", config)
     graph_name_const = 'const FALKORDB_GRAPH_NAME: &str = "gobby_code";' in config and re.search(
         r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config

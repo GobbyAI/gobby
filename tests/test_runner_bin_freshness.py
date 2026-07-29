@@ -170,6 +170,7 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
             telemetry=SimpleNamespace(trace_retention_days=7),
             bin_freshness=BinFreshnessConfig(enabled=False),
             logging=object(),
+            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
         ),
     )
 
@@ -201,6 +202,8 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
         )
 
     assert runner._bin_freshness_task is None
+    assert runner._metrics_cleanup_task.name == "metrics-cleanup"
+    assert runner._tool_results_cleanup_task.name == "tool-result-cleanup"
 
 
 def test_chat_attachment_periodic_defaults_are_explicit() -> None:
@@ -217,6 +220,7 @@ def test_chat_attachment_periodic_defaults_are_explicit() -> None:
             bin_freshness=BinFreshnessConfig(enabled=False),
             chat=None,
             logging=object(),
+            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
         ),
     )
     cleanup_kwargs: dict[str, object] = {}

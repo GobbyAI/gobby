@@ -174,6 +174,7 @@ def test_start_periodic_tasks_registers_resource_monitor(
             logging=logging_config,
             bin_freshness=BinFreshnessConfig(enabled=False),
             chat=None,
+            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
         ),
     )
     monitor_args: list[tuple[Any, ...]] = []

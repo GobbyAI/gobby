@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -10,92 +9,19 @@ from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 from gobby.terminal_ownership import TerminalIdentity, terminal_session_identity
 
+from ._discovery_helpers import (
+    handoff_candidate_matches,
+    normalize_context_parent_pid,
+    parse_terminal_context_value,
+    terminal_session_match_score,
+    unique_best_match,
+)
+
 MAX_TERMINAL_SESSION_CANDIDATES = 250
 MAX_HANDOFF_PARENT_CANDIDATES = 8
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-
-
-_TERMINAL_CONTEXT_FILTER_FIELDS = (
-    "tmux_pane",
-    "tmux_socket_path",
-    "tmux_session",
-    "tty",
-    "term_session_id",
-)
-
-
-def _parse_terminal_context_value(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, str) or not value:
-        return {}
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _normalize_context_parent_pid(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and value > 0:
-        return value
-    if isinstance(value, str) and value.isdigit() and int(value) > 0:
-        return int(value)
-    return None
-
-
-def _non_empty_text(value: Any) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    return None
-
-
-def _terminal_context_match_score(
-    requested_context: dict[str, Any],
-    stored_context: dict[str, Any],
-) -> int | None:
-    score = 0
-    for field_name in _TERMINAL_CONTEXT_FILTER_FIELDS:
-        requested_value = _non_empty_text(requested_context.get(field_name))
-        stored_value = _non_empty_text(stored_context.get(field_name))
-        if not requested_value or not stored_value:
-            continue
-        if requested_value != stored_value:
-            return None
-        score += 1
-    return score
-
-
-def _terminal_session_match_score(
-    session: Session,
-    requested_context: dict[str, Any],
-    parent_pid: int | None,
-) -> int | None:
-    stored_context = session.terminal_context or {}
-    stored_parent_pid = _normalize_context_parent_pid(stored_context.get("parent_pid"))
-    pid_match = parent_pid is not None and stored_parent_pid == parent_pid
-    match_score = _terminal_context_match_score(requested_context, stored_context)
-    if match_score is None or (not pid_match and match_score == 0):
-        return None
-    return match_score + 100 if pid_match else match_score
-
-
-def _unique_best_match(matches: list[tuple[int, Session]]) -> Session | None:
-    best_score = max(score for score, _session in matches)
-    best_matches = [session for score, session in matches if score == best_score]
-    return best_matches[0] if len(best_matches) == 1 else None
-
-
-def _handoff_candidate_matches(session: Session, requested_context: dict[str, Any]) -> bool:
-    """Return whether a handoff candidate matches the child's terminal identity."""
-    if requested_context.get("gobby_session_id") == session.id:
-        return True
-    score = _terminal_context_match_score(requested_context, session.terminal_context or {})
-    return score is not None and score > 0
 
 
 class _ManagerState(Protocol):
@@ -302,7 +228,7 @@ class _DiscoveryMixin:
         if not candidates:
             return None
 
-        requested_context = _parse_terminal_context_value(terminal_context)
+        requested_context = parse_terminal_context_value(terminal_context)
         if not requested_context:
             return candidates[0] if len(candidates) == 1 else None
 
@@ -310,7 +236,7 @@ class _DiscoveryMixin:
             (
                 candidate
                 for candidate in candidates
-                if _handoff_candidate_matches(candidate, requested_context)
+            if handoff_candidate_matches(candidate, requested_context)
             ),
             None,
         )
@@ -322,7 +248,7 @@ class _DiscoveryMixin:
         terminal_context: dict[str, Any] | str | None = None,
     ) -> Session | None:
         """Find the unique active session matching project and terminal identity."""
-        normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
+        normalized_parent_pid = normalize_context_parent_pid(parent_pid)
         normalized_project_id = project_id.strip() if isinstance(project_id, str) else None
         if not normalized_project_id or normalized_parent_pid is None:
             return None
@@ -339,11 +265,11 @@ class _DiscoveryMixin:
             (normalized_project_id, "active", MAX_TERMINAL_SESSION_CANDIDATES),
         )
 
-        requested_context = _parse_terminal_context_value(terminal_context)
+        requested_context = parse_terminal_context_value(terminal_context)
         matches: list[tuple[int, Session]] = []
         for row in rows:
             session = Session.from_row(row)
-            match_score = _terminal_session_match_score(
+            match_score = terminal_session_match_score(
                 session,
                 requested_context,
                 normalized_parent_pid,
@@ -355,7 +281,7 @@ class _DiscoveryMixin:
         if not matches:
             return None
 
-        return _unique_best_match(matches)
+        return unique_best_match(matches)
 
     def resolve_current_terminal_session(
         self: _ManagerState,
@@ -365,8 +291,8 @@ class _DiscoveryMixin:
     ) -> Session | None:
         """Resolve the current terminal session from project-scoped ambient identity."""
         normalized_project_id = project_id.strip() if isinstance(project_id, str) else None
-        normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
-        requested_context = _parse_terminal_context_value(terminal_context)
+        normalized_parent_pid = normalize_context_parent_pid(parent_pid)
+        requested_context = parse_terminal_context_value(terminal_context)
         if not normalized_project_id or (normalized_parent_pid is None and not requested_context):
             return None
 
@@ -394,7 +320,7 @@ class _DiscoveryMixin:
         fallback_matches: list[tuple[int, Session]] = []
         for row in rows:
             session = Session.from_row(row)
-            match_score = _terminal_session_match_score(
+            match_score = terminal_session_match_score(
                 session,
                 requested_context,
                 normalized_parent_pid,
@@ -405,8 +331,8 @@ class _DiscoveryMixin:
             matches.append((match_score, session))
 
         if active_matches:
-            return _unique_best_match(active_matches)
-        return _unique_best_match(fallback_matches) if fallback_matches else None
+            return unique_best_match(active_matches)
+        return unique_best_match(fallback_matches) if fallback_matches else None
 
     def find_children(self: _ManagerState, parent_session_id: str) -> list[Session]:
         """

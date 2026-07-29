@@ -63,6 +63,7 @@ def test_periodic_approval_expiry_uses_global_manager_without_startup_project() 
             bin_freshness=BinFreshnessConfig(enabled=False),
             chat=None,
             logging=LoggingSettings(),
+            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
         ),
     )
     approval_managers: list[LocalPipelineExecutionManager] = []

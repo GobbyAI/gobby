@@ -405,6 +405,7 @@ class TestInitSubsystems:
         runner.span_storage = None
         runner.memory_backup_manager = None
         runner.memory_manager = None
+        runner.memory_dream_coordinator = None
         runner.llm_service = None
         runner.vector_store = None
         runner.mcp_proxy = None
@@ -2335,7 +2336,7 @@ class TestPipelineEventBroadcasting:
         assert len(run_db.calls) == 1
         dispatch, payload, kwargs = run_db.calls[0]
         assert dispatch is handler
-        assert payload.execution_id == "pe-125"
+        assert getattr(payload, "execution_id") == "pe-125"
         assert kwargs == {"db": mock_pipeline_executor.db}
 
 

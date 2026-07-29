@@ -151,8 +151,8 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
 
     await _register_wiki_cron_handlers(runner, tracker)
 
-    assert len(executor.handlers) == 14
-    assert all(len(cron_storage.list_jobs(project_id=project.id)) == 7 for project in projects)
+    assert len(executor.handlers) == 17
+    assert all(len(cron_storage.list_jobs(project_id=project.id)) == 8 for project in projects)
     assert "Wiki cron handlers" in tracker.steps_completed
     assert tracker.errors == []
     offloaded_operations = {call.args[0].__name__ for call in db_run.await_args_list}
@@ -224,7 +224,7 @@ async def test_wiki_cron_purges_stale_projects_and_restores_fresh_jobs(
     assert cron_storage.list_runs(missing_job.id) == []
     assert cron_storage.get_job(operator_owned.id) is not None
     assert cron_storage.get_job(unrelated_system.id) is not None
-    assert len(cron_storage.list_jobs(project_id=live.id)) == 7
+    assert len(cron_storage.list_jobs(project_id=live.id)) == 8
     assert tracker.errors == []
     assert "Wiki cron handlers" in tracker.steps_completed
     assert str(empty.id) in caplog.text
@@ -232,7 +232,7 @@ async def test_wiki_cron_purges_stale_projects_and_restores_fresh_jobs(
     assert caplog.text.count("Deleted 1 stale wiki cron job(s)") == 2
 
     await _register_wiki_cron_handlers(runner, StartupTracker())
-    assert len(cron_storage.list_jobs(project_id=live.id)) == 7
+    assert len(cron_storage.list_jobs(project_id=live.id)) == 8
 
     missing_root.mkdir()
     project_manager.update(missing.id, repo_path=str(missing_root))
@@ -244,7 +244,7 @@ async def test_wiki_cron_purges_stale_projects_and_restores_fresh_jobs(
         for job in cron_storage.list_jobs(project_id=missing.id)
         if job.is_system and job.name.startswith("gobby:wiki-")
     ]
-    assert len(restored_wiki_jobs) == 7
+    assert len(restored_wiki_jobs) == 8
     assert all(job.enabled for job in restored_wiki_jobs)
     assert restored_tracker.errors == []
 

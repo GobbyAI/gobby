@@ -22,25 +22,13 @@ from gobby.utils.datetime import utc_now
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
+from ._registration import manual_registration_title
 from ._title_defaults import (
-    MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     format_provisional_session_title,
 )
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
-
-
-def _manual_registration_title(
-    title: str | None | UnsetType,
-    title_source: str | None | UnsetType,
-) -> tuple[str | UnsetType, str | UnsetType]:
-    """Classify a non-empty registration title as user-owned."""
-    if not is_set(title) or not isinstance(title, str) or not title.strip():
-        return UNSET, UNSET
-    if is_set(title_source) and title_source not in {None, MANUAL_TITLE_SOURCE}:
-        return UNSET, UNSET
-    return title.strip(), MANUAL_TITLE_SOURCE
 
 
 class _SessionCRUDHost(Protocol):
@@ -157,7 +145,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
             raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
 
-        manual_title, manual_title_source = _manual_registration_title(title, title_source)
+        manual_title, manual_title_source = manual_registration_title(title, title_source)
 
         if is_set(parent_session_id) and parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)

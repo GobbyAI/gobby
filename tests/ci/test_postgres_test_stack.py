@@ -277,7 +277,9 @@ def test_pre_push_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> No
 
     _assert_uv_run_all_extras_helper(script)
     assert "uv_run ruff check src/ --fix --no-unsafe-fixes" in script
-    assert "uv_run mypy src/ --strict --no-incremental" in script
+    mypy_command = next(line for line in script.splitlines() if "uv_run mypy src/" in line)
+    assert "--strict" in mypy_command
+    assert "--no-incremental" in mypy_command
     assert "uv_run bandit -c pyproject.toml -r src/ -q" in script
     assert "uv_run pip-audit" in script
     assert "uv_run gobby test-quality audit" in script
