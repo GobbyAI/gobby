@@ -167,12 +167,16 @@ def reconcile_native_mode(
     turn-start resolution can hold ``plan_mode`` stale indefinitely after an
     unapproved plan-mode exit. Tool-event reconciliation runs before rule
     evaluation, so the first gated edit after such an exit clears the stale
-    flag instead of being blocked. Web-chat sessions and structured
-    ``chat_mode`` signals stay owned by turn-start resolution.
+    flag instead of being blocked. Codex permission values describe sandbox
+    state, so its collaboration mode stays owned by transcript turn-context
+    resolution. Web-chat sessions and structured ``chat_mode`` signals stay
+    owned by turn-start resolution.
     """
     metadata = event.metadata or {}
     data = event.data or {}
     if metadata.get("session_type") == "web_chat":
+        return
+    if event.source is SessionSource.CODEX:
         return
     if _normalize_mode(metadata.get("chat_mode")) is not None:
         return

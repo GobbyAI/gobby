@@ -534,6 +534,68 @@ class TestNudgeCompactOnContextPressure:
         assert variables["context_compact_mid_turn_pressure_band"] == "strong"
         assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
 
+    async def test_spawned_plan_mode_injects_soft_then_strong_guidance(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _sync_bundled(db)
+        session_manager = _SessionManagerWithContextRatio(0.40)
+        handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db),
+            session_manager=session_manager,
+        )
+        variable_manager = SessionVariableManager(db)
+        variable_manager.merge_variables(
+            SESSION_ID,
+            {
+                "chat_mode": "plan",
+                "is_spawned_agent": True,
+                "mode_level": 0,
+                "parent_turn_seq": 4,
+                "plan_mode": True,
+            },
+        )
+        turn_start = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"permission_mode": "plan", "prompt": "continue planning"},
+            cwd=".",
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        response = await handler._evaluate_rules(turn_start)
+
+        assert response.context is not None
+        assert "Context pressure is 40%" in response.context
+
+        session_manager.ratio = 0.70
+        after_tool = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "permission_mode": "plan",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/repo/src/module.py"},
+                "tool_output": "contents",
+            },
+            cwd=".",
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        response = await handler._evaluate_rules(after_tool)
+
+        assert response.context is not None
+        assert "Context pressure is 70%" in response.context
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert variables["context_compact_mid_turn_pressure_band"] == "strong"
+        assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
+
     def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}
         session_manager = _SessionManagerWithContextRatio(0.40)

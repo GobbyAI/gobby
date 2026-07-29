@@ -187,25 +187,29 @@ def test_turn_start_resolves_mode_before_context_pressure_accounting() -> None:
 @pytest.mark.parametrize(
     ("source", "mode_key"),
     [
-        (SessionSource.AGY, "currentMode"),
-        (SessionSource.CLAUDE, "permission_mode"),
-        (SessionSource.CODEX, None),
-        (SessionSource.DROID, "approvalMode"),
-        (SessionSource.GROK, "current_mode"),
-        (SessionSource.QWEN, "mode"),
+        pytest.param(SessionSource.AGY, "currentMode", id="agy"),
+        pytest.param(SessionSource.CLAUDE, "permission_mode", id="claude"),
+        pytest.param(SessionSource.CODEX, None, id="codex"),
+        pytest.param(SessionSource.DROID, "approvalMode", id="droid"),
+        pytest.param(SessionSource.GROK, "current_mode", id="grok"),
+        pytest.param(SessionSource.QWEN, "mode", id="qwen"),
+        pytest.param(SessionSource.CLAUDE, "web_chat", id="managed-web-chat"),
     ],
 )
-def test_first_turn_resolves_authoritative_plan_mode_with_empty_variables(
+def test_plan_mode_suppresses_turn_start_and_mid_turn_guidance_across_surfaces(
     source: SessionSource,
     mode_key: str | None,
     tmp_path: Path,
 ) -> None:
     data: dict[str, object] = {"prompt": "first prompt"}
+    session_type = "web_chat" if mode_key == "web_chat" else "terminal"
+    metadata: dict[str, object] = {"session_type": session_type}
     session = SimpleNamespace(
-        session_type="terminal",
-        context_usage_ratio=None,
+        session_type=session_type,
+        chat_mode="normal",
+        context_usage_ratio=0.39,
         context_used_tokens=None,
-        context_window=None,
+        context_window=200_000,
         transcript_path=None,
     )
     if mode_key is None:
@@ -217,20 +221,47 @@ def test_first_turn_resolves_authoritative_plan_mode_with_empty_variables(
             + "\n"
         )
         session.transcript_path = str(transcript)
+    elif mode_key == "web_chat":
+        metadata["chat_mode"] = "plan"
     else:
         data[mode_key] = "plan"
-    event = _event(source, data=data, metadata={"session_type": "terminal"})
+    event = _event(source, data=data, metadata=metadata)
     variables: dict[str, object] = {}
+    handler = WorkflowHookHandler(session_manager=_SessionManager(session))
 
-    failures = WorkflowHookHandler(session_manager=_SessionManager(session))._run_observers(
-        event, SESSION_ID, variables
-    )
+    failures = handler._run_observers(event, SESSION_ID, variables)
 
     assert failures == set()
     assert variables["mode_level"] == 0
     assert variables["plan_mode"] is True
     assert variables["context_compact_guidance_message"] == ""
     assert "turns_since_compact" not in variables
+
+    tool_data: dict[str, object] = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": "/repo/src/module.py"},
+    }
+    tool_metadata = dict(metadata)
+    if mode_key is None:
+        tool_data["permission_mode"] = "bypassPermissions"
+    elif mode_key != "web_chat":
+        tool_data[mode_key] = "plan"
+    session.context_usage_ratio = 0.90
+    failures = handler._run_observers(
+        _tool_event(
+            HookEventType.AFTER_TOOL,
+            data=tool_data,
+            metadata=tool_metadata,
+            source=source,
+        ),
+        SESSION_ID,
+        variables,
+    )
+
+    assert failures == set()
+    assert variables["plan_mode"] is True
+    assert variables["context_compact_guidance_message"] == ""
+    assert "context_compact_mid_turn_pressure_band" not in variables
 
 
 def test_structured_hook_mode_precedes_provider_state_and_prompt_markers() -> None:
@@ -342,12 +373,13 @@ def _tool_event(
     *,
     data: dict[str, object],
     metadata: dict[str, object] | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     normalize_tool_fields(data)
     return HookEvent(
         event_type=event_type,
         session_id=SESSION_ID,
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
         metadata=metadata or {},
@@ -478,6 +510,32 @@ def test_reconcile_clears_stale_plan_mode_on_late_turn_events(
     assert variables["plan_mode"] is False
     assert variables["mode_level"] == 2
     assert variables["chat_mode"] == "bypass"
+
+
+def test_codex_permission_state_cannot_clear_resolved_plan_mode() -> None:
+    variables = _stale_plan_variables()
+    event = _tool_event(
+        HookEventType.AFTER_TOOL,
+        data={"permission_mode": "bypassPermissions"},
+        source=SessionSource.CODEX,
+    )
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables == _stale_plan_variables()
+
+
+def test_droid_unknown_permission_value_leaves_resolved_plan_mode_untouched() -> None:
+    variables = _stale_plan_variables()
+    event = _tool_event(
+        HookEventType.AFTER_TOOL,
+        data={"approvalMode": "auto-medium"},
+        source=SessionSource.DROID,
+    )
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables == _stale_plan_variables()
 
 
 def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
