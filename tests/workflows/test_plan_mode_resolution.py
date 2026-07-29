@@ -12,8 +12,16 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.observer_plan_mode import resolve_plan_mode
+from gobby.workflows.observer_plan_mode import reconcile_native_mode, resolve_plan_mode
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -327,3 +335,172 @@ def test_codex_transcript_failure_falls_back_to_prompt_marker(
 
     assert variables["mode_level"] == 0
     assert variables["plan_mode"] is True
+
+
+def _tool_event(
+    event_type: HookEventType,
+    *,
+    data: dict[str, object],
+    metadata: dict[str, object] | None = None,
+) -> HookEvent:
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=event_type,
+        session_id=SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata=metadata or {},
+    )
+
+
+def _stale_plan_variables() -> dict[str, Any]:
+    return {"chat_mode": "plan", "mode_level": 0, "plan_mode": True}
+
+
+def _block_edits_when(db: HubDatabase) -> tuple[RuleEngine, str]:
+    sync_bundled_rules(db, get_bundled_rules_path())
+    row = LocalWorkflowDefinitionManager(db).get_by_name("block-edits-plan-mode")
+    assert row is not None
+    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+    assert body.when is not None
+    return RuleEngine(db), body.when
+
+
+def _edit_event(permission_mode: str | None) -> HookEvent:
+    data: dict[str, object] = {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "/repo/src/module.py"},
+    }
+    if permission_mode is not None:
+        data["permission_mode"] = permission_mode
+    return _tool_event(HookEventType.BEFORE_TOOL, data=data)
+
+
+def test_rejected_plan_exit_then_edit_unblocks_via_tool_event_mode(
+    temp_db: HubDatabase,
+) -> None:
+    """A rejected ExitPlanMode leaves plan_mode stale; the edit's own PreToolUse
+    carries the harness's real permission mode and must clear it before rules run."""
+    engine, when = _block_edits_when(temp_db)
+    variables = _stale_plan_variables()
+    event = _edit_event("default")
+    handler = WorkflowHookHandler(session_manager=_SessionManager(None))
+
+    failures = handler._run_observers(event, SESSION_ID, variables)
+
+    assert failures == set()
+    assert variables["plan_mode"] is False
+    assert variables["mode_level"] == 1
+    assert variables["chat_mode"] == "normal"
+    ctx = engine._build_eval_context(event, variables)
+    funcs = engine._build_allowed_funcs(ctx)
+    assert SafeExpressionEvaluator(ctx, funcs).evaluate(when) is False
+
+
+def test_edit_during_live_plan_mode_still_blocks(temp_db: HubDatabase) -> None:
+    engine, when = _block_edits_when(temp_db)
+    variables = _stale_plan_variables()
+    event = _edit_event("plan")
+    handler = WorkflowHookHandler(session_manager=_SessionManager(None))
+
+    handler._run_observers(event, SESSION_ID, variables)
+
+    assert variables["plan_mode"] is True
+    ctx = engine._build_eval_context(event, variables)
+    funcs = engine._build_allowed_funcs(ctx)
+    assert SafeExpressionEvaluator(ctx, funcs).evaluate(when) is True
+
+
+def test_reconcile_without_native_signal_leaves_state_untouched() -> None:
+    variables = _stale_plan_variables()
+
+    reconcile_native_mode(_edit_event(None), variables, SESSION_ID)
+
+    assert variables == _stale_plan_variables()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"session_type": "web_chat"},
+        {"chat_mode": "plan"},
+    ],
+)
+def test_reconcile_defers_to_managed_and_structured_signals(
+    metadata: dict[str, object],
+) -> None:
+    variables = _stale_plan_variables()
+    event = _tool_event(
+        HookEventType.BEFORE_TOOL,
+        data={
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/src/module.py"},
+            "permission_mode": "default",
+        },
+        metadata=metadata,
+    )
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables == _stale_plan_variables()
+
+
+def test_reconcile_defers_to_structured_data_chat_mode() -> None:
+    variables = _stale_plan_variables()
+    event = _tool_event(
+        HookEventType.BEFORE_TOOL,
+        data={
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/src/module.py"},
+            "chat_mode": "plan",
+            "permission_mode": "default",
+        },
+    )
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables == _stale_plan_variables()
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [HookEventType.AFTER_TOOL, HookEventType.STOP],
+)
+def test_reconcile_clears_stale_plan_mode_on_late_turn_events(
+    event_type: HookEventType,
+) -> None:
+    variables = _stale_plan_variables()
+    event = _tool_event(event_type, data={"permission_mode": "bypassPermissions"})
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables["plan_mode"] is False
+    assert variables["mode_level"] == 2
+    assert variables["chat_mode"] == "bypass"
+
+
+def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
+    anchor = build_request_anchor("anchor-1", "Plan this work")
+    variables: dict[str, Any] = {
+        "chat_mode": "normal",
+        "mode_level": 1,
+        "plan_mode": False,
+        REQUEST_ANCHOR_VARIABLE: anchor,
+    }
+    event = _tool_event(HookEventType.BEFORE_TOOL, data={"permission_mode": "plan"})
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables["plan_mode"] is True
+    assert variables["mode_level"] == 0
+    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
+
+
+def test_reconcile_skips_plan_entry_without_request_anchor() -> None:
+    variables: dict[str, Any] = {"chat_mode": "normal", "mode_level": 1, "plan_mode": False}
+    event = _tool_event(HookEventType.BEFORE_TOOL, data={"permission_mode": "plan"})
+
+    reconcile_native_mode(event, variables, SESSION_ID)
+
+    assert variables == {"chat_mode": "normal", "mode_level": 1, "plan_mode": False}

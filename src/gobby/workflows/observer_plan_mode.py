@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.hooks.events import HookEvent, SessionSource
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_requirements import capture_request_anchor
 
 logger = logging.getLogger("gobby.workflows.observers")
@@ -152,6 +153,50 @@ def resolve_plan_mode(
         session_id,
         request_anchor_id=request_anchor_id,
     )
+
+
+def reconcile_native_mode(
+    event: HookEvent,
+    variables: dict[str, Any],
+    session_id: str,
+) -> None:
+    """Apply the provider-stamped permission mode carried by this event.
+
+    Claude Code stamps ``permission_mode`` on tool and stop payloads but omits
+    it on UserPromptSubmit, and a manual plan-mode toggle fires no hook, so
+    turn-start resolution can hold ``plan_mode`` stale indefinitely after an
+    unapproved plan-mode exit. Tool-event reconciliation runs before rule
+    evaluation, so the first gated edit after such an exit clears the stale
+    flag instead of being blocked. Web-chat sessions and structured
+    ``chat_mode`` signals stay owned by turn-start resolution.
+    """
+    metadata = event.metadata or {}
+    data = event.data or {}
+    if metadata.get("session_type") == "web_chat":
+        return
+    if _normalize_mode(metadata.get("chat_mode")) is not None:
+        return
+    if _normalize_mode(data.get("chat_mode")) is not None:
+        return
+    mode = _provider_native_mode(data)
+    if mode is None:
+        return
+    try:
+        _apply_resolved_mode(
+            variables,
+            session_id,
+            mode,
+            "provider-native tool-event state",
+            persist_plan_mode=False,
+            request_anchor_id=_request_anchor_id(data, session_id, None),
+            request_content=None,
+        )
+    except ReviewEvidenceError:
+        logger.debug(
+            "Session %s: native mode %r not applied - plan entry lacks a request anchor",
+            session_id,
+            mode,
+        )
 
 
 def _load_session(session_manager: _SessionManager | None, session_id: str) -> _SessionValue | None:

@@ -524,7 +524,7 @@ class WorkflowHookHandler:
             detect_context_compact_guidance,
             detect_mid_turn_context_compact_guidance,
         )
-        from .observer_plan_mode import resolve_plan_mode
+        from .observer_plan_mode import reconcile_native_mode, resolve_plan_mode
         from .observers import (
             detect_bash_commit,
             detect_commit_link,
@@ -552,6 +552,22 @@ class WorkflowHookHandler:
                     event.event_type,
                     exc_info=True,
                 )
+
+        # Tool and stop payloads carry the provider's live permission mode;
+        # turn-start events (e.g. Claude UserPromptSubmit) omit it and manual
+        # plan-mode toggles fire no hook, so these events are the only
+        # authoritative correction point for a stale plan_mode.
+        if event.event_type in (
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+        ) or _is_turn_end_event(event.event_type):
+            run_observer(
+                "reconcile_native_mode",
+                reconcile_native_mode,
+                event,
+                variables,
+                session_id,
+            )
 
         # Reconcile stale claimed_tasks on semantic turn-end before rule evaluation
         if _is_turn_end_event(event.event_type):
