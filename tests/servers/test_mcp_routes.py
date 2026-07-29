@@ -62,6 +62,7 @@ from gobby.servers.routes.mcp.hooks import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
 from tests.servers.conftest import create_http_server
@@ -396,7 +397,13 @@ class TestListMCPTools:
     def test_list_tools_records_session_discovery_state(
         self, session_storage: SessionManager
     ) -> None:
-        """Session header should drive listed_servers tracking for discovery routes."""
+        """Resolved session identity should drive discovery tracking."""
+        session = session_storage.register(
+            external_id="discovery-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=None,
+        )
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -409,13 +416,13 @@ class TestListMCPTools:
         with TestClient(server.app) as client:
             response = client.get(
                 "/api/mcp/gobby-tasks/tools",
-                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+                headers={"X-Gobby-Session-Id": session.id},
             )
 
         assert response.status_code == 200
         server._tools_handler.tool_proxy.record_listed_server.assert_called_once_with(
             "gobby-tasks",
-            session_id="123e4567-e89b-12d3-a456-426614174000",
+            session_id=session.id,
         )
 
     def test_list_tools_does_not_emit_proxy_after_tool(
@@ -1281,23 +1288,21 @@ class TestCallMCPTool:
             "notification_session_id": "session-123",
         }
 
-    def test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint(
+    def test_call_tool_stale_wrapper_without_identity_fails_closed(
         self, session_storage: SessionManager
     ) -> None:
-        """Structured wait calls recover even if a stale wrapper header is present."""
+        """Structured wrapper calls still require independent caller identity."""
         server = create_http_server(
             port=60887,
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(
-                    name="gobby-agents",
-                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
-                ),
-            ]
+        registry = FakeInternalRegistry(
+            name="gobby-agents",
+            tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
         )
+        registry.call = AsyncMock(wraps=registry.call)
+        server._internal_manager = FakeInternalManager([registry])
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -1313,10 +1318,10 @@ class TestCallMCPTool:
                 },
             )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_agent"}
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "SESSION_REQUIRED"
+        assert response.json()["detail"]["terminal_context_seen"] is False
+        registry.call.assert_not_awaited()
 
     def test_call_tool_internal_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server with error."""
@@ -2501,9 +2506,19 @@ class TestMCPProxy:
         assert data["restart_required"] is True
 
     def test_proxy_accepts_current_wait_wrapper_fingerprint(
-        self, session_storage: SessionManager
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
     ) -> None:
-        """Fresh stdio wrappers keep using the legacy route normally."""
+        """Fresh ambient wrappers resolve terminal identity before dispatch."""
+        terminal_context = {"parent_pid": 4242, "tmux_pane": "%12"}
+        session = session_storage.register(
+            external_id="ambient-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+            terminal_context=terminal_context,
+        )
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2521,7 +2536,11 @@ class TestMCPProxy:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/mcp/gobby-sessions/tools/wait_for_summary",
-                headers={MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint()},
+                headers={
+                    MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint(),
+                    TERMINAL_CONTEXT_HEADER: json.dumps(terminal_context),
+                    "X-Gobby-Caller-Project-Id": test_project["id"],
+                },
                 json={"session_id": "sess-123"},
             )
 
@@ -2529,6 +2548,9 @@ class TestMCPProxy:
         data = response.json()
         assert data["success"] is True
         assert data["result"] == {"tool": "wait_for_summary"}
+        resolved_session = session_storage.get(session.id)
+        assert resolved_session is not None
+        assert resolved_session.status == "active"
 
     def test_proxy_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""
@@ -2844,16 +2866,12 @@ class TestRefreshMCPTools:
         server._tools_handler = mock_handler
 
         hash_manager = SchemaHashManager(db=MagicMock())
-        hash_manager.get_hashes_for_server = MagicMock(
-            return_value=[
-                MagicMock(
-                    tool_name="list_tasks",
-                    schema_hash=compute_schema_hash(schema, description="Old description"),
-                )
-            ]
-        )
-        hash_manager.store_hash = MagicMock()
-        hash_manager.cleanup_stale_hashes = MagicMock(return_value=0)
+        stored_hashes = [
+            MagicMock(
+                tool_name="list_tasks",
+                schema_hash=compute_schema_hash(schema, description="Old description"),
+            )
+        ]
 
         with (
             TestClient(server.app) as client,
@@ -2862,6 +2880,13 @@ class TestRefreshMCPTools:
                 "gobby.mcp_proxy.schema_hash.SchemaHashManager",
                 return_value=hash_manager,
             ),
+            patch.object(
+                hash_manager,
+                "get_hashes_for_server",
+                return_value=stored_hashes,
+            ),
+            patch.object(hash_manager, "store_hash") as mock_store_hash,
+            patch.object(hash_manager, "cleanup_stale_hashes", return_value=0),
         ):
             response = client.post("/api/mcp/refresh", json={"force": False})
 
@@ -2870,7 +2895,7 @@ class TestRefreshMCPTools:
         assert data["stats"]["tools_changed"] == 1
         assert data["stats"]["embeddings_generated"] == 1
         semantic_search.embed_tool.assert_awaited_once()
-        hash_manager.store_hash.assert_called_once_with(
+        mock_store_hash.assert_called_once_with(
             server_name="gobby-tasks",
             tool_name="list_tasks",
             project_id="test-project",

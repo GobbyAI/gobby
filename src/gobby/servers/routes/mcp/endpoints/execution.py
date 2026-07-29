@@ -22,7 +22,6 @@ from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
-from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -208,7 +207,6 @@ async def list_mcp_tools(
         List of available tools with their descriptions
     """
     start_time = time.perf_counter()
-    requested_session_id = request_context._get_discovery_session_id({}, request)
     ctx_token = await request_context._set_context_for_request(server, {}, request)
 
     try:
@@ -222,7 +220,7 @@ async def list_mcp_tools(
                 if server.tool_proxy:
                     server.tool_proxy.record_listed_server(
                         server_name,
-                        session_id=requested_session_id,
+                        session_id=ctx_token.resolved_session_id,
                     )
                 result = {
                     "success": True,
@@ -310,7 +308,7 @@ async def list_mcp_tools(
             if server.tool_proxy:
                 server.tool_proxy.record_listed_server(
                     server_name,
-                    session_id=get_current_session_id(),
+                    session_id=ctx_token.resolved_session_id,
                 )
 
             result = {
@@ -528,7 +526,7 @@ async def call_mcp_tool(
                     server_name,
                     tool_name,
                     arguments,
-                    session_id=get_current_session_id(),
+                    session_id=ctx_token.resolved_session_id,
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
@@ -635,7 +633,7 @@ async def mcp_proxy(
                     server_name,
                     tool_name,
                     arguments,
-                    session_id=get_current_session_id(),
+                    session_id=ctx_token.resolved_session_id,
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,

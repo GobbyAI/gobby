@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 AGENT_RUN_ID_HEADER = "X-Gobby-Agent-Run-Id"
+TERMINAL_CONTEXT_HEADER = "X-Gobby-Terminal-Context"
 
 
 @dataclass(frozen=True)

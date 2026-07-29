@@ -9,18 +9,27 @@ workflow/session context when body arguments target another session.
 
 from __future__ import annotations
 
+import json
 import uuid
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_FINGERPRINT_HEADER
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
-from gobby.utils.session_context import SeededContextTokens
+from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER, SeededContextTokens
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 SESSION_UUID = str(uuid.uuid4())
 PROJECT_ID = str(uuid.uuid4())
+
+
+def _exception_detail(exc: HTTPException) -> dict[str, Any]:
+    return cast(dict[str, Any], exc.detail)
 
 
 def _make_server(db: MagicMock | None = None) -> MagicMock:
@@ -36,6 +45,9 @@ def _make_request(
     project_id: str | None = None,
     session_id: str | None = None,
     caller_project_id: str | None = None,
+    *,
+    wrapper: bool = False,
+    terminal_context: str | None = None,
 ) -> MagicMock:
     request = MagicMock()
     headers: dict[str, str] = {}
@@ -45,6 +57,10 @@ def _make_request(
         headers["x-gobby-caller-project-id"] = caller_project_id
     if session_id:
         headers["x-gobby-session-id"] = session_id
+    if wrapper:
+        headers[MCP_WRAPPER_FINGERPRINT_HEADER] = "test-wrapper"
+    if terminal_context is not None:
+        headers[TERMINAL_CONTEXT_HEADER] = terminal_context
     request.headers = headers
     return request
 
@@ -236,3 +252,197 @@ class TestSetContextForRequest:
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None
+
+    async def test_wrapper_session_header_wins_without_parsing_terminal_context(self) -> None:
+        """An explicit wrapper header is authoritative even if ambient context is malformed."""
+        server = _make_server()
+        request = _make_request(
+            project_id=PROJECT_ID,
+            session_id="#7",
+            wrapper=True,
+            terminal_context="{",
+        )
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
+        ) as mock_helper:
+            tokens = await _set_context_for_request(
+                server,
+                {"session_id": "target-session"},
+                request,
+            )
+
+        assert tokens.resolved_session_id == SESSION_UUID
+        assert mock_helper.call_args.kwargs["session_ref"] == "#7"
+        server.session_manager.resolve_current_terminal_session.assert_not_called()
+
+    async def test_wrapper_target_session_does_not_bootstrap_caller_project(self) -> None:
+        """A body session_id cannot seed wrapper caller enforcement context."""
+        server = _make_server()
+        request = _make_request(session_id=str(uuid.uuid4()), wrapper=True)
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_session_reference"
+            ) as mock_resolve,
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
+            ) as mock_helper,
+        ):
+            await _set_context_for_request(server, {"session_id": "#5"}, request)
+
+        assert mock_helper.call_args.kwargs["project_ref"] is None
+        mock_resolve.assert_not_called()
+
+    async def test_wrapper_terminal_context_uses_caller_project_scope(self) -> None:
+        """Ambient resolution uses caller scope while target project remains independent."""
+        server = _make_server()
+        caller_project_id = str(uuid.uuid4())
+        terminal_context = {
+            "parent_pid": 4242,
+            "tmux_pane": "%1",
+            "tmux_socket_path": "/tmp/tmux/default",
+        }
+        server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
+            id=SESSION_UUID,
+            external_id="external-session",
+            project_id=caller_project_id,
+        )
+        request = _make_request(
+            project_id=PROJECT_ID,
+            caller_project_id=caller_project_id,
+            wrapper=True,
+            terminal_context=json.dumps(terminal_context),
+        )
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(resolved_project_id=PROJECT_ID),
+        ) as mock_helper:
+            tokens = await _set_context_for_request(server, {}, request)
+
+        server.run_db.assert_any_await(
+            server.session_manager.resolve_current_terminal_session,
+            caller_project_id,
+            4242,
+            terminal_context,
+        )
+        assert mock_helper.call_args.kwargs["session_ref"] is None
+        assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
+        assert tokens.resolved_session_id == SESSION_UUID
+        assert tokens.resolved_project_id == PROJECT_ID
+
+    @pytest.mark.parametrize(
+        ("terminal_context", "terminal_context_seen"),
+        [
+            (None, False),
+            ("", True),
+            ("{}", True),
+            ("[]", True),
+            ("null", True),
+            ("{", True),
+            ('{"unknown":"value"}', True),
+        ],
+    )
+    async def test_wrapper_invalid_terminal_context_fails_closed(
+        self,
+        terminal_context: str | None,
+        terminal_context_seen: bool,
+    ) -> None:
+        """Invalid or empty allowlisted context never reaches resolution."""
+        server = _make_server()
+        request = _make_request(
+            project_id=PROJECT_ID,
+            wrapper=True,
+            terminal_context=terminal_context,
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _set_context_for_request(server, {}, request)
+
+        assert exc_info.value.status_code == 409
+        assert _exception_detail(exc_info.value) == {
+            "success": False,
+            "error_code": "SESSION_REQUIRED",
+            "error": "Wrapper caller session could not be resolved",
+            "terminal_context_seen": terminal_context_seen,
+        }
+        mock_helper.assert_not_awaited()
+        server.session_manager.resolve_current_terminal_session.assert_not_called()
+
+    async def test_wrapper_unmatched_terminal_context_fails_closed(self) -> None:
+        """A valid but unmatched terminal fingerprint is rejected before seeding."""
+        server = _make_server()
+        terminal_context = {"parent_pid": 4242, "tty": "/dev/ttys001"}
+        server.session_manager.resolve_current_terminal_session.return_value = None
+        request = _make_request(
+            project_id=PROJECT_ID,
+            wrapper=True,
+            terminal_context=json.dumps(terminal_context),
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _set_context_for_request(server, {}, request)
+
+        assert exc_info.value.status_code == 409
+        detail = _exception_detail(exc_info.value)
+        assert detail["error_code"] == "SESSION_REQUIRED"
+        assert detail["terminal_context_seen"] is True
+        mock_helper.assert_not_awaited()
+
+    async def test_wrapper_body_session_id_does_not_supply_caller_identity(self) -> None:
+        """Wrapper tool arguments retain session_id without using it as caller context."""
+        server = _make_server()
+        request = _make_request(project_id=PROJECT_ID, wrapper=True)
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                new_callable=AsyncMock,
+            ) as mock_helper,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _set_context_for_request(server, {"session_id": "target-session"}, request)
+
+        assert exc_info.value.status_code == 409
+        assert _exception_detail(exc_info.value)["error_code"] == "SESSION_REQUIRED"
+        mock_helper.assert_not_awaited()
+
+    async def test_wrapper_unresolved_explicit_session_header_fails_closed(self) -> None:
+        """An explicit wrapper header does not fall through to ambient resolution."""
+        server = _make_server()
+        request = _make_request(
+            project_id=PROJECT_ID,
+            session_id="missing-session",
+            wrapper=True,
+            terminal_context=json.dumps({"parent_pid": 4242}),
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                return_value=SeededContextTokens(),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _set_context_for_request(server, {}, request)
+
+        assert exc_info.value.status_code == 409
+        detail = _exception_detail(exc_info.value)
+        assert detail["error_code"] == "SESSION_REQUIRED"
+        assert detail["terminal_context_seen"] is True
+        server.session_manager.resolve_current_terminal_session.assert_not_called()

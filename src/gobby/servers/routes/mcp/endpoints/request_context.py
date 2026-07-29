@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from fastapi import HTTPException, Request
 
+from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_FINGERPRINT_HEADER
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.session_context import (
     AGENT_RUN_ID_HEADER,
+    TERMINAL_CONTEXT_HEADER,
     SeededContextTokens,
+    SessionContext,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
     set_current_agent_run_id,
+    set_session_context,
 )
 
 if TYPE_CHECKING:
@@ -23,23 +30,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.servers.routes.mcp.endpoints.execution")
 
+_TERMINAL_CONTEXT_KEYS = frozenset(
+    {
+        "parent_pid",
+        "tmux_pane",
+        "tmux_socket_path",
+        "tmux_session",
+        "tty",
+        "term_program",
+        "term_session_id",
+    }
+)
 
-def _get_requested_session_id(arguments: Any, request: Request | None = None) -> str | None:
-    """Return the raw session reference from tool arguments or HTTP headers.
 
-    Discovery routes need the caller-supplied value for audit/proxy events even
-    when context seeding cannot resolve it to a platform UUID.
-    """
-    if isinstance(arguments, dict):
-        session_id = arguments.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            return session_id
+def _raise_session_required(*, terminal_context_seen: bool) -> NoReturn:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "success": False,
+            "error_code": ToolProxyErrorCode.SESSION_REQUIRED.value,
+            "error": "Wrapper caller session could not be resolved",
+            "terminal_context_seen": terminal_context_seen,
+        },
+    )
 
-    if request is None:
-        return None
 
-    header_session_id = request.headers.get("x-gobby-session-id")
-    return header_session_id or None
+def _parse_terminal_context_header(raw_context: str | None, *, seen: bool) -> dict[str, Any]:
+    if not seen or not raw_context:
+        _raise_session_required(terminal_context_seen=seen)
+    try:
+        parsed = json.loads(raw_context)
+    except (json.JSONDecodeError, TypeError):
+        _raise_session_required(terminal_context_seen=True)
+    if (
+        not isinstance(parsed, dict)
+        or not parsed
+        or not set(parsed).issubset(_TERMINAL_CONTEXT_KEYS)
+    ):
+        _raise_session_required(terminal_context_seen=True)
+    return parsed
+
+
+def _header_seen(headers: Mapping[str, str], name: str) -> bool:
+    return name in headers or name.lower() in headers
 
 
 def _get_argument_session_id(arguments: Any) -> str | None:
@@ -49,21 +82,6 @@ def _get_argument_session_id(arguments: Any) -> str | None:
         if isinstance(session_id, str) and session_id:
             return session_id
     return None
-
-
-def _get_discovery_session_id(arguments: Any, request: Request | None = None) -> str | None:
-    """Return the session ref that should own HTTP discovery side effects.
-
-    For HTTP callers, the session header identifies the requesting CLI session.
-    Body/session arguments may target some other session for tool semantics, so
-    discovery tracking prefers the header and only falls back to arguments.
-    """
-    if request is not None:
-        header_session_id = request.headers.get("x-gobby-session-id")
-        if header_session_id:
-            return header_session_id
-
-    return _get_requested_session_id(arguments, request)
 
 
 def _session_ref_seq_num(session_ref: str | None) -> int | None:
@@ -117,11 +135,13 @@ async def _set_context_for_request(
 ) -> SeededContextTokens:
     """Set project and session context vars from the best available source.
 
-    Priority:
-      1. X-Gobby-Session-Id header (the caller/workflow context)
-      2. session_id from tool arguments (the target tool parameter)
-      3. X-Gobby-Caller-Project-Id header for wrapper session scope
-      4. X-Gobby-Project-Id header for target project context
+    Wrapper caller identity:
+      1. X-Gobby-Session-Id header
+      2. X-Gobby-Terminal-Context resolution
+      3. HTTP 409 SESSION_REQUIRED
+
+    Non-wrapper callers retain the body ``session_id`` fallback. For wrappers,
+    body ``session_id`` remains a target-tool parameter only.
 
     The stdio process runs in the CLI's project directory, so its CWD-derived
     project_id is always correct. The daemon's CWD is NOT — it points to the
@@ -129,15 +149,18 @@ async def _set_context_for_request(
 
     Returns seeded tokens; pass them to ``_reset_context`` after the tool call.
     """
-    header_session_id = request.headers.get("x-gobby-session-id") if request else None
-    project_id_header = request.headers.get("x-gobby-project-id") if request else None
-    caller_project_id_header = request.headers.get("x-gobby-caller-project-id") if request else None
+    headers = request.headers if request else {}
+    header_session_id = headers.get("x-gobby-session-id")
+    project_id_header = headers.get("x-gobby-project-id")
+    caller_project_id_header = headers.get("x-gobby-caller-project-id")
+    wrapper_request = _header_seen(headers, MCP_WRAPPER_FINGERPRINT_HEADER)
+    terminal_context_seen = _header_seen(headers, TERMINAL_CONTEXT_HEADER)
     argument_session_id = _get_argument_session_id(arguments)
 
     # Header session is wrapper/caller context. Body session_id remains a
     # target-tool parameter and must not make child-session workflow
     # enforcement apply to the caller.
-    session_id = header_session_id or argument_session_id
+    session_id = header_session_id or (None if wrapper_request else argument_session_id)
     session_ref_origin: Literal["explicit", "ambient"] = "ambient"
     if header_session_id:
         session_ref_origin = "explicit"
@@ -152,6 +175,49 @@ async def _set_context_for_request(
         and bool(project_id_header)
         and caller_project_id_header != project_id_header
     )
+
+    if wrapper_request and not header_session_id:
+        terminal_context = _parse_terminal_context_header(
+            headers.get(TERMINAL_CONTEXT_HEADER),
+            seen=terminal_context_seen,
+        )
+        if not server.session_manager:
+            _raise_session_required(terminal_context_seen=terminal_context_seen)
+        resolution_project_id = caller_project_id_header or project_id_header
+        resolved_session = await server.run_db(
+            server.session_manager.resolve_current_terminal_session,
+            resolution_project_id,
+            terminal_context.get("parent_pid"),
+            terminal_context,
+        )
+        if resolved_session is None:
+            _raise_session_required(terminal_context_seen=terminal_context_seen)
+
+        canonical_project_ref = canonical_project_ref or resolved_session.project_id
+        db = server.session_manager.db
+        tokens = await resolve_and_seed_contexts(
+            session_ref=None,
+            session_manager=server.session_manager,
+            project_ref=canonical_project_ref,
+            session_scope_ref=caller_project_id_header,
+            session_ref_origin="ambient",
+            project_ref_is_fallback=project_ref_is_fallback,
+            db=db,
+        )
+        tokens.session_token = set_session_context(
+            SessionContext(
+                session_id=resolved_session.id,
+                conversation_id=resolved_session.external_id,
+            )
+        )
+        tokens.resolved_session_id = resolved_session.id
+        try:
+            await _bind_agent_run_context(server, request, tokens, db=db)
+        except Exception:
+            reset_seeded_contexts(tokens)
+            raise
+        return tokens
+
     if not canonical_project_ref and header_session_id:
         canonical_project_ref = await server.run_db(
             _derive_project_from_unique_session_seq, server, header_session_id
@@ -160,6 +226,7 @@ async def _set_context_for_request(
         not canonical_project_ref
         and header_session_id
         and argument_session_id
+        and not wrapper_request
         and server.session_manager
         and argument_session_id.lstrip("#").isdigit()
     ):
@@ -187,6 +254,9 @@ async def _set_context_for_request(
         project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )
+    if wrapper_request and tokens.resolved_session_id is None:
+        reset_seeded_contexts(tokens)
+        _raise_session_required(terminal_context_seen=terminal_context_seen)
     try:
         await _bind_agent_run_context(server, request, tokens, db=db)
     except Exception:
