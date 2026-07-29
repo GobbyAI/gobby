@@ -46,7 +46,6 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
         load_config=MagicMock(),
         check_daemon_http_health=AsyncMock(return_value=True),
         read_project_id=lambda: "project-1",
-        resolve_session_id_from_terminal_context=AsyncMock(return_value=None),
         http_client_factory=lambda: client,
         logger=logging.getLogger("test"),
     )

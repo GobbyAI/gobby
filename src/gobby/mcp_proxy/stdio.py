@@ -29,10 +29,6 @@ from gobby.mcp_proxy.daemon_control import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
-from gobby.mcp_proxy.session_bootstrap import (
-    read_project_id,
-    resolve_session_id_from_terminal_context,
-)
 from gobby.mcp_proxy.stdio_daemon import (
     DaemonStartupDependencies,
 )
@@ -47,6 +43,9 @@ from gobby.mcp_proxy.stdio_proxy import (
 )
 from gobby.mcp_proxy.stdio_proxy import (
     DaemonProxyDependencies,
+)
+from gobby.mcp_proxy.stdio_proxy import (
+    read_project_id as _read_project_id,
 )
 from gobby.mcp_proxy.stdio_results import (
     DAEMON_HEALTH_ATTEMPTS,
@@ -104,9 +103,7 @@ __all__ = [
     "main",
     "mcp_wrapper_source_stale_result",
     "prepare_client_guard",
-    "read_project_id",
     "register_proxy_tools",
-    "resolve_session_id_from_terminal_context",
     "restart_daemon_process",
     "setup_internal_registries",
     "start_daemon_process",
@@ -119,8 +116,7 @@ def _proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
         load_config=load_config,
         check_daemon_http_health=check_daemon_http_health,
-        read_project_id=read_project_id,
-        resolve_session_id_from_terminal_context=resolve_session_id_from_terminal_context,
+        read_project_id=_read_project_id,
         http_client_factory=httpx.AsyncClient,
         logger=logger,
     )

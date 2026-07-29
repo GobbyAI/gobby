@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from gobby.mcp_proxy.session_bootstrap import resolve_session_id_from_terminal_context
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
@@ -294,25 +293,3 @@ async def test_list_tools_strips_explicit_nulls_from_schemas() -> None:
             }
         ],
     }
-
-
-@pytest.mark.asyncio
-async def test_session_bootstrap_sends_auth_header() -> None:
-    response = _response(200, {"session": {"id": "session-123"}})
-    client = AsyncMock()
-    client.post = AsyncMock(return_value=response)
-
-    with (
-        patch(
-            "gobby.mcp_proxy.session_bootstrap.daemon_auth_headers",
-            return_value={"Authorization": "Bearer bootstrap-token"},
-        ),
-        patch("gobby.mcp_proxy.session_bootstrap.httpx.AsyncClient") as client_cls,
-    ):
-        client_cls.return_value.__aenter__.return_value = client
-        session_id = await resolve_session_id_from_terminal_context(
-            "http://127.0.0.1:60887", "project-123"
-        )
-
-    assert session_id == "session-123"
-    assert client.post.await_args.kwargs["headers"] == {"Authorization": "Bearer bootstrap-token"}

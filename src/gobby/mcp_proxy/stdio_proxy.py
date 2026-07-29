@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
 
 from gobby.config.app import load_config as _load_config
 from gobby.mcp_proxy.daemon_control import check_daemon_http_health as _check_daemon_http_health
+from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
-from gobby.mcp_proxy.session_bootstrap import (
-    read_project_id as _read_project_id,
-)
-from gobby.mcp_proxy.session_bootstrap import (
-    resolve_session_id_from_terminal_context as _resolve_session_id_from_terminal_context,
-)
 from gobby.mcp_proxy.stdio_results import (
     DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS,
     DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
@@ -30,6 +27,10 @@ from gobby.mcp_proxy.stdio_results import (
     _request_timeout_result,
     _strip_none,
 )
+from gobby.mcp_proxy.terminal_context import (
+    current_terminal_context,
+    serialize_terminal_context,
+)
 from gobby.mcp_proxy.wait_tools import (
     EXTENDED_TIMEOUT_TOOL_NAMES,
     MCP_WRAPPER_FINGERPRINT_HEADER,
@@ -38,7 +39,7 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_process_fingerprint,
 )
 from gobby.utils.local_token import daemon_auth_headers
-from gobby.utils.session_context import AGENT_RUN_ID_HEADER
+from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
 
 
 class CheckDaemonHealth(Protocol):
@@ -51,33 +52,42 @@ class CheckDaemonHealth(Protocol):
     ) -> Awaitable[bool]: ...
 
 
-class ResolveSessionIdFromTerminalContext(Protocol):
-    def __call__(self, base_url: str, project_id: str) -> Awaitable[str | None]: ...
-
-
 @dataclass(frozen=True, slots=True)
 class DaemonProxyDependencies:
     load_config: Callable[[], Any]
     check_daemon_http_health: CheckDaemonHealth
     read_project_id: Callable[[], str | None]
-    resolve_session_id_from_terminal_context: ResolveSessionIdFromTerminalContext
     http_client_factory: Callable[[], httpx.AsyncClient]
     logger: logging.Logger
 
 
-# Retry interval for session bootstrap lookups via find_by_terminal_context.
-# A failed lookup (parent_pid mismatch, daemon busy, session not yet active)
-# is retried after this delay rather than permanently giving up.
-_BOOTSTRAP_RETRY_INTERVAL_SECONDS: float = 10.0
 _MAX_INTENT_QUERY_CHARS = 1_024
+
+
+def read_project_id() -> str | None:
+    """Read project_id from the environment or nearest .gobby/project.json."""
+    env_project_id = os.environ.get("GOBBY_PROJECT_ID")
+    if env_project_id:
+        return env_project_id
+
+    for root in [Path.cwd(), *Path.cwd().parents]:
+        project_file = root / ".gobby" / "project.json"
+        if not project_file.exists():
+            continue
+        try:
+            data = json.loads(project_file.read_text())
+        except (PermissionError, json.JSONDecodeError, OSError):
+            return None
+        project_id = data.get("id")
+        return project_id if isinstance(project_id, str) else None
+    return None
 
 
 def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
         load_config=_load_config,
         check_daemon_http_health=_check_daemon_http_health,
-        read_project_id=_read_project_id,
-        resolve_session_id_from_terminal_context=_resolve_session_id_from_terminal_context,
+        read_project_id=read_project_id,
         http_client_factory=httpx.AsyncClient,
         logger=logging.getLogger("gobby.mcp.stdio"),
     )
@@ -95,8 +105,8 @@ class DaemonProxy:
         self.base_url = f"http://127.0.0.1:{port}"
         self._deps_factory = deps_factory or default_daemon_proxy_dependencies
         self._project_id: str | None = self._deps_factory().read_project_id()
-        self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
-        self._last_bootstrap_attempt_at: float = 0.0
+        self._environment_session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
+        self._terminal_context_header = serialize_terminal_context(current_terminal_context())
         self._last_health_ok_at = 0.0
         self._auth_headers = daemon_auth_headers()
         self._client: httpx.AsyncClient | None = None
@@ -115,23 +125,6 @@ class DaemonProxy:
         if self._client is client:
             self._client = None
 
-    async def _resolve_session_id(self) -> str | None:
-        if self._session_id:
-            return self._session_id
-        if not self._project_id:
-            return None
-        now = time.monotonic()
-        if now - self._last_bootstrap_attempt_at < _BOOTSTRAP_RETRY_INTERVAL_SECONDS:
-            return self._session_id
-        self._last_bootstrap_attempt_at = now
-        resolved_session_id = await self._deps_factory().resolve_session_id_from_terminal_context(
-            self.base_url,
-            self._project_id,
-        )
-        if resolved_session_id is not None:
-            self._session_id = resolved_session_id
-        return self._session_id
-
     async def _request(
         self,
         method: str,
@@ -144,10 +137,6 @@ class DaemonProxy:
         preflight: bool = False,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
-        if session_id:
-            self._session_id = session_id
-            self._last_bootstrap_attempt_at = time.monotonic()
-
         if preflight:
             now = time.monotonic()
             if now - self._last_health_ok_at >= DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS:
@@ -168,13 +157,15 @@ class DaemonProxy:
         }
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id
-        effective_session_id = session_id or await self._resolve_session_id()
+        effective_session_id = session_id or self._environment_session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
         if caller_project_id:
             headers["X-Gobby-Caller-Project-Id"] = caller_project_id
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
+        else:
+            headers[TERMINAL_CONTEXT_HEADER] = self._terminal_context_header
         managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
         if managed_run_id:
             headers[AGENT_RUN_ID_HEADER] = managed_run_id
@@ -206,6 +197,18 @@ class DaemonProxy:
             if resp.status_code == 200:
                 data: dict[str, Any] = resp.json()
                 return data
+            if resp.status_code == 409:
+                try:
+                    error_data = resp.json()
+                except ValueError:
+                    error_data = None
+                if isinstance(error_data, dict):
+                    detail = error_data.get("detail")
+                    if (
+                        isinstance(detail, dict)
+                        and detail.get("error_code") == ToolProxyErrorCode.SESSION_REQUIRED.value
+                    ):
+                        return detail
             return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
         except httpx.ConnectError:
             return _daemon_unavailable_result(self.port, "connection failed")
