@@ -184,7 +184,7 @@ class TestTmuxTextInjection:
         assert commands[2] == [*tmux_cmd, "delete-buffer", "-b", buffer_name]
         assert commands[3] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
         assert not any("send-keys" in command and "-l" in command for command in commands)
-        sleep.assert_awaited_once_with(0.2)
+        sleep.assert_awaited_once_with(1.0)
 
     @pytest.mark.asyncio
     async def test_multiple_trailing_newlines_send_one_enter_after_one_delay(
@@ -217,7 +217,7 @@ class TestTmuxTextInjection:
         ]
         assert commands[0][-1] == "hello"
         assert commands[-1] == ["tmux", "send-keys", "-t", "%12", "Enter"]
-        sleep.assert_awaited_once_with(0.2)
+        sleep.assert_awaited_once_with(1.0)
 
     @pytest.mark.asyncio
     async def test_without_trailing_newline_preserves_internal_newline_without_enter(

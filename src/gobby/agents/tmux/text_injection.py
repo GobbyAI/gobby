@@ -11,7 +11,7 @@ from typing import Literal
 from uuid import uuid4
 
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
-TMUX_TEXT_ENTER_DELAY_SECONDS = 0.2
+TMUX_TEXT_ENTER_DELAY_SECONDS = 1.0
 
 _MISSING_OR_DEAD_TARGET_FRAGMENTS = (
     "can't find pane",

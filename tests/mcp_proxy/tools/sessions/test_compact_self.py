@@ -300,71 +300,6 @@ class TestCompactSelfTerminalPath:
         ]
 
     @pytest.mark.asyncio
-    async def test_codex_schedules_readiness_after_marker_before_compacting(self) -> None:
-        events: list[str] = []
-        tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="before")
-
-        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
-            _ = literal
-            events.append(keys)
-            return True
-
-        def mark_pending() -> bool:
-            events.append("mark")
-            return True
-
-        def schedule_readiness(before_command: str | None) -> bool:
-            assert before_command == "before"
-            events.append("readiness")
-            return True
-
-        tmux.send_keys = AsyncMock(side_effect=send_keys)
-
-        result = await _send_terminal_compaction_command(
-            tmux,
-            "%12",
-            "/compact",
-            "s1",
-            cli_source="codex",
-            mark_continuation_pending=mark_pending,
-            clear_continuation_pending=lambda: True,
-            schedule_continuation_readiness=schedule_readiness,
-            settle_seconds=0,
-        )
-
-        assert result == (True, None, True, None)
-        assert events == ["C-c", "mark", "readiness", "/compact\n"]
-
-    @pytest.mark.asyncio
-    async def test_codex_readiness_schedule_failure_aborts_before_compacting(self) -> None:
-        tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="before")
-        tmux.send_keys = AsyncMock(return_value=True)
-        clear_pending = MagicMock(return_value=True)
-
-        result = await _send_terminal_compaction_command(
-            tmux,
-            "%12",
-            "/compact",
-            "s1",
-            cli_source="codex",
-            mark_continuation_pending=lambda: True,
-            clear_continuation_pending=clear_pending,
-            schedule_continuation_readiness=lambda _before: False,
-            settle_seconds=0,
-        )
-
-        assert result == (
-            False,
-            "failed to schedule compact_self continuation readiness",
-            False,
-            None,
-        )
-        clear_pending.assert_called_once_with()
-        assert tmux.send_keys.await_args_list == [call("%12", "C-c", literal=False)]
-
-    @pytest.mark.asyncio
     async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
         tmux = MagicMock()
         tmux.send_keys = AsyncMock(return_value=False)
@@ -604,7 +539,6 @@ class TestCompactSelfTerminalPath:
             side_effect=[
                 old_output,
                 old_output,
-                old_output,
                 old_output + "/compact\n'/compact' is disabled while a task is in progress\n",
             ]
         )
@@ -636,7 +570,6 @@ class TestCompactSelfTerminalPath:
         assert tmux.capture_pane.await_args_list == [
             call("%12", lines=1),
             call("%12", lines=30),
-            call("%12", lines=100),
             call("%12", lines=30),
         ]
         mock_mark.assert_called_once()

@@ -22,7 +22,7 @@ class _TestRegistry(InternalToolRegistry):
 
 
 @pytest.mark.asyncio
-async def test_terminal_compact_self_waits_for_compact_session_start() -> None:
+async def test_terminal_compact_self_waits_for_compact_session_start_without_pane_watcher() -> None:
     registry = _TestRegistry(name="test", description="test")
     session = MagicMock()
     session.id = "s1"
@@ -69,13 +69,14 @@ Send the compact command and wait for the compact SessionStart hook.
             return_value=True,
         ),
         patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.schedule_compact_self_continuation_fallback",
+            "gobby.mcp_proxy.tools.sessions._terminal."
+            "schedule_codex_compact_self_continuation_readiness",
             create=True,
-        ) as mock_schedule,
+        ) as mock_schedule_readiness,
         session_context_for_test("s1"),
     ):
         result = await compact_self()
 
     assert result["compacted"] is True
     assert result["continuation_pending"] is True
-    mock_schedule.assert_not_called()
+    mock_schedule_readiness.assert_not_called()

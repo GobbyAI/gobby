@@ -312,13 +312,18 @@ class TestResolveSessionStartIdentity:
 class TestSessionStartInPlaceCompact:
     """Handler-level in-place compact reactivation."""
 
+    @patch("gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity")
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_reactivates_same_row(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self,
+        mock_sv_mgr_cls: MagicMock,
+        mock_reconcile: MagicMock,
+        mock_dependencies: dict,
     ) -> None:
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
         row = _make_row(session_id="sess-123")
         row.summary_markdown = None
+        mock_reconcile.return_value = SessionActivityResolution(session=row)
 
         def get_session(session_id: str) -> MagicMock | None:
             return row if session_id == "sess-123" else None
@@ -343,6 +348,7 @@ class TestSessionStartInPlaceCompact:
 
         assert response.decision == "allow"
         assert event.metadata["_platform_session_id"] == "sess-123"
+        mock_reconcile.assert_called_once_with(mock_dependencies["session_manager"], row.id)
         mock_dependencies["session_manager"].register_session.assert_not_called()
         mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
 
@@ -389,9 +395,13 @@ class TestSessionStartInPlaceCompact:
         assert event.metadata["_platform_session_id"] == canonical.id
         mock_dependencies["session_manager"].register_session.assert_not_called()
 
+    @patch("gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity")
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_bounds_large_summary_with_breadcrumb(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self,
+        mock_sv_mgr_cls: MagicMock,
+        mock_reconcile: MagicMock,
+        mock_dependencies: dict,
     ) -> None:
         """A large pre-compaction summary is bounded for injection but kept full elsewhere."""
         mock_sv_mgr = MagicMock()
@@ -404,6 +414,7 @@ class TestSessionStartInPlaceCompact:
         row = _make_row(session_id="sess-123")
         row.seq_num = 42
         row.summary_markdown = big_summary
+        mock_reconcile.return_value = SessionActivityResolution(session=row)
 
         def get_session(session_id: str) -> MagicMock | None:
             return row if session_id == "sess-123" else None
