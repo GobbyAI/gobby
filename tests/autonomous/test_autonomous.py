@@ -1663,6 +1663,159 @@ class TestStuckDetectorToolLoop:
         assert "Bash" in result.reason
 
 
+class TestStuckDetectorToolLoopInvocationCounting:
+    """Each tool invocation counts once, not once per recorded event."""
+
+    def test_start_and_completion_pair_counts_as_one_invocation(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Three real calls recorded as start+completion must not reach a threshold of 5."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        args = {"server_name": "gobby-plans", "tool_name": "get_plan_review_snapshot"}
+        for _ in range(3):
+            tracker.record_tool_start(session_id, "mcp__gobby__get_tool_schema", tool_args=args)
+            tracker.record_tool_call(session_id, "mcp__gobby__get_tool_schema", tool_args=args)
+
+        assert len(tracker.get_recent_events(session_id, limit=20)) == 6
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+
+    def test_genuine_repeat_still_detected_and_reports_invocation_count(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Five identical invocations trip the threshold and report 5, not 10."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        args = {"file_path": "/same/file.py"}
+        for _ in range(5):
+            tracker.record_tool_start(session_id, "Read", tool_args=args)
+            tracker.record_tool_call(session_id, "Read", tool_args=args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is True
+        assert result.layer == "tool_loop"
+        assert result.details is not None
+        assert result.details["call_count"] == 5
+
+    def test_in_flight_calls_without_completion_are_counted_once_each(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """A tool that hangs on every identical call is still a loop."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        args = {"command": "echo same"}
+        for _ in range(5):
+            tracker.record_tool_start(session_id, "Bash", tool_args=args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is True
+        assert result.details is not None
+        assert result.details["call_count"] == 5
+
+    def test_paginated_sweep_with_advancing_offset_is_not_a_loop(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Paging a large offloaded result fingerprints differently per page."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        for offset in range(0, 8 * 12000, 12000):
+            args = {
+                "server_name": "gobby-plans",
+                "tool_name": "get_plan_review_snapshot",
+                "arguments": {"offset": offset, "limit": 12000},
+            }
+            tracker.record_tool_start(session_id, "mcp__gobby__call_tool", tool_args=args)
+            tracker.record_tool_call(session_id, "mcp__gobby__call_tool", tool_args=args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+
+    def test_progressive_discovery_across_distinct_tools_is_not_a_loop(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Schema lookups for six different tools are not one repeated pattern."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        for tool in (
+            "create_task",
+            "claim_task",
+            "close_task",
+            "get_task",
+            "list_tasks",
+            "update_task",
+        ):
+            args = {"server_name": "gobby-tasks", "tool_name": tool}
+            tracker.record_tool_start(session_id, "mcp__gobby__get_tool_schema", tool_args=args)
+            tracker.record_tool_call(session_id, "mcp__gobby__get_tool_schema", tool_args=args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+
+    def test_sweep_that_stops_advancing_is_detected(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Re-fetching the same page repeatedly is a real loop."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=5,
+            tool_window_size=20,
+        )
+
+        args = {
+            "server_name": "gobby-plans",
+            "tool_name": "get_plan_review_snapshot",
+            "arguments": {"offset": 0, "limit": 12000},
+        }
+        for _ in range(5):
+            tracker.record_tool_start(session_id, "mcp__gobby__call_tool", tool_args=args)
+            tracker.record_tool_call(session_id, "mcp__gobby__call_tool", tool_args=args)
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is True
+        assert result.details is not None
+        assert result.details["call_count"] == 5
+
+
 class TestStuckDetectorIsStuck:
     """Tests for StuckDetector.is_stuck comprehensive check."""
 

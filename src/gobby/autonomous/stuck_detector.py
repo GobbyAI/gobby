@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.autonomous.progress_tracker import ProgressType
 from gobby.utils.datetime import require_stored_datetime
 
 if TYPE_CHECKING:
@@ -82,6 +83,10 @@ class StuckDetector:
     Layer 3 - Tool Call Patterns:
         Detects repeated identical tool calls that indicate the agent
         is stuck in a loop (e.g., repeatedly reading the same file).
+        Calls are counted per invocation, not per recorded event, and calls
+        whose arguments differ (a paginated sweep advancing an offset, or
+        progressive discovery across distinct tools) fingerprint differently
+        and never collapse into one pattern.
     """
 
     # Thresholds for loop detection
@@ -284,10 +289,24 @@ class StuckDetector:
         if not recent_events:
             return StuckDetectionResult(is_stuck=False)
 
-        # Count tool call patterns
+        # Count tool call patterns, once per invocation.
+        #
+        # A single tool call writes two rows: TOOL_STARTED when it goes in
+        # flight, then a completion row whose progress type depends on the
+        # outcome (TOOL_CALL, MCP_MUTATION, FILE_MODIFIED, TEST_PASSED, ...).
+        # Both rows carry the same tool name, arg keys, and arg fingerprint, so
+        # counting rows counts every call twice and halves the effective
+        # threshold — three identical calls reached the default threshold of
+        # five. Pair each completion with its pending start and count the pair
+        # once. Unmatched rows on either side still count, so an in-flight call
+        # with no completion and a completion with no recorded start are each
+        # counted exactly once.
         tool_counts: dict[str, int] = {}
         tool_names: dict[str, str] = {}
-        for event in recent_events:
+        pending_starts: dict[str, int] = {}
+        # get_recent_events returns newest first; walk oldest first so a start
+        # is always seen before the completion it pairs with.
+        for event in reversed(recent_events):
             if event.tool_name:
                 if event.details.get("is_passive_wait") is True:
                     continue
@@ -306,6 +325,11 @@ class StuckDetector:
                     else event.tool_name
                 )
                 key = f"{tool_name}:{arg_keys}:{arg_fingerprint}"
+                if event.progress_type is ProgressType.TOOL_STARTED:
+                    pending_starts[key] = pending_starts.get(key, 0) + 1
+                elif pending_starts.get(key, 0) > 0:
+                    pending_starts[key] -= 1
+                    continue
                 tool_counts[key] = tool_counts.get(key, 0) + 1
                 tool_names[key] = tool_name
 
