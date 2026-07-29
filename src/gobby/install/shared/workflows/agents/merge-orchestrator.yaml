@@ -411,6 +411,7 @@ steps:
       - "gobby-agents:wait_for_agent"
       - "gobby-agents:list_agent_runs"
       - "gobby-agents:get_agent_result"
+      - "gobby-agents:get_agent_capture"
       - "gobby-agents:list_running_agents"
       - "gobby-agents:get_running_agent"
       - "gobby-agents:running_agent_stats"
