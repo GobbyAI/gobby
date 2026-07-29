@@ -236,6 +236,7 @@ def test_init_configures_health_metrics_after_meter_provider_and_file_logging(
 @pytest.mark.asyncio
 async def test_dispatcher_boundary_records_fatal_failure(
     monkeypatch: pytest.MonkeyPatch,
+    temp_db: object,
 ) -> None:
     from gobby.dispatch import dispatcher
 
@@ -252,7 +253,7 @@ async def test_dispatcher_boundary_records_fatal_failure(
     )
 
     with pytest.raises(RuntimeError, match="dispatcher failed"):
-        await dispatcher.run_heartbeat()
+        await dispatcher.run_heartbeat(db=cast(Any, temp_db))
 
     assert outcomes == [("dispatcher", "failed")]
 
@@ -260,6 +261,7 @@ async def test_dispatcher_boundary_records_fatal_failure(
 @pytest.mark.asyncio
 async def test_dispatcher_readiness_block_records_skip(
     monkeypatch: pytest.MonkeyPatch,
+    temp_db: object,
 ) -> None:
     from gobby.agents import readiness
     from gobby.dispatch import dispatcher
@@ -272,7 +274,7 @@ async def test_dispatcher_readiness_block_records_skip(
         lambda component, outcome: outcomes.append((component, outcome)),
     )
 
-    result = await dispatcher.run_heartbeat(services=object())
+    result = await dispatcher.run_heartbeat(db=cast(Any, temp_db), services=object())
 
     assert result.reason == "daemon offline"
     assert outcomes == [("dispatcher", "skipped")]

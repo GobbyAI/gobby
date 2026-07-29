@@ -52,7 +52,9 @@ def _make_manager(
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
 
-    config = config or MemoryConfig()
+    config = config or MemoryConfig(
+        dream={"write_supersession_mark_due_enabled": False},
+    )
 
     kwargs = {
         "db": db,

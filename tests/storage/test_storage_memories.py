@@ -1166,6 +1166,7 @@ def test_prune_runs_drops_aged_runs_and_cascades_snapshots(db) -> None:
     store = MemoryDreamStore(db)
     # project_id is left NULL — memory_dream_runs.project_id carries an FK to projects.
     aged = store.create_run(project_id=None, dry_run=False, options={})
+    store.update_run(aged, status="completed")
     fresh = store.create_run(project_id=None, dry_run=False, options={})
     aged_memory_id = str(uuid.uuid4())
     fresh_memory_id = str(uuid.uuid4())

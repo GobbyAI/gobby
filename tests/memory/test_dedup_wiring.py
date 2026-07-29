@@ -27,7 +27,7 @@ def _make_manager(
 ):
     """Create a MemoryManager with optional mocked dependencies."""
     db = MagicMock()
-    config = _make_config()
+    config = _make_config(dream={"write_supersession_mark_due_enabled": False})
     llm_service = MagicMock() if has_llm else None
 
     if has_llm:
