@@ -413,6 +413,10 @@ async def _apply_action(
             stamp,
         )
         return 0
+    if action.action == "keep" and not (action.memory_id or "").strip():
+        # Audit-only keep marker from plan validation (planner referenced an
+        # unknown or missing candidate id) — nothing to stamp, not a failure.
+        return 0
     if action.action in {"keep", "review", "delete", "refresh", "promote"}:
         memory_id = _required_memory_id(action)
         candidate = candidate_map.get(memory_id)

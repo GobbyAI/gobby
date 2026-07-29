@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -2497,6 +2498,38 @@ async def test_sweep_snapshot_totals_are_per_unit_not_cumulative() -> None:
     # Regression: unit summaries carry per-unit snapshot deltas; summing the
     # run-cumulative count across the 3 units would report 11 here, not 5.
     assert summary["snapshots"] == applied
+
+
+@pytest.mark.asyncio
+async def test_apply_skips_audit_keep_marker_without_memory_id() -> None:
+    """An id-less keep is the validator's audit marker, not a failed action."""
+
+    class _TransactionalFakeDB(_FakeDreamDB):
+        # Presence of `transaction` selects the primary dispatch path, where
+        # the marker previously failed _required_memory_id.
+        def transaction(self) -> Any:
+            return contextlib.nullcontext()
+
+    db = _TransactionalFakeDB()
+    manager = _FakeMemoryManager(db)
+    store = _dream_store(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=_as_dream_manager(manager),
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="keep", reason="unknown candidate id", confidence=0.0)],
+        candidates=[],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["errors"] == 0
+    assert summary["error_details"] == []
+    assert summary["mutations"] == 0
+    assert summary["actions"] == {"keep": 1}
+    assert db.snapshots == []
 
 
 @pytest.mark.asyncio
