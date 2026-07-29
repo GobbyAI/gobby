@@ -14,6 +14,12 @@ from click.testing import CliRunner
 
 from gobby.cli.memory.dream import memory_dream
 from gobby.config.persistence import MemoryDreamConfig
+from gobby.memory.dream.aggregate import (
+    _completed_mutation_count,
+    _result_run_id,
+    _scope_sweep_key,
+    _ScopeSweep,
+)
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates, memory_to_candidate
 from gobby.memory.dream.duplicates import find_duplicate_groups
@@ -40,13 +46,7 @@ from gobby.memory.dream.planner import (
     build_raw_plan,
 )
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
-from gobby.memory.dream.service import (
-    MemoryDreamService,
-    _completed_mutation_count,
-    _result_run_id,
-    _scope_sweep_key,
-    _ScopeSweep,
-)
+from gobby.memory.dream.service import MemoryDreamService
 from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
     INTERRUPTED_RESTART_ERROR,
@@ -508,7 +508,7 @@ async def test_build_raw_plan_runs_planner_pages_serially() -> None:
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
-        await asyncio.sleep(0)
+        await asyncio.to_thread(lambda: None)
         active -= 1
         return {"actions": []}
 
@@ -3465,6 +3465,40 @@ async def test_round_robin_gives_each_due_scope_one_unit_per_pass() -> None:
 
 
 @pytest.mark.asyncio
+async def test_aggregate_runner_honors_patched_service_scope_lifecycle_seams() -> None:
+    service, visits = _coordinator_service(
+        ["proj-a"],
+        {"project:proj-a": [_unit(1)]},
+    )
+    patched_open = service._open_scope_sweep
+    patched_close = service._close_scope_sweep
+    opens: list[str] = []
+    closes: list[tuple[str, str, str | None]] = []
+
+    async def tracking_open(
+        scope: MemoryScope, *, memory_type: str | None, full_sweep: bool
+    ) -> _ScopeSweep:
+        opens.append(_scope_sweep_key(scope))
+        return await patched_open(scope, memory_type=memory_type, full_sweep=full_sweep)
+
+    async def tracking_close(
+        sweep: _ScopeSweep, *, status: str, error: str | None = None
+    ) -> dict[str, Any]:
+        closes.append((_scope_sweep_key(sweep.scope), status, error))
+        return await patched_close(sweep, status=status, error=error)
+
+    _set_method(service, "_open_scope_sweep", tracking_open)
+    _set_method(service, "_close_scope_sweep", tracking_close)
+
+    result = await service.run_all_due_projects()
+
+    assert opens == ["project:proj-a"]
+    assert visits == ["project:proj-a"]
+    assert closes == [("project:proj-a", "completed", None)]
+    assert result["completed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_window_exhaustion_stops_new_units_and_records_partial(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -3480,7 +3514,7 @@ async def test_window_exhaustion_stops_new_units_and_records_partial(
     checks = iter([True, True, False])
     _set_method(service, "_admission_window_open", lambda _deadline: next(checks))
     run_id = service.store.create_run(project_id=None, dry_run=False, options={})
-    caplog.set_level("INFO", logger="gobby.memory.dream.service")
+    caplog.set_level("INFO", logger="gobby.memory.dream.aggregate")
 
     result = await service.execute_all_due_projects_run(run_id)
 
@@ -3518,7 +3552,7 @@ async def test_dependency_failure_stops_coordinator_with_single_warning(
             "global": [_unit(2), _unit(1)],
         },
     )
-    caplog.set_level("INFO", logger="gobby.memory.dream.service")
+    caplog.set_level("INFO", logger="gobby.memory.dream.aggregate")
 
     result = await service.run_all_due_projects()
 
@@ -3553,7 +3587,7 @@ async def test_run_all_due_projects_isolates_target_failure(
             "global": [_unit(1)],
         },
     )
-    caplog.set_level("ERROR", logger="gobby.memory.dream.service")
+    caplog.set_level("ERROR", logger="gobby.memory.dream.aggregate")
 
     result = await service.run_all_due_projects()
 
@@ -3724,7 +3758,7 @@ def test_completed_mutation_count_coerces_string_and_warns(
         )
         == 2
     )
-    caplog.set_level("WARNING", logger="gobby.memory.dream.service")
+    caplog.set_level("WARNING", logger="gobby.memory.dream.aggregate")
     assert (
         _completed_mutation_count(
             {"success": True, "run": {"id": "r", "summary": {"mutations": "bad"}}}
