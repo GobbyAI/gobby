@@ -20,7 +20,6 @@ SKILL_DIR = (
     / "tasks"
 )
 SKILL_PATH = SKILL_DIR / "SKILL.md"
-EVIDENCE_REFERENCE_PATH = SKILL_DIR / "references" / "evidence-provider-recovery.md"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TASKS_GUIDE_PATH = REPO_ROOT / "docs" / "guides" / "tasks.md"
 MCP_GUIDE_PATH = REPO_ROOT / "docs" / "guides" / "mcp-tools.md"
@@ -30,15 +29,15 @@ LIFECYCLE_SCENARIO_PATH = (
 
 
 def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
-    content = EVIDENCE_REFERENCE_PATH.read_text()
+    """9c17a6466 replaced evidence receipts with the checklist close contract."""
+    content = SKILL_PATH.read_text()
 
-    assert "Run each validation command as one native terminal invocation" in content
-    assert "follow every `wait` or `write_stdin` token until termination" in content
-    assert "## Recovery" in content
-    assert "Claude Code and Qwen" in content
-    assert "Droid and Grok" in content
-    assert "Codex" in content
-    assert "Manual `validation_command` evidence is prohibited" in content
+    assert "Shell validation must produce a definitive exit code" in content
+    assert "follow every yielded cell or PTY session until exit" in content
+    assert "derives validation evidence from the claiming and closing session" in content
+    assert "rerun the command through a supported shell tool" in content
+    for provider in ("Claude Code", "Qwen", "Droid", "Grok", "Codex"):
+        assert provider not in content, f"close guidance must stay provider-neutral: {provider}"
 
 
 def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
@@ -57,13 +56,13 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         "5. Review session memories"
     )
     assert content.index("5. Review session memories") < content.index("7. Call `close_task`")
-    assert "repeat the conditional close until `closed=true`" in content
+    assert "Call `close_task` once with" in content
+    assert "A ready call links the commit and closes atomically." in content
     assert "Repeat the same `close_task` call without `preview`" not in content
+    assert "repeat the conditional close" not in content
     assert "references/creation.md" in content
-    assert "references/evidence-provider-recovery.md" in content
     assert "references/no-work-closures.md" in content
     assert "references/review-flows.md" in content
-    assert "```python" not in content
 
 
 def test_guides_document_single_call_conditional_close() -> None:

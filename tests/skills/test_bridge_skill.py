@@ -38,7 +38,10 @@ def test_bridge_skill_live_mode_contract() -> None:
     assert "## Live Mode" in body
     assert "Never end the turn to wait" in body
     assert "Monitor" in body
-    assert "create_task" in body
+    # a46e947fe moved the umbrella-task lifecycle into the `live-session` skill;
+    # bridge delegates rather than calling create_task itself.
+    assert "`live-session` skill owns the umbrella task" in body
+    assert "task creation, and claiming" in body
     assert "close_task" in body
     # Sentinel matcher tokens
     assert "`done`" in body
@@ -73,5 +76,8 @@ def test_bridge_skill_live_mode_single_commit_wrapup() -> None:
     """Wrap-up commits the session diff before closing the umbrella task."""
     body = _body()
 
-    assert "single commit" in body
-    assert "commit SHA" in body
+    normalized = " ".join(body.split())
+
+    assert "Execute `live done`" in body
+    assert "the final task-linked commit when changes exist, and `close_task`" in normalized
+    assert "never close the task mid-session" in normalized

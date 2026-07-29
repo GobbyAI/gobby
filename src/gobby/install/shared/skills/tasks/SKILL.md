@@ -35,7 +35,7 @@ Required creation fields:
 | `title` | Always; use an imperative summary |
 | `category` | Always |
 | `implementation_domain` | Required for `category="code"` |
-| `validation_criteria` | Required for `category="code"`; state observable, specific, complete behavior |
+| `validation_criteria` | Required for every `task_type` except `"epic"`, whatever the category; state observable, specific, complete behavior |
 
 Create and claim in one call when starting new work:
 

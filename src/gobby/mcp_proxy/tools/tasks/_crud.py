@@ -96,6 +96,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             labels: List of labels
             category: Task domain category (test, code, document, research, config, manual)
             validation_criteria: Acceptance criteria for validating completion.
+                Required for every task_type except "epic".
             implementation_domain: Required code task implementation domain.
             claim: If True, auto-claim the task for the current session.
             additional_skills: Optional skills required to work on the task.
@@ -321,7 +322,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     registry.register(
         name="create_task",
         description="Create a new task in the current project.",
-        brief="Create a new task. Requires: title, session_id, category, validation_criteria (if category='code')",
+        brief="Create a new task. Requires: title, session_id, category, validation_criteria (every task_type except 'epic')",
         input_schema={
             "type": "object",
             "properties": {
@@ -367,12 +368,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "category": {
                     "type": "string",
-                    "description": "Task domain: 'code' (implementation — requires validation_criteria), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
+                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
                     "enum": list(TASK_CATEGORY_ENUM),
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for task completion. REQUIRED when category='code' — creation fails without it. Describe what 'done' looks like — validate_task checks the diff against this.",
+                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -619,7 +620,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion",
+                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'.",
                     "default": None,
                 },
                 "parent_task_id": {
@@ -629,7 +630,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "category": {
                     "type": "string",
-                    "description": "Task domain: 'code' (implementation — requires validation_criteria), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
+                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
                     "enum": list(TASK_CATEGORY_ENUM),
                     "default": None,
                 },
