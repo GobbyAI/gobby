@@ -7,8 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.config.persistence import MemoryDreamConfig
-from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
-from gobby.memory.dream.service import MemoryDreamService
+from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -17,7 +16,7 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
+    from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 
 MEMORY_DREAM_CRON_JOB_NAME = "gobby:memory-dream"
 MEMORY_DREAM_CRON_HANDLER = "memory.dream"
@@ -50,11 +49,9 @@ def register_memory_dream_cron(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
-    memory_manager: MemoryDreamManagerProtocol,
+    coordinator: MemoryDreamCoordinator,
     dream_config: MemoryDreamConfig,
-    llm_service: MemoryDreamLLMProtocol | None = None,
     project_id: str | None = None,
-    daemon_config: DaemonConfig | None = None,
 ) -> int:
     """Register the memory dream handler and reconcile its single system row."""
     if not dream_config.enabled:
@@ -70,19 +67,15 @@ def register_memory_dream_cron(
 
     async def _handler(_job: CronJob) -> str:
         # Cooldown-throttled nightly sweep: round-robin work units across every
-        # scope with due memories via the shared coordinator (also used by
-        # manual triggers). Nightly mutating maintenance is the default; the
-        # admission window bounds the run and a window-exhausted partial is a
-        # normal outcome. Admission owns the aggregate row, so a fire that
-        # overlaps an active run coalesces or skips instead of stacking a
-        # second sweep.
-        service = MemoryDreamService(
-            memory_manager=memory_manager,
-            dream_config=dream_config,
-            llm_service=llm_service,
-            daemon_config=daemon_config,
-            current_project_id=project_id,
-        )
+        # scope with due memories via the daemon-owned coordinator's service
+        # (the same admission owner behind manual triggers). Nightly mutating
+        # maintenance is the default; the admission window bounds the run and a
+        # window-exhausted partial is a normal outcome. Admission owns the
+        # aggregate row, so a fire that overlaps an active run coalesces or
+        # skips instead of stacking a second sweep. Unlike HTTP/MCP triggers,
+        # cron executes inline: the handler already runs as its own background
+        # job and reports the completed aggregate.
+        service = coordinator.service
         started = await service.start_all_due_projects_async(dry_run=False)
         if started.get("coalesced"):
             run_id = started.get("run_id")

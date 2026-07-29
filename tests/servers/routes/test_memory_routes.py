@@ -74,7 +74,19 @@ def client(mock_server):
 
 
 @pytest.fixture
-def dream_client(mock_server) -> TestClient:
+def dream_coordinator(mock_server) -> MagicMock:
+    """Attach a fake daemon-owned dream coordinator to the mock server."""
+    coordinator = MagicMock()
+    coordinator.trigger = AsyncMock()
+    coordinator.trigger_all_due_projects = AsyncMock()
+    coordinator.service.status = AsyncMock()
+    coordinator.service.revert = AsyncMock()
+    mock_server.services.memory_dream_coordinator = coordinator
+    return coordinator
+
+
+@pytest.fixture
+def dream_client(mock_server, dream_coordinator) -> TestClient:
     """Create TestClient with memory dream router."""
     app = FastAPI()
     app.include_router(create_memory_dream_router(mock_server))
@@ -84,139 +96,182 @@ def dream_client(mock_server) -> TestClient:
 class TestMemoryDreamRoutes:
     """Test memory dream HTTP endpoints."""
 
-    def test_start_dream_returns_run_id(
-        self, dream_client: TestClient, mock_server: MagicMock
+    def test_start_dream_returns_run_id_immediately(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
     ) -> None:
-        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
-            service = service_cls.return_value
-            service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-            service.execute_run = AsyncMock(return_value={"success": True})
-
-            response = dream_client.post(
-                "/memory/dream",
-                json={"dry_run": True, "project_id": "proj-1", "memory_type": "fact"},
-            )
-
-        assert response.status_code == 202
-        assert response.json()["run_id"] == "dream-1"
-        service.start_async.assert_awaited_once()
-        options = service.start_async.await_args.args[0]
-        assert options.dry_run is True
-        assert options.project_id == "proj-1"
-        assert options.memory_type == "fact"
-        mock_server.register_background_task.assert_called_once()
-        # The daemon's own project identity is threaded into the service.
-        assert service_cls.call_args.kwargs["current_project_id"] == "test-project"
-
-    def test_wait_dream_returns_completed_run(self, dream_client: TestClient) -> None:
-        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
-            service = service_cls.return_value
-            service.run = AsyncMock(
-                return_value={"success": True, "run_id": "dream-1", "run": {"status": "completed"}}
-            )
-
-            response = dream_client.post(
-                "/memory/dream",
-                json={"wait": True, "skip_consolidation": True, "project_id": "proj-1"},
-            )
-
-        assert response.status_code == 200
-        assert response.json()["run"]["status"] == "completed"
-        service.run.assert_awaited_once()
-        options = service.run.await_args.args[0]
-        assert options.skip_consolidation is True
-        assert options.project_id == "proj-1"
-
-    def test_unscoped_dream_runs_all_due_projects(self, dream_client: TestClient) -> None:
-        aggregate = {
+        dream_coordinator.trigger.return_value = {
             "success": True,
-            "targets": 2,
-            "completed": 2,
-            "failed": 0,
-            "mutations": 3,
-            "runs": [
-                {"project_id": "proj-1", "success": True, "run_id": "r1", "mutations": 1},
-                {"project_id": None, "success": True, "run_id": "r2", "mutations": 2},
-            ],
+            "run_id": "dream-1",
+            "status": "running",
+            "coalesced": False,
         }
-        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
-            service = service_cls.return_value
-            service.run_all_due_projects = AsyncMock(return_value=aggregate)
-            service.run = AsyncMock()
-            service.start_async = AsyncMock()
 
-            response = dream_client.post("/memory/dream", json={"dry_run": True, "wait": True})
-
-        assert response.status_code == 200
-        assert response.json() == aggregate
-        service.run_all_due_projects.assert_awaited_once()
-        assert service.run_all_due_projects.await_args.kwargs["dry_run"] is True
-        # An unscoped trigger never runs the single-digest path.
-        service.run.assert_not_awaited()
-        service.start_async.assert_not_awaited()
-
-    def test_unscoped_background_dream_returns_run_id(
-        self, dream_client: TestClient, mock_server: MagicMock
-    ) -> None:
-        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
-            service = service_cls.return_value
-            service.start_all_due_projects_async = AsyncMock(
-                return_value={"success": True, "run_id": "aggregate-1"}
-            )
-            service.execute_all_due_projects_run = AsyncMock(return_value={"success": True})
-
-            response = dream_client.post(
-                "/memory/dream",
-                json={"dry_run": True, "full_sweep": True},
-            )
+        # A legacy "wait" key is ignored: the route exposes no wait parameter
+        # and every trigger is asynchronous.
+        response = dream_client.post(
+            "/memory/dream",
+            json={"dry_run": True, "project_id": "proj-1", "memory_type": "fact", "wait": True},
+        )
 
         assert response.status_code == 202
         assert response.json() == {
             "success": True,
-            "status": "started",
-            "run_id": "aggregate-1",
+            "run_id": "dream-1",
+            "status": "running",
+            "coalesced": False,
         }
-        service.start_all_due_projects_async.assert_awaited_once_with(
+        dream_coordinator.trigger.assert_awaited_once()
+        options = dream_coordinator.trigger.await_args.args[0]
+        assert options.dry_run is True
+        assert options.project_id == "proj-1"
+        assert options.memory_type == "fact"
+        dream_coordinator.trigger_all_due_projects.assert_not_awaited()
+
+    def test_unscoped_dream_triggers_all_due_projects(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        dream_coordinator.trigger_all_due_projects.return_value = {
+            "success": True,
+            "run_id": "aggregate-1",
+            "status": "running",
+            "coalesced": False,
+        }
+
+        response = dream_client.post("/memory/dream", json={"dry_run": True, "full_sweep": True})
+
+        assert response.status_code == 202
+        assert response.json()["run_id"] == "aggregate-1"
+        dream_coordinator.trigger_all_due_projects.assert_awaited_once_with(
             dry_run=True,
             skip_consolidation=False,
             memory_type=None,
             full_sweep=True,
         )
-        mock_server.register_background_task.assert_called_once()
+        # An unscoped trigger never runs the single-digest path.
+        dream_coordinator.trigger.assert_not_awaited()
 
-    def test_status_and_revert(self, dream_client: TestClient) -> None:
-        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
-            service = service_cls.return_value
-            service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
-            service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+    def test_coalesced_run_returns_200_with_progress(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        active = {
+            "run_id": "dream-1",
+            "scope": "all",
+            "phase": "sweep",
+            "checkpoint": {"phase": "sweep", "batch_number": 3, "mutations": 2},
+        }
+        dream_coordinator.trigger_all_due_projects.return_value = {
+            "success": True,
+            "run_id": "dream-1",
+            "status": "running",
+            "coalesced": True,
+            "active": active,
+        }
 
-            status = dream_client.get("/memory/dream/dream-1")
-            revert = dream_client.post("/memory/dream/dream-1/revert")
+        response = dream_client.post("/memory/dream", json={})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["coalesced"] is True
+        assert body["run_id"] == "dream-1"
+        assert body["active"]["checkpoint"]["batch_number"] == 3
+
+    def test_conflicting_run_returns_409_with_active_details(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        dream_coordinator.trigger.return_value = {
+            "success": False,
+            "error": "a memory dream run is already active with incompatible options",
+            "error_code": "dream_run_conflict",
+            "conflict": {"run_id": "other-1", "scope": "project:proj-2", "phase": "sweep"},
+        }
+
+        response = dream_client.post("/memory/dream", json={"project_id": "proj-1"})
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["error_code"] == "dream_run_conflict"
+        assert body["conflict"]["run_id"] == "other-1"
+
+    def test_launch_failure_returns_500_with_run_id(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        dream_coordinator.trigger.return_value = {
+            "success": False,
+            "run_id": "dream-1",
+            "status": "failed",
+            "error": "Failed to launch memory dream run: loop closed",
+        }
+
+        response = dream_client.post("/memory/dream", json={"project_id": "proj-1"})
+
+        assert response.status_code == 500
+        assert response.json()["run_id"] == "dream-1"
+
+    def test_disabled_dream_returns_400(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        dream_coordinator.trigger_all_due_projects.return_value = {
+            "success": False,
+            "error": "memory dream is disabled",
+        }
+
+        response = dream_client.post("/memory/dream", json={})
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "memory dream is disabled"
+
+    def test_status_exposes_durable_checkpoint_fields(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        checkpoint = {
+            "phase": "coordinator",
+            "scope": "all-due",
+            "pass_number": 2,
+            "batch_number": 5,
+            "completed": 40,
+            "remaining": 60,
+            "channels": {"keyword": {"attempts": 1, "latency_ms": 42}},
+            "mutations": 7,
+            "backlog": {"project:proj-1": 60},
+            "stop_reason": "window_exhausted",
+        }
+        dream_coordinator.service.status.return_value = {
+            "success": True,
+            "run": {"id": "dream-1", "status": "partial", "checkpoint": checkpoint},
+        }
+
+        response = dream_client.get("/memory/dream/dream-1")
+
+        assert response.status_code == 200
+        assert response.json()["run"]["checkpoint"] == checkpoint
+        dream_coordinator.service.status.assert_awaited_once_with("dream-1")
+
+    def test_status_and_revert(
+        self, dream_client: TestClient, dream_coordinator: MagicMock
+    ) -> None:
+        dream_coordinator.service.status.return_value = {
+            "success": True,
+            "run": {"id": "dream-1"},
+        }
+        dream_coordinator.service.revert.return_value = {"success": True, "run_id": "dream-1"}
+
+        status = dream_client.get("/memory/dream/dream-1")
+        revert = dream_client.post("/memory/dream/dream-1/revert")
 
         assert status.status_code == 200
         assert revert.status_code == 200
-        service.status.assert_awaited_once_with("dream-1")
-        service.revert.assert_awaited_once_with("dream-1")
+        dream_coordinator.service.status.assert_awaited_once_with("dream-1")
+        dream_coordinator.service.revert.assert_awaited_once_with("dream-1")
 
-    def test_missing_memory_manager_returns_503(self, mock_server: MagicMock) -> None:
-        mock_server.memory_manager = None
+    def test_missing_coordinator_returns_503(self, mock_server: MagicMock) -> None:
+        mock_server.services.memory_dream_coordinator = None
         app = FastAPI()
         app.include_router(create_memory_dream_router(mock_server))
 
-        response = TestClient(app).post("/memory/dream", json={"wait": True})
+        response = TestClient(app).post("/memory/dream", json={})
 
         assert response.status_code == 503
-        assert response.json()["detail"] == "memory manager is unavailable"
-
-    def test_missing_dream_config_returns_503(self, mock_server: MagicMock) -> None:
-        mock_server.services.config.memory.dream = None
-        app = FastAPI()
-        app.include_router(create_memory_dream_router(mock_server))
-
-        response = TestClient(app).post("/memory/dream", json={"wait": True})
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == "memory dream config is unavailable"
+        assert response.json()["detail"] == "memory dream coordinator is unavailable"
 
 
 # =============================================================================
@@ -544,7 +599,11 @@ class TestPromoteMemory:
         assert response.json()["is_global"] is True
         mock_server.memory_manager.promote_memory.assert_awaited_once_with("mm-promoted")
 
-    def test_promote_rejects_extraneous_fields(self, client, mock_server) -> None:
+    def test_promote_rejects_extraneous_fields(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
         """Promotion rejects unsupported request fields."""
         promoted = _make_memory(id="mm-promoted", is_global=True)
         mock_server.memory_manager.promote_memory = AsyncMock(return_value=promoted)

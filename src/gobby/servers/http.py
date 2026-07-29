@@ -23,7 +23,6 @@ from gobby.mcp_proxy.semantic_search import (
     SemanticToolSearch,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.mcp_proxy.tools import memory_dream as memory_dream_tools
 from gobby.servers.auth_service import AuthMode, AuthService
 from gobby.telemetry.instruments import inc_counter
 
@@ -230,6 +229,7 @@ class HTTPServer:
             code_index=services.code_indexer,
             run_db=services.run_db,
             detection_registry=services.detection_registry,
+            dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
         )
         registry_count = len(self._internal_manager)
         logger.debug("Internal registries initialized: %s registries", registry_count)
@@ -551,7 +551,9 @@ class HTTPServer:
                         )
 
             try:
-                await memory_dream_tools.cleanup_background_dream_tasks()
+                coordinator = getattr(self.services, "memory_dream_coordinator", None)
+                if coordinator is not None:
+                    await coordinator.aclose()
             except Exception as exc:
                 logger.warning(
                     "Error cleaning up background memory dreams during shutdown: %s",

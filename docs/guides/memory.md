@@ -216,9 +216,9 @@ call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
 ```python
 call_tool(server_name="gobby-memory", tool_name="memory_dream", arguments={
     "dry_run": True,
-    "wait": True,
     "memory_type": "fact"
 })
+# Returns the run ID immediately; poll memory_dream_status for progress.
 ```
 
 ## HTTP Routes
@@ -233,8 +233,8 @@ with `/api/memories`.
 | `POST /api/memories` | Create a memory from `content`, `memory_type`, `project_id`, `source_type`, `source_session_id`, and `tags`. |
 | `GET /api/memories/search` | Search memories with required query parameter `q`, plus `project_id` and `limit`. |
 | `GET /api/memories/stats` | Return memory counts, optionally scoped by `project_id`. |
-| `POST /memory/dream` | Start a memory dream run. Pass `wait=true` to run synchronously. |
-| `GET /memory/dream/{run_id}` | Return dream run status and summary. |
+| `POST /memory/dream` | Start an asynchronous memory dream run; returns the run ID immediately (202 admitted, 200 coalesced, 409 conflicting active run). |
+| `GET /memory/dream/{run_id}` | Return dream run status, durable checkpoint, and summary. |
 | `POST /memory/dream/{run_id}/revert` | Revert a dream run from snapshots. |
 | `GET /api/memories/{memory_id}` | Read one memory, optionally scoped by `project_id`. |
 | `PUT /api/memories/{memory_id}` | Update memory `content` and/or `tags`. |
@@ -437,7 +437,7 @@ Use `gobby memory backup` or MCP `backup_memories` to write the file. Use
 
 - Search before creating a memory to avoid duplicates.
 - Delete stale memories when you discover them.
-- Use `gobby memory dream --dry-run --wait` or MCP `memory_dream` with `dry_run=true`
+- Use `gobby memory dream --dry-run` or MCP `memory_dream` with `dry_run=true`
   for a report-only hygiene pass.
 - Rebuild cross-references after large imports or cleanup.
 - Reindex embeddings after changing embedding providers or models.

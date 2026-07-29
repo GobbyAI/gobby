@@ -11,16 +11,17 @@ Focuses on:
 
 import asyncio
 import inspect
-import logging
 import uuid
 from collections.abc import Iterator
-from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools import memory_dream as memory_dream_tools
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
+from gobby.memory.dream.coordinator import MemoryDreamCoordinator
+from gobby.memory.dream.service import MemoryDreamService
 
 pytestmark = pytest.mark.unit
 
@@ -539,7 +540,49 @@ class TestSearchKnowledgeGraph:
         assert "KG down" in result["error"]
 
 
-# ─── memory dream ────────────────────────────────────────────────────────
+# ─── memory dream ──────────────────────────────────────────────────────────
+
+
+def _fake_coordinator() -> MagicMock:
+    """Fake daemon-owned dream coordinator resolved by the MCP tools."""
+    coordinator = MagicMock()
+    coordinator.trigger = AsyncMock()
+    coordinator.trigger_all_due_projects = AsyncMock()
+    coordinator.service.status = AsyncMock()
+    coordinator.service.revert = AsyncMock()
+    return coordinator
+
+
+def _dream_registry(
+    mock_memory_manager: MagicMock, coordinator: MemoryDreamCoordinator | MagicMock | None
+) -> InternalToolRegistry:
+    return create_memory_registry(
+        mock_memory_manager,
+        dream_coordinator_resolver=lambda: coordinator,
+    )
+
+
+class _AdmissionFakeService:
+    """Admission-contract fake: first start admits, later starts coalesce."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.starts = 0
+
+    async def start_async(self, options: Any) -> dict[str, Any]:
+        self.starts += 1
+        if self.starts == 1:
+            return {"success": True, "run_id": "run-1"}
+        return {
+            "success": True,
+            "run_id": "run-1",
+            "coalesced": True,
+            "active": {"run_id": "run-1", "phase": "sweep", "checkpoint": None},
+        }
+
+    async def execute_run(self, run_id: str, options: Any) -> dict[str, Any]:
+        await self.release.wait()
+        return {"success": True}
 
 
 class TestMemoryDreamTools:
@@ -556,330 +599,177 @@ class TestMemoryDreamTools:
         ):
             yield
 
+    def test_memory_dream_exposes_no_wait_parameter(self, mock_memory_manager: MagicMock) -> None:
+        registry = _dream_registry(mock_memory_manager, _fake_coordinator())
+        tool = registry.get_tool_metadata("memory_dream")
+        assert tool is not None
+        assert inspect.iscoroutinefunction(tool.func)
+        parameters = inspect.signature(tool.func).parameters
+        assert "wait" not in parameters
+        assert set(parameters) == {"dry_run", "skip_consolidation", "memory_type", "full_sweep"}
+
     @pytest.mark.asyncio
-    async def test_memory_dream_runs_service(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.run = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
+    async def test_memory_dream_scoped_triggers_run(self, mock_memory_manager: MagicMock) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.trigger.return_value = {
+            "success": True,
+            "run_id": "dream-1",
+            "status": "running",
+            "coalesced": False,
+        }
+        registry = _dream_registry(mock_memory_manager, coordinator)
+
+        result = await registry.call(
+            "memory_dream",
+            {"dry_run": True, "skip_consolidation": True, "memory_type": "fact"},
         )
-        status_tool = registry.get_tool_metadata("memory_dream_status")
-        assert status_tool is not None
-        assert inspect.iscoroutinefunction(status_tool.func)
 
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
-        ):
-            result = await registry.call(
-                "memory_dream",
-                {
-                    "dry_run": True,
-                    "wait": True,
-                    "skip_consolidation": True,
-                    "memory_type": "fact",
-                },
-            )
-
-        assert result["success"] is True
-        options = service.run.await_args.args[0]
+        assert result == {
+            "success": True,
+            "run_id": "dream-1",
+            "status": "running",
+            "coalesced": False,
+        }
+        options = coordinator.trigger.await_args.args[0]
         assert options.dry_run is True
         assert options.skip_consolidation is True
         assert options.memory_type == "fact"
         assert options.project_id == "11111111-1111-4111-8111-111111110001"
+        coordinator.trigger_all_due_projects.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_memory_dream_unscoped_runs_all_due_projects(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
+    async def test_memory_dream_unscoped_triggers_all_due_projects(
+        self, mock_memory_manager: MagicMock
     ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        aggregate = {
+        coordinator = _fake_coordinator()
+        coordinator.trigger_all_due_projects.return_value = {
             "success": True,
-            "targets": 1,
-            "completed": 1,
-            "failed": 0,
-            "mutations": 2,
-            "runs": [],
+            "run_id": "aggregate-1",
+            "status": "running",
+            "coalesced": False,
         }
-        service.run_all_due_projects = AsyncMock(return_value=aggregate)
-        service.run = AsyncMock()
-        service.start_async = AsyncMock()
 
         with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
-            registry = create_memory_registry(
-                mock_memory_manager,
-                llm_service=mock_llm_service,
-                config=config,
+            registry = _dream_registry(mock_memory_manager, coordinator)
+            result = await registry.call(
+                "memory_dream",
+                {"dry_run": True, "full_sweep": True},
             )
-            with patch(
-                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-                return_value=service,
-            ):
-                result = await registry.call(
-                    "memory_dream",
-                    {"dry_run": True, "wait": True, "full_sweep": True},
-                )
 
-        assert result == aggregate
-        service.run_all_due_projects.assert_awaited_once()
-        kwargs = service.run_all_due_projects.await_args.kwargs
-        assert kwargs["dry_run"] is True
-        assert kwargs["full_sweep"] is True
+        assert result["run_id"] == "aggregate-1"
+        coordinator.trigger_all_due_projects.assert_awaited_once_with(
+            dry_run=True,
+            skip_consolidation=False,
+            memory_type=None,
+            full_sweep=True,
+        )
         # No project context → never the single-run path.
-        service.run.assert_not_awaited()
-        service.start_async.assert_not_awaited()
+        coordinator.trigger.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_memory_dream_unscoped_background_returns_aggregate_run_id(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.start_all_due_projects_async = AsyncMock(
-            return_value={"success": True, "run_id": "aggregate-1"}
-        )
-        service.execute_all_due_projects_run = AsyncMock(return_value={"success": True})
-        service.run_all_due_projects = AsyncMock()
-        service.start_async = AsyncMock()
+    async def test_memory_dream_conflict_passthrough(self, mock_memory_manager: MagicMock) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.trigger.return_value = {
+            "success": False,
+            "error": "a memory dream run is already active with incompatible options",
+            "error_code": "dream_run_conflict",
+            "conflict": {"run_id": "other-1", "scope": "all", "phase": "sweep"},
+        }
+        registry = _dream_registry(mock_memory_manager, coordinator)
 
-        with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
-            registry = create_memory_registry(
-                mock_memory_manager,
-                llm_service=mock_llm_service,
-                config=config,
-            )
-            with patch(
-                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-                return_value=service,
-            ):
-                result = await registry.call(
-                    "memory_dream",
-                    {"dry_run": True, "wait": False, "full_sweep": True},
-                )
-                background_tasks = memory_dream_tools.get_background_tasks()
-                assert len(background_tasks) == 1
-                assert background_tasks[0].get_name() == "memory-dream:aggregate-1"
-                background_results = await asyncio.gather(*background_tasks)
-
-        assert result == {"success": True, "run_id": "aggregate-1", "status": "started"}
-        assert background_results == [{"success": True}]
-        assert memory_dream_tools.get_background_tasks() == ()
-        service.start_all_due_projects_async.assert_awaited_once_with(
-            dry_run=True,
-            skip_consolidation=False,
-            memory_type=None,
-            full_sweep=True,
-        )
-        service.execute_all_due_projects_run.assert_awaited_once_with(
-            "aggregate-1",
-            dry_run=True,
-            skip_consolidation=False,
-            memory_type=None,
-            full_sweep=True,
-        )
-        service.run_all_due_projects.assert_not_awaited()
-        service.start_async.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_memory_dream_background_logs_failed_result(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        service.execute_run = AsyncMock(return_value={"success": False, "error": "boom"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
-        caplog.set_level(logging.WARNING, logger="gobby.mcp_proxy.tools.memory_dream")
-
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
-        ):
-            result = await registry.call("memory_dream", {"wait": False})
-            background_tasks = memory_dream_tools.get_background_tasks()
-            await asyncio.gather(*background_tasks)
-
-        assert result == {"success": True, "run_id": "dream-1", "status": "started"}
-        assert len(background_tasks) == 1
-        messages = [record.getMessage() for record in caplog.records]
-        assert any("Background memory dream failed" in message for message in messages)
-        assert any("dream-1" in message for message in messages)
-        assert any("memory-dream:dream-1" in message for message in messages)
-
-    @pytest.mark.asyncio
-    async def test_memory_dream_background_create_task_failure_marks_run_failed(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        service.execute_run = AsyncMock(return_value={"success": True})
-        service.record_run_failure = MagicMock(return_value={"status": "failed"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-                return_value=service,
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.memory_dream.asyncio.create_task",
-                side_effect=RuntimeError("scheduler unavailable"),
-            ),
-        ):
-            result = await registry.call("memory_dream", {"wait": False})
+        result = await registry.call("memory_dream", {})
 
         assert result["success"] is False
-        assert result["run_id"] == "dream-1"
-        assert result["status"] == "failed"
-        assert "scheduler unavailable" in result["error"]
-        service.record_run_failure.assert_called_once()
-        assert memory_dream_tools.get_background_tasks() == ()
+        assert result["error_code"] == "dream_run_conflict"
+        assert result["conflict"]["run_id"] == "other-1"
 
-    async def test_memory_dream_status_and_revert(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
+    @pytest.mark.asyncio
+    async def test_memory_dream_holds_at_most_one_background_task(
+        self, mock_memory_manager: MagicMock
     ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
-        service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
+        # The real coordinator over an admission-contract fake: the second
+        # trigger coalesces onto the active run instead of launching a second
+        # background task.
+        service = _AdmissionFakeService()
+        coordinator = MemoryDreamCoordinator(cast("MemoryDreamService", service))
+        registry = _dream_registry(mock_memory_manager, coordinator)
 
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
-        ):
-            status = await registry.call("memory_dream_status", {"run_id": "dream-1"})
-            revert = await registry.call("memory_dream_revert", {"run_id": "dream-1"})
+        first = await registry.call("memory_dream", {})
+        second = await registry.call("memory_dream", {})
+
+        assert first == {
+            "success": True,
+            "run_id": "run-1",
+            "status": "running",
+            "coalesced": False,
+        }
+        assert second["coalesced"] is True
+        assert second["run_id"] == "run-1"
+        tasks = coordinator.background_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].get_name() == "memory-dream:run-1"
+
+        service.release.set()
+        await asyncio.gather(*tasks)
+        assert coordinator.background_tasks() == ()
+
+    @pytest.mark.asyncio
+    async def test_memory_dream_status_exposes_durable_checkpoint(
+        self, mock_memory_manager: MagicMock
+    ) -> None:
+        coordinator = _fake_coordinator()
+        checkpoint = {
+            "phase": "sweep",
+            "scope": "project:proj-1",
+            "pass_number": 1,
+            "batch_number": 4,
+            "completed": 100,
+            "remaining": 25,
+            "channels": {"vector": {"attempts": 2, "latency_ms": 87}},
+            "mutations": 9,
+            "backlog": {"project:proj-1": 25},
+            "stop_reason": None,
+        }
+        coordinator.service.status.return_value = {
+            "success": True,
+            "run": {"id": "dream-1", "status": "running", "checkpoint": checkpoint},
+        }
+        registry = _dream_registry(mock_memory_manager, coordinator)
+
+        result = await registry.call("memory_dream_status", {"run_id": "dream-1"})
+
+        assert result["success"] is True
+        assert result["run"]["checkpoint"] == checkpoint
+        coordinator.service.status.assert_awaited_once_with("dream-1")
+
+    @pytest.mark.asyncio
+    async def test_memory_dream_status_and_revert(self, mock_memory_manager: MagicMock) -> None:
+        coordinator = _fake_coordinator()
+        coordinator.service.status.return_value = {"success": True, "run": {"id": "dream-1"}}
+        coordinator.service.revert.return_value = {"success": True, "run_id": "dream-1"}
+        registry = _dream_registry(mock_memory_manager, coordinator)
+
+        status = await registry.call("memory_dream_status", {"run_id": "dream-1"})
+        revert = await registry.call("memory_dream_revert", {"run_id": "dream-1"})
 
         assert status["success"] is True
         assert revert["success"] is True
-        service.status.assert_awaited_once_with("dream-1")
-        service.revert.assert_awaited_once_with("dream-1")
+        coordinator.service.status.assert_awaited_once_with("dream-1")
+        coordinator.service.revert.assert_awaited_once_with("dream-1")
 
     @pytest.mark.asyncio
-    async def test_memory_dream_reuses_registered_service(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
+    async def test_memory_dream_unavailable_coordinator(
+        self, mock_memory_manager: MagicMock
     ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.run = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
-        service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
+        registry = _dream_registry(mock_memory_manager, None)
 
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
-        ) as service_factory:
-            run = await registry.call("memory_dream", {"wait": True})
-            status = await registry.call("memory_dream_status", {"run_id": "dream-1"})
-            revert = await registry.call("memory_dream_revert", {"run_id": "dream-1"})
-
-        assert run == {"success": True, "run_id": "dream-1"}
-        assert status == {"success": True, "run": {"id": "dream-1"}}
-        assert revert == {"success": True, "run_id": "dream-1"}
-        service_factory.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_memory_dream_start_failure_releases_background_slot(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.start_async = AsyncMock(
-            side_effect=[
-                *[
-                    RuntimeError("database unavailable")
-                    for _ in range(memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS)
-                ],
-                {"success": True, "run_id": "dream-1"},
-            ]
-        )
-        service.execute_run = AsyncMock(return_value={"success": True})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
-
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
+        for name, args in (
+            ("memory_dream", {}),
+            ("memory_dream_status", {"run_id": "dream-1"}),
+            ("memory_dream_revert", {"run_id": "dream-1"}),
         ):
-            for _ in range(memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS):
-                with pytest.raises(RuntimeError, match="database unavailable"):
-                    await registry.call("memory_dream", {"wait": False})
-
-            result = await registry.call("memory_dream", {"wait": False})
-            background_tasks = memory_dream_tools.get_background_tasks()
-            await asyncio.gather(*background_tasks)
-
-        assert result == {"success": True, "run_id": "dream-1", "status": "started"}
-        assert service.start_async.await_count == memory_dream_tools.MAX_BACKGROUND_DREAM_TASKS + 1
-
-    @pytest.mark.asyncio
-    async def test_memory_dream_background_start_respects_task_cap(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_llm_service: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
-        service = MagicMock()
-        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
-        registry = create_memory_registry(
-            mock_memory_manager,
-            llm_service=mock_llm_service,
-            config=config,
-        )
-        monkeypatch.setattr(memory_dream_tools, "MAX_BACKGROUND_DREAM_TASKS", 0)
-
-        with patch(
-            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
-            return_value=service,
-        ):
-            result = await registry.call("memory_dream", {"wait": False})
-
-        assert result["success"] is False
-        assert "limit reached" in result["error"].lower()
-        service.start_async.assert_not_called()
+            result = await registry.call(name, args)
+            assert result == {
+                "success": False,
+                "error": "memory dream coordinator is unavailable",
+            }

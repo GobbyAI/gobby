@@ -6,14 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.config.app import DaemonConfig
 from gobby.config.persistence import MemoryDreamConfig
+from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 from gobby.memory.dream.cron import (
     MEMORY_DREAM_CRON_HANDLER,
     MEMORY_DREAM_CRON_JOB_NAME,
     register_memory_dream_cron,
 )
-from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import DreamRunOptions
 from gobby.storage.cron import CronJobStorage
 
@@ -68,15 +67,38 @@ class _FakeCronExecutor:
         self.handlers[name] = handler
 
 
-class _FakeDreamManager:
-    def __init__(self, targets: list[str | None]) -> None:
-        self.targets = targets
-        self.cutoffs: list[str] = []
-        self.db = MagicMock()
+def _stub_coordinator() -> MemoryDreamCoordinator:
+    """Registration-only coordinator stand-in; the handler is never invoked."""
+    return cast(MemoryDreamCoordinator, MagicMock())
 
-    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
-        self.cutoffs.append(redream_cutoff)
-        return list(self.targets)
+
+def _fake_coordinator(
+    aggregate: dict[str, Any],
+    *,
+    started: dict[str, Any] | None = None,
+) -> tuple[MemoryDreamCoordinator, dict[str, Any]]:
+    """Build a coordinator whose shared service resolves admission per
+    ``started`` and returns a canned aggregate from the run executor. The
+    per-target loop itself is unit-tested against the real service in
+    test_dream.py; here we only verify cron orchestration."""
+    captured: dict[str, Any] = {}
+
+    class _Service:
+        async def start_all_due_projects_async(self, **kwargs: Any) -> dict[str, Any]:
+            captured["start"] = kwargs
+            return dict(started or {"success": True, "run_id": "run-agg"})
+
+        async def execute_all_due_projects_run(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
+            captured["call"] = kwargs
+            captured["run_id"] = run_id
+            return {
+                "success": bool(aggregate.get("success")),
+                "run_id": run_id,
+                "aggregate": aggregate,
+            }
+
+    coordinator = cast(MemoryDreamCoordinator, SimpleNamespace(service=_Service()))
+    return coordinator, captured
 
 
 def test_register_memory_dream_cron_creates_single_system_job() -> None:
@@ -87,7 +109,7 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
     registered = register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        coordinator=_stub_coordinator(),
         dream_config=config,
         project_id="proj-1",
     )
@@ -111,7 +133,7 @@ def test_register_memory_dream_cron_does_not_register_pipeline_action() -> None:
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        coordinator=_stub_coordinator(),
         dream_config=MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
@@ -132,7 +154,7 @@ def test_register_memory_dream_cron_tolerates_missing_job_during_disable(
     registered = register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=MagicMock(),
-        memory_manager=MagicMock(),
+        coordinator=_stub_coordinator(),
         dream_config=MemoryDreamConfig(enabled=False),
         project_id="proj-1",
     )
@@ -151,7 +173,7 @@ def test_register_memory_dream_cron_preserves_disabled_system_job() -> None:
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=MagicMock(),
-        memory_manager=MagicMock(),
+        coordinator=_stub_coordinator(),
         dream_config=MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
@@ -169,7 +191,7 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=MagicMock(),
-        memory_manager=MagicMock(),
+        coordinator=_stub_coordinator(),
         dream_config=MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
@@ -178,67 +200,25 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
     assert cron_storage.woken_job_ids == ["job-1"]
 
 
-def _patch_dream_service(
-    monkeypatch: pytest.MonkeyPatch,
-    aggregate: dict[str, Any],
-    *,
-    started: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Replace cron's MemoryDreamService with a fake that records construction,
-    resolves admission per ``started``, and returns a canned aggregate from the
-    run executor. The per-target loop itself is unit-tested against the real
-    service in test_dream.py; here we only verify cron orchestration."""
-    captured: dict[str, Any] = {}
-
-    class _Service:
-        def __init__(self, **kwargs: Any) -> None:
-            captured["init"] = kwargs
-
-        async def start_all_due_projects_async(self, **kwargs: Any) -> dict[str, Any]:
-            captured["start"] = kwargs
-            return dict(started or {"success": True, "run_id": "run-agg"})
-
-        async def execute_all_due_projects_run(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
-            captured["call"] = kwargs
-            captured["run_id"] = run_id
-            return {
-                "success": bool(aggregate.get("success")),
-                "run_id": run_id,
-                "aggregate": aggregate,
-            }
-
-    monkeypatch.setattr("gobby.memory.dream.cron.MemoryDreamService", _Service)
-    return captured
-
-
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_memory_dream_cron_handler_delegates_and_formats_aggregate() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-a", None, "proj-b"])
-    captured = _patch_dream_service(
-        monkeypatch,
+    coordinator, captured = _fake_coordinator(
         {"success": True, "targets": 3, "completed": 3, "failed": 0, "mutations": 4, "runs": []},
     )
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="daemon-proj",
-        daemon_config=DaemonConfig(),
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
     message = await handler(SimpleNamespace())
 
     assert message == "memory dream: 3 target(s), 4 mutation(s) total"
-    # The daemon's own project identity is threaded into the service so the
-    # per-target loop can route the daemon's own memories to platform truth.
-    assert captured["init"]["current_project_id"] == "daemon-proj"
-    assert captured["init"]["memory_manager"] is memory_manager
     # Nightly runs stay cooldown-throttled (full_sweep is not forced).
     assert captured["call"].get("full_sweep", False) is False
     # Nightly mutating maintenance is the default: the cron never dry-runs.
@@ -249,21 +229,17 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_coalesces_onto_active_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_memory_dream_cron_handler_coalesces_onto_active_run() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-a"])
-    captured = _patch_dream_service(
-        monkeypatch,
+    coordinator, captured = _fake_coordinator(
         {"success": True},
         started={"success": True, "run_id": "run-active", "coalesced": True},
     )
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
@@ -276,14 +252,10 @@ async def test_memory_dream_cron_handler_coalesces_onto_active_run(
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_skips_on_conflicting_active_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_memory_dream_cron_handler_skips_on_conflicting_active_run() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-a"])
-    captured = _patch_dream_service(
-        monkeypatch,
+    coordinator, captured = _fake_coordinator(
         {"success": True},
         started={
             "success": False,
@@ -294,7 +266,7 @@ async def test_memory_dream_cron_handler_skips_on_conflicting_active_run(
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
@@ -311,20 +283,16 @@ def test_dream_run_options_default_to_plan_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_reports_failed_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_memory_dream_cron_handler_reports_failed_targets() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-ok", "proj-bad", None])
-    _patch_dream_service(
-        monkeypatch,
+    coordinator, _captured = _fake_coordinator(
         {"success": True, "targets": 3, "completed": 2, "failed": 1, "mutations": 4, "runs": []},
     )
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
@@ -337,14 +305,11 @@ async def test_memory_dream_cron_handler_reports_failed_targets(
 
 @pytest.mark.asyncio
 async def test_memory_dream_cron_handler_reports_window_exhaustion_without_warning(
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-a", "proj-b", None])
-    _patch_dream_service(
-        monkeypatch,
+    coordinator, _captured = _fake_coordinator(
         {
             "success": True,
             "targets": 3,
@@ -358,7 +323,7 @@ async def test_memory_dream_cron_handler_reports_window_exhaustion_without_warni
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
@@ -374,20 +339,16 @@ async def test_memory_dream_cron_handler_reports_window_exhaustion_without_warni
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_raises_when_aggregate_failed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_memory_dream_cron_handler_raises_when_aggregate_failed() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-bad", None])
-    _patch_dream_service(
-        monkeypatch,
+    coordinator, _captured = _fake_coordinator(
         {"success": False, "targets": 2, "completed": 0, "failed": 2, "mutations": 0, "runs": []},
     )
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
-        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        coordinator=coordinator,
         dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )

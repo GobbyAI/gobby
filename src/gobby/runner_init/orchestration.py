@@ -298,6 +298,28 @@ def init_orchestration(runner: GobbyRunner) -> None:
         memory_dream_config=getattr(getattr(runner.config, "memory", None), "dream", None),
     )
 
+    # Single daemon-owned admission/launch owner for memory dream runs; cron,
+    # HTTP routes, and MCP tools all resolve this instance.
+    runner.memory_dream_coordinator = None
+    memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
+    if memory_dream_config is not None and runner.memory_manager is not None:
+        try:
+            from gobby.memory.dream.coordinator import MemoryDreamCoordinator
+            from gobby.memory.dream.service import MemoryDreamService
+
+            runner.memory_dream_coordinator = MemoryDreamCoordinator(
+                MemoryDreamService(
+                    memory_manager=runner.memory_manager,
+                    dream_config=memory_dream_config,
+                    llm_service=runner.llm_service,
+                    daemon_config=runner.config,
+                    current_project_id=runner.project_id,
+                )
+            )
+        except Exception:
+            mark_service_degraded(runner, "memory_dream_coordinator")
+            logger.exception("Failed to initialize memory dream coordinator")
+
     runner.cron_storage = None
     runner.cron_scheduler = None
     runner.system_automation_loop = None
@@ -423,12 +445,13 @@ def init_orchestration(runner: GobbyRunner) -> None:
             mark_service_degraded(runner, "project_purge_service")
             logger.exception("Failed to initialize project purge service")
 
-        memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
         if memory_dream_config is None:
             logger.debug("Skipping memory dream cron registration; memory.dream config missing")
-        elif runner.memory_manager is None:
+        elif runner.memory_dream_coordinator is None:
             mark_service_degraded(runner, "memory_dream_cron")
-            logger.warning("Skipping memory dream cron registration; MemoryManager is unavailable")
+            logger.warning(
+                "Skipping memory dream cron registration; dream coordinator is unavailable"
+            )
         else:
             try:
                 from gobby.memory.dream.cron import register_memory_dream_cron
@@ -436,11 +459,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 registered = register_memory_dream_cron(
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
-                    memory_manager=runner.memory_manager,
+                    coordinator=runner.memory_dream_coordinator,
                     dream_config=memory_dream_config,
-                    llm_service=runner.llm_service,
                     project_id=runner.project_id,
-                    daemon_config=runner.config,
                 )
                 logger.debug("Memory dream cron handlers registered: %s", registered)
             except Exception:

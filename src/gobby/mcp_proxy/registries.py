@@ -75,6 +75,7 @@ def setup_internal_registries(
     code_index: Any | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
+    dream_coordinator_resolver: Callable[[], Any | None] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -213,6 +214,7 @@ def setup_internal_registries(
             session_manager=session_manager,
             config=_config,
             task_manager=task_manager,
+            dream_coordinator_resolver=dream_coordinator_resolver,
         )
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")

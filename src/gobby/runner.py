@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
+    from gobby.memory.dream.coordinator import MemoryDreamCoordinator
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
     from gobby.runner_pid_file import PidOwnershipResolution
@@ -155,6 +156,7 @@ class GobbyRunner:
     project_purge_service: Any | None
     embedding_switch_coordinator: Any | None
     memory_manager: MemoryManager | None
+    memory_dream_coordinator: MemoryDreamCoordinator | None
     code_indexer: Any | None
     code_index_pruner: CodeIndexPruner | None
     code_index_nightly_reindexer: CodeIndexNightlyFullReindexer | None

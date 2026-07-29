@@ -33,8 +33,11 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
+    from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +151,7 @@ def create_memory_registry(
     session_manager: Any | None = None,
     config: DaemonConfig | None = None,
     task_manager: SupportsTaskDecomposition | None = None,
+    dream_coordinator_resolver: Callable[[], MemoryDreamCoordinator | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create a memory tool registry with all memory-related tools.
@@ -158,6 +162,8 @@ def create_memory_registry(
         memory_backup_manager: MemoryBackupManager for backup/restore (optional)
         session_manager: SessionManager for session lookups (optional)
         config: DaemonConfig carrying digest feature routing config (optional)
+        dream_coordinator_resolver: resolves the daemon-owned dream coordinator
+            for the memory_dream tools (optional)
 
     Returns:
         InternalToolRegistry with memory tools registered
@@ -947,9 +953,7 @@ def create_memory_registry(
     register_memory_recall_tool(registry, memory_manager)
     register_memory_dream_tools(
         registry,
-        memory_manager=memory_manager,
-        llm_service=llm_service,
-        config=config,
+        coordinator_resolver=dream_coordinator_resolver or (lambda: None),
         get_project_id=get_current_project_id,
     )
 
