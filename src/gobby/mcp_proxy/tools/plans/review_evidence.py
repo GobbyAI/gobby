@@ -202,7 +202,7 @@ def register_review_evidence_tools(
                     limit=limit,
                 ),
             }
-        except ReviewEvidenceError as exc:
+        except (ReviewEvidenceError, OSError, ValueError) as exc:
             return _error_payload(exc, "get_plan_review_snapshot_failed")
 
     registry.register(

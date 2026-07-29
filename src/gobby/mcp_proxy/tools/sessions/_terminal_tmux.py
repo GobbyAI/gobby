@@ -29,6 +29,7 @@ _DEFAULT_COMPACT_INTERRUPT_KEY = "Escape"
 _CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
     "codex": "C-c",
 }
+_DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 _CODEX_INTERRUPT_SETTLE_SECONDS = 1.0
 _COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
@@ -149,7 +150,7 @@ async def _send_terminal_compaction_command(
     mark_continuation_pending: Callable[[], bool],
     clear_continuation_pending: Callable[[], bool],
     settle_seconds: float | None = None,
-    interrupt_settle_seconds: float = _CODEX_INTERRUPT_SETTLE_SECONDS,
+    interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
 ) -> tuple[bool, str | None, bool, dict[str, str] | None]:
     """Interrupt the active prompt, mark continuation pending, then compact."""

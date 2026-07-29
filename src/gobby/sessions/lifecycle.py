@@ -297,7 +297,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         # complete within seconds, so 30 min is generous). Workflow state is
         # kept for revival; reclaim it only after the revival horizon.
         orphaned = self.session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30)
-        self.session_manager.prune_stale_compact_workflow_instances(retention_hours=24)
+        pruned_workflows = self.session_manager.prune_stale_compact_workflow_instances(
+            retention_hours=24
+        )
+        if pruned_workflows:
+            logger.info("Pruned %s stale compact workflow instances", pruned_workflows)
 
         # Then expire sessions that have been paused/active for too long
         expired = self.session_manager.expire_stale_sessions(

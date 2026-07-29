@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.sessions.compact_identity import (
+    MAX_COMPACT_CONTINUATION_CANDIDATES,
+    resolve_compact_continuation,
+)
 from gobby.storage import session_activity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_activity import reconcile_compact_session_activity
@@ -285,4 +290,39 @@ def test_ambiguous_marked_terminal_process_matches_return_no_session(
     )
 
     assert resolution.session is None
-    assert resolution.conflicting_session_ids == (first_id, second_id)
+    assert resolution.conflicting_session_ids == (second_id, first_id)
+
+
+def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -> None:
+    db = MagicMock()
+    db.fetchall.return_value = [
+        {"id": "newer", "compact_marker": "compact"},
+        {"id": "older", "compact_marker": "compact"},
+    ]
+    candidates = [
+        SimpleNamespace(id="newer", status="expired", terminal_context={"pid": 1}),
+        SimpleNamespace(id="older", status="expired", terminal_context={"pid": 1}),
+    ]
+
+    with (
+        patch(
+            "gobby.sessions.compact_identity.Session.from_row",
+            side_effect=candidates,
+        ),
+        patch(
+            "gobby.sessions.compact_identity.terminal_process_contexts_match",
+            return_value=True,
+        ),
+    ):
+        resolution = resolve_compact_continuation(
+            db,
+            machine_id="machine-1",
+            source="codex",
+            terminal_context={"pid": 1},
+        )
+
+    query, params = db.fetchall.call_args.args
+    assert "ORDER BY s.created_at DESC, s.id DESC" in query
+    assert "LIMIT %s" in query
+    assert params == ("machine-1", "codex", MAX_COMPACT_CONTINUATION_CANDIDATES)
+    assert resolution.conflicting_session_ids == ("newer", "older")

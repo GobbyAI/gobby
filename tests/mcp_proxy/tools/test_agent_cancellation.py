@@ -147,7 +147,17 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
     completion_registry = RecordingCompletionRegistry()
     task_manager = MagicMock()
 
-    with patch("gobby.mcp_proxy.tools.agent_cancellation.TaskRecoveryHandler") as recovery_cls:
+    async def run_offload(func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    with (
+        patch("gobby.mcp_proxy.tools.agent_cancellation.TaskRecoveryHandler") as recovery_cls,
+        patch(
+            "gobby.agents.terminal_delivery.run_terminal_delivery_offload",
+            new_callable=AsyncMock,
+            side_effect=run_offload,
+        ) as mock_offload,
+    ):
         recovery = recovery_cls.return_value
         recovery.recover_task_from_terminal_agent = AsyncMock()
 
@@ -161,6 +171,11 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
         )
 
     assert result == {"status": "error", "workflow_stopped": True}
+    mock_offload.assert_any_await(
+        runner.run_storage.fail,
+        "run-123",
+        error="Agent self-reported error",
+    )
     runner.run_storage.fail.assert_called_once_with("run-123", error="Agent self-reported error")
     recovery.recover_task_from_terminal_agent.assert_awaited_once_with(
         failed_run,

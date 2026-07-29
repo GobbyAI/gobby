@@ -310,6 +310,13 @@ def register_agent_lifecycle_tools(
         agents = facade()
         kill_db = ctx.db or ctx.agent_run_manager.db
         if effective_status == "success":
+            completion_error = _review_completion_error(
+                ctx,
+                run_id=resolved_run_id,
+                run_result=db_run.result,
+            )
+            if completion_error is not None:
+                return cast(dict[str, Any], completion_error)
             return cast(
                 dict[str, Any],
                 await agents._complete_self_terminated_run(

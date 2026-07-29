@@ -1514,6 +1514,7 @@ class TestMarkTaskNeedsReview:
             "planning",
             review_notes="Please check the output",
             by_session_id=ANY,
+            repair_submission=None,
         )
 
     @pytest.mark.asyncio

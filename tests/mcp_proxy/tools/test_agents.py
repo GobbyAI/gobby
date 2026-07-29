@@ -1626,6 +1626,42 @@ class TestKillAgentSelfTerminationViaRunId:
         runner.cancel_run.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_run_id_self_termination_requires_review_completion(self) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+        )
+        runner.get_run.return_value = mock_run
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        from gobby.utils.session_context import session_context_for_test
+
+        completion_error = {
+            "success": False,
+            "error": "Review work is incomplete",
+            "error_code": "review_incomplete",
+        }
+        with (
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents_lifecycle_tools._review_completion_error",
+                return_value=completion_error,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents._complete_self_terminated_run",
+                new_callable=AsyncMock,
+            ) as mock_complete,
+        ):
+            result = await kill_agent(run_id="run-123")
+
+        assert result == completion_error
+        mock_complete.assert_not_awaited()
+        runner.complete_run.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_run_id_parent_kill_defaults_to_cancelled(self) -> None:
         """When parent kills agent via run_id, session context doesn't match, default to cancelled."""
         runner = _make_runner_with_run_storage()

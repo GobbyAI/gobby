@@ -879,3 +879,49 @@ async def test_deferred_health_check_respects_evidence_bind(
     current = stage_review_setup.manager.stage_states.current_stage(stage_review_setup.task_id)
     assert current is not None
     assert current.state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_deferred_health_check_persists_bounded_redacted_pane_output(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stage_review_setup = cast(
+        StageReviewSetup,
+        request.getfixturevalue("_stage_review_setup"),
+    )
+    secret = "sk-ABCDEFGHIJKLMNOPQRSTUV"
+    pane_output = f"{'x' * 2048}\n{secret}"
+
+    async def dead_session(*_args: object, **_kwargs: object) -> tuple[bool, str]:
+        return False, pane_output
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+        dead_session,
+    )
+    run = stage_review_setup.runs.create(
+        parent_session_id=stage_review_setup.parent_session_id,
+        provider="codex",
+        prompt="bounded health error",
+    )
+    runner = SimpleNamespace(run_storage=stage_review_setup.runs)
+
+    await _deferred_tmux_health_check(
+        runner,
+        run.id,
+        "bounded-health",
+        None,
+        None,
+        0,
+    )
+
+    failed_run = stage_review_setup.runs.get(run.id)
+    assert failed_run is not None
+    assert failed_run.status == "error"
+    assert failed_run.error is not None
+    error_tail = failed_run.error.split("Pane output:\n", 1)[1]
+    assert secret not in error_tail
+    assert "sk-<redacted>" in error_tail
+    assert error_tail.startswith("[truncated]\n")
+    assert len(error_tail) <= 1024

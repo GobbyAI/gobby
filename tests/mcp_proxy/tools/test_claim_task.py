@@ -659,6 +659,7 @@ class TestClaimTaskSessionVariables:
             assert "error" not in result
             merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
             assert merged_vars["claimed_task_required_skills"] == [
+                "tasks",
                 "python",
                 "development-discipline",
             ]

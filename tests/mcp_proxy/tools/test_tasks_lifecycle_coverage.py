@@ -1000,7 +1000,11 @@ class TestCloseTaskTool:
                 },
             }
             mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.side_effect = [initial_owner_vars, fresh_owner_vars]
+            mock_sv_manager.get_variables.side_effect = [
+                initial_owner_vars,
+                fresh_owner_vars,
+                fresh_owner_vars,
+            ]
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
@@ -1029,6 +1033,7 @@ class TestCloseTaskTool:
 
         assert "error" not in result
         assert mock_sv_manager.get_variables.call_args_list == [
+            call("owner-session"),
             call("owner-session"),
             call("owner-session"),
         ]

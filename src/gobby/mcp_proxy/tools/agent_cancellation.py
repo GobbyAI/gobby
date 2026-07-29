@@ -123,11 +123,14 @@ async def terminalize_killed_agent_run(
             action="fail",
             error=error,
         )
-        failed_run = (
-            review_outcome.run
-            if review_outcome.handled
-            else runner.run_storage.fail(run_id, error=error)
-        )
+        if review_outcome.handled:
+            failed_run = review_outcome.run
+        else:
+            failed_run = await run_terminal_delivery_offload(
+                runner.run_storage.fail,
+                run_id,
+                error=error,
+            )
         if failed_run is None:
             current = runner.get_run(run_id)
             logger.debug(

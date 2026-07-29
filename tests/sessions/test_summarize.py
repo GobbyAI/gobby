@@ -21,6 +21,7 @@ from gobby.sessions.summarize import (
     _generate_delta_summary,
     _generate_full_summary,
     _source_hash_payload,
+    _SummaryCoreResult,
     generate_session_summaries,
 )
 from gobby.storage.executor import DatabaseExecutor
@@ -519,6 +520,97 @@ class TestGenerateSessionSummaries:
         assert len(generated_logs) == 1
         assert generated_logs[0].levelno == logging.DEBUG
         assert joined_count == 19
+
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_receive_nested_result_copies(self) -> None:
+        manager = MagicMock()
+        manager.db = None
+        generation_started = asyncio.Event()
+        joiner_attached = asyncio.Event()
+        release_generation = asyncio.Event()
+
+        async def generate_core(**_kwargs: object) -> _SummaryCoreResult:
+            generation_started.set()
+            await release_generation.wait()
+            return _SummaryCoreResult(
+                result={"success": True, "metadata": {"items": []}},
+                full_markdown="summary",
+            )
+
+        def observe_debug(message: object, *_args: object) -> None:
+            if str(message).startswith("Joining in-flight"):
+                joiner_attached.set()
+
+        with (
+            patch(
+                "gobby.sessions.summarize._generate_session_summary_core",
+                side_effect=generate_core,
+            ) as mock_core,
+            patch(
+                "gobby.sessions.summarize._write_files",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
+        ):
+            first = asyncio.create_task(generate_session_summaries("sess-deep-copy", manager))
+            await generation_started.wait()
+            second = asyncio.create_task(generate_session_summaries("sess-deep-copy", manager))
+            await joiner_attached.wait()
+            release_generation.set()
+            first_result, second_result = await asyncio.gather(first, second)
+
+        first_result["metadata"]["items"].append("caller-only")
+
+        assert second_result["metadata"]["items"] == []
+        assert mock_core.call_count == 1
+
+    def test_same_session_on_different_event_loops_generates_independently(self) -> None:
+        manager = MagicMock()
+        manager.db = None
+        barrier = threading.Barrier(2)
+        generation_threads: list[int] = []
+        results: list[dict[str, object]] = []
+        errors: list[BaseException] = []
+
+        async def generate_core(**_kwargs: object) -> _SummaryCoreResult:
+            generation_threads.append(threading.get_ident())
+            barrier.wait(timeout=2)
+            return _SummaryCoreResult(
+                result={"success": True},
+                full_markdown="summary",
+            )
+
+        async def write_files(**_kwargs: object) -> list[str]:
+            return []
+
+        def run_summary() -> None:
+            try:
+                results.append(asyncio.run(generate_session_summaries("sess-cross-loop", manager)))
+            except BaseException as exc:
+                errors.append(exc)
+
+        with (
+            patch(
+                "gobby.sessions.summarize._generate_session_summary_core",
+                side_effect=generate_core,
+            ) as mock_core,
+            patch(
+                "gobby.sessions.summarize._write_files",
+                side_effect=write_files,
+            ),
+        ):
+            threads = [threading.Thread(target=run_summary) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        assert errors == []
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(results) == 2
+        assert len(set(generation_threads)) == 2
+        assert mock_core.call_count == 2
 
     @pytest.mark.asyncio
     async def test_different_sessions_generate_in_parallel(self) -> None:

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from copy import copy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.tool_error_tracker import load_open_tool_errors
@@ -18,6 +20,7 @@ from gobby.sessions.summary_transcripts import (
     _summary_source_text,
     _truncate_markdown,
 )
+from gobby.sessions.workspace_context import _session_git_paths
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -26,14 +29,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.sessions.summarize")
 
 
+def _decode_git_status_path(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        try:
+            decoded = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return value[1:-1]
+        if isinstance(decoded, str):
+            return decoded
+    return value
+
+
+def _git_status_paths(line: str) -> tuple[str, ...]:
+    payload = line[3:] if len(line) >= 3 else line
+    if " -> " not in payload:
+        return (_decode_git_status_path(payload),)
+    source, destination = payload.split(" -> ", 1)
+    return (
+        _decode_git_status_path(source),
+        _decode_git_status_path(destination),
+    )
+
+
 def _scoped_git_status(status: str, paths: tuple[str, ...]) -> str:
+    requested_paths = set(paths)
     scoped: list[str] = []
     for line in status.splitlines():
-        for path in paths:
-            if line.endswith(path):
-                prefix = line[:3] if len(line) >= 3 else ""
-                scoped.append(f"{prefix}{path}")
-                break
+        if requested_paths.intersection(_git_status_paths(line)):
+            scoped.append(line)
     return "\n".join(scoped)
 
 
@@ -170,7 +194,11 @@ async def _build_summary_prompt_context(
         else ""
     )
     has_session_edits = bool(handoff_ctx.files_modified)
-    session_paths = tuple(str(path) for path in handoff_ctx.files_modified)
+    project_root = Path(project_path).resolve() if project_path else Path.cwd().resolve()
+    session_paths = _session_git_paths(
+        [str(path) for path in handoff_ctx.files_modified],
+        project_root,
+    )
     structured_handoff_ctx = copy(handoff_ctx)
     if has_session_edits:
         structured_handoff_ctx.git_status = _scoped_git_status(
@@ -181,20 +209,33 @@ async def _build_summary_prompt_context(
         structured_handoff_ctx.git_status = ""
         structured_handoff_ctx.git_commits = []
 
+    file_changes = (
+        await run_db_fn(
+            run_db,
+            get_file_changes,
+            project_path=project_path,
+            paths=session_paths,
+        )
+        if has_session_edits
+        else ""
+    )
+    git_diff_summary = (
+        await run_db_fn(
+            run_db,
+            get_git_diff_summary,
+            project_path=project_path,
+            paths=session_paths,
+        )
+        if has_session_edits
+        else ""
+    )
+
     return {
         "transcript_summary": transcript_summary,
         "last_messages": last_messages_str,
         "git_status": structured_handoff_ctx.git_status,
-        "file_changes": (
-            get_file_changes(project_path=project_path, paths=session_paths)
-            if has_session_edits
-            else ""
-        ),
-        "git_diff_summary": (
-            get_git_diff_summary(project_path=project_path, paths=session_paths)
-            if has_session_edits
-            else ""
-        ),
+        "file_changes": file_changes,
+        "git_diff_summary": git_diff_summary,
         "structured_context": _format_structured_context(structured_handoff_ctx),
         "claimed_tasks": claimed_tasks,
         "session_memories": session_memories,

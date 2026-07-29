@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -117,19 +118,23 @@ def test_unchanged_membership_does_not_require_session_context() -> None:
     cast(MagicMock, ctx.resolve_session_id).assert_not_called()
 
 
-def test_fails_closed_when_session_variables_cannot_be_read() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("unavailable"), psycopg.OperationalError("database unavailable")],
+)
+def test_fails_closed_when_session_variables_cannot_be_read(error: Exception) -> None:
     ctx = _context()
-    cast(MagicMock, ctx.session_var_manager.get_variables).side_effect = ValueError("unavailable")
+    cast(MagicMock, ctx.session_var_manager.get_variables).side_effect = error
 
-    error = live_session_label_change_error(
+    validation_error = live_session_label_change_error(
         ctx,
         [],
         ["live-session"],
         session_id=SESSION_ID,
     )
 
-    assert error is not None
-    assert "readable session state" in error
+    assert validation_error is not None
+    assert "readable session state" in validation_error
 
 
 @pytest.mark.asyncio

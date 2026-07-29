@@ -10,9 +10,12 @@ Used by:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -70,15 +73,18 @@ class _SummaryCoreResult:
     full_markdown: str
 
 
-_summary_tasks: dict[str, asyncio.Task[_SummaryCoreResult]] = {}
+_SummaryTaskKey = tuple[asyncio.AbstractEventLoop, str]
+_summary_tasks: dict[_SummaryTaskKey, asyncio.Task[_SummaryCoreResult]] = {}
+_summary_tasks_lock = threading.Lock()
 
 
 def _remove_summary_task(
-    session_id: str,
+    key: _SummaryTaskKey,
     task: asyncio.Task[_SummaryCoreResult],
 ) -> None:
-    if _summary_tasks.get(session_id) is task:
-        del _summary_tasks[session_id]
+    with _summary_tasks_lock:
+        if _summary_tasks.get(key) is task:
+            del _summary_tasks[key]
     if not task.cancelled():
         task.exception()
 
@@ -450,8 +456,11 @@ async def generate_session_summaries(
 ) -> dict[str, Any]:
     """Generate summary_markdown for a session.
 
-    Concurrent requests for one session share load, generation, persistence, and
-    wiki output. Status transitions and optional file output remain caller-specific.
+    Concurrent requests for one session on the same event loop share load,
+    generation, persistence, and wiki output. Joiners reuse the originator's
+    LLM service, summary configuration, database, session manager, and database
+    runner. Different event loops generate independently. Status transitions
+    and optional file output remain caller-specific.
 
     Args:
         session_id: Platform session ID (UUID).
@@ -476,22 +485,25 @@ async def generate_session_summaries(
         return {"success": False, "error": "Session manager not available"}
 
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
-    task = _summary_tasks.get(session_id)
-    if task is None:
-        task = asyncio.create_task(
-            _generate_session_summary_core(
-                session_id=session_id,
-                session_manager=session_manager,
-                llm_service=llm_service,
-                session_summary_config=session_summary_config,
-                db=db,
-                run_db=db_runner,
+    loop = asyncio.get_running_loop()
+    task_key = (loop, session_id)
+    with _summary_tasks_lock:
+        task = _summary_tasks.get(task_key)
+        if task is None:
+            task = loop.create_task(
+                _generate_session_summary_core(
+                    session_id=session_id,
+                    session_manager=session_manager,
+                    llm_service=llm_service,
+                    session_summary_config=session_summary_config,
+                    db=db,
+                    run_db=db_runner,
+                )
             )
-        )
-        _summary_tasks[session_id] = task
-        task.add_done_callback(lambda completed: _remove_summary_task(session_id, completed))
-    else:
-        logger.debug("Joining in-flight session summary generation for %s", session_id)
+            _summary_tasks[task_key] = task
+            task.add_done_callback(partial(_remove_summary_task, task_key))
+        else:
+            logger.debug("Joining in-flight session summary generation for %s", session_id)
 
     core_result = await asyncio.shield(task)
     summary_is_valid = bool(core_result.result.get("success"))
@@ -506,6 +518,6 @@ async def generate_session_summaries(
         output_path=output_path,
         session_manager=session_manager,
     )
-    result = dict(core_result.result)
+    result = copy.deepcopy(core_result.result)
     result["files_written"] = files_written
     return result

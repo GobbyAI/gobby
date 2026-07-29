@@ -242,14 +242,15 @@ class TestCompactSelfTerminalPath:
         ]
 
     @pytest.mark.parametrize(
-        ("cli_source", "interrupt_key"),
-        [("codex", "C-c"), ("grok", "Escape")],
+        ("cli_source", "interrupt_key", "interrupt_settle_seconds"),
+        [("codex", "C-c", 1.0), ("grok", "Escape", 0.1)],
     )
     @pytest.mark.asyncio
     async def test_interrupt_settles_before_marking_and_compacting(
         self,
         cli_source: str,
         interrupt_key: str,
+        interrupt_settle_seconds: float,
     ) -> None:
         events: list[tuple[str, str | float]] = []
         tmux = MagicMock()
@@ -294,7 +295,7 @@ class TestCompactSelfTerminalPath:
         assert failure_detail is None
         assert events[:4] == [
             ("tmux", interrupt_key),
-            ("sleep", 1.0),
+            ("sleep", interrupt_settle_seconds),
             ("mark", "s1"),
             ("tmux", "/compact\n"),
         ]

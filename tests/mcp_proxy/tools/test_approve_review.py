@@ -10,6 +10,7 @@ from unittest.mock import ANY, MagicMock
 
 import pytest
 
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._stage_states import StageState
 from gobby.utils.session_context import session_context_for_test
@@ -210,6 +211,100 @@ class TestMarkTaskReviewApproved:
 
         assert "quality_ledger" not in inspect.signature(tool_func).parameters
         assert result["approval_result"] == approval_result
+
+    def test_planning_approval_replay_reuses_loaded_evidence(
+        self,
+        stage_ops_registry: Any,
+        mock_task_manager: MagicMock,
+        sample_task_needs_review: Task,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.tasks import _stage_review
+
+        approval_result = {"verdict": "approved", "quality_ledger": []}
+
+        class EvidenceService:
+            calls = 0
+
+            def __init__(self, _db: object) -> None:
+                pass
+
+            def get_evidence(self, _evidence_id: str) -> SimpleNamespace:
+                type(self).calls += 1
+                return SimpleNamespace(
+                    finalized_at="2026-07-28T12:00:00Z",
+                    approval_result=approval_result,
+                )
+
+        monkeypatch.setattr(_stage_review, "PlanReviewEvidenceService", EvidenceService)
+        monkeypatch.setattr(
+            _stage_review,
+            "complete_plan_review_mint",
+            lambda *_args, **_kwargs: {"lesson_mint_status": "none"},
+        )
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.approve_review.return_value = sample_task_needs_review
+        tool_func = stage_ops_registry._tools["approve_review"].func
+
+        result = tool_func(
+            task_id=sample_task_needs_review.id,
+            stage_name="planning",
+            round_number=1,
+            findings=[],
+            manifest_entries=[],
+            routing_decisions={},
+            coverage_attestation={"evidence_id": "evidence-1"},
+            evidence_id="evidence-1",
+        )
+
+        assert EvidenceService.calls == 1
+        assert result["approval_result"] == approval_result
+
+    def test_successful_planning_approval_tolerates_final_evidence_reload_failure(
+        self,
+        stage_ops_registry: Any,
+        mock_task_manager: MagicMock,
+        sample_task_needs_review: Task,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.mcp_proxy.tools.tasks import _stage_review
+
+        class EvidenceService:
+            calls = 0
+
+            def __init__(self, _db: object) -> None:
+                pass
+
+            def get_evidence(self, _evidence_id: str) -> SimpleNamespace:
+                type(self).calls += 1
+                if type(self).calls == 1:
+                    return SimpleNamespace(finalized_at=None, approval_result=None)
+                raise ReviewEvidenceError("evidence_not_found", "evidence disappeared")
+
+        monkeypatch.setattr(_stage_review, "PlanReviewEvidenceService", EvidenceService)
+        monkeypatch.setattr(
+            _stage_review,
+            "complete_plan_review_mint",
+            lambda *_args, **_kwargs: {"lesson_mint_status": "none"},
+        )
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.approve_review.return_value = sample_task_needs_review
+        tool_func = stage_ops_registry._tools["approve_review"].func
+
+        result = tool_func(
+            task_id=sample_task_needs_review.id,
+            stage_name="planning",
+            round_number=1,
+            findings=[],
+            manifest_entries=[],
+            routing_decisions={},
+            coverage_attestation={"evidence_id": "evidence-1"},
+            evidence_id="evidence-1",
+        )
+
+        assert EvidenceService.calls == 2
+        assert "approval_result" not in result
+        mock_task_manager.approve_review.assert_called_once()
 
     def test_approve_in_progress_task(
         self, stage_ops_registry, mock_task_manager, sample_task_in_progress

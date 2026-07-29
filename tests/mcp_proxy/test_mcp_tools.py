@@ -100,6 +100,7 @@ async def test_create_task(mock_task_manager: MagicMock) -> None:
                     "title": "Test Task",
                     "priority": 1,
                     "category": "research",
+                    "validation_criteria": "The research result is documented.",
                 },
             )
 
@@ -112,7 +113,7 @@ async def test_create_task(mock_task_manager: MagicMock) -> None:
             parent_task_id=None,
             labels=None,
             category="research",
-            validation_criteria=None,
+            validation_criteria="The research result is documented.",
             implementation_domain=None,
             additional_skills=None,
             created_in_session_id="test-session",
@@ -151,7 +152,11 @@ async def test_create_task_with_session_id(mock_task_manager: MagicMock) -> None
         with session_context_for_test("session-abc123"):
             result = await registry.call(
                 "create_task",
-                {"title": "Test Task", "category": "research"},
+                {
+                    "title": "Test Task",
+                    "category": "research",
+                    "validation_criteria": "The research result is documented.",
+                },
             )
 
         mock_task_manager.create_task_with_decomposition.assert_called_with(
@@ -163,7 +168,7 @@ async def test_create_task_with_session_id(mock_task_manager: MagicMock) -> None
             parent_task_id=None,
             labels=None,
             category="research",
-            validation_criteria=None,
+            validation_criteria="The research result is documented.",
             implementation_domain=None,
             additional_skills=None,
             created_in_session_id="session-abc123",

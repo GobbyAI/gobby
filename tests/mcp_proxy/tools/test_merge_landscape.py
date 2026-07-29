@@ -756,7 +756,7 @@ async def test_verify_in_worktree_command_failure(tmp_path) -> None:
 
     assert result["success"] is False
     assert result["exit_code"] != 0
-    assert result["failure_category"] == "environment"
+    assert result["failure_category"] == "code"
 
 
 @pytest.mark.asyncio

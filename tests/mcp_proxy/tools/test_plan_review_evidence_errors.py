@@ -27,23 +27,51 @@ def _registry(service: MagicMock) -> InternalToolRegistry:
     return registry
 
 
-def test_snapshot_non_bytes_returns_structured_error() -> None:
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            ReviewEvidenceError(
+                "invalid_evidence_row",
+                "stored plan snapshot is not bytes",
+            ),
+            {
+                "ok": False,
+                "error": "invalid_evidence_row",
+                "message": "stored plan snapshot is not bytes",
+                "retryable": False,
+            },
+        ),
+        (
+            OSError("snapshot unavailable"),
+            {
+                "ok": False,
+                "error": "get_plan_review_snapshot_failed",
+                "message": "snapshot unavailable",
+            },
+        ),
+        (
+            ValueError("invalid page"),
+            {
+                "ok": False,
+                "error": "get_plan_review_snapshot_failed",
+                "message": "invalid page",
+            },
+        ),
+    ],
+)
+def test_snapshot_expected_failures_return_structured_error(
+    error: Exception,
+    expected: dict[str, object],
+) -> None:
     service = MagicMock()
-    service.snapshot_page.side_effect = ReviewEvidenceError(
-        "invalid_evidence_row",
-        "stored plan snapshot is not bytes",
-    )
+    service.snapshot_page.side_effect = error
 
     tool = _registry(service).get_tool("get_plan_review_snapshot")
     assert tool is not None
     result = tool(evidence_id="evidence-1")
 
-    assert result == {
-        "ok": False,
-        "error": "invalid_evidence_row",
-        "message": "stored plan snapshot is not bytes",
-        "retryable": False,
-    }
+    assert result == expected
 
 
 @pytest.mark.parametrize(

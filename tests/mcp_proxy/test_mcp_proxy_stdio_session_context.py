@@ -57,9 +57,8 @@ def _mock_http_client(
 
 
 @pytest.mark.asyncio
-async def test_request_session_id_override_replaces_stale_cached_header() -> None:
+async def test_request_session_id_override_does_not_mutate_proxy_state() -> None:
     proxy = DaemonProxy(60887)
-    proxy._session_id = "old-session"
 
     with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
         client = _mock_http_client(mock_client_cls)
@@ -73,7 +72,7 @@ async def test_request_session_id_override_replaces_stale_cached_header() -> Non
 
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
-    assert proxy._session_id == "new-session"
+    assert not hasattr(proxy, "_session_id")
 
 
 @pytest.mark.asyncio
@@ -87,13 +86,12 @@ async def test_request_body_session_id_does_not_update_context_header() -> None:
 
     _, kwargs = client.request.call_args
     assert "X-Gobby-Session-Id" not in kwargs["headers"]
-    assert proxy._session_id is None
+    assert not hasattr(proxy, "_session_id")
 
 
 @pytest.mark.asyncio
-async def test_call_tool_session_id_override_replaces_stale_cached_header() -> None:
+async def test_call_tool_session_id_override_does_not_mutate_proxy_state() -> None:
     proxy = DaemonProxy(60887)
-    proxy._session_id = "old-session"
 
     with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
         mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
@@ -115,7 +113,7 @@ async def test_call_tool_session_id_override_replaces_stale_cached_header() -> N
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
     assert kwargs["json"] == {"status": "open"}
-    assert proxy._session_id == "new-session"
+    assert not hasattr(proxy, "_session_id")
 
 
 @pytest.mark.asyncio
@@ -150,7 +148,6 @@ async def test_call_tool_sends_caller_project_header_with_target_project_overrid
 @pytest.mark.asyncio
 async def test_variable_tools_send_requested_session_as_target_and_header() -> None:
     proxy = DaemonProxy(60887)
-    proxy._session_id = "old-session"
 
     with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
         client = _mock_http_client(mock_client_cls)
@@ -167,3 +164,4 @@ async def test_variable_tools_send_requested_session_as_target_and_header() -> N
     }
     assert get_call.kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
     assert get_call.kwargs["json"] == {"name": "flag", "session_id": "new-session"}
+    assert not hasattr(proxy, "_session_id")

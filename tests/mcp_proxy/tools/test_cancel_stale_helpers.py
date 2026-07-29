@@ -116,16 +116,20 @@ async def test_best_effort_continues_on_per_run_failure() -> None:
             "gobby.mcp_proxy.tools.agents._kill_agent_process",
             new_callable=AsyncMock,
             side_effect=kill_side_effect,
-        ),
+        ) as kill_agent_process,
         patch(
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             new_callable=AsyncMock,
             return_value=True,
-        ),
+        ) as terminalize,
         patch(
             "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
             new_callable=AsyncMock,
-        ),
+        ) as cleanup,
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+            new_callable=AsyncMock,
+        ) as deliver,
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
@@ -138,6 +142,10 @@ async def test_best_effort_continues_on_per_run_failure() -> None:
         "errors": [{"run_id": "run-first", "error": "process refused TERM"}],
         "count": 1,
     }
+    assert kill_agent_process.await_count == 2
+    terminalize.assert_awaited_once()
+    cleanup.assert_awaited_once()
+    assert deliver.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -162,6 +170,9 @@ async def test_cleanup_step_order_parity_with_stop_agent() -> None:
     async def cleanup_side_effect(**_kwargs: object) -> None:
         call_order.append("cleanup")
 
+    async def deliver_side_effect(**_kwargs: object) -> None:
+        call_order.append("deliver")
+
     with (
         patch(
             "gobby.mcp_proxy.tools.agents._kill_agent_process",
@@ -178,6 +189,11 @@ async def test_cleanup_step_order_parity_with_stop_agent() -> None:
             new_callable=AsyncMock,
             side_effect=cleanup_side_effect,
         ) as cleanup,
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+            new_callable=AsyncMock,
+            side_effect=deliver_side_effect,
+        ) as deliver,
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
@@ -185,10 +201,11 @@ async def test_cleanup_step_order_parity_with_stop_agent() -> None:
         )
 
     assert result == {"success": True, "cancelled": ["run-123"], "errors": [], "count": 1}
-    assert call_order == ["kill", "terminalize", "cleanup"]
+    assert call_order == ["kill", "terminalize", "cleanup", "deliver"]
     kill_agent_process.assert_awaited_once()
     terminalize.assert_awaited_once()
     cleanup.assert_awaited_once()
+    deliver.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -216,6 +233,10 @@ async def test_db_less_registry_uses_runner_run_storage() -> None:
             "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
             new_callable=AsyncMock,
         ),
+        patch(
+            "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+            new_callable=AsyncMock,
+        ) as deliver,
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
@@ -224,3 +245,5 @@ async def test_db_less_registry_uses_runner_run_storage() -> None:
 
     assert result == {"success": True, "cancelled": ["run-123"], "errors": [], "count": 1}
     runner.run_storage.list_by_parent.assert_called_once_with("parent-session")
+    assert deliver.await_args is not None
+    assert deliver.await_args.kwargs["db"] is runner.run_storage.db

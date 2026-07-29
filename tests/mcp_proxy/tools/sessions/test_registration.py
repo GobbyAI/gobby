@@ -317,3 +317,21 @@ class TestRegisterSession:
         assert result["canonical_external_id"] == "provider-stable-id"
         session_manager.update_status_from_activity.assert_not_called()
         session_manager.register.assert_not_called()
+
+    def test_ambient_resolver_failure_returns_not_found(self) -> None:
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = ValueError("unknown session")
+        register = _make_registry(session_manager=session_manager).get_tool("register_session")
+        assert register is not None
+
+        with session_context_for_test("#42"):
+            result = register(
+                external_id="provider-id",
+                source="codex",
+                machine_id="machine-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+            )
+
+        assert result["error_code"] == "ambient_session_not_found"
+        session_manager.get.assert_not_called()
+        session_manager.register.assert_not_called()

@@ -9,6 +9,8 @@ from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 
+MAX_COMPACT_CONTINUATION_CANDIDATES = 250
+
 
 @dataclass(frozen=True)
 class CompactIdentityResolution:
@@ -42,9 +44,10 @@ def resolve_compact_continuation(
           AND s.source = %s
           AND s.session_type = 'terminal'
           AND s.status IN ('handoff_ready', 'expired')
-        ORDER BY s.created_at, s.id
+        ORDER BY s.created_at DESC, s.id DESC
+        LIMIT %s
         """,
-        (machine_id, source),
+        (machine_id, source, MAX_COMPACT_CONTINUATION_CANDIDATES),
     )
     matching = [
         candidate

@@ -92,10 +92,13 @@ machine_id and project_id are auto-resolved from the local environment if omitte
 
         ambient_session_ref = get_current_session_id()
         if ambient_session_ref:
-            ambient_session_id = session_manager.resolve_session_reference(
-                ambient_session_ref,
-                resolved_project_id,
-            )
+            try:
+                ambient_session_id = session_manager.resolve_session_reference(
+                    ambient_session_ref,
+                    resolved_project_id,
+                )
+            except ValueError:
+                ambient_session_id = None
             ambient_session = (
                 session_manager.get(ambient_session_id) if ambient_session_id is not None else None
             )

@@ -209,8 +209,8 @@ def add_messaging_tools(
                                 "invalid_round_result",
                                 "delivered round result must be a JSON object",
                             )
-                        payload = validate_round_result(raw_result)
-                        telemetry = payload.get("convergence_telemetry")
+                        round_result = validate_round_result(raw_result)
+                        telemetry = round_result.get("convergence_telemetry")
                         if not isinstance(telemetry, Mapping):
                             raise ReviewEvidenceError(
                                 "invalid_round_result",
@@ -232,7 +232,7 @@ def add_messaging_tools(
                         effect_kind="round_result",
                         target_session_id=str(resolved_target_id),
                     )
-                    bound_review = (str(row["run_id"]), message_id, payload)
+                    bound_review = (str(row["run_id"]), message_id, round_result)
 
             send_result = await mailbox.send(
                 from_session_id=from_id,
@@ -273,7 +273,7 @@ def add_messaging_tools(
                         }
                     if include_wakeup:
                         send_result.wake_results = [
-                            await mailbox._wake(send_result.recipient_session_ids[0])
+                            await mailbox.wake(send_result.recipient_session_ids[0])
                         ]
                 else:
                     try:
@@ -318,11 +318,11 @@ def add_messaging_tools(
                                 "error": str(e),
                             }
                         )
-            payload = send_result.to_dict()
-            payload["failed_ws_broadcasts"] = failed_ws_broadcasts
-            payload["success"] = send_result.success
-            payload["message"] = msg.to_dict() if msg is not None else None
-            return payload
+            response = send_result.to_dict()
+            response["failed_ws_broadcasts"] = failed_ws_broadcasts
+            response["success"] = send_result.success
+            response["message"] = msg.to_dict() if msg is not None else None
+            return response
 
         except Exception as e:
             logger.error("send_message failed: %s", e)

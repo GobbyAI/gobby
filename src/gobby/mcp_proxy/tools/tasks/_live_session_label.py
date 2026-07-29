@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import psycopg
+
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.utils.session_context import get_current_session_id
 
@@ -29,7 +31,7 @@ def live_session_label_change_error(
     try:
         resolved_session_id = ctx.resolve_session_id(session_ref)
         session = ctx.session_manager.get(resolved_session_id)
-    except (KeyError, LookupError, ValueError):
+    except (KeyError, LookupError, ValueError, psycopg.Error):
         session = None
     if session is None:
         return "Changing the live-session label requires a resolvable session."
@@ -40,7 +42,7 @@ def live_session_label_change_error(
 
     try:
         variables = ctx.session_var_manager.get_variables(resolved_session_id)
-    except (KeyError, LookupError, ValueError):
+    except (KeyError, LookupError, ValueError, psycopg.Error):
         return "Changing the live-session label requires readable session state."
     loaded_skills = variables.get("loaded_skills")
     if not isinstance(loaded_skills, list) or "live-session" not in loaded_skills:

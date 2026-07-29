@@ -19,6 +19,7 @@ from gobby.sessions.compact_continuation import (
     _pop_session_variable,
     build_compact_self_continue_prompt,
     consume_and_schedule_compact_self_continuation,
+    consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
     schedule_compact_self_continuation,
@@ -152,6 +153,26 @@ def test_pending_marker_stores_summary_session_id(session_db: HubDatabase) -> No
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == SOURCE_SESSION_ID
+
+
+def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) -> None:
+    created_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
+    assert mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        now=created_at,
+    )
+
+    prompt = consume_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        now=datetime(2026, 7, 28, 12, 0, 2, tzinfo=UTC),
+        fresh_seconds=1,
+    )
+
+    assert prompt is None
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
 
 
 def test_failed_schedule_restores_exact_pending_marker(session_db: HubDatabase) -> None:

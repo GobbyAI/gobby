@@ -179,17 +179,7 @@ class MailboxService:
 
         wake_results: list[dict[str, Any]] = []
         if include_wakeup:
-            wake_results = [
-                self._normalize_wake_result(recipient_id, result)
-                for recipient_id, result in zip(
-                    recipient_ids,
-                    await asyncio.gather(
-                        *(self._wake(rid) for rid in recipient_ids),
-                        return_exceptions=True,
-                    ),
-                    strict=True,
-                )
-            ]
+            wake_results = list(await asyncio.gather(*(self.wake(rid) for rid in recipient_ids)))
 
         return MailboxSendResult(
             messages=messages,
@@ -818,3 +808,13 @@ class MailboxService:
         if isinstance(result, dict):
             return result
         return {"session_id": session_id, "delivered": False, "method": None}
+
+    async def wake(self, session_id: str) -> dict[str, Any]:
+        """Wake a session and normalize dispatcher failures."""
+        result = (
+            await asyncio.gather(
+                self._wake(session_id),
+                return_exceptions=True,
+            )
+        )[0]
+        return self._normalize_wake_result(session_id, result)

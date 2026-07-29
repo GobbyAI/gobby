@@ -23,7 +23,7 @@ from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_sta
 from gobby.mcp_proxy.tools.tasks._plan_review_approval import complete_plan_review_mint
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_findings import FINDING_REPAIR_SCOPES, FINDING_SEVERITIES
 from gobby.plans.review_telemetry import CONVERGENCE_TELEMETRY_SCHEMA
 from gobby.storage.tasks import TaskNotFoundError
@@ -340,10 +340,12 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         replay = False
         evidence_service: PlanReviewEvidenceService | None = None
+        review_evidence: PlanReviewEvidence | None = None
         if stage_name == "planning" and evidence_id:
             evidence_service = PlanReviewEvidenceService(ctx.task_manager.db)
             try:
-                replay = evidence_service.get_evidence(evidence_id).finalized_at is not None
+                review_evidence = evidence_service.get_evidence(evidence_id)
+                replay = review_evidence.finalized_at is not None
             except ReviewEvidenceError:
                 replay = False
         approval_kwargs: dict[str, Any] = {
@@ -401,10 +403,10 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             if replay:
                 if evidence_service is None:
                     raise RuntimeError("planning replay has no evidence service")
+                if review_evidence is None:
+                    raise RuntimeError("planning replay has no loaded review evidence")
                 response = _operation_response(ctx, resolved_id, stage_name)
-                response["approval_result"] = evidence_service.get_evidence(
-                    evidence_id
-                ).approval_result
+                response["approval_result"] = review_evidence.approval_result
                 response.update(mint_result)
                 return response
 
@@ -460,7 +462,16 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         )
         response = _operation_response(ctx, resolved_id, stage_name)
         if evidence_service is not None and evidence_id is not None:
-            response["approval_result"] = evidence_service.get_evidence(evidence_id).approval_result
+            try:
+                response["approval_result"] = evidence_service.get_evidence(
+                    evidence_id
+                ).approval_result
+            except ReviewEvidenceError:
+                logger.warning(
+                    "Planning approval succeeded but evidence %s could not be reloaded",
+                    evidence_id,
+                    exc_info=True,
+                )
         if mint_result is not None:
             response.update(mint_result)
         return response

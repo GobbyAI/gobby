@@ -179,6 +179,7 @@ class TestResolveSessionTaskValueHashRef:
         task = tm.create_task(
             project_id=sample_project["id"],
             title="Test task for resolution",
+            validation_criteria="The task reference resolves to this task.",
         )
 
         result = resolve_session_task_value(
@@ -204,6 +205,7 @@ class TestResolveSessionTaskValueHashRef:
         task = tm.create_task(
             project_id=sample_project["id"],
             title="Task for numeric ref",
+            validation_criteria="The numeric task reference resolves to this task.",
         )
 
         result = resolve_session_task_value(

@@ -12,8 +12,13 @@ import psycopg
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.plans.review_terminal import AgentRunTerminalStorage, terminalize_plan_review_run
+from gobby.sessions.session_wiki_file import redact_session_markdown
 
 logger = logging.getLogger(__name__)
+
+_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS = 5.0
+_PANE_ERROR_MAX_CHARS = 1024
+_PANE_ERROR_TRUNCATION_MARKER = "[truncated]\n"
 
 # Track fire-and-forget health check tasks for clean shutdown
 _health_check_tasks: set[asyncio.Task[None]] = set()
@@ -27,6 +32,14 @@ class _RunStorageForHealth(AgentRunTerminalStorage, Protocol):
 class _RunnerWithRunStorage(Protocol):
     @property
     def run_storage(self) -> _RunStorageForHealth: ...
+
+
+def _bounded_redacted_pane_output(output: str) -> str:
+    redacted = redact_session_markdown(output.strip())
+    if len(redacted) <= _PANE_ERROR_MAX_CHARS:
+        return redacted
+    tail_chars = _PANE_ERROR_MAX_CHARS - len(_PANE_ERROR_TRUNCATION_MARKER)
+    return f"{_PANE_ERROR_TRUNCATION_MARKER}{redacted[-tail_chars:]}"
 
 
 def cancel_health_checks() -> None:
@@ -79,13 +92,19 @@ async def _check_tmux_session_alive(
     if not manager.is_available():
         return True, None  # Can't check without tmux binary, assume alive
     try:
-        info = await asyncio.wait_for(manager.get_session(session_name), timeout=5.0)
+        info = await asyncio.wait_for(
+            manager.get_session(session_name),
+            timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
+        )
         alive = bool(info and not info.pane_dead and info.pane_pid is not None)
         if alive or info is None:
             return alive, None
         try:
-            output = await manager.capture_pane(session_name, lines=50)
-        except Exception:
+            output = await asyncio.wait_for(
+                manager.capture_pane(session_name, lines=50),
+                timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
             output = None
         if not output or not output.strip():
             return False, None
@@ -118,7 +137,7 @@ async def _deferred_tmux_health_check(
                 return
             error = "Agent process exited immediately after spawn"
             if pane_output:
-                error = f"{error}\nPane output:\n{pane_output}"
+                error = f"{error}\nPane output:\n{_bounded_redacted_pane_output(pane_output)}"
             logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)
             try:
                 review_outcome = terminalize_plan_review_run(

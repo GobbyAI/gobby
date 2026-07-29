@@ -35,6 +35,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _COMPACTION_REJECTION_ERROR_CODE,
     _COMPACTION_REJECTION_SETTLE_SECONDS,
     _DEFAULT_COMPACT_INTERRUPT_KEY,
+    _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     _capture_pane_snapshot,
     _compact_interrupt_key,
     _detect_compaction_rejection,
@@ -215,7 +216,11 @@ async def _send_terminal_compaction_command(
         mark_continuation_pending=mark_continuation_pending,
         clear_continuation_pending=clear_continuation_pending,
         settle_seconds=settle_seconds,
-        interrupt_settle_seconds=_CODEX_INTERRUPT_SETTLE_SECONDS,
+        interrupt_settle_seconds=(
+            _CODEX_INTERRUPT_SETTLE_SECONDS
+            if cli_source == "codex"
+            else _DEFAULT_INTERRUPT_SETTLE_SECONDS
+        ),
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
     )
 

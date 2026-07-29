@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionInfo
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.spawn_agent._health import (
+    _bounded_redacted_pane_output,
     _check_tmux_session_alive,
     _deferred_tmux_health_check,
     cancel_health_checks,
@@ -115,7 +116,7 @@ async def test_check_tmux_session_alive_keeps_confirmed_death_when_capture_fails
     manager.get_session = AsyncMock(
         return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
     )
-    manager.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
+    manager.capture_pane = AsyncMock(side_effect=OSError("capture failed"))
 
     with (
         patch(
@@ -132,6 +133,80 @@ async def test_check_tmux_session_alive_keeps_confirmed_death_when_capture_fails
     assert result[0] is False
     assert result[1] is None
     manager.capture_pane.assert_awaited_once_with("sess", lines=50)
+
+
+@pytest.mark.asyncio
+async def test_check_tmux_session_alive_propagates_unexpected_capture_failure() -> None:
+    manager = MagicMock()
+    manager.is_available.return_value = True
+    manager.get_session = AsyncMock(
+        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
+    )
+    manager.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            return_value=manager,
+        ),
+        patch(
+            "gobby.agents.tmux.get_configured_tmux_config",
+            return_value=TmuxConfig(),
+        ),
+        pytest.raises(RuntimeError, match="capture failed"),
+    ):
+        await _check_tmux_session_alive("sess")
+
+    assert manager.get_session.await_args_list == [call("sess")]
+    assert manager.capture_pane.await_args_list == [call("sess", lines=50)]
+
+
+@pytest.mark.asyncio
+async def test_check_tmux_session_alive_bounds_capture_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MagicMock()
+    manager.is_available.return_value = True
+    manager.get_session = AsyncMock(
+        return_value=TmuxSessionInfo(name="sess", pane_pid=123, pane_dead=True)
+    )
+
+    async def capture_forever(*_args: object, **_kwargs: object) -> str:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    manager.capture_pane = AsyncMock(side_effect=capture_forever)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._health._TMUX_HEALTH_CHECK_TIMEOUT_SECONDS",
+        0.001,
+    )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            return_value=manager,
+        ),
+        patch(
+            "gobby.agents.tmux.get_configured_tmux_config",
+            return_value=TmuxConfig(),
+        ),
+    ):
+        result = await _check_tmux_session_alive("sess")
+
+    assert result == (False, None)
+    assert manager.get_session.await_args_list == [call("sess")]
+    assert manager.capture_pane.await_args_list == [call("sess", lines=50)]
+
+
+def test_bounded_redacted_pane_output_redacts_secret_and_preserves_tail_bound() -> None:
+    output = f"{'x' * 2048}\nsk-ABCDEFGHIJKLMNOPQRSTUV"
+
+    result = _bounded_redacted_pane_output(output)
+
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in result
+    assert "sk-<redacted>" in result
+    assert result.startswith("[truncated]\n")
+    assert len(result) <= 1024
 
 
 @pytest.mark.asyncio

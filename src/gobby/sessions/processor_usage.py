@@ -59,7 +59,7 @@ class ProcessorUsageMixin:
         session_model = getattr(session, "model", None)
         session_model = session_model if isinstance(session_model, str) and session_model else None
         last_model = session_model
-        if not has_usage and not has_window_metadata:
+        if not has_usage and not has_context_occupancy and not has_window_metadata:
             for msg in messages:
                 last_model = reconcile_observed_model(last_model, msg.model)
             if last_model is not None and last_model != session_model:
