@@ -548,7 +548,8 @@ async def test_saturated_keyword_calls_do_not_starve_vector(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     blocker = asyncio.Event()
-    candidates = [_candidate(f"candidate-{index}") for index in range(8)]
+    candidates = [_candidate(f"candidate-{index}") for index in range(40)]
+    newer = _memory("vector-hit", created_at=_NOW + timedelta(days=1))
     started_count = 0
     active_count = 0
     peak_active_count = 0
@@ -564,39 +565,57 @@ async def test_saturated_keyword_calls_do_not_starve_vector(
             active_count -= 1
         return []
 
-    vector = AsyncMock(return_value={})
+    async def healthy_vector(
+        page_candidates: list[DreamCandidate],
+        **_kwargs: object,
+    ) -> dict[str, list[tuple[str, float]]]:
+        return {page_candidate.id: [("vector-hit", 0.8)] for page_candidate in page_candidates}
+
+    vector = AsyncMock(side_effect=healthy_vector)
     session = RelatedEvidenceSession()
     with (
         patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.03),
-        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
+        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.15),
         patch("gobby.memory.dream.related._keyword_hits", side_effect=block_keyword),
         patch("gobby.memory.dream.related._vector_hits", vector),
+        patch(
+            "gobby.memory.dream.related._hydrate_hits",
+            AsyncMock(return_value=[newer]),
+        ),
     ):
-        started = asyncio.get_running_loop().time()
-        result = await gather_related_evidence(
-            candidates,
-            db=MagicMock(),
-            vector_store=MagicMock(),
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-        elapsed = asyncio.get_running_loop().time() - started
+        elapsed_pages: list[float] = []
+        results: list[list[DreamCandidate]] = []
+        for _page in range(3):
+            started = asyncio.get_running_loop().time()
+            results.append(
+                await gather_related_evidence(
+                    candidates,
+                    db=MagicMock(),
+                    vector_store=MagicMock(),
+                    dream_config=SimpleNamespace(),
+                    session=session,
+                    scope=RetrievalScope.project_only("project-a"),
+                )
+            )
+            elapsed_pages.append(asyncio.get_running_loop().time() - started)
         await session.aclose()
         calls_after_close = started_count
         await asyncio.wait_for(asyncio.to_thread(lambda: None), timeout=0.2)
 
-    assert result == candidates
-    assert elapsed < 0.2
+    assert results[0] == candidates
+    assert results[1] == candidates
+    assert results[2][0].related[0].id == "vector-hit"
+    assert max(elapsed_pages) < 0.15
     assert "channels=keyword" in caplog.text
     assert "channels=page" not in caplog.text
     assert started_count > 0
     assert peak_active_count <= 4
     assert calls_after_close == started_count
     assert active_count == 0
-    assert session._timeout_counts["keyword"] == 1
+    assert session.channel_tripped("keyword")
+    assert session._timeout_counts["keyword"] == 2
     assert session._timeout_counts["vector"] == 0
-    assert vector.await_count == 1
+    assert vector.await_count == 3
     assert not session._tasks
 
 

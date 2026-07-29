@@ -1377,6 +1377,7 @@ class TestRemoveMemoryFromGraph:
         self,
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """remove_memory_from_graph on non-existent ID doesn't raise."""
         mock_falkor.query.return_value = []
@@ -1385,6 +1386,8 @@ class TestRemoveMemoryFromGraph:
             c for c in mock_falkor.query.call_args_list if "DETACH DELETE m" in c.args[0]
         ]
         assert len(delete_calls) == 1
+        assert not any("_Entity" in call.args[0] for call in mock_falkor.query.call_args_list)
+        assert not caplog.text
 
     @pytest.mark.asyncio
     async def test_remove_memories_preserves_owner_and_visibility_scopes(

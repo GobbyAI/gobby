@@ -224,18 +224,18 @@ class RelatedEvidenceSession:
 
         async def execute() -> _CallOutcome:
             nonlocal task
-            async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
-                task = self.create_task(
-                    operation(),
-                    name=f"dream-related-{channel}-page-{page_index}",
-                )
-                return _CallOutcome(value=await task)
+            task = self.create_task(
+                operation(),
+                name=f"dream-related-{channel}-page-{page_index}",
+            )
+            return _CallOutcome(value=await task)
 
         try:
-            if channel in _DB_BACKED_CHANNELS:
-                async with self._db_semaphore:
-                    return await execute()
-            return await execute()
+            async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
+                if channel in _DB_BACKED_CHANNELS:
+                    async with self._db_semaphore:
+                        return await execute()
+                return await execute()
         except TimeoutError:
             if task is not None:
                 task.cancel()

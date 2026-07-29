@@ -42,6 +42,8 @@ class KnowledgeGraphMaintenance:
                 "MATCH (m:Memory {memory_id: $memory_id}) DETACH DELETE m",
                 {"memory_id": memory_id},
             )
+            if memory_scope is None and global_scope is None:
+                return
             await self.remove_orphaned_entities(
                 scope="global" if global_scope else "project",
                 project_id=memory_scope,
