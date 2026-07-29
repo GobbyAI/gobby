@@ -572,6 +572,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         *_codex_mcp_config_overrides(
             request.project_path,
             (launch.provider_env or {}).get("TMPDIR"),
+            managed_identity_env=env,
         ),
         *request.codex_config_overrides,
     ]

@@ -7,6 +7,7 @@ import pytest
 
 from gobby.cli.installers.shared import sync_bundled_content_to_db
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -279,6 +280,83 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         assert refreshed_a is not None
         assert refreshed_a.status == "expired"
         assert refreshed_a.to_dict() == expired_a
+    finally:
+        await proxy.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_spawn_uses_child_identity_for_schema_lease(
+    cli_events: CLIEventSimulator,
+    daemon_instance: DaemonInstance,
+    postgres_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_result = cli_events.register_test_project(
+        project_id=PROJECT_ID,
+        name="E2E Test Project",
+        repo_path=str(daemon_instance.project_dir),
+    )
+    assert project_result["status"] in {"success", "already_exists"}
+
+    session_manager = SessionManager(postgres_db)
+    parent = session_manager.register(
+        external_id=f"managed-parent-{uuid.uuid4()}",
+        machine_id="test-machine",
+        source="codex",
+        project_id=PROJECT_ID,
+    )
+    child_external_id = f"managed-child-{uuid.uuid4()}"
+    child = session_manager.register(
+        external_id=child_external_id,
+        machine_id="test-machine",
+        source="codex",
+        project_id=PROJECT_ID,
+        parent_session_id=parent.id,
+        agent_depth=1,
+    )
+    run_manager = LocalAgentRunManager(postgres_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        claimed_session_id=child.id,
+        provider="codex",
+        prompt="Exercise progressive discovery",
+        run_id=str(uuid.uuid4()),
+    )
+    run_manager.start(run.id)
+
+    variable_manager = SessionVariableManager(postgres_db)
+    variable_manager.set_variable(child.id, "enforce_tool_schema_check", True)
+    variable_manager.set_variable(child.id, "unlocked_tools", [])
+    variable_manager.set_variable(parent.id, "unlocked_tools", [])
+
+    monkeypatch.setenv("GOBBY_HOME", str(daemon_instance.gobby_home))
+    monkeypatch.setenv("GOBBY_PROJECT_ID", PROJECT_ID)
+    monkeypatch.setenv("GOBBY_SESSION_ID", child.id)
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", run.id)
+    proxy = DaemonProxy(daemon_instance.http_port)
+
+    try:
+        schema = await proxy.get_tool_schema(TARGET_SERVER, TARGET_TOOL)
+        assert schema.get("success") is True
+        post_tool = cli_events.post_tool_use(
+            child_external_id,
+            cli_source="codex",
+            input_data=_schema_hook_input("codex"),
+            project_id=PROJECT_ID,
+        )
+        assert post_tool.get("continue") is True
+
+        result = await proxy.call_tool(
+            TARGET_SERVER,
+            TARGET_TOOL,
+            {},
+            preflight_enabled=False,
+        )
+        assert result.get("success") is True
+        lease = f"{TARGET_SERVER}:{TARGET_TOOL}"
+        assert lease in variable_manager.get_variables(child.id)["unlocked_tools"]
+        assert lease not in variable_manager.get_variables(parent.id)["unlocked_tools"]
     finally:
         await proxy.aclose()
 

@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 
 import psycopg
 
-from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
+from gobby.agents.constants import (
+    ALL_TERMINAL_ENV_VARS,
+    GOBBY_AGENT_RUN_ID,
+    GOBBY_PROJECT_ID,
+    GOBBY_SESSION_ID,
+)
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn
@@ -53,6 +58,11 @@ _CODEX_REQUIRED_GOBBY_TOOLS = frozenset(
     }
 )
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
+_CODEX_GOBBY_MCP_IDENTITY_ENV_VARS = (
+    GOBBY_SESSION_ID,
+    GOBBY_PROJECT_ID,
+    GOBBY_AGENT_RUN_ID,
+)
 
 
 def _validate_codex_gobby_tool_allowlist() -> None:
@@ -237,6 +247,7 @@ def _record_actual_sandbox_enforcement(
 def _codex_mcp_config_overrides(
     project_path: str | None,
     sandbox_temp_dir: str | None = None,
+    managed_identity_env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Force Codex spawned in isolated workspaces to use the main repo MCP server."""
     if not project_path:
@@ -258,6 +269,10 @@ def _codex_mcp_config_overrides(
     # per-run scratchpad the policy actually allows.
     if sandbox_temp_dir:
         overrides.append(f"mcp_servers.gobby.env.TMPDIR={json.dumps(sandbox_temp_dir)}")
+    if managed_identity_env:
+        for variable_name in _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS:
+            if value := managed_identity_env.get(variable_name):
+                overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
     # Dotted -c overrides replace enough of the spawned server table that Codex
     # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
     # tools required by worker contracts so unattended builds do not stop on MCP

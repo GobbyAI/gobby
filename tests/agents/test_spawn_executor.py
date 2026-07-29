@@ -507,7 +507,11 @@ class TestExecuteSpawn:
         spawn_context = MagicMock(
             session_id="gobby-sess-123",
             agent_run_id="run-abc123def456",
-            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            env_vars={
+                "GOBBY_SESSION_ID": "gobby-sess-123",
+                "GOBBY_PROJECT_ID": "proj",
+                "GOBBY_AGENT_RUN_ID": "run-abc123def456",
+            },
         )
         mock_prepare = MagicMock(
             side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context
@@ -562,6 +566,10 @@ class TestExecuteSpawn:
             assert 'mcp_servers.gobby.tools.list_tools.approval_mode="approve"' in command
             assert 'mcp_servers.gobby.tools.get_tool_schema.approval_mode="approve"' in command
             assert 'mcp_servers.gobby.tools.call_tool.approval_mode="approve"' in command
+            assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="gobby-sess-123"' in command
+            assert 'mcp_servers.gobby.env.GOBBY_PROJECT_ID="proj"' in command
+            assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-abc123def456"' in command
+            assert not any("GOBBY_PARENT_SESSION_ID" in argument for argument in command)
             assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can
