@@ -25,8 +25,10 @@ the hub install (shared wrapped-DEK; shared `auth.api_token_hash` in config_stor
 - Default behavior unchanged: `datastore_mode` absent means `local`, which is exactly
   today's semantics including the loopback-only `database_url` validation.
 - The tailnet is the trust boundary: Tailscale ACLs restricting the three datastore
-  ports to Josh's devices are a documented requirement. Qdrant API key is explicitly
-  deferred (config plumbing exists Rust-side when needed).
+ports to Josh's devices are a documented requirement. Qdrant API key is explicitly
+deferred (config plumbing exists Rust-side when needed), so datastore exposure is
+limited to loopback or one concrete Tailscale interface address; wildcard binds are
+refused rather than exposing unauthenticated Qdrant outside that boundary.
 - Paths stay opaque strings; no daemon-host normalization of another machine's paths.
 - M0 client machines should use identical project checkout paths (`/Users/josh/...` on
   both Macs); `projects.repo_path` is intentionally untouched until #17435/#17437.
@@ -110,10 +112,11 @@ Parameterize the hub-side bind address and make exposure survive reinstalls:
   must derive host/url from `databases.published_host`, falling back to localhost when
   unset.
 - New hub-side command `gobby datastores expose --bind <addr> --host <name>`: persists
-  both keys, rewrites `databases.qdrant.url` → `http://<host>:<qdrant_port>` and
-  `databases.falkordb.host` → `<host>`, re-runs compose up with the new binding, and
-  reasserts the `unless-stopped` restart policy. Idempotent; `--bind` accepts an IP or
-  `0.0.0.0`.
+both keys, rewrites `databases.qdrant.url` → `http://<host>:<qdrant_port>` and
+`databases.falkordb.host` → `<host>`, re-runs compose up with the new binding, and
+reasserts the `unless-stopped` restart policy. Idempotent; `--bind` accepts loopback
+or a concrete Tailscale interface address and rejects wildcard addresses
+(`0.0.0.0` and `::`) while Qdrant authentication is deferred.
 - No Qdrant API key in this deliverable (deferred; documented in 3.2). No hand edits to
   the installed compose file are ever required — the knob lives in env/config_store, so
   `_refresh_unified_compose` (`falkor.py:118`) template overwrites are harmless.
@@ -123,7 +126,7 @@ Parameterize the hub-side bind address and make exposure survive reinstalls:
 - 1.2.1 - Both compose templates use the bind-address variable and remain identical. test: `tests/cli/test_compose_bind_address.py::test_templates_parameterized_and_identical`.
 - 1.2.2 - `resolve_compose_runtime` injects `GOBBY_SERVICES_BIND_ADDRESS` from `databases.bind_address`. symbol: `gobby.cli.installers.compose_env.resolve_compose_runtime`.
 - 1.2.3 - FalkorDB/Qdrant installers derive config endpoints from `databases.published_host` and no longer hardcode localhost. test: `tests/cli/test_compose_bind_address.py::test_installers_respect_published_host`.
-- 1.2.4 - `gobby datastores expose` persists keys, rewrites endpoint config, and is idempotent. test: `tests/cli/test_datastores_expose.py::test_expose_sets_keys_and_endpoints`.
+- 1.2.4 - `gobby datastores expose` persists keys, rewrites endpoint config, and is idempotent; loopback and a concrete Tailscale address are accepted, while `0.0.0.0` and `::` are refused before configuration or compose state changes. test: `tests/cli/test_datastores_expose.py::test_expose_sets_keys_and_endpoints`.
 - 1.2.5 - Expose command exists and is registered. file: `src/gobby/cli/datastores.py`.
 
 ### 1.3 Remote-mode gobby install with reachability preflight [category: code] (depends: 1.1)
@@ -174,17 +177,20 @@ The migration file is new; use the next free number after
 Schema changes (baseline + migration kept in sync per the repo's migration-contract
 rules):
 
-- `worktrees`: ADD `machine_id TEXT NOT NULL`. Backfill: join `sessions.machine_id`
-  via `agent_session_id`; else the most-recent `machines` row; else `'unknown'`.
-  Replace `idx_worktrees_path` UNIQUE(worktree_path) → UNIQUE(machine_id,
-  worktree_path); replace `idx_worktrees_branch` UNIQUE(project_id, branch_name) →
-  UNIQUE(project_id, branch_name, machine_id). Branch uniqueness is per-machine
-  because local git branches do not sync between machines.
-- `clones`: ADD `machine_id TEXT NOT NULL` (same backfill); `idx_clones_path` →
-  UNIQUE(machine_id, clone_path).
-- `agent_runs`: ADD `machine_id TEXT NOT NULL` (backfill via session join, same
-  fallback chain); new index `(machine_id, status)`.
-- `cron_runs`: ADD `machine_id TEXT` (nullable; legacy rows treated as local-any).
+- `worktrees`: ADD `machine_id TEXT NOT NULL`. Backfill only from the authoritative
+`sessions.machine_id` join via `agent_session_id`; an unresolved owner aborts the
+migration with diagnostics instead of guessing.
+Replace `idx_worktrees_path` UNIQUE(worktree_path) → UNIQUE(machine_id,
+worktree_path); replace `idx_worktrees_branch` UNIQUE(project_id, branch_name) →
+UNIQUE(project_id, branch_name, machine_id). Branch uniqueness is per-machine
+because local git branches do not sync between machines.
+- `clones`: ADD `machine_id TEXT NOT NULL` (same authoritative-session backfill and
+fail-closed handling); `idx_clones_path` →
+UNIQUE(machine_id, clone_path).
+- `agent_runs`: ADD `machine_id TEXT NOT NULL` (same authoritative-session backfill
+and fail-closed handling); new index `(machine_id, status)`.
+- `cron_runs`: ADD `machine_id TEXT NOT NULL`; backfill through the run's
+authoritative session ownership and abort on an unresolved row.
 
 Writers stamp `get_machine_id()` at creation: worktree create
 (`src/gobby/storage/worktrees.py:118`), clone create (`src/gobby/storage/clones.py:137`),
@@ -192,12 +198,9 @@ agent_run create (`src/gobby/storage/agents/_manager.py`), cron run create
 (`src/gobby/storage/cron_runs.py:34`, scheduler passes it). Dataclasses (`Worktree`,
 clone and agent-run models) gain the field.
 
-Rows backfilled to `'unknown'` are excluded from cross-machine destructive sweeps by
-construction, because all sweeps filter by equality with the local machine id (2.2/2.4).
-
 **Acceptance:**
 
-- 2.1.1 - Migration adds columns, swaps unique indexes, and backfills via session joins. file: `src/gobby/storage/migrations/343_machine_scope.sql`.
+- 2.1.1 - Migration adds NOT NULL columns, swaps unique indexes, backfills only through authoritative session ownership, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/343_machine_scope.sql`.
 - 2.1.2 - Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 2.1.3 - Same (project, branch) worktree can exist for two machine_ids; same path string can exist for two machine_ids. test: `tests/storage/test_worktrees.py::test_worktree_uniqueness_is_machine_scoped`.
 - 2.1.4 - Worktree/clone/agent-run/cron-run creation stamps the local machine_id. test: `tests/storage/test_machine_scope_writers.py::test_creation_paths_stamp_machine_id`.
@@ -279,9 +282,9 @@ Occurrence claiming is already cross-daemon safe (`_create_scheduled_run` claims
 wins; document that. The sweeps are not safe:
 
 - `_fail_remaining_active_runs` (`storage/cron_children.py:187`) fails ALL
-  pending/running cron_runs at every scheduler startup — with two daemons, restarting
-  B deterministically kills A's in-flight runs. Scope to
-  `machine_id = local OR machine_id IS NULL`.
+pending/running cron_runs at every scheduler startup — with two daemons, restarting
+B deterministically kills A's in-flight runs. Scope to
+`machine_id = local`.
 - `fail_stale_running_runs` (`storage/cron_runs.py:220`) excludes only locally-tracked
   run ids, so B times out A's legitimately long runs. Same scoping.
 - `count_running` (concurrency slots) counts per-machine so one machine's running jobs
@@ -292,7 +295,7 @@ wins; document that. The sweeps are not safe:
 
 **Acceptance:**
 
-- 2.4.1 - Startup reconcile fails only local-or-legacy runs. symbol: `gobby.storage.cron_children._fail_remaining_active_runs`.
+- 2.4.1 - Startup reconcile fails only runs whose `machine_id` exactly matches the local machine. symbol: `gobby.storage.cron_children._fail_remaining_active_runs`.
 - 2.4.2 - Restarting one daemon leaves the other machine's in-flight cron runs untouched. test: `tests/scheduler/test_cron_machine_scope.py::test_restart_does_not_fail_remote_runs`.
 - 2.4.3 - Stale-run timeout and concurrency counting are machine-scoped. test: `tests/scheduler/test_cron_machine_scope.py::test_stale_sweep_and_slots_scoped`.
 
@@ -359,8 +362,9 @@ Target: `tests/e2e/test_shared_datastores_m0.py`, plus a manual checklist append
 `docs/guides/shared-stack.md`
 
 Automated where possible (two isolated daemons with distinct GOBBY_HOME/machine_id
-against one temp Postgres, `GOBBY_TEST_PROTECT=1`), manual checklist for the pieces
-that need real machines:
+against one isolated temporary stack containing PostgreSQL, Qdrant, and FalkorDB,
+with separate test namespaces/configuration, explicit readiness checks, and
+`GOBBY_TEST_PROTECT=1`), manual checklist for the pieces that need real machines:
 
 1. Hub exposure: containers healthy; binds only on the tailnet address; ports
    unreachable from a non-ACL device (manual).
@@ -384,7 +388,7 @@ that need real machines:
 
 **Acceptance:**
 
-- 4.1.1 - Automated two-daemon e2e covers items 3-7 against an isolated temp stack. test: `tests/e2e/test_shared_datastores_m0.py::test_two_machine_continuity_and_isolation`.
+- 4.1.1 - Automated two-daemon e2e covers items 3-7 against an isolated temporary PostgreSQL/Qdrant/FalkorDB stack, including the cross-daemon vector-and-graph memory round-trip against those provisioned services. test: `tests/e2e/test_shared_datastores_m0.py::test_two_machine_continuity_and_isolation`.
 - 4.1.2 - Manual checklist for items 1-2 and 8 ships in the runbook. behavior: "M0 acceptance checklist" in `docs/guides/shared-stack.md`.
 
 ## V1 Plan Changelog

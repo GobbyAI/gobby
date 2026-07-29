@@ -739,7 +739,8 @@ than making retention wait on every concurrent reader.
 ### 3.5 Generated-write mode for code/** [category: code] (depends: 3.4)
 `kind: deliverable`
 
-Target: `crates/gwiki/src/commands/page.rs`
+Target: `crates/gwiki/src/commands/page.rs`,
+`crates/gwiki/src/page_generation.rs`
 
 Today `confine_page_path` restricts writes to `knowledge/**`
 (`WRITABLE_PREFIX = "knowledge"`, page.rs:13, enforced :205-208). Add a
@@ -779,6 +780,27 @@ unrepresentable. Both are rechecked under the same page lock immediately before
 the rename, so a delayed orphan holding `--expected-absent` for a page that has
 since been created lands nothing, exactly as a stale hash does.
 
+Filesystem state is not enough to order generations: a delayed creator can
+observe absence, wait while a newer create and delete both complete, then find
+the path absent again and satisfy the same `--expected-absent` check. Every
+generated mutation therefore also carries mandatory
+`--expected-generation <u64>`. Gwiki stores one durable per-path record under
+`wiki/code/_meta/page_generations/<sha256(path)>.json` (excluded from page
+indexing) containing the committed generation and either the current content
+hash or a tombstone. A missing record is generation zero. Successful creation,
+replacement, or deletion advances the generation; deletion retains the
+tombstone, so absence never erases ordering history. An idempotent delete of an
+already-tombstoned path returns the existing generation without advancing it.
+
+The page and generation record are coordinated by a one-record write-ahead
+transition under the existing page lock, not by two unrelated renames. The
+record first stores the old state plus the intended next generation and content
+hash/tombstone, the page rename or unlink executes, and the record is then
+committed atomically. On entry, any pending transition is reconciled from the
+old/new hashes before a new mutation is admitted. A crash at either boundary
+therefore settles to the old or new whole state, while a request holding an
+older generation is refused even when the path has returned to absence.
+
 Generated **delete** takes the same two flags with a deliberately narrower
 contract, because the symmetry is only apparent. `--expected-hash` is the removal
 authority: it names the exact bytes the caller intends to destroy and is
@@ -797,9 +819,9 @@ than a removal.
 - 3.5.2 - Non-generated writes to code/** are still rejected. test: `crates/gwiki/src/commands/page/tests.rs::code_write_requires_generated`.
 - 3.5.3 - A generated write mutating a deterministic region is rejected with its rule code. test: `crates/gwiki/src/commands/page/tests.rs::out_of_slot_write_rejected`.
 - 3.5.4 - Generated writes land by staged-temp-plus-rename within the confined root; a write interrupted before rename leaves the previous page intact and complete. test: `crates/gwiki/src/commands/page/tests.rs::generated_write_is_atomic`.
-- 3.5.5 - A generated write requires exactly one of `--expected-hash` or `--expected-absent`; supplying both, or neither, is a typed input error, and each precondition is rechecked under the page lock immediately before rename so a delayed write whose expected state is stale lands nothing. test: `crates/gwiki/src/commands/page/tests.rs::stale_generation_write_is_refused`.
-- 3.5.6 - `--expected-absent` creates a page that does not exist and is refused once the page exists; two concurrent creators of one path yield exactly one landed page and one precondition failure. test: `crates/gwiki/src/commands/page/tests.rs::expected_absent_creates_once`.
-- 3.5.7 - Generated delete of an existing page requires `--expected-hash` and is refused when the hash is stale or `--expected-absent` is supplied; `--expected-absent` against an already-absent page succeeds idempotently; a delete racing a replacement write removes nothing. test: `crates/gwiki/src/commands/page/tests.rs::generated_delete_requires_expected_hash`.
+- 3.5.5 - A generated write requires `--expected-generation` plus exactly one of `--expected-hash` or `--expected-absent`; supplying both filesystem preconditions, neither, or a stale generation is a typed input error, and all preconditions are rechecked under the page lock immediately before mutation. test: `crates/gwiki/src/commands/page/tests.rs::stale_generation_write_is_refused`.
+- 3.5.6 - `--expected-absent` with generation zero creates a never-seen page exactly once; after a newer create and delete leave the path absent again, a delayed creator holding the old generation is refused by the retained tombstone. test: `crates/gwiki/src/commands/page/tests.rs::expected_absent_creates_once`.
+- 3.5.7 - Generated delete of an existing page requires its expected hash and generation, advances a durable tombstone, and is refused when either is stale; an already-tombstoned delete succeeds idempotently without advancing, a delete racing a replacement removes nothing, and crash injection before and after the filesystem mutation reconciles the write-ahead record to one whole state. test: `crates/gwiki/src/commands/page/tests.rs::generated_delete_requires_expected_hash`.
 
 ### 3.6 gwiki contract and daemon gateway surface [category: code] (depends: 3.4, 3.5)
 `kind: deliverable`
@@ -852,8 +874,9 @@ only when supplied (`gwiki_gateway.py:285-299`), and `delete_page` takes a path
 alone (:301) — neither can express the `--generated --template <id>@<ver>`
 authorization 3.5 now requires for `code/**`, so a literal implementation would
 leave every generated write and every prune rejected by the binary they call.
-Both methods gain generated/template parameters that reach argv, carrying exactly
-one of the two 3.5 preconditions, and existing knowledge-vault callers keep
+Both methods gain generated/template parameters that reach argv, carrying the
+3.5 expected generation plus exactly one filesystem-state precondition, and
+existing knowledge-vault callers keep
 today's non-generated behavior by default. The two methods do not carry the same
 precondition domain, because 3.5's delete contract is narrower than its write
 contract: `write_page` forwards `--expected-hash` for a replacement or
@@ -861,7 +884,9 @@ contract: `write_page` forwards `--expected-hash` for a replacement or
 `--expected-hash` to remove an existing page and may forward `--expected-absent`
 only to assert an already-completed removal. A gateway that let a prune delete
 under `--expected-absent` would hand the finalizer exactly the unconditional
-removal 3.5 refuses at the binary. Reinstall the gwiki binary.
+removal 3.5 refuses at the binary. Generated read/write/delete responses expose
+the current or resulting generation so a restarted executor resumes from the
+durable fence rather than guessing. Reinstall the gwiki binary.
 
 This deliverable carries the P3 exit gate. It is the phase's terminal leaf — it
 depends on 3.4 and 3.5, which reach 3.8, 3.7, 3.3, 3.2, and 3.1 transitively — so
@@ -875,7 +900,7 @@ would certify nothing.
 - 3.6.1 - New commands pinned; both binaries' drift tests pass. file: `crates/gwiki/contract/gwiki.contract.json`.
 - 3.6.2 - The relocated feature-catalog handler map covers the new gwiki commands and stays exactly equal to the pinned contract set. test: `crates/gwiki/src/code_wiki/features/tests.rs`.
 - 3.6.3 - GwikiGateway exposes the code_* wrappers. file: `src/gobby/gwiki_gateway.py`.
-- 3.6.6 - `write_page` and `delete_page` forward generated/template authorization to argv along with exactly one of `--expected-hash` or `--expected-absent`; `delete_page` cannot emit a removal of an existing page under `--expected-absent`; existing knowledge callers still emit today's non-generated argv. test: `tests/wiki/test_gwiki_gateway.py::generated_flags_reach_argv`.
+- 3.6.6 - `write_page` and `delete_page` forward generated/template authorization and `--expected-generation` to argv along with exactly one of `--expected-hash` or `--expected-absent`, expose the resulting generation, and cannot emit a removal of an existing page under `--expected-absent`; existing knowledge callers still emit today's non-generated argv. test: `tests/wiki/test_gwiki_gateway.py::generated_flags_reach_argv`.
 - 3.6.7 - Every exhaustive consumer of the gwiki `Command` enum classifies the three new `code` commands, including `commands/project_admission.rs`, and the crate compiles with no non-exhaustive-match error. test: `crates/gwiki/src/commands/project_admission/tests.rs::code_commands_are_classified`.
 - 3.6.4 - Each `code` subcommand parses, maps, dispatches, and returns a nonzero exit with a machine-readable error for a bad page argument. test: `crates/gwiki/src/cli/tests.rs`.
 - 3.6.5 - P3 exit gate: all three crates build, `~/.gobby/bin/{gcode,gwiki,ghook}` are rebuilt and reinstalled, and the daemon answers `wiki_search`, `wiki_ask`, and `wiki_read` against the existing vault with no codewiki generator compiled or installed. test: `tests/wiki/test_phase_exit_smoke.py`.
@@ -1187,6 +1212,13 @@ written by the service; the executor drains a run:
    deterministic render in step 1 (3.3), names included. Each item gets its
    stable page path and rendered scaffold at planning time.
 
+   Before reading requested mode or scope, step 0 locks the run row, copies the
+   merged request into `planned_mode`/`planned_scope`, and sets
+   `scope_sealed_at` in the same transaction. Planning reads only that sealed
+   pair. Admission may widen an executing row until this seal, but a request
+   arriving afterwards cannot mutate the inputs step 0 already consumed; it is
+   admitted to the queued successor instead.
+
    Planning produces **two** sets, and conflating them destroys data. The
    *desired inventory* is every `code/**` page that should exist at this
    generation — derived in full from the pinned FactsBundle and catalog snapshot
@@ -1244,6 +1276,15 @@ written by the service; the executor drains a run:
    from **that inventory**, re-render `_index.md`, refresh the `wiki_overview`
    session variable source, trigger reindex via `WikiUpdateCoordinator` — in that
    order, so reindex never sees an orphan.
+   The run row persists a `finalizer_checkpoint` after each ordered mutation
+   (`build_report`, `truth_digest`, `prune`, `index_page`, `overview_source`,
+   `reindex`). Each mutation is idempotent, and restart resumes at the first
+   incomplete checkpoint rather than replaying the whole finalizer. If the
+   daemon crashes after a side effect but before its checkpoint write, replaying
+   that same step converges: atomic page writes reproduce the same bytes,
+   generation-fenced tombstone deletes recognize the completed removal, the
+   session-variable refresh is an upsert, and reindex is safe to request again.
+   The run becomes terminal only after the `reindex` checkpoint is durable.
    The truth digest is in that list because it is a live cross-subsystem
    dependency, not a codewiki artifact. Memory dream resolves each project's
    repo path and reads exactly `_meta/truth_digest.json` to decide whether stored
@@ -1412,7 +1453,7 @@ proves nothing about aggregate-page quality drifting over months.
 - 4.3.17 - Executor, startup recovery, and watchdog are registered lifecycle subsystems: a daemon restarted with an admitted, undrained run recovers it, promotes any successor, and drains to a terminal state without operator action, and shutdown cancels and awaits them. test: `tests/wiki/test_codewiki_executor.py::executor_lifecycle_is_owned`.
 - 4.3.18 - `bundled_content_manifest.json` is regenerated over every shared file this epic adds and the committed manifest matches the shared tree exactly. test: `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`.
 - 4.3.11 - Planning reads the pinned concept-catalog snapshot: a concept page added to the vault after admission does not change the planned item set. test: `tests/wiki/test_codewiki_executor.py::planning_uses_pinned_catalog`.
-- 4.3.4 - Stale-fence results are rejected, failed items retain the last valid page, and crash injection at dispatch/write/ack/finalize leaves the vault consistent. test: `tests/wiki/test_codewiki_executor.py::crash_injection_consistency`.
+- 4.3.4 - Stale-fence results are rejected, failed items retain the last valid page, and crash injection at dispatch, write, acknowledgement, and before or after every finalizer mutation resumes from the durable checkpoint and leaves the vault consistent without skipping or duplicating an effect. test: `tests/wiki/test_codewiki_executor.py::crash_injection_consistency`.
 - 4.3.5 - ARCHITECTURE/FULL runs record verification probes and withhold the fresh stamp on regression. file: `src/gobby/install/shared/templates/codewiki/query_corpus.yaml`.
 
 ### 4.4 Page-type templates and manifest [category: config] (depends: 3.4)
@@ -1525,9 +1566,11 @@ the executor gets a repository, not inline SQL.
 compressed `facts_bundle` and concept-catalog snapshot bytes (4.2), the
 canonical `desired_inventory` page-path list 4.3 step 0 derives and step 4
 reconciles against, the merged `requested_mode`/`requested_scope` pair, the
-`owner`/`heartbeat_at`/`lease_expires_at` triple below, state
-including `degraded`, timestamps. `codewiki_page_items`: run id, `page_path`,
-page type, `state`, `attempts`, `lease_expires_at`, `fence`, last error.
+sealed `planned_mode`/`planned_scope` pair and `scope_sealed_at`, the
+`finalizer_checkpoint` from 4.3, the
+`owner`/`heartbeat_at`/`lease_expires_at` triple below, state including
+`degraded`, timestamps. `codewiki_page_items`: run id, `page_path`, page type,
+`state`, `attempts`, `lease_expires_at`, `fence`, last error.
 Constraints carry the invariants the executor depends on rather than leaving
 them to application checks: unique `(run_id, page_path)`, a state CHECK, a
 monotonic `fence`, and an index supporting lease reclamation by
@@ -1546,11 +1589,13 @@ The second is restricted to the `queued` state, admitting at most one **waiting
 successor**. A single index over all non-terminal states would be wrong, because
 `queued` is non-terminal and a queued successor is exactly what 4.2 promises a
 newer commit: an index that rejects it would make run A at commit A silently
-absorb a trigger at commit B, and B would never build. So a request whose
-fingerprint matches the executing run coalesces into it; a request at a newer
-commit writes or replaces the single queued row. When the executing run reaches a
-terminal state the queued row is promoted in the same transaction that closes it,
-so promotion cannot race a fresh admission.
+absorb a trigger at commit B, and B would never build. A request whose fingerprint
+matches the executing run coalesces into it only while that row's planning scope
+is unsealed; after `scope_sealed_at` is set, any request that widens mode or scope
+writes or merges into the single queued row even when the fingerprint matches.
+A request at a newer commit likewise writes or replaces the queued row. When the
+executing run reaches a terminal state the queued row is promoted in the same
+transaction that closes it, so promotion cannot race a fresh admission.
 
 Replacing that row is only safe if the survivor subsumes what it replaced, and a
 newest-wins replacement does not. Trigger B queues with changed file `x`, trigger
@@ -1579,6 +1624,14 @@ newest-wins because scope is an additive claim about what must be rebuilt, and
 because the union is bounded by the desired inventory it can never grow without
 limit. Both fields survive a restart because they live on the row, not in the
 request that set them.
+
+The executor seals those fields exactly once. Step 0 holds the run-row lock,
+copies `requested_mode`/`requested_scope` into
+`planned_mode`/`planned_scope`, and sets `scope_sealed_at` in one update before
+enumerating work. An admission racing before that update merges into the values
+step 0 copies; an admission racing after it cannot alter the executing row and
+is monotonically merged into the queued successor. This makes the seal, rather
+than an unlocked read of the execution state, the total boundary.
 
 An executing run that never terminalizes is worse than a lost trigger, because
 the executing partial index makes the wedge permanent: a daemon killed mid-run, a
@@ -1618,14 +1671,14 @@ that has no tables.
 
 **Acceptance:**
 
-- 4.7.1 - Numbered migration creates both tables with the unique, CHECK, and lease indexes plus the two partial unique indexes (one executing run, one queued successor, per project), mirrored in the baseline schema. file: `src/gobby/storage/postgres_baseline_schema.sql`.
+- 4.7.1 - Numbered migration creates both tables with the planning-seal and finalizer-checkpoint columns, unique, CHECK, and lease indexes, plus the two partial unique indexes (one executing run, one queued successor, per project), mirrored in the baseline schema. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 4.7.2 - Migration applies cleanly on an existing hub and is idempotent on re-run. test: `tests/storage/test_codewiki_queue_migration.py`.
 - 4.7.3 - Queue storage exposes claim/lease/advance/fail with fence checks; duplicate `(run_id, page_path)` is rejected by the database. test: `tests/wiki/test_codewiki_queue_storage.py`.
 - 4.7.4 - Two real connections inserting executing runs for one project at the same time yield one success and one unique violation; a terminal run does not block the next admission. test: `tests/wiki/test_codewiki_queue_storage.py::single_active_run_per_project`.
 - 4.7.5 - A queued successor is admitted alongside an executing run, a newer trigger replaces the queued row rather than being rejected, and terminalizing the executing run promotes the queued row in the same transaction. test: `tests/wiki/test_codewiki_queue_storage.py::successor_queues_and_promotes`.
 - 4.7.6 - Successor replacement is monotone: a trigger touching `x` followed by a newer trigger touching `y` promotes to a run whose recomputed change set covers both, and a pending `full` request is not demoted by a later narrower trigger. test: `tests/wiki/test_codewiki_queue_storage.py::successor_replacement_is_monotone`.
 - 4.7.7 - An executing run whose lease has expired is terminalized with a stable error by startup recovery and by the watchdog, its queued successor is promoted in the same transaction, and a fresh admission for that project succeeds afterwards; two watchdogs racing one abandoned row yield exactly one takeover and one no-op, and an unexpired row is never taken over. test: `tests/wiki/test_codewiki_queue_storage.py::abandoned_run_is_recovered`.
-- 4.7.8 - Requested scope merges monotonically across coalescing: `scope A` then `scope B` promotes to a run covering both, `scope A` then `auto` still covers A, a requested `full` dominates and clears the scope, and every merge survives a restart because it is stored on the row. test: `tests/wiki/test_codewiki_queue_storage.py::requested_scope_merges_monotonically`.
+- 4.7.8 - Requested scope merges monotonically across coalescing: `scope A` then `scope B` before the planning seal executes one run covering both, `scope B` arriving after step 0 seals `scope A` is stored on the queued successor rather than mutating the executing plan, `scope A` then `auto` still covers A, a requested `full` dominates and clears the scope, and every pre- or post-seal merge survives a restart because it is stored on a row. test: `tests/wiki/test_codewiki_queue_storage.py::requested_scope_merges_monotonically`.
 
 ## P5: Cutover and Deletion
 `kind: framing`
@@ -1637,7 +1690,8 @@ then delete the legacy codewiki machinery from gcode and the daemon glue.
 `kind: deliverable`
 
 Target: `tests/wiki/test_codewiki_e2e.py`,
-`docs/contracts/codewiki-capability-matrix.md`
+`docs/contracts/codewiki-capability-matrix.md`,
+`src/gobby/wiki/codewiki/vault_migration.py`
 
 Run a daemon-driven FULL generation on the gobby repo (isolated test daemon for
 automated coverage plus one live run). Gate criteria: exhaustive-partition
@@ -1652,6 +1706,18 @@ verification stage must run with every mandatory probe at or above threshold,
 its results recorded in the run report as the baseline later runs are compared
 against. Automated e2e test covers a scoped run against fixture repos with stub
 agents.
+
+The six shared deterministic paths already contain legacy bytes, and an
+expected-hash precondition proves only that the replacement targeted the bytes
+it inspected; it cannot restore them if a later replacement or dogfood gate
+fails. Before replacing the first shared path, the run writes a durable
+cutover journal in `vault_migration.py` containing every path, expected hash,
+and exact prior bytes in a run-owned backup area. If any replacement, validation,
+reindex, or capability gate fails, recovery restores all six paths byte-for-byte
+from that journal and reindexes before reporting failure. The backup is removed
+only after every 5.1 gate passes and the successful cutover record is durable.
+This is the reusable journal primitive that 5.3 extends for the larger
+quarantine; it is implemented here so 5.1 does not depend on its own successor.
 
 "Better than parity with Understand-Anything" is a settled launch requirement,
 and as prose it is unfalsifiable — the existing gate measures retrieval and wall
@@ -1673,7 +1739,7 @@ in the same commit as the gate it governs.
 - 5.1.1 - Scoped e2e with stub agents passes classify→queue→render→validate→land. test: `tests/wiki/test_codewiki_e2e.py`.
 - 5.1.2 - Live FULL run on gobby meets all gate criteria. behavior: "P4 gate criteria" in `wiki/code/_meta/build.json`.
 - 5.1.3 - Summary coverage is complete and verification probes pass, both recorded as the retrieval baseline. behavior: "cutover retrieval baseline recorded" in `wiki/code/_meta/build.json`.
-- 5.1.5 - The dogfood run replaces the legacy occupant at each shared deterministic path (`features.md`, `changes.md`, `hotspots.md`, `infrastructure.md`, `ownership.md`, `deprecations.md`) with a page carrying the current marker, and each replacement satisfies its expected-hash precondition rather than being written unconditionally. behavior: "shared deterministic paths replaced" in `wiki/code/_meta/build.json`.
+- 5.1.5 - Before replacing any shared deterministic path, the dogfood run durably journals all six prior byte sequences and hashes; success replaces each with a current-marker page under its hash and generation preconditions, while failure after any replacement or gate restores all six byte-for-byte and reindexes before the run terminates. behavior: "shared deterministic paths replaced" in `wiki/code/_meta/build.json`.
 - 5.1.4 - Every capability-matrix row has a passing probe against the dogfood output, parity and daemon-only alike. file: `docs/contracts/codewiki-capability-matrix.md`.
 
 ### 5.2 Delete the legacy codewiki subtree and its residue [category: code] (depends: 3.8, 5.1, 5.3)

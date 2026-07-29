@@ -61,8 +61,9 @@ Research corrections to the epic text (verified against code and the live hub):
    this plan. `docs/reviews/cli-build-ops.md:56-60` falsely claims the new
    tables already exist — corrected in P7.
 8. The epic's referenced test paths (`tests/workflows/test_rule_engine.py`,
-   `tests/workflows/test_session_defaults.py`) do not exist; no audit test
-   exists today — it is written from scratch in P7.
+`tests/workflows/test_session_defaults.py`) both exist and are extended or
+retargeted in P7; only the new legacy-reference absence audit is written from
+scratch there.
 
 Decisions made with the operator (2026-07-26):
 
@@ -825,13 +826,22 @@ One atomic cutover — writers and readers share the data plane:
     resulting `PreparedSpawn` down. `SpawnRequest`
     (`src/gobby/agents/spawn_models.py:16`) carries no prepared-spawn field
     today, so it gains one required field holding that object, and the
-    prepare call is deleted from the five provider consumers that reach it
-    through `SpawnRequest`: `spawn_executor.py:171, 301, 401, 513, 628`.
-    Reuse `PreparedSpawn`; do not introduce a second prepared-spawn type.
+prepare call is deleted from the five provider consumers that reach it
+through `SpawnRequest`: `spawn_executor.py:171, 301, 401, 513, 628`.
+Reuse `PreparedSpawn`; do not introduce a second prepared-spawn type.
 
-    **`resume_executor.py:192` is deliberately excluded.** It is a sixth
-    caller of `prepare_terminal_spawn`, but it is not on the `SpawnRequest`
-    path: `resume_agent_run` builds its own `spawn_context` inline and its
+Hoisting preparation creates a new pre-launch failure boundary: by the time the
+caller saves the step instance, `prepare_terminal_spawn` has already created both
+the child session and its `agent_runs` row. If that save fails, the caller runs
+bounded compensation that deletes those exact two newly-created rows before
+returning the error. No provider process exists yet, so this path does not invoke
+post-launch termination cleanup; it simply leaves no durable spawn rows and does
+not claim a task. A compensation failure is surfaced with both row ids for
+operator recovery rather than hiding the leak behind the original save error.
+
+**`resume_executor.py:192` is deliberately excluded.** It is a sixth
+caller of `prepare_terminal_spawn`, but it is not on the `SpawnRequest`
+path: `resume_agent_run` builds its own `spawn_context` inline and its
     sole caller supplies no `PreparedSpawn`, so deleting the call there leaves
     the resume path with nothing to construct a session from. Preparation
     stays inside `resume_agent_run`.
@@ -1043,13 +1053,13 @@ One atomic cutover — writers and readers share the data plane:
 - 3.2.5 - _step_workflow_name is gone from the spawn, persona, context-injection, and idle-reprompt writers. file: `src/gobby/workflows/hooks.py`. file: `src/gobby/agents/idle_check_handler.py`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`. file: `src/gobby/mcp_proxy/tools/apply_persona.py`.
 - 3.2.6 - spawn_agent/_implementation.py is under 1,000 lines after extraction. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.
 - 3.2.7 - The equivalence guard fails on the generated-row branch when snapshot or step position diverges, and fails on both branches when current_step is absent from the copied snapshot's steps, including a generated row whose refresh removed the active step. test: `tests/storage/test_instance_copy_migration.py`.
-- 3.2.8 - A failed step-instance save aborts the spawn before any child process starts or task is claimed, and aborts the persona switch with the prior instance intact. test: `tests/workflows/test_step_snapshot_semantics.py`.
+- 3.2.8 - A failed step-instance save aborts before any child process starts or task is claimed, deletes the child session and agent-run rows created by pre-launch preparation, and aborts the persona switch with the prior instance intact. test: `tests/workflows/test_step_snapshot_semantics.py`.
 - 3.2.9 - A handoff_ready session keeps its step position and variables through the migration. test: `tests/storage/test_instance_copy_migration.py::test_handoff_ready_session_continuity`.
 - 3.2.10 - Variables, both action counters, timestamps, enabled, and context_injected survive the copy with nullable legacy values normalized; agent_step_workflow_id is populated wherever the typed child exists and left NULL for a valid snapshot whose child does not, while a row with neither lineage nor a recoverable snapshot fails the migration. test: `tests/storage/test_instance_copy_migration.py::test_runtime_field_equivalence`. test: `tests/storage/test_instance_copy_migration.py::test_definitionless_snapshot_migrates_with_null_lineage`.
 - 3.2.11 - A persona switch to a different agent replaces snapshot and lineage together; a switch to a step-less agent removes the instance. test: `tests/workflows/test_step_snapshot_semantics.py`.
 - 3.2.12 - RuleEngine constructs AgentStepInstanceManager in the same commit as the typed readers. symbol: `RuleEngine`. file: `src/gobby/workflows/engine/core.py`.
 - 3.2.13 - The caller calls prepare_terminal_spawn and saves the step instance before launch, so the instance row is durable before any provider process exists. symbol: `prepare_terminal_spawn`. file: `src/gobby/agents/spawn.py`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.
-- 3.2.13a - SpawnRequest carries the prepared spawn and every provider path consumes it without creating a second session, across all five executor call sites and the resume path. file: `src/gobby/agents/spawn_models.py`. file: `src/gobby/agents/spawn_executor.py`. file: `src/gobby/agents/resume_executor.py`.
+- 3.2.13a - SpawnRequest carries the prepared spawn and every provider path consumes it without creating a second session across all five executor call sites. file: `src/gobby/agents/spawn_models.py`. file: `src/gobby/agents/spawn_executor.py`.
 - 3.2.13b - The spawn, executor, droid, SRT, resume, and execution suites are retargeted to the moved boundary and still pin agent_run persistence and per-provider spawn context. test: `tests/agents/test_spawn.py`. test: `tests/agents/test_spawn_executor.py`. test: `tests/agents/test_spawn_executor_droid.py`. test: `tests/agents/test_srt_spawn.py`. test: `tests/agents/test_resume_executor.py`. test: `tests/mcp_proxy/tools/spawn_agent/test_execution.py`.
 - 3.2.13c - The resume path keeps its inline prepare_terminal_spawn call and gains no step-state transfer, so daemon-stop resume behavior is unchanged by this task and remains task #18974. symbol: `resume_agent_run`. file: `src/gobby/agents/resume_executor.py`.
 - 3.2.21 - Persona tests are retargeted off _step_workflow_name and WorkflowInstanceManager onto the typed instance. test: `tests/mcp_proxy/tools/test_apply_persona.py`.
