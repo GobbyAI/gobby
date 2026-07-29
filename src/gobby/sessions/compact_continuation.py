@@ -44,11 +44,17 @@ _CODEX_COMPACT_READY_MARKER = "Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
 LOADING_SKILLS_NAME = "loading-skills"
+# Written by the workflow engine's load_skill effect: the skills the session's
+# active workflow actually asked for. Distinct from `loaded_skills`, which is an
+# unbounded history of every get_skill call and is the wrong source for a reload
+# list — reloading it wholesale would spend the context that compaction reclaimed.
+WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
 COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
     "required_skills",
     "additional_skills",
     "claimed_task_required_skills",
     "claimed_task_additional_skills",
+    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
 
 

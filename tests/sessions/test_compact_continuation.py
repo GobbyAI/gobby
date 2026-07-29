@@ -15,6 +15,7 @@ from gobby.sessions.compact_continuation import (
     _COMPACT_SELF_CONTINUATION_TASKS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
@@ -357,6 +358,28 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     assert skills == ["loading-skills", "python", "tasks", "development-discipline"]
     variables = sv_mgr.get_variables(SESSION_ID)
     assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skills
+
+
+def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill(
+    session_db: HubDatabase,
+) -> None:
+    """A skill the active workflow asked for survives compaction; history does not."""
+    db = session_db
+    sv_mgr = SessionVariableManager(db)
+    sv_mgr.merge_variables(
+        SESSION_ID,
+        {
+            "required_skills": ["python"],
+            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan", "elicit"],
+            "loaded_skills": ["code-index", "brevity"],
+        },
+    )
+
+    skills = persist_compact_resume_required_skills(db, SESSION_ID)
+
+    assert skills == ["loading-skills", "python", "plan", "elicit"]
+    assert "code-index" not in skills
+    assert "brevity" not in skills
 
 
 def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() -> None:

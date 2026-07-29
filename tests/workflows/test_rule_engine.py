@@ -15,6 +15,7 @@ from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
+from gobby.sessions.compact_continuation import WORKFLOW_REQUESTED_SKILLS_VARIABLE
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -3422,6 +3423,30 @@ class TestLoadSkillEffect:
         assert response.decision == "allow"
         assert response.context == skill_fetch_directive("plan")
         assert "You are now in plan mode." not in (response.context or "")
+        assert variables[WORKFLOW_REQUESTED_SKILLS_VARIABLE] == ["plan"]
+
+    @pytest.mark.asyncio
+    async def test_load_skill_records_request_for_compaction_reload(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Repeated load_skill requests accumulate without duplicating."""
+        _insert_rule(
+            manager,
+            "load-elicit-skill",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                effects=[RuleEffect(type="load_skill", skill="elicit")],
+            ),
+        )
+
+        engine = RuleEngine(db, skill_manager=_FakeSkillManager())
+        variables: dict[str, Any] = {WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan"]}
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Bash"})
+
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables[WORKFLOW_REQUESTED_SKILLS_VARIABLE] == ["plan", "elicit"]
 
     @pytest.mark.asyncio
     async def test_load_skill_missing_skill_still_emits_directive(

@@ -337,9 +337,23 @@ class EffectsMixin(DeliveryFormattingMixin):
 
         elif effect.type == "load_skill":
             if effect.skill:
+                from gobby.sessions.compact_continuation import (
+                    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+                )
                 from gobby.skills.formatting import skill_fetch_directive
 
                 context_parts.append(skill_fetch_directive(effect.skill))
+                # Record the request so compaction can reload it. The directive
+                # itself only lives in this turn's context, and a workflow that
+                # asked for a skill still needs it after the context is summarized
+                # away. Stored as list[str] because session variables are
+                # JSON-persisted.
+                requested = variables.get(WORKFLOW_REQUESTED_SKILLS_VARIABLE)
+                if not isinstance(requested, list):
+                    requested = []
+                if effect.skill not in requested:
+                    requested.append(effect.skill)
+                variables[WORKFLOW_REQUESTED_SKILLS_VARIABLE] = requested
 
         return None
 
