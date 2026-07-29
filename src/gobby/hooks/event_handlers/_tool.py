@@ -14,6 +14,7 @@ from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
+from gobby.utils.git import is_path_gitignored
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -254,13 +255,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if Path(repo_relative_path).parts[:1] == (".gobby",):
                 continue
 
-            from gobby.utils.git import is_path_gitignored
-
             if is_path_gitignored(repo_relative_path, os.fspath(repo_root)):
                 continue
             if repo_relative_path not in committable_paths:
                 committable_paths.append(repo_relative_path)
-            self._notify_code_index(repo_root, repo_relative_path)
+                self._notify_code_index(repo_root, repo_relative_path)
 
         structured_mutation = input_data.get("canonical_structured_mutation") is True
         mutation_observed = bool(committable_paths) or (structured_mutation and not file_paths)

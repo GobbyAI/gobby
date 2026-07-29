@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,22 @@ from gobby.hooks.tool_outcomes import ToolOutcome, normalize_tool_outcome
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
+
+
+def _successful_close_result(tool_output: object) -> Mapping[str, Any] | None:
+    """Return the authoritative successful close envelope."""
+    if not isinstance(tool_output, Mapping):
+        return None
+    if tool_output.get("error") or tool_output.get("status") == "error":
+        return None
+    result = tool_output.get("result")
+    if isinstance(result, Mapping) and result.get("error"):
+        return None
+    if tool_output.get("closed") is True:
+        return tool_output
+    if isinstance(result, Mapping) and result.get("closed") is True:
+        return result
+    return None
 
 
 def _json_safe(value: Any) -> Any:

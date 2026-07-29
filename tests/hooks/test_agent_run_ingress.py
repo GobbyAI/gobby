@@ -213,6 +213,31 @@ def test_matching_hook_without_provisional_phase_skips_finalization(
     finalize.assert_not_called()
 
 
+def test_truthy_non_mapping_resume_metadata_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_manager, run_manager = _managers()
+    run_manager.get.return_value.resume_metadata_json = ["invalid"]
+    finalize = MagicMock()
+    monkeypatch.setattr(
+        "gobby.hooks.agent_run_ingress.finalize_resume_handoff_threadsafe",
+        finalize,
+    )
+
+    result = validate_managed_agent_hook(
+        _event(_RUN_ID),
+        session_manager=session_manager,
+        agent_run_manager=run_manager,
+        database=MagicMock(),
+        completion_registry=None,
+        registry_loop=None,
+    )
+
+    assert result.accepted is True
+    assert result.managed is True
+    finalize.assert_not_called()
+
+
 def test_provisional_finalization_failure_is_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

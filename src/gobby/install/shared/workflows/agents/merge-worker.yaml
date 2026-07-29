@@ -223,6 +223,7 @@ steps:
       - "gobby-merge:verify_in_worktree"
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
+    mcp_error_policy: stay
     on_mcp_success:
       - server: gobby-merge
         tool: merge_start

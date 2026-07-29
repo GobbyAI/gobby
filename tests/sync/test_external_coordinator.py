@@ -237,6 +237,27 @@ async def test_usage_limit_uses_maximum_backoff() -> None:
 
 
 @pytest.mark.asyncio
+async def test_issue_429_error_does_not_rate_limit_project() -> None:
+    now = [10.0]
+    project = _project()
+    coordinator, _ = _coordinator([project], monotonic=lambda: now[0])
+    current = MagicMock(consecutive_failures=1, last_error="missing")
+    _status_store(coordinator).get.return_value = current
+    linear = MagicMock()
+    linear.is_available.return_value = True
+    linear.create_missing_issues = AsyncMock(side_effect=RuntimeError("Issue #429 not found"))
+
+    with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
+        await coordinator.refresh()
+        await coordinator.wait_for_idle()
+
+    assert coordinator._due[("linear", "project-1")] == 15.0
+    calls = _status_store(coordinator).upsert.call_args_list
+    assert any(call.kwargs["state"] == "degraded" for call in calls)
+    assert all(call.kwargs["state"] != "rate_limited" for call in calls)
+
+
+@pytest.mark.asyncio
 async def test_wait_for_idle_drains_dispatched_work() -> None:
     coordinator, _ = _coordinator([_project()])
     entered = asyncio.Event()
@@ -313,3 +334,7 @@ async def test_shutdown_cancels_and_drains_dispatched_work() -> None:
 
     assert cancelled.is_set()
     assert not coordinator._tasks
+    assert any(
+        call.kwargs["state"] == "pending"
+        for call in _status_store(coordinator).upsert.call_args_list
+    )

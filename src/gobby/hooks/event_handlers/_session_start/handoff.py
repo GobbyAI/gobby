@@ -121,12 +121,20 @@ def resolve_session_start_identity(
         )
 
     compact_candidate_resolved = False
-    candidate_resolution = resolve_compact_continuation(
-        handler._session_manager.db,
-        machine_id=machine_id,
-        source=cli_source,
-        terminal_context=input_data.get("terminal_context"),
-    )
+    try:
+        candidate_resolution = resolve_compact_continuation(
+            handler._session_manager.db,
+            machine_id=machine_id,
+            source=cli_source,
+            terminal_context=input_data.get("terminal_context"),
+        )
+    except Exception as e:
+        handler.logger.warning(
+            "Compact continuation lookup failed for %s: %s",
+            external_id,
+            e,
+        )
+        return SessionStartResolution(session=session, session_source=session_source)
     if candidate_resolution.ambiguous:
         handler.logger.warning(
             "Blocking compact restart: terminal process matches multiple compact rows",
@@ -284,7 +292,7 @@ def prepare_compact_continuation_variables(
     db = handler._session_manager.db
     sv_mgr = SessionVariableManager(db)
     current_vars = sv_mgr.get_variables(session_id)
-    auto_inject = current_vars.get("auto_inject_handoff", True)
+    auto_inject = _variable_enabled(current_vars.get("auto_inject_handoff"), default=True)
 
     session = handler._session_manager.get(session_id)
     summary_markdown = ""
@@ -307,6 +315,20 @@ def prepare_compact_continuation_variables(
 
     _normalize_compact_resume_required_skills(sv_mgr, session_id, current_vars)
     consume_compact_handoff_marker(db, session_id)
+
+
+def _variable_enabled(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+    return default
 
 
 def _bound_handoff_summary(summary: str, session: Any) -> str:

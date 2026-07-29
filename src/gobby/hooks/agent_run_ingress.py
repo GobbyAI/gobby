@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -100,7 +101,8 @@ def validate_managed_agent_hook(
             reason="managed hook run is not durable yet",
         )
 
-    metadata = getattr(run, "resume_metadata_json", None) or {}
+    raw_metadata = getattr(run, "resume_metadata_json", None)
+    metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
     phase = metadata.get("daemon_stop_resume_phase")
     if phase in _PROVISIONAL_RESUME_PHASES:
         original_run_id = metadata.get("resumed_from_run_id")

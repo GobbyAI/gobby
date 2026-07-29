@@ -215,3 +215,26 @@ def test_get_active_step_workflow_context_logs_malformed_definitions(
     assert result is None
     assert "Skipping malformed step workflow definition workflow" in caplog.text
     assert expected_log in caplog.text
+
+
+def test_first_incomplete_step_workflow_skips_malformed_definitions(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _patch_step_workflow_managers(
+        monkeypatch,
+        instances=[
+            SimpleNamespace(
+                workflow_name="workflow",
+                current_step="review",
+                variables={},
+            )
+        ],
+        definition_json="{not-json",
+    )
+
+    with caplog.at_level("WARNING", logger="gobby.workflows.step_context"):
+        result = first_incomplete_step_workflow(MagicMock(), "session-1")
+
+    assert result is None
+    assert "Skipping malformed step workflow definition workflow" in caplog.text

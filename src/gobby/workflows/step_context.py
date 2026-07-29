@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,36 +55,7 @@ def _get_active_step_workflow_context(
 ) -> StepWorkflowContext | None:
     """Read step workflow state, ignoring malformed workflow definitions."""
 
-    instance_manager = WorkflowInstanceManager(db)
-    definition_manager = LocalWorkflowDefinitionManager(db)
-
-    for instance in instance_manager.get_active_instances(session_id):
-        if not instance.current_step:
-            continue
-
-        row = definition_manager.get_by_name(instance.workflow_name)
-        if row is None or row.workflow_type == "pipeline":
-            continue
-
-        try:
-            definition = WorkflowDefinition(**json.loads(row.definition_json))
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "Skipping malformed step workflow definition %s: invalid JSON: %s",
-                instance.workflow_name,
-                exc,
-                extra=_definition_log_extra(instance, row, session_id),
-            )
-            continue
-        except (TypeError, pydantic.ValidationError) as exc:
-            logger.warning(
-                "Skipping malformed step workflow definition %s: validation failed: %s",
-                instance.workflow_name,
-                exc,
-                extra=_definition_log_extra(instance, row, session_id),
-            )
-            continue
-
+    for instance, definition in _iter_active_step_workflows(db, session_id):
         step = definition.get_step(instance.current_step)
         if step is None:
             continue
@@ -121,6 +93,40 @@ def _definition_log_extra(instance: Any, definition_row: Any, session_id: str) -
     }
 
 
+def _iter_active_step_workflows(
+    db: HubDatabase,
+    session_id: str,
+) -> Iterator[tuple[Any, WorkflowDefinition]]:
+    instance_manager = WorkflowInstanceManager(db)
+    definition_manager = LocalWorkflowDefinitionManager(db)
+
+    for instance in instance_manager.get_active_instances(session_id):
+        if not instance.current_step:
+            continue
+        row = definition_manager.get_by_name(instance.workflow_name)
+        if row is None or row.workflow_type == "pipeline":
+            continue
+        try:
+            definition = WorkflowDefinition(**json.loads(row.definition_json))
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Skipping malformed step workflow definition %s: invalid JSON: %s",
+                instance.workflow_name,
+                exc,
+                extra=_definition_log_extra(instance, row, session_id),
+            )
+            continue
+        except (TypeError, pydantic.ValidationError) as exc:
+            logger.warning(
+                "Skipping malformed step workflow definition %s: validation failed: %s",
+                instance.workflow_name,
+                exc,
+                extra=_definition_log_extra(instance, row, session_id),
+            )
+            continue
+        yield instance, definition
+
+
 def first_incomplete_step_workflow(
     db: HubDatabase,
     session_id: str,
@@ -135,23 +141,12 @@ def first_incomplete_step_workflow(
     from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
     from gobby.workflows.state_manager import SessionVariableManager
 
-    instance_manager = WorkflowInstanceManager(db)
-    definition_manager = LocalWorkflowDefinitionManager(db)
     session_variables = SessionVariableManager(db).get_variables(session_id)
 
-    for instance in instance_manager.get_active_instances(session_id):
-        if not instance.current_step:
-            continue
-
+    for instance, definition in _iter_active_step_workflows(db, session_id):
         variables = {**session_variables, **instance.variables}
         if variables.get("step_workflow_complete") is True:
             continue
-
-        row = definition_manager.get_by_name(instance.workflow_name)
-        if not row or row.workflow_type == "pipeline":
-            continue
-
-        definition = WorkflowDefinition(**json.loads(row.definition_json))
         if not definition.steps:
             continue
 

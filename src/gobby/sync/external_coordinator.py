@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import re
 import time
 from collections.abc import Callable, Mapping
 from datetime import timedelta
@@ -24,6 +23,7 @@ from gobby.sync.github_issue_sync import (
     GitHubIssueSyncService,
     GitHubRepositoryReadinessError,
 )
+from gobby.sync.github_validation import is_github_rate_limit_error
 from gobby.sync.linear import LinearSyncService
 from gobby.utils.datetime import utc_now
 
@@ -243,6 +243,23 @@ class ExternalIssueSyncCoordinator:
         try:
             async with self._provider_limits[provider]:
                 await operation
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(
+                    self._write_status(
+                        project_id,
+                        provider,
+                        "pending",
+                        preserve_existing=True,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to restore pending %s issue sync status for project %s",
+                    provider,
+                    project_id,
+                )
+            raise
         except Exception:
             logger.exception("Unhandled %s issue sync failure for project %s", provider, project_id)
         finally:
@@ -480,7 +497,7 @@ class ExternalIssueSyncCoordinator:
     ) -> None:
         linked, pending = await asyncio.to_thread(self.status_store.counts, project_id, provider)
         delay = self._retry_delay(exc)
-        is_rate_limit = _is_rate_limit(exc)
+        is_rate_limit = is_github_rate_limit_error(exc)
         await self._record_failure(
             project_id,
             provider,
@@ -563,7 +580,7 @@ class ExternalIssueSyncCoordinator:
         text = str(exc).lower()
         if "usage limit" in text or "quota exceeded" in text:
             return 300.0
-        return 30.0 if _is_rate_limit(exc) else 5.0
+        return 30.0 if is_github_rate_limit_error(exc) else 5.0
 
 
 def _failure_count(value: Any) -> int:
@@ -577,18 +594,3 @@ def _failure_count(value: Any) -> int:
     if isinstance(value, list):
         return sum(_failure_count(item) for item in value)
     return 0
-
-
-def _is_rate_limit(exc: Exception) -> bool:
-    text = f"{type(exc).__name__}: {exc}".lower()
-    return bool(re.search(r"\b429\b", text)) or any(
-        marker in text
-        for marker in (
-            "rate limit",
-            "rate-limit",
-            "ratelimit",
-            "usage limit",
-            "quota exceeded",
-            "too many requests",
-        )
-    )

@@ -37,6 +37,7 @@ _AUTH_PROMPT_RE = re.compile(
     re.IGNORECASE,
 )
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
+_TERMINAL_DELIVERY_WAIT_SECONDS = 20.0
 _INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
 
 
@@ -377,8 +378,24 @@ class SessionCoordinator:
                 turns_used=turns_used,
                 session_id=session_id,
             )
-            return future.result(timeout=5)
-        except (FutureCancelledError, FutureTimeoutError, RuntimeError):
+            return future.result(timeout=_TERMINAL_DELIVERY_WAIT_SECONDS)
+        except FutureTimeoutError:
+            self.logger.warning(
+                "Deferred terminalization for agent run %s because terminal delivery did not "
+                "finish within %.0f seconds",
+                run_id,
+                _TERMINAL_DELIVERY_WAIT_SECONDS,
+                exc_info=True,
+            )
+            return None
+        except FutureCancelledError:
+            self.logger.warning(
+                "Deferred terminalization for agent run %s because terminal delivery was cancelled",
+                run_id,
+                exc_info=True,
+            )
+            return None
+        except RuntimeError:
             self.logger.warning(
                 "Deferred terminalization for agent run %s because the database executor "
                 "was unavailable",

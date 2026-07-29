@@ -56,7 +56,7 @@ class TestPipelineChildSession:
         assert call_kwargs["parent_session_id"] == "caller-session-456"
         assert call_kwargs["source"] == "pipeline"
         assert "pipeline-" in call_kwargs["external_id"]
-        assert call_kwargs["title"] == "pipeline:test-pipeline"
+        assert "title" not in call_kwargs
         assert call_kwargs["agent_depth"] == 0
         assert mock_session_manager.register in [call.args[0] for call in run_db.await_args_list]
 

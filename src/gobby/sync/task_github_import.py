@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.github_validation import normalize_github_issue_number
 from gobby.sync.tasks import _parse_timestamp
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GITHUB_CLI_TIMEOUT_SECONDS = 180
-_MAX_GITHUB_ISSUE_NUMBER = 2_147_483_647
 
 
 def _normalize_labels(raw_labels: object) -> list[str]:
@@ -173,16 +173,13 @@ class GitHubIssueImporter:
         imported_count = 0
         with self.db.transaction() as conn:
             for issue in issues:
-                issue_num = issue.get("number")
-                if (
-                    type(issue_num) is not int
-                    or issue_num <= 0
-                    or issue_num > _MAX_GITHUB_ISSUE_NUMBER
-                ):
+                raw_issue_num = issue.get("number")
+                issue_num = normalize_github_issue_number(raw_issue_num)
+                if type(raw_issue_num) is not int or issue_num is None:
                     logger.warning(
                         "Skipping GitHub issue with invalid number",
                         extra={
-                            "github_issue_number": issue_num,
+                            "github_issue_number": raw_issue_num,
                             "github_repo": github_repo,
                         },
                     )

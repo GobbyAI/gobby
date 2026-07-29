@@ -263,8 +263,9 @@ async def test_step_mcp_block_writes_audit_row(
 
     assert response.decision == "block"
     rows = _audit_rows(db)
-    assert len(rows) == 1
-    row = rows[0]
+    by_type = {row["event_type"]: row for row in rows}
+    assert set(by_type) == {"rule_eval", "tool_call"}
+    row = by_type["tool_call"]
     assert row["event_type"] == "tool_call"
     assert row["tool_name"] == "gobby-tasks:close_task"
     assert row["result"] == "block"

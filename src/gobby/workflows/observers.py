@@ -37,6 +37,7 @@ from gobby.workflows.observer_utils import (
     _extract_shell_output_text,
     _json_safe,
     _shell_tool_succeeded,
+    _successful_close_result,
 )
 
 if TYPE_CHECKING:
@@ -131,10 +132,7 @@ def detect_task_claim(
 
     if inner_tool_name == "close_task":
         arguments = tool_input.get("arguments", {}) or {}
-        if not isinstance(tool_output, dict):
-            return
-        close_result = tool_output.get("result", tool_output)
-        if not isinstance(close_result, dict) or close_result.get("closed") is not True:
+        if _successful_close_result(tool_output) is None:
             return
 
         closed_task_id: str | None = None

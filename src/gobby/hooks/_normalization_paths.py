@@ -24,7 +24,8 @@ _PATH_FIELDS = (
     "destinationPath",
 )
 _PATH_LIST_FIELDS = ("file_paths", "filePaths", "paths")
-_PATCH_TEXT_FIELDS = ("command", "patch", "content", "text", "diff")
+_APPLY_PATCH_TEXT_FIELDS = ("command", "patch", "content", "text", "diff")
+_EMBEDDED_PATCH_TEXT_FIELDS = ("command", "patch", "diff")
 _NESTED_PAYLOAD_FIELDS = (
     "arguments",
     "args",
@@ -135,7 +136,7 @@ def _extract_apply_patch_text(tool_input: Any) -> str | None:
     if not isinstance(tool_input, dict):
         return None
 
-    for key in _PATCH_TEXT_FIELDS:
+    for key in _APPLY_PATCH_TEXT_FIELDS:
         value = tool_input.get(key)
         if isinstance(value, str):
             return value
@@ -201,7 +202,7 @@ def _extract_payload_paths(value: Any, paths: list[str], *, depth: int = 0) -> N
     for key in _PATH_FIELDS:
         _append_unique_path(paths, value.get(key))
 
-    for key in _PATCH_TEXT_FIELDS:
+    for key in _EMBEDDED_PATCH_TEXT_FIELDS:
         patch_text = value.get(key)
         if not isinstance(patch_text, str):
             continue

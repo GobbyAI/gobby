@@ -71,6 +71,38 @@ class _ReloadingAppContext:
         return func(*args)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loaded_candidates", [[], [SimpleNamespace(id="peer-session")]])
+async def test_pane_ownership_keeps_requested_session_when_lookup_omits_it(
+    loaded_candidates: list[Any],
+) -> None:
+    from gobby.sessions.tmux_window_naming import _resolve_tmux_pane_ownership
+
+    session = SimpleNamespace(id="requested-session")
+    container = SimpleNamespace(
+        session_manager=SimpleNamespace(find_by_terminal_identity=MagicMock()),
+        run_db=AsyncMock(return_value=loaded_candidates),
+    )
+    expected = MagicMock()
+
+    with (
+        patch("gobby.app_context.get_app_context", return_value=container),
+        patch(
+            "gobby.sessions.tmux_window_naming.terminal_session_identity",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gobby.sessions.tmux_window_naming.resolve_pane_ownership",
+            return_value=expected,
+        ) as resolve,
+    ):
+        result = await _resolve_tmux_pane_ownership(session)
+
+    assert result is expected
+    candidates = resolve.call_args.args[0]
+    assert candidates[-1] is session
+
+
 class TestRenameTmuxWindow:
     """Tests for _rename_tmux_window helper."""
 

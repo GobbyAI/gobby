@@ -301,10 +301,14 @@ async def _resolve_tmux_pane_ownership(session: Any) -> PaneOwnershipDecision | 
         and hasattr(session_manager, "find_by_terminal_identity")
     ):
         try:
-            candidates = await container.run_db(
+            loaded_candidates = await container.run_db(
                 session_manager.find_by_terminal_identity,
                 identity,
             )
+            if loaded_candidates:
+                candidates = list(loaded_candidates)
+                if all(getattr(candidate, "id", None) != session_id for candidate in candidates):
+                    candidates.append(session)
         except Exception:
             logger.debug(
                 "Failed to load pane peers for session %s",

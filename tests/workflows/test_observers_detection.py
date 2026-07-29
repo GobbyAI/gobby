@@ -404,6 +404,27 @@ class TestDetectTaskClaimCloseTaskBehavior:
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
 
+    def test_top_level_successful_close_ignores_unrelated_result_envelope(
+        self, variables, make_after_tool_event, mock_task_manager
+    ) -> None:
+        variables["task_claimed"] = True
+        variables["claimed_tasks"] = {"task-uuid-123": "#1"}
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#1"},
+            },
+            tool_output={"success": True, "closed": True, "result": {"preview": False}},
+        )
+
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables.get("task_claimed") is False
+        assert variables.get("claimed_tasks") == {}
+        mock_task_manager.get_task.assert_not_called()
+
     def test_blocked_close_preview_preserves_claimed_task(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
@@ -1259,6 +1280,23 @@ class TestDetectCommitLink:
                 "arguments": {"task_id": "#123", "commit_sha": "abc123"},
             },
             tool_output={"success": True, "result": {"closed": True}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
+    def test_top_level_successful_close_with_unrelated_result_sets_task_has_commits(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+            },
+            tool_output={"success": True, "closed": True, "result": {"preview": False}},
         )
 
         detect_commit_link(event, variables, SESSION_ID)

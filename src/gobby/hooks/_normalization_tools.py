@@ -3,7 +3,7 @@
 import json as _json
 from typing import Any
 
-from gobby.hooks._normalization_canonical import _set_canonical_tool_metadata
+from gobby.hooks._normalization_canonical import _compact_tool_name, _set_canonical_tool_metadata
 from gobby.hooks._normalization_mcp import normalize_mcp_fields
 from gobby.hooks._normalization_paths import (
     _normalize_apply_patch_input,
@@ -71,11 +71,7 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     tool_input = data.get("tool_input")
     tool_name = data.get("tool_name")
 
-    compact_tool_name = (
-        "".join(character for character in tool_name.lower() if character.isalnum())
-        if isinstance(tool_name, str)
-        else ""
-    )
+    compact_tool_name = _compact_tool_name(tool_name)
     if compact_tool_name == "applypatch":
         data.setdefault("_original_tool_name", tool_name)
         data["tool_name"] = "Write"

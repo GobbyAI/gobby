@@ -77,7 +77,7 @@ class TestSubagentRuleIntegration:
         result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "block"
-        assert "gobby task" in (result.reason or "").lower()
+        assert "gobby-task" in (result.reason or "").lower()
 
     @pytest.mark.asyncio
     async def test_blocks_task_tools_when_variables_unset(self, engine) -> None:

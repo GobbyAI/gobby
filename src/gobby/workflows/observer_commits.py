@@ -12,6 +12,7 @@ from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
     _shell_tool_succeeded,
+    _successful_close_result,
 )
 
 if TYPE_CHECKING:
@@ -113,10 +114,8 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
         result = tool_output.get("result")
         if isinstance(result, dict) and result.get("error"):
             return
-        if inner_tool == "close_task":
-            close_result = result if isinstance(result, dict) else tool_output
-            if close_result.get("closed") is not True:
-                return
+    if inner_tool == "close_task" and _successful_close_result(tool_output) is None:
+        return
 
     variables["task_has_commits"] = True
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)

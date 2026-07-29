@@ -224,7 +224,7 @@ class TestNoFullCargoSuiteRule:
         effect = self._effect(db, manager)
 
         assert self._is_blocked(effect, command)
-        assert "full Cargo test suite" in effect.reason
+        assert "cargo test -p <package>" in effect.reason
 
     @pytest.mark.parametrize(
         "command",

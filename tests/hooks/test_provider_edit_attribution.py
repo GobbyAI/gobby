@@ -53,6 +53,36 @@ def test_structured_mutation_without_path_preserves_empty_canonical_sentinel() -
     assert data["canonical_structured_mutation"] is True
 
 
+@pytest.mark.parametrize("leaf_name", ["create", "edit", "replace"])
+def test_generic_mcp_leaf_names_are_not_file_mutations(leaf_name: str) -> None:
+    data: dict[str, Any] = {
+        "tool_name": f"mcp__service__{leaf_name}",
+        "mcp_server": "service",
+        "mcp_tool": leaf_name,
+        "tool_input": {"path": "src/example.py"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "mcp"
+    assert "canonical_repo_mutation" not in data
+    assert "canonical_structured_mutation" not in data
+
+
+def test_file_content_with_patch_markers_does_not_add_phantom_paths() -> None:
+    data: dict[str, Any] = {
+        "tool_name": "WriteFile",
+        "tool_input": {
+            "file_path": "docs/example.md",
+            "content": "*** Update File: src/phantom.py\n",
+        },
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_file_paths"] == ["docs/example.md"]
+
+
 def test_change_lists_preserve_old_new_and_direct_paths_once() -> None:
     data = {
         "tool_name": "Edit",

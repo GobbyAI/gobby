@@ -238,7 +238,7 @@ class TestToolHandlerEdgeCases:
 
         with (
             caplog.at_level(logging.WARNING),
-            patch("gobby.utils.git.is_path_gitignored", return_value=False),
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
                 side_effect=RuntimeError("primary write failed"),
@@ -370,7 +370,7 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(tmp_path)
 
         with (
-            patch("gobby.utils.git.is_path_gitignored", return_value=True),
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=True),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
             ) as record_files,
@@ -399,7 +399,7 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(tmp_path)
 
         with (
-            patch("gobby.utils.git.is_path_gitignored", return_value=False),
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
                 return_value=True,
@@ -418,6 +418,7 @@ class TestToolHandlerEdgeCases:
     ) -> None:
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
         handlers = EventHandlers(**mock_dependencies)
+        notify_code_index = MagicMock()
         event = make_event(
             HookEventType.AFTER_TOOL,
             data={
@@ -428,7 +429,7 @@ class TestToolHandlerEdgeCases:
                 "canonical_file_paths": [
                     str(tmp_path / "src" / "first.py"),
                     str(tmp_path / "docs" / "plan.md"),
-                    str(tmp_path / "src" / "first.py"),
+                    "src/first.py",
                 ],
             },
             metadata={"_platform_session_id": "sess-123"},
@@ -436,7 +437,8 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(tmp_path)
 
         with (
-            patch("gobby.utils.git.is_path_gitignored", return_value=False),
+            patch.object(handlers, "_notify_code_index", notify_code_index),
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
                 return_value=True,
@@ -448,6 +450,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["src/first.py", "docs/plan.md"],
         )
+        assert notify_code_index.call_count == 2
 
     def test_structured_edit_without_paths_records_empty_sentinel_and_warns(
         self,

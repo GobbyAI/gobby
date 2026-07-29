@@ -255,7 +255,6 @@ class SessionLookupService:
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""
         machine_id = event.machine_id or self._get_machine_id()
-        cwd = event.data.get("cwd")
         project_id = event.project_id
         platform_session_id = self._session_manager.get_session_id(
             external_id,
@@ -264,174 +263,198 @@ class SessionLookupService:
             project_id=project_id,
         )
 
-        # If not in mapping and not session-start, try to query database
-        if not platform_session_id and event.event_type != HookEventType.SESSION_START:
-            with self._session_coordinator.get_lookup_lock(external_id, event.source.value):
-                # Double check in case another thread finished lookup
-                platform_session_id = self._session_manager.get_session_id(
-                    external_id,
-                    event.source.value,
-                    machine_id=machine_id,
-                    project_id=project_id,
-                )
+        if platform_session_id or event.event_type == HookEventType.SESSION_START:
+            return platform_session_id
 
-                if not platform_session_id:
-                    self._logger.debug(
-                        "Session not in mapping, querying database for external_id=%s", external_id
-                    )
-                    # Lookup with full composite key
-                    platform_session_id = self._session_manager.lookup_session_id(
-                        external_id,
-                        source=event.source.value,
-                        machine_id=machine_id,
-                        project_id=project_id,
-                    )
-                    if platform_session_id:
-                        self._logger.debug(
-                            "Found session_id %s for external_id %s",
-                            platform_session_id,
-                            external_id,
-                        )
-                    else:
-                        recovered_session = self._session_manager.recover_session(
-                            external_id=external_id,
-                            source=event.source.value,
-                            machine_id=machine_id,
-                            project_id=project_id,
-                        )
-                        if recovered_session:
-                            platform_session_id = recovered_session.id
-                            self._logger.warning(
-                                "Recovered session %s for external_id=%s across source mismatch "
-                                "(incoming=%s, existing=%s)",
-                                platform_session_id,
-                                external_id,
-                                event.source.value,
-                                recovered_session.source,
-                            )
-                            return platform_session_id
+        with self._session_coordinator.get_lookup_lock(external_id, event.source.value):
+            platform_session_id = self._session_manager.get_session_id(
+                external_id,
+                event.source.value,
+                machine_id=machine_id,
+                project_id=project_id,
+            )
+            if platform_session_id:
+                return platform_session_id
 
-                        compact_resolution = resolve_compact_continuation(
-                            self._session_manager.db,
-                            machine_id=machine_id,
-                            source=event.source.value,
-                            terminal_context=event.data.get("terminal_context"),
-                        )
-                        if compact_resolution.ambiguous:
-                            detail = {
-                                "error": (
-                                    "Compact continuation matches multiple persisted sessions."
-                                ),
-                                "error_code": "compact_identity_ambiguous",
-                                "conflicting_session_ids": list(
-                                    compact_resolution.conflicting_session_ids
-                                ),
-                            }
-                            event.metadata["_session_resolution_error"] = detail
-                            self._logger.warning(
-                                "Skipping auto-registration for ambiguous compact continuation",
-                                extra={
-                                    "event": "compact_identity_ambiguous",
-                                    "observed_external_id": external_id,
-                                    **detail,
-                                },
-                            )
-                            return None
-                        if compact_resolution.session is not None:
-                            canonical = compact_resolution.session
-                            activity = reconcile_compact_session_activity(
-                                self._session_manager,
-                                canonical.id,
-                            )
-                            if not activity.success:
-                                detail = activity.error_result()
-                                event.metadata["_session_resolution_error"] = detail
-                                self._logger.warning(
-                                    "Skipping auto-registration for conflicting compact continuation",
-                                    extra={
-                                        "event": "compact_identity_reactivation_blocked",
-                                        "session_id": canonical.id,
-                                        "observed_external_id": external_id,
-                                        **detail,
-                                    },
-                                )
-                                return None
+            return self._resolve_uncached_session_id(
+                external_id,
+                event,
+                machine_id=machine_id,
+                project_id=project_id,
+            )
 
-                            event.metadata["_observed_external_id"] = external_id
-                            event.session_id = canonical.external_id
-                            self._session_manager.cache_session_mapping(
-                                external_id=canonical.external_id,
-                                source=event.source.value,
-                                session_id=canonical.id,
-                                machine_id=canonical.machine_id,
-                                project_id=canonical.project_id,
-                            )
-                            self._session_manager.cache_session_mapping(
-                                external_id=external_id,
-                                source=event.source.value,
-                                session_id=canonical.id,
-                                machine_id=machine_id,
-                                project_id=project_id,
-                            )
-                            self._logger.info(
-                                "Recovered pre-start compact continuation as session %s",
-                                canonical.id,
-                                extra={
-                                    "event": "compact_identity_prestart_recovered",
-                                    "session_id": canonical.id,
-                                    "canonical_external_id": canonical.external_id,
-                                    "observed_external_id": external_id,
-                                },
-                            )
-                            return canonical.id
+    def _resolve_uncached_session_id(
+        self,
+        external_id: str,
+        event: HookEvent,
+        *,
+        machine_id: str,
+        project_id: str | None,
+    ) -> str | None:
+        """Resolve a session after cache lookup has failed under the lookup lock."""
+        self._logger.debug(
+            "Session not in mapping, querying database for external_id=%s", external_id
+        )
+        platform_session_id = self._session_manager.lookup_session_id(
+            external_id,
+            source=event.source.value,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
+        if platform_session_id:
+            self._logger.debug(
+                "Found session_id %s for external_id %s",
+                platform_session_id,
+                external_id,
+            )
+            return platform_session_id
 
-                        if event.event_type == HookEventType.SESSION_END:
-                            self._logger.warning(
-                                "Skipping auto-registration for orphaned SESSION_END: "
-                                "external_id=%s not found in DB "
-                                "(machine_id=%s, project_id=%s, source=%s).",
-                                external_id,
-                                machine_id,
-                                project_id,
-                                event.source.value,
-                            )
-                            return None
+        recovered_session = self._session_manager.recover_session(
+            external_id=external_id,
+            source=event.source.value,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
+        if recovered_session:
+            self._logger.warning(
+                "Recovered session %s for external_id=%s across source mismatch "
+                "(incoming=%s, existing=%s)",
+                recovered_session.id,
+                external_id,
+                event.source.value,
+                recovered_session.source,
+            )
+            return recovered_session.id
 
-                        if is_gobby_acp_child(event.data.get("terminal_context")):
-                            self._logger.info(
-                                "Skipping auto-registration for ACP child process: "
-                                "external_id=%s source=%s",
-                                external_id,
-                                event.source.value,
-                            )
-                            return None
+        compact_handled, compact_session_id = self._recover_compact_session(
+            external_id,
+            event,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
+        if compact_handled:
+            return compact_session_id
 
-                        # Not in cache, composite DB lookup, or cross-source
-                        # recovery. Delegate to register_session, which re-looks-up
-                        # under a registration lock and reuses the existing row if
-                        # one exists (parent linkage preserved by the UNSET
-                        # default), otherwise creates a new session. Logged at
-                        # INFO since this path is idempotent and self-healing.
-                        self._logger.info(
-                            "Session not found via cache/DB lookup for external_id=%s "
-                            "(machine_id=%s, project_id=%s, source=%s); delegating to "
-                            "idempotent register_session (reuses existing row or creates).",
-                            external_id,
-                            machine_id,
-                            project_id,
-                            event.source.value,
-                        )
-                        platform_session_id = self._session_manager.register_session(
-                            external_id=external_id,
-                            machine_id=machine_id,
-                            project_id=project_id,
-                            transcript_path=event.data.get("transcript_path"),
-                            source=event.source.value,
-                            project_path=cwd,
-                            terminal_context=event.data.get("terminal_context"),
-                        )
+        if event.event_type == HookEventType.SESSION_END:
+            self._logger.warning(
+                "Skipping auto-registration for orphaned SESSION_END: "
+                "external_id=%s not found in DB "
+                "(machine_id=%s, project_id=%s, source=%s).",
+                external_id,
+                machine_id,
+                project_id,
+                event.source.value,
+            )
+            return None
 
-        return platform_session_id
+        if is_gobby_acp_child(event.data.get("terminal_context")):
+            self._logger.info(
+                "Skipping auto-registration for ACP child process: external_id=%s source=%s",
+                external_id,
+                event.source.value,
+            )
+            return None
+
+        self._logger.info(
+            "Session not found via cache/DB lookup for external_id=%s "
+            "(machine_id=%s, project_id=%s, source=%s); delegating to "
+            "idempotent register_session (reuses existing row or creates).",
+            external_id,
+            machine_id,
+            project_id,
+            event.source.value,
+        )
+        return self._session_manager.register_session(
+            external_id=external_id,
+            machine_id=machine_id,
+            project_id=project_id,
+            transcript_path=event.data.get("transcript_path"),
+            source=event.source.value,
+            project_path=event.data.get("cwd"),
+            terminal_context=event.data.get("terminal_context"),
+        )
+
+    def _recover_compact_session(
+        self,
+        external_id: str,
+        event: HookEvent,
+        *,
+        machine_id: str,
+        project_id: str | None,
+    ) -> tuple[bool, str | None]:
+        """Recover compact identity, returning whether resolution is terminal."""
+        compact_resolution = resolve_compact_continuation(
+            self._session_manager.db,
+            machine_id=machine_id,
+            source=event.source.value,
+            terminal_context=event.data.get("terminal_context"),
+        )
+        if compact_resolution.ambiguous:
+            detail = {
+                "error": "Compact continuation matches multiple persisted sessions.",
+                "error_code": "compact_identity_ambiguous",
+                "conflicting_session_ids": list(compact_resolution.conflicting_session_ids),
+            }
+            event.metadata["_session_resolution_error"] = detail
+            self._logger.warning(
+                "Skipping auto-registration for ambiguous compact continuation",
+                extra={
+                    "event": "compact_identity_ambiguous",
+                    "observed_external_id": external_id,
+                    **detail,
+                },
+            )
+            return True, None
+
+        if compact_resolution.session is None:
+            return False, None
+
+        canonical = compact_resolution.session
+        activity = reconcile_compact_session_activity(
+            self._session_manager,
+            canonical.id,
+        )
+        if not activity.success:
+            detail = activity.error_result()
+            event.metadata["_session_resolution_error"] = detail
+            self._logger.warning(
+                "Skipping auto-registration for conflicting compact continuation",
+                extra={
+                    "event": "compact_identity_reactivation_blocked",
+                    "session_id": canonical.id,
+                    "observed_external_id": external_id,
+                    **detail,
+                },
+            )
+            return True, None
+
+        event.metadata["_observed_external_id"] = external_id
+        event.session_id = canonical.external_id
+        self._session_manager.cache_session_mapping(
+            external_id=canonical.external_id,
+            source=event.source.value,
+            session_id=canonical.id,
+            machine_id=canonical.machine_id,
+            project_id=canonical.project_id,
+        )
+        self._session_manager.cache_session_mapping(
+            external_id=external_id,
+            source=event.source.value,
+            session_id=canonical.id,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
+        self._logger.info(
+            "Recovered pre-start compact continuation as session %s",
+            canonical.id,
+            extra={
+                "event": "compact_identity_prestart_recovered",
+                "session_id": canonical.id,
+                "canonical_external_id": canonical.external_id,
+                "observed_external_id": external_id,
+            },
+        )
+        return True, canonical.id
 
     def _enrich_task_context(self, platform_session_id: str, event: HookEvent) -> None:
         """Add active task context to event metadata."""

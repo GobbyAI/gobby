@@ -11,7 +11,6 @@ import pytest
 
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
 from ._event_handler_helpers import empty_database_mock
@@ -704,6 +703,9 @@ class TestSessionMoreCoverage:
         row.seq_num = 1
         row.parent_session_id = None
         row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        row.external_id = "ext-3"
+        row.machine_id = "machine-1"
+        row.project_id = "proj-1"
 
         handler._session_manager.get.side_effect = lambda sid: (row if sid == "sess-1" else None)
         handler._session_manager.find_by_external_id.return_value = row
@@ -719,25 +721,16 @@ class TestSessionMoreCoverage:
             patch(
                 "gobby.hooks.event_handlers._session_start.handoff.consume_compact_handoff_marker"
             ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity"
+            ) as reconcile_activity,
         ):
-            handler._session_manager.register_session.return_value = "sess-1"
+            reconcile_activity.return_value.success = True
 
             handler.handle_session_start(event)
 
-            # The compact restart reactivates the same row via registration
-            handler._session_manager.register_session.assert_called_with(
-                external_id="ext-3",
-                machine_id=handler._get_machine_id(),
-                project_id=handler._resolve_project_id(),
-                parent_session_id=UNSET,
-                transcript_path=None,
-                source="claude",
-                project_path=None,
-                terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
-                workflow_name=None,
-                agent_depth=2,
-                sandbox_enabled=None,
-            )
+            reconcile_activity.assert_called_once_with(handler._session_manager, "sess-1")
+            handler._session_manager.register_session.assert_not_called()
             assert event.metadata["_platform_session_id"] == "sess-1"
             # In-place handoff: nothing expires and claims never change owner
             handler._session_manager.mark_session_expired.assert_not_called()

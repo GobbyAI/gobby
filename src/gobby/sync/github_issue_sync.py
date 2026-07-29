@@ -15,23 +15,16 @@ from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github import GitHubSyncService
+from gobby.sync.github_validation import (
+    is_github_rate_limit_error,
+    normalize_github_issue_number,
+)
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.utils.datetime import parse_stored_datetime
 
 TriageIssueCallback = Callable[..., Awaitable[dict[str, Any]]]
 _GITHUB_PAGE_SIZE = 100
 _MAX_GITHUB_RECOVERY_PAGES = 100
-_MAX_GITHUB_ISSUE_NUMBER = 2_147_483_647
-
-
-def _normalize_issue_number(value: object) -> int | None:
-    if type(value) is int:
-        number = value
-    elif isinstance(value, str) and value.strip().isdecimal():
-        number = int(value.strip())
-    else:
-        return None
-    return number if 0 < number <= _MAX_GITHUB_ISSUE_NUMBER else None
 
 
 class GitHubRepositoryReadinessError(RuntimeError):
@@ -99,7 +92,7 @@ class GitHubIssueSyncService:
         issue_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update the one Gobby task linked to a GitHub issue."""
-        normalized_issue_number = _normalize_issue_number(issue_number)
+        normalized_issue_number = normalize_github_issue_number(issue_number)
         if normalized_issue_number is None:
             raise ValueError("GitHub issue number must be a positive integer")
         issue_number = normalized_issue_number
@@ -117,7 +110,7 @@ class GitHubIssueSyncService:
         issue = issue_data or await self._fetch_issue(repo, issue_number)
         if issue.get("pull_request"):
             return {"action": "skipped_pull_request"}
-        response_number = _normalize_issue_number(issue.get("number", issue_number))
+        response_number = normalize_github_issue_number(issue.get("number", issue_number))
         if response_number != issue_number:
             raise ValueError("GitHub issue response number does not match the requested issue")
 
@@ -234,7 +227,7 @@ class GitHubIssueSyncService:
                         break
                     seen_pages.add(page_marker)
                 except Exception as exc:
-                    if _is_rate_limit_error(exc):
+                    if is_github_rate_limit_error(exc):
                         raise
                     stats["errors"] += 1
                     break
@@ -242,7 +235,7 @@ class GitHubIssueSyncService:
                     if not isinstance(issue, dict) or issue.get("pull_request"):
                         continue
                     stats["scanned"] += 1
-                    issue_number = _normalize_issue_number(issue.get("number"))
+                    issue_number = normalize_github_issue_number(issue.get("number"))
                     if issue_number is None:
                         stats["errors"] += 1
                         continue
@@ -263,8 +256,6 @@ class GitHubIssueSyncService:
                         stats["errors"] += 1
                 if len(issues) < _GITHUB_PAGE_SIZE:
                     break
-            else:
-                stats["errors"] += 1
         return stats
 
     async def push_linked_tasks(self, project_id: str) -> dict[str, int]:
@@ -291,7 +282,7 @@ class GitHubIssueSyncService:
                 await service.sync_task_to_github(row["id"])
                 stats["pushed"] += 1
             except Exception as exc:
-                if _is_rate_limit_error(exc):
+                if is_github_rate_limit_error(exc):
                     raise
                 stats["errors"] += 1
         return stats
@@ -384,16 +375,6 @@ class GitHubIssueDeliveryHandler:
                 issue_data=issue_data,
             )
         return result
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    if any(getattr(exc, name, None) is not None for name in ("retry_after_seconds", "retry_after")):
-        return True
-    message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in ("rate limit", "rate-limit", "usage limit", "quota exceeded", "429")
-    )
 
 
 def _copy_retry_metadata(source: Exception, target: Exception) -> None:

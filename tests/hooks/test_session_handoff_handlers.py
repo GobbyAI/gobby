@@ -218,6 +218,31 @@ class TestResolveSessionStartIdentity:
         assert not resolution.is_compact
         assert resolution.session is row
 
+    def test_compact_resolver_database_failure_degrades_to_normal_start(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        row = _make_row(status="active")
+        handler = _make_resolver_handler(row)
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.handoff.resolve_compact_continuation",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            resolution = resolve_session_start_identity(
+                handler,
+                {"terminal_context": TERMINAL_CONTEXT},
+                "startup",
+                external_id="ext-1",
+                machine_id="machine-1",
+                project_id="project-1",
+                cli_source="claude",
+            )
+
+        assert not resolution.is_compact
+        assert resolution.session is row
+        assert "Compact continuation lookup failed" in caplog.text
+
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_conflicting_terminal_identity_blocks(self, mock_sv_mgr_cls: MagicMock) -> None:
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
@@ -574,13 +599,18 @@ class TestPrepareCompactContinuationVariables:
         assert variables["full_session_summary"] == ""
         assert variables["handoff_summary_injectable"] == ""
 
-    def test_auto_inject_disabled_clears_and_consumes_marker(self, hub_db: HubDatabase) -> None:
+    @pytest.mark.parametrize("auto_inject", [False, "false", "0"])
+    def test_auto_inject_disabled_clears_and_consumes_marker(
+        self,
+        hub_db: HubDatabase,
+        auto_inject: bool | str,
+    ) -> None:
         session = self._make_session(hub_db, project_name="handoff-prep-optout")
         sv_mgr = SessionVariableManager(hub_db)
         sv_mgr.merge_variables(
             session.id,
             {
-                "auto_inject_handoff": False,
+                "auto_inject_handoff": auto_inject,
                 "session_summary": "stale",
                 COMPACT_HANDOFF_MARKER_VARIABLE: "compact",
             },

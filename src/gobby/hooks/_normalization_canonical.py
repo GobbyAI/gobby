@@ -144,11 +144,7 @@ def _is_structured_file_mutation(data: Mapping[str, Any], tool_name: Any) -> boo
     mcp_tool = data.get("mcp_tool")
     if not isinstance(mcp_tool, str):
         return False
-    leaf_name = mcp_tool.casefold()
-    return (
-        leaf_name in _MCP_FILE_MUTATION_LEAF_TOOLS
-        or _compact_tool_name(leaf_name) in CANONICAL_WRITE_TOOL_NAMES
-    )
+    return mcp_tool.casefold() in _MCP_FILE_MUTATION_LEAF_TOOLS
 
 
 def _truncate_positional_paths(parts: list[str]) -> list[str]:

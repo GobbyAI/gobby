@@ -3618,7 +3618,7 @@ class TestCodeIndexNavigationRules:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
-            'gcode search "supports_stored_vector_search" --limit 10 2>/dev/null '
+            'gcode search "search_by_stored_vectors" --limit 10 2>/dev/null '
             '| python3 -c "import json,sys; d=json.load(sys.stdin); '
             "[print(r['file_path'], r['line_start']) for r in d['results']]\"",
             cwd=str(repo),
@@ -3927,7 +3927,7 @@ class TestContext7RuleCondition:
         assert "not variables.get('context7_nudge_fired')" in (body.when or "")
         assert body.effects[0].acknowledge_variable == "context7_nudge_fired"
         assert body.effects[0].reason is not None
-        assert "retry after this nudge" in body.effects[0].reason
+        assert "one-time nudge is now cleared" in body.effects[0].reason
 
     def test_skips_non_write(self) -> None:
         assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False

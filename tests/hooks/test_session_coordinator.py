@@ -644,7 +644,10 @@ class TestAgentRunCompletion:
         assert mock_agent_run_manager.complete.call_count == 0
         assert notify.call_count == 1
 
-    def test_timed_out_terminal_offload_runs_followups_after_persistence(self) -> None:
+    def test_timed_out_terminal_offload_runs_followups_after_persistence(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         manager = MagicMock()
         terminal_run = MagicMock(status="success")
         manager.complete.return_value = terminal_run
@@ -658,6 +661,7 @@ class TestAgentRunCompletion:
             submitted["kwargs"] = kwargs
             future = MagicMock()
             future.result.side_effect = TimeoutError("still running")
+            submitted["future"] = future
             return future
 
         with (
@@ -680,8 +684,10 @@ class TestAgentRunCompletion:
             )
 
             assert result is None
+            cast(MagicMock, submitted["future"]).result.assert_called_once_with(timeout=20.0)
             mock_notify.assert_not_called()
             mock_release.assert_not_called()
+            assert "terminal delivery did not finish within 20 seconds" in caplog.text
 
             updated = submitted["operation"](**submitted["kwargs"])
 

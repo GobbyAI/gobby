@@ -271,7 +271,7 @@ async def test_recovery_stops_at_the_page_limit(
     assert call_mock.await_count == 2
     assert sync_issue.await_count == 200
     assert stats["scanned"] == 200
-    assert stats["errors"] == 1
+    assert stats["errors"] == 0
 
 
 @pytest.mark.asyncio
