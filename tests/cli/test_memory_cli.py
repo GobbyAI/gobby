@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from gobby.cli import cli
 from gobby.cli.memory.main import memory as memory_cli
@@ -518,6 +518,43 @@ class TestMemoryReconcileCommand:
         )
 
 
+def _dream_client(*responses: Any) -> MagicMock:
+    client = MagicMock()
+    client.call_http_api.side_effect = list(responses)
+    return client
+
+
+def _dream_started(run_id: str = "run-1") -> _FakeHTTPResponse:
+    return _FakeHTTPResponse(
+        {"success": True, "run_id": run_id, "status": "running", "coalesced": False},
+        status_code=202,
+    )
+
+
+def _dream_run_status(
+    status: str,
+    *,
+    run_id: str = "run-1",
+    checkpoint: dict[str, Any] | None = None,
+    summary: dict[str, Any] | None = None,
+    plan: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> _FakeHTTPResponse:
+    return _FakeHTTPResponse(
+        {
+            "success": True,
+            "run": {
+                "id": run_id,
+                "status": status,
+                "checkpoint": checkpoint,
+                "summary": summary,
+                "plan": plan,
+                "error": error,
+            },
+        }
+    )
+
+
 class TestMemoryDreamCommand:
     """Tests for gobby memory dream command."""
 
@@ -526,99 +563,324 @@ class TestMemoryDreamCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
-    def test_dream_prints_aggregate_summary(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        """An unscoped dream sweeps every due project and prints a per-project summary."""
-        mock_client = MagicMock()
-        mock_client.call_http_api.return_value = _FakeHTTPResponse(
-            {
-                "success": True,
-                "targets": 2,
-                "completed": 2,
-                "failed": 0,
-                "mutations": 3,
-                "runs": [
-                    {"project_id": "proj-1", "success": True, "run_id": "r1", "mutations": 1},
-                    {"project_id": None, "success": True, "run_id": "r2", "mutations": 2},
-                ],
-            }
-        )
-
-        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
+    def _invoke(
+        self, runner: CliRunner, client: MagicMock, args: list[str]
+    ) -> tuple[Result, MagicMock]:
+        with (
+            patch("gobby.cli.memory.dream._get_daemon_client", return_value=client),
+            patch("gobby.cli.memory.dream.time.sleep") as mock_sleep,
+        ):
             result = runner.invoke(
                 memory_cli,
-                ["dream", "--dry-run"],
+                ["dream", *args],
                 obj={"config": MagicMock(daemon_port=60887)},
             )
+        return result, mock_sleep
+
+    def test_dream_starts_async_and_polls_to_completed(self, runner: CliRunner) -> None:
+        """3.2.1: prints the run ID immediately, polls changed progress, renders summary."""
+        checkpoint = {
+            "phase": "sweep",
+            "scope": "proj-1",
+            "pass_number": 1,
+            "batch_number": 2,
+            "completed": 10,
+            "remaining": None,
+            "mutations": 1,
+            "backlog": {},
+            "stop_reason": None,
+            "last_dependency_failure": None,
+        }
+        done_checkpoint = {**checkpoint, "batch_number": 3, "completed": 25, "mutations": 4}
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status("running", checkpoint=checkpoint),
+            _dream_run_status("running", checkpoint=checkpoint),
+            _dream_run_status(
+                "completed",
+                checkpoint=done_checkpoint,
+                summary={"candidates_reviewed": 25, "mutations": 4, "snapshots": 4, "errors": 0},
+                plan={"dry_run": False},
+            ),
+        )
+
+        result, mock_sleep = self._invoke(runner, client, [])
+
+        assert result.exit_code == 0
+        assert "Started dream run: run-1" in result.output
+        # An unchanged checkpoint is rendered once, not once per poll.
+        progress = "[sweep] scope=proj-1 pass=1 batch=2 completed=10 mutations=1"
+        assert result.output.count(progress) == 1
+        assert "[sweep] scope=proj-1 pass=1 batch=3 completed=25 mutations=4" in result.output
+        assert "Dream run run-1 completed" in result.output
+        assert "Candidates reviewed: 25" in result.output
+        # Default --timeout 0 imposes no client deadline: the wait never expires.
+        assert "still running" not in result.output
+        post = client.call_http_api.call_args_list[0]
+        assert post.args == ("/memory/dream",)
+        assert post.kwargs["method"] == "POST"
+        # The trigger is asynchronous: short network timeout, no wait parameter.
+        assert post.kwargs["timeout"] == 30.0
+        assert "wait" not in post.kwargs["json_data"]
+        assert "project_id" not in post.kwargs["json_data"]
+        for poll in client.call_http_api.call_args_list[1:]:
+            assert poll.args == ("/memory/dream/run-1",)
+            assert poll.kwargs["method"] == "GET"
+        mock_sleep.assert_called_with(2.0)
+
+    def test_dream_passes_flags_to_the_trigger(self, runner: CliRunner) -> None:
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status(
+                "completed",
+                summary={"candidates_reviewed": 0, "mutations": 0, "snapshots": 0, "errors": 0},
+            ),
+        )
+
+        result, _ = self._invoke(runner, client, ["--full", "--memory-type", "fact", "--dry-run"])
+
+        assert result.exit_code == 0
+        post = client.call_http_api.call_args_list[0]
+        assert post.kwargs["json_data"] == {
+            "dry_run": True,
+            "skip_consolidation": False,
+            "memory_type": "fact",
+            "full_sweep": True,
+        }
+
+    def test_dream_explicit_timeout_stops_wait_and_prints_resume_command(
+        self, runner: CliRunner
+    ) -> None:
+        """3.2.2: an explicit deadline stops only the CLI wait and leaves the run active."""
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status("running"),
+        )
+
+        with (
+            patch("gobby.cli.memory.dream._get_daemon_client", return_value=client),
+            patch("gobby.cli.memory.dream.time.sleep") as mock_sleep,
+            patch("gobby.cli.memory.dream.time.monotonic", side_effect=[0.0, 100.0]),
+        ):
+            result = runner.invoke(
+                memory_cli,
+                ["dream", "--timeout", "5"],
+                obj={"config": MagicMock(daemon_port=60887)},
+            )
+
+        assert result.exit_code == 0
+        assert "Dream run run-1 is still running" in result.output
+        assert "Resume observation with: gobby memory dream status run-1" in result.output
+        # POST plus a single poll; the daemon run was never cancelled.
+        assert client.call_http_api.call_count == 2
+        mock_sleep.assert_not_called()
+
+    def test_dream_ctrl_c_preserves_run_and_prints_resume_command(self, runner: CliRunner) -> None:
+        """3.2.2: Ctrl-C stops only the CLI wait and prints the resume command."""
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status("running"),
+            KeyboardInterrupt(),
+        )
+
+        result, _ = self._invoke(runner, client, [])
+
+        assert result.exit_code != 0
+        assert "Stopped watching; dream run run-1 keeps running in the daemon." in result.output
+        assert "Resume observation with: gobby memory dream status run-1" in result.output
+        assert client.call_http_api.call_count == 3
+
+    def test_dream_partial_outcome_renders_stop_and_backlog_nonzero_exit(
+        self, runner: CliRunner
+    ) -> None:
+        """3.2.3: partial window/dependency outcomes render stop semantics, exit non-zero."""
+        checkpoint = {
+            "phase": "coordinator",
+            "scope": "all-due",
+            "pass_number": 2,
+            "batch_number": 5,
+            "completed": 37,
+            "remaining": 88,
+            "mutations": 4,
+            "backlog": {"proj-1": 60, "proj-2": 28},
+            "stop_reason": "window_exhausted",
+            "last_dependency_failure": "planner timed out",
+        }
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status(
+                "partial",
+                checkpoint=checkpoint,
+                summary={
+                    "targets": 3,
+                    "completed": 1,
+                    "failed": 0,
+                    "mutations": 4,
+                    "stop_reason": "window_exhausted",
+                },
+                plan={"aggregate": True, "runs": []},
+            ),
+        )
+
+        result, _ = self._invoke(runner, client, [])
+
+        assert result.exit_code == 1
+        assert "Dream run run-1 partial" in result.output
+        assert "Stop reason: window_exhausted" in result.output
+        assert "Completed: 37 candidate(s), 4 mutation(s)" in result.output
+        assert "Remaining: 88 candidate(s)" in result.output
+        assert '"proj-1": 60' in result.output
+        assert "retry=planner timed out" in result.output
+
+    @pytest.mark.parametrize("status", ["failed", "interrupted"])
+    def test_dream_failure_statuses_exit_nonzero(self, runner: CliRunner, status: str) -> None:
+        """3.2.3: failed and interrupted terminal runs exit non-zero with the error."""
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status(status, error="boom"),
+        )
+
+        result, _ = self._invoke(runner, client, [])
+
+        assert result.exit_code == 1
+        assert f"Dream run run-1 {status}" in result.output
+        assert "Error: boom" in result.output
+
+    def test_dream_inventory_only_renders_candidates_remain_due(self, runner: CliRunner) -> None:
+        """3.2.3: inventory-only runs render candidate IDs/counts and state they stay due."""
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status(
+                "completed",
+                summary={
+                    "skip_consolidation": True,
+                    "candidates_eligible": 3,
+                    "mutations": 0,
+                    "snapshots": 0,
+                    "errors": 0,
+                },
+                plan={
+                    "skip_consolidation": True,
+                    "candidate_count": 3,
+                    "candidate_ids": ["m1", "m2", "m3"],
+                    "candidate_ids_truncated": False,
+                },
+            ),
+        )
+
+        result, _ = self._invoke(runner, client, ["--skip-consolidation"])
+
+        assert result.exit_code == 0
+        assert "Inventory-only run: 3 candidate(s) eligible" in result.output
+        assert "candidates remain due" in result.output
+        assert "Candidate IDs: m1, m2, m3" in result.output
+        post = client.call_http_api.call_args_list[0]
+        assert post.kwargs["json_data"]["skip_consolidation"] is True
+
+    def test_dream_coalesced_trigger_polls_the_active_run(self, runner: CliRunner) -> None:
+        active_checkpoint = {
+            "phase": "sweep",
+            "scope": "proj-1",
+            "pass_number": 1,
+            "batch_number": 1,
+            "completed": 5,
+            "remaining": None,
+            "mutations": 0,
+        }
+        client = _dream_client(
+            _FakeHTTPResponse(
+                {
+                    "success": True,
+                    "run_id": "run-9",
+                    "coalesced": True,
+                    "status": "running",
+                    "active": {"run_id": "run-9", "checkpoint": active_checkpoint},
+                }
+            ),
+            _dream_run_status(
+                "completed",
+                run_id="run-9",
+                summary={"candidates_reviewed": 5, "mutations": 0, "snapshots": 0, "errors": 0},
+            ),
+        )
+
+        result, _ = self._invoke(runner, client, [])
+
+        assert result.exit_code == 0
+        assert "Coalesced onto active dream run: run-9" in result.output
+        assert "[sweep] scope=proj-1 pass=1 batch=1 completed=5 mutations=0" in result.output
+        poll = client.call_http_api.call_args_list[1]
+        assert poll.args == ("/memory/dream/run-9",)
+
+    def test_dream_aggregate_completed_renders_per_project_summary(self, runner: CliRunner) -> None:
+        client = _dream_client(
+            _dream_started(),
+            _dream_run_status(
+                "completed",
+                summary={
+                    "targets": 2,
+                    "completed": 2,
+                    "failed": 0,
+                    "mutations": 3,
+                    "passes": 1,
+                    "stop_reason": "drained",
+                },
+                plan={
+                    "aggregate": True,
+                    "runs": [
+                        {"project_id": "proj-1", "success": True, "run_id": "r1", "mutations": 1},
+                        {"project_id": None, "success": True, "run_id": "r2", "mutations": 2},
+                    ],
+                },
+            ),
+        )
+
+        result, _ = self._invoke(runner, client, [])
 
         assert result.exit_code == 0
         assert "Swept 2/2 project(s): 3 mutation(s) total" in result.output
         assert "proj-1: 1 mutation(s) (run r1)" in result.output
         assert "global: 2 mutation(s) (run r2)" in result.output
-        mock_client.call_http_api.assert_called_once()
-        call = mock_client.call_http_api.call_args
-        assert call.args == ("/memory/dream",)
-        assert call.kwargs["method"] == "POST"
-        # The sweep is synchronous; the POST waits for the full --timeout (default 900s).
-        assert call.kwargs["timeout"] == 900.0
-        assert call.kwargs["json_data"]["dry_run"] is True
-        assert "wait" not in call.kwargs["json_data"]
-        assert "project_id" not in call.kwargs["json_data"]
 
-    def test_dream_passes_flags_and_renders_failed_target(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        mock_client = MagicMock()
-        mock_client.call_http_api.return_value = _FakeHTTPResponse(
-            {
-                "success": True,
-                "targets": 2,
-                "completed": 1,
-                "failed": 1,
-                "mutations": 2,
-                "runs": [
-                    {"project_id": "proj-ok", "success": True, "run_id": "r1", "mutations": 2},
-                    {"project_id": "proj-bad", "success": False, "error": "boom"},
-                ],
-            }
+    def test_dream_raises_on_unsuccessful_response(self, runner: CliRunner) -> None:
+        client = _dream_client(
+            _FakeHTTPResponse(
+                {"success": False, "error": "memory dream is disabled"}, status_code=400
+            ),
         )
 
-        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
+        result, _ = self._invoke(runner, client, [])
+
+        assert result.exit_code != 0
+        assert "memory dream is disabled" in result.output
+
+    def test_dream_status_renders_checkpoint_progress(self, runner: CliRunner) -> None:
+        client = _dream_client(
+            _dream_run_status(
+                "running",
+                checkpoint={
+                    "phase": "sweep",
+                    "scope": "proj-1",
+                    "pass_number": 1,
+                    "batch_number": 2,
+                    "completed": 10,
+                    "remaining": None,
+                    "mutations": 1,
+                },
+            ),
+        )
+
+        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=client):
             result = runner.invoke(
                 memory_cli,
-                ["dream", "--full", "--memory-type", "fact", "--timeout", "30"],
+                ["dream", "status", "run-1"],
                 obj={"config": MagicMock(daemon_port=60887)},
             )
 
         assert result.exit_code == 0
-        assert "Swept 1/2 project(s): 2 mutation(s) total, 1 failed" in result.output
-        assert "proj-bad: failed — boom" in result.output
-        call = mock_client.call_http_api.call_args
-        assert call.kwargs["timeout"] == 30.0
-        assert call.kwargs["json_data"]["full_sweep"] is True
-        assert call.kwargs["json_data"]["memory_type"] == "fact"
-
-    def test_dream_raises_on_unsuccessful_response(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        mock_client = MagicMock()
-        mock_client.call_http_api.return_value = _FakeHTTPResponse(
-            {"success": False, "error": "memory dream is disabled"}
-        )
-
-        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
-            result = runner.invoke(
-                memory_cli,
-                ["dream"],
-                obj={"config": MagicMock(daemon_port=60887)},
-            )
-
-        assert result.exit_code != 0
-        assert "memory dream is disabled" in result.output
+        assert "Dream run: run-1" in result.output
+        assert "Status: running" in result.output
+        assert "[sweep] scope=proj-1 pass=1 batch=2 completed=10 mutations=1" in result.output
 
 
 class TestMemoryBackupCommand:
