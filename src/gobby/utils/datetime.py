@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, date, datetime
 from functools import wraps
+from pathlib import Path
 from typing import Any, TypeVar, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 T = TypeVar("T", bound=type[Any])
 
@@ -55,6 +58,56 @@ def datetime_to_iso(value: datetime | None) -> str | None:
 def datetime_to_required_iso(value: datetime) -> str:
     """Serialize a required datetime for an external JSON/text boundary."""
     return to_aware_utc(value).isoformat()
+
+
+def datetime_to_local_iso(value: datetime | None) -> str | None:
+    """Serialize a stored UTC datetime for a human reader, in host local time.
+
+    Storage stays UTC; only presentation shifts. The rendered offset keeps the
+    instant unambiguous.
+    """
+    if value is None:
+        return None
+    return to_aware_utc(value).astimezone().isoformat()
+
+
+def is_valid_timezone(value: str) -> bool:
+    """Return whether a string names a resolvable IANA timezone."""
+    try:
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
+
+
+def resolve_local_timezone(configured_timezone: str | None = None) -> str:
+    """Resolve the host's IANA timezone name for schedule evaluation.
+
+    An explicit configured value wins, then ``TZ``, then the ``/etc/localtime``
+    symlink target, falling back to UTC. Timestamps remain stored as UTC — this
+    only names the zone a wall-clock schedule is interpreted in.
+    """
+    configured = (configured_timezone or "").strip()
+    if configured:
+        return configured
+
+    env_timezone = (os.environ.get("TZ") or "").strip()
+    if env_timezone and not env_timezone.startswith(":") and is_valid_timezone(env_timezone):
+        return env_timezone
+
+    try:
+        target = Path("/etc/localtime").resolve(strict=True)
+    except OSError:
+        return "UTC"
+
+    parts = target.parts
+    if "zoneinfo" not in parts:
+        return "UTC"
+    zoneinfo_index = parts.index("zoneinfo")
+    candidate = "/".join(parts[zoneinfo_index + 1 :])
+    if candidate and is_valid_timezone(candidate):
+        return candidate
+    return "UTC"
 
 
 def to_json_safe(value: Any) -> Any:

@@ -19,7 +19,7 @@ from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronJob
 from gobby.storage.cron_runs import CronRunStorageMixin
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import parse_stored_datetime, utc_now
+from gobby.utils.datetime import parse_stored_datetime, resolve_local_timezone, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -168,11 +168,16 @@ class CronJobStorage(CronRunStorageMixin):
         cron_expr: str | None = None,
         interval_seconds: int | None = None,
         run_at: str | None = None,
-        timezone: str = "UTC",
+        timezone: str | None = None,
         enabled: bool = True,
         is_system: bool = False,
     ) -> CronJob:
-        """Create a new cron job."""
+        """Create a new cron job.
+
+        An omitted ``timezone`` resolves to the host zone: a wall-clock
+        expression like ``0 2 * * *`` means 2 AM where the daemon runs.
+        Timestamps are still stored as UTC.
+        """
         if schedule_type == "cron" and (not cron_expr or not croniter.is_valid(cron_expr)):
             raise ValueError(f"Invalid cron expression: {cron_expr!r}")
 
@@ -196,7 +201,7 @@ class CronJobStorage(CronRunStorageMixin):
             cron_expr=cron_expr,
             interval_seconds=interval_seconds,
             run_at=run_at_value,
-            timezone=timezone,
+            timezone=resolve_local_timezone(timezone),
             enabled=enabled,
             is_system=is_system,
         )
@@ -595,9 +600,13 @@ class CronJobStorage(CronRunStorageMixin):
             "cron_expr": cron_expr,
             "interval_seconds": interval_seconds,
             "run_at": run_at,
-            "timezone": timezone,
         }
         desired.update({key: value for key, value in optional.items() if value is not UNSET})
+        # Bundled schedules are wall-clock local, so an omitted timezone repairs
+        # the row to the host zone instead of leaving a stale one in place.
+        desired["timezone"] = resolve_local_timezone(
+            None if isinstance(timezone, _Unset) else timezone
+        )
         self._normalize_update_fields(job, desired)
         for key, value in desired.items():
             if getattr(job, key) != value:

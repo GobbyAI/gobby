@@ -17,7 +17,7 @@ from gobby.cli.utils_config import get_daemon_client
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_client import DaemonClient
-from gobby.utils.datetime import datetime_to_iso
+from gobby.utils.datetime import datetime_to_local_iso
 from gobby.utils.json_helpers import json_dumps
 
 
@@ -120,13 +120,14 @@ def list_jobs(
     for job in jobs:
         status_icon = "●" if job.enabled else "○"
         if job.schedule_type == "cron":
-            schedule = job.cron_expr or "?"
+            # A bare expression is ambiguous without the zone it is read in.
+            schedule = f"{job.cron_expr} {job.timezone}" if job.cron_expr else "?"
         elif job.schedule_type == "interval":
             schedule = f"every {job.interval_seconds}s" if job.interval_seconds else "?"
         else:
-            schedule = datetime_to_iso(job.run_at) or "?"
+            schedule = datetime_to_local_iso(job.run_at) or "?"
         last = job.last_status or "never"
-        click.echo(f"  {status_icon} {job.id}  {job.name:<30} {schedule:<20} last: {last}")
+        click.echo(f"  {status_icon} {job.id}  {job.name:<30} {schedule:<32} last: {last}")
 
 
 @cron.command("add")
@@ -146,7 +147,12 @@ def list_jobs(
 )
 @click.option("--action-config", "-c", required=True, help="Action config as JSON string")
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
-@click.option("--timezone", "tz", default="UTC", help="Timezone (default: UTC)")
+@click.option(
+    "--timezone",
+    "tz",
+    default=None,
+    help="Schedule timezone (default: the host's local zone)",
+)
 @click.option("--description", "-d", help="Job description")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def add_job(
@@ -155,7 +161,7 @@ def add_job(
     action_type: str,
     action_config: str,
     project_ref: str | None,
-    tz: str,
+    tz: str | None,
     description: str | None,
     json_format: bool,
 ) -> None:
@@ -189,9 +195,12 @@ def add_job(
 
     click.echo(f"Created cron job: {job.id}")
     click.echo(f"  Name: {job.name}")
-    click.echo(
-        f"  Schedule: {parsed_schedule.cron_expr or f'every {parsed_schedule.interval_seconds}s'}"
+    schedule_label = (
+        f"{parsed_schedule.cron_expr} {job.timezone}"
+        if parsed_schedule.cron_expr
+        else f"every {parsed_schedule.interval_seconds}s"
     )
+    click.echo(f"  Schedule: {schedule_label}")
     click.echo(f"  Action: {action_type}")
 
 
@@ -278,7 +287,7 @@ def list_runs(job_id: str, limit: int, json_format: bool) -> None:
         if run.started_at and run.completed_at:
             secs = (run.completed_at - run.started_at).total_seconds()
             duration = f" ({secs:.1f}s)"
-        triggered_at = datetime_to_iso(run.triggered_at) or "?"
+        triggered_at = datetime_to_local_iso(run.triggered_at) or "?"
         click.echo(f"  {status_icon} {run.id}  {run.status:<12} {triggered_at}{duration}")
 
 

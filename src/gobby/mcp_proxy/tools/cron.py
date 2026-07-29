@@ -89,7 +89,7 @@ def create_cron_registry(
         cron_expr: str | None = None,
         interval_seconds: int | None = None,
         run_at: str | None = None,
-        timezone: str = "UTC",
+        timezone: str | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -104,7 +104,7 @@ def create_cron_registry(
             cron_expr: Cron expression (for schedule_type=cron)
             interval_seconds: Interval in seconds (for schedule_type=interval)
             run_at: ISO 8601 datetime (for schedule_type=once)
-            timezone: Timezone (default: UTC)
+            timezone: Schedule timezone (default: the daemon host's local zone)
             description: Job description
         """
         from gobby.storage.projects import PERSONAL_PROJECT_ID

@@ -1,6 +1,7 @@
 """Tests for cron CLI commands."""
 
 import json
+import time
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
@@ -182,6 +183,34 @@ class TestCronAdd:
         assert result.exit_code == 0
         assert "cj-abc123" in result.output
         mock_storage.create_job.assert_called_once()
+        # No --timezone: storage resolves the host zone rather than forcing UTC.
+        assert mock_storage.create_job.call_args.kwargs["timezone"] is None
+
+    def test_add_uses_an_explicit_timezone_when_given(
+        self, runner: CliRunner, mock_storage: MagicMock
+    ) -> None:
+        mock_storage.create_job.return_value = _make_job(timezone="Europe/Berlin")
+        result = runner.invoke(
+            cli,
+            [
+                "cron",
+                "add",
+                "--name",
+                "Berlin Check",
+                "--schedule",
+                "0 7 * * *",
+                "--action-type",
+                "shell",
+                "--action-config",
+                '{"command": "echo"}',
+                "--timezone",
+                "Europe/Berlin",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert mock_storage.create_job.call_args.kwargs["timezone"] == "Europe/Berlin"
+        assert "0 7 * * * Europe/Berlin" in result.output
 
     def test_add_interval_job(self, runner, mock_storage) -> None:
         mock_storage.create_job.return_value = _make_job(
@@ -443,6 +472,28 @@ class TestCronRuns:
         assert result.exit_code == 0
         assert "cr-001" in result.output
         assert "cr-002" in result.output
+
+    def test_runs_presents_trigger_times_in_local_zone(
+        self,
+        runner: CliRunner,
+        mock_storage: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Runs are stored UTC and rendered in the reader's local zone."""
+        monkeypatch.setenv("TZ", "America/Chicago")
+        time.tzset()
+        try:
+            mock_storage.get_job.return_value = _make_job()
+            mock_storage.list_runs.return_value = [_make_run(id="cr-001")]
+
+            result = runner.invoke(cli, ["cron", "runs", "cj-abc123"])
+        finally:
+            monkeypatch.undo()
+            time.tzset()
+
+        assert result.exit_code == 0
+        assert "2026-02-10T01:00:00-06:00" in result.output
+        assert "2026-02-10T07:00:00+00:00" not in result.output
 
     def test_runs_empty(self, runner, mock_storage) -> None:
         mock_storage.get_job.return_value = _make_job()

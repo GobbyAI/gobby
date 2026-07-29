@@ -34,7 +34,8 @@ class CreateCronJobRequest(BaseModel):
     cron_expr: str | None = None
     interval_seconds: int | None = None
     run_at: str | None = None
-    timezone: str = "UTC"
+    # Omitted means the daemon's local zone; storage resolves it.
+    timezone: str | None = None
     action_type: Literal["agent_spawn", "pipeline", "shell"]
     action_config: dict[str, Any] = Field(default_factory=dict)
 

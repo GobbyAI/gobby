@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import signal
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshRequest,
@@ -24,6 +22,7 @@ from gobby.shutdown_intent import read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.datetime import resolve_local_timezone
 from gobby.wiki.prune_job import guard_project_cron_handler
 
 logger = logging.getLogger(__name__)
@@ -298,27 +297,7 @@ def register_codewiki_nightly_crons(
 
 def resolve_codewiki_nightly_timezone(configured_timezone: str | None = None) -> str:
     """Resolve the schedule timezone; execution timestamps remain UTC in storage."""
-    configured = (configured_timezone or "").strip()
-    if configured:
-        return configured
-
-    env_timezone = (os.environ.get("TZ") or "").strip()
-    if env_timezone and not env_timezone.startswith(":") and _is_valid_timezone(env_timezone):
-        return env_timezone
-
-    try:
-        target = Path("/etc/localtime").resolve(strict=True)
-    except OSError:
-        return "UTC"
-
-    parts = target.parts
-    if "zoneinfo" not in parts:
-        return "UTC"
-    zoneinfo_index = parts.index("zoneinfo")
-    candidate = "/".join(parts[zoneinfo_index + 1 :])
-    if candidate and _is_valid_timezone(candidate):
-        return candidate
-    return "UTC"
+    return resolve_local_timezone(configured_timezone)
 
 
 def _reconcile_enabled_state(
@@ -342,11 +321,3 @@ def _reconcile_enabled_state(
         enabled=True,
         next_run_at=next_run.isoformat() if next_run else None,
     )
-
-
-def _is_valid_timezone(value: str) -> bool:
-    try:
-        ZoneInfo(value)
-    except (ValueError, ZoneInfoNotFoundError):
-        return False
-    return True

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 
@@ -7,10 +10,13 @@ import pytest
 
 from gobby.utils.datetime import (
     datetime_to_iso,
+    datetime_to_local_iso,
     datetime_to_required_iso,
+    is_valid_timezone,
     normalize_datetime_model,
     parse_stored_datetime,
     require_stored_datetime,
+    resolve_local_timezone,
     to_aware_utc,
     to_json_safe,
     to_json_safe_dict,
@@ -83,6 +89,63 @@ def test_datetime_to_required_iso_serializes_non_optional_values() -> None:
     value = datetime(2026, 1, 1, 22, 30, tzinfo=offset)
 
     assert datetime_to_required_iso(value) == "2026-01-02T03:30:00+00:00"
+
+
+@pytest.fixture
+def host_timezone() -> Iterator[Callable[[str], None]]:
+    """Repoint the process timezone, restoring the original on teardown."""
+    original = os.environ.get("TZ")
+
+    def _set(name: str) -> None:
+        os.environ["TZ"] = name
+        time.tzset()
+
+    yield _set
+
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    time.tzset()
+
+
+def test_datetime_to_local_iso_renders_the_stored_instant_in_host_time(
+    host_timezone: Callable[[str], None],
+) -> None:
+    host_timezone("America/Chicago")
+    stored = datetime(2026, 7, 30, 2, 0, tzinfo=UTC)
+
+    assert datetime_to_local_iso(stored) == "2026-07-29T21:00:00-05:00"
+    assert datetime_to_local_iso(None) is None
+
+
+def test_resolve_local_timezone_prefers_explicit_then_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", "America/Chicago")
+
+    assert resolve_local_timezone("Europe/Berlin") == "Europe/Berlin"
+    assert resolve_local_timezone("  ") == "America/Chicago"
+    assert resolve_local_timezone() == "America/Chicago"
+
+
+def test_resolve_local_timezone_ignores_unusable_env_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``:``-prefixed or unknown TZ falls through to the host zone."""
+    monkeypatch.setenv("TZ", ":/etc/localtime")
+    from_colon_form = resolve_local_timezone()
+    monkeypatch.setenv("TZ", "Not/AZone")
+    from_unknown_zone = resolve_local_timezone()
+
+    assert from_colon_form != ":/etc/localtime"
+    assert is_valid_timezone(from_colon_form)
+    assert from_unknown_zone == from_colon_form
+
+
+def test_is_valid_timezone_rejects_unknown_names() -> None:
+    assert is_valid_timezone("America/Chicago")
+    assert not is_valid_timezone("Not/AZone")
 
 
 def test_to_json_safe_recursively_serializes_datetime_and_date_values() -> None:

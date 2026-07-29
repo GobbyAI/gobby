@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -102,6 +103,79 @@ def test_create_job(cron_storage: CronJobStorage) -> None:
     assert job.schedule_type == "cron"
     assert job.action_type == "shell"
     assert job.enabled is True
+
+
+def test_create_job_schedules_in_the_host_zone_by_default(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare wall-clock expression means that hour where the daemon runs."""
+    monkeypatch.setenv("TZ", "America/Chicago")
+
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Local nightly",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+    )
+
+    assert job.timezone == "America/Chicago"
+    assert job.next_run_at is not None
+    # Stored as UTC; 2 AM Central is 07:00 or 08:00 UTC depending on DST.
+    assert job.next_run_at.tzinfo is not None
+    assert job.next_run_at.astimezone(ZoneInfo("America/Chicago")).hour == 2
+
+
+def test_create_job_honors_an_explicit_timezone(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", "America/Chicago")
+
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Explicit zone",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+        timezone="UTC",
+    )
+
+    assert job.timezone == "UTC"
+
+
+def test_reconcile_system_job_definition_repairs_a_stale_utc_timezone(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bundled rows registered before local scheduling get repaired in place."""
+    monkeypatch.setenv("TZ", "America/Chicago")
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:memory-dream",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+        timezone="UTC",
+        is_system=True,
+    )
+
+    repaired = cron_storage.reconcile_system_job_definition(
+        job.id,
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        schedule_type="cron",
+        cron_expr="0 2 * * *",
+    )
+
+    assert repaired is not None
+    assert repaired.timezone == "America/Chicago"
+    assert repaired.next_run_at is not None
+    assert repaired.next_run_at.astimezone(ZoneInfo("America/Chicago")).hour == 2
 
 
 def test_create_job_rejects_invalid_enabled_schedule(cron_storage: CronJobStorage) -> None:
