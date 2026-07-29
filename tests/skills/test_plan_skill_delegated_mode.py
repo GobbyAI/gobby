@@ -84,6 +84,8 @@ def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     assert "review-anchor task" in lowered
     assert "per-round review tasks" in lowered
     assert "do not create or claim tasks" in lowered
+    assert "plan artifact writes under `.gobby/plans/**` are exempt" in lowered
+    assert "`require-task-before-edit`" in lowered
     assert "do not create review anchors" in lowered
 
 

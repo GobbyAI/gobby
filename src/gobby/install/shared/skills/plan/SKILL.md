@@ -501,6 +501,8 @@ user approves the optional handoff.
 ## Boundaries
 
 - Do not create or claim tasks during plan drafting or plan review.
+- Plan artifact writes under `.gobby/plans/**` are exempt from
+  `require-task-before-edit`.
 - Do not create review anchors.
 - Enhancement (step 4.5) is advisory: apply only user-accepted suggestions, and
   never let it gate, approve, reject, or block the adversary review. The human

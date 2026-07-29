@@ -263,7 +263,8 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
     if not normalised.endswith(".md"):
         return False
 
-    return any(seg in normalised for seg in _CLI_DIR_SEGMENTS)
+    rooted = normalised if normalised.startswith(os.sep) else f"{os.sep}{normalised}"
+    return any(seg in rooted for seg in _CLI_DIR_SEGMENTS)
 
 
 def is_source_code_path(file_path: str) -> bool:

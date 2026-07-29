@@ -1538,3 +1538,66 @@ def _make_reopen_event(task_id: str) -> HookEvent:
         },
         metadata={"_platform_session_id": SESSION_ID},
     )
+
+
+class TestRequireTaskBeforeEditTargetParity:
+    """Verify equivalent write targets receive the same task-gate decision."""
+
+    @pytest.mark.parametrize(
+        ("relative_path", "requires_task"),
+        [
+            (".gobby/plans/web-styling-consolidation-phase-2.md", False),
+            ("src/main.py", True),
+        ],
+    )
+    def test_write_and_bash_redirect_gate_the_same_target_consistently(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        relative_path: str,
+        requires_task: bool,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        tool_payloads: list[tuple[str, dict[str, str]]] = [
+            ("Write", {"file_path": f"/project/{relative_path}"}),
+            ("Bash", {"command": f"printf content > {relative_path}"}),
+        ]
+        decisions: list[bool] = []
+        for tool_name, tool_input in tool_payloads:
+            data: dict[str, object] = {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "cwd": "/project",
+                "project_root": "/project",
+            }
+            normalize_tool_fields(data)
+            context = {
+                "variables": {
+                    "require_task_before_edit": True,
+                    "task_claimed": False,
+                    "plan_mode": False,
+                },
+                "event": type("Event", (), {"data": data})(),
+                "tool_input": data["tool_input"],
+                "source": "claude_code",
+            }
+            allowed_funcs = build_condition_helpers(context=context)
+            allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+            decisions.append(
+                bool(
+                    SafeExpressionEvaluator(
+                        context=context,
+                        allowed_funcs=allowed_funcs,
+                    ).evaluate(body.when)
+                )
+            )
+
+        assert decisions == [requires_task, requires_task]
