@@ -314,9 +314,9 @@ class TestFeatureConfigInheritance:
                 FeatureProfile.HIGH
             )
 
-    def test_memory_dream_candidate_page_timeout_must_be_positive(self) -> None:
+    def test_memory_dream_work_unit_timeout_must_be_positive(self) -> None:
         from gobby.config.persistence import MemoryDreamConfig
 
-        assert MemoryDreamConfig().candidate_page_timeout_seconds == 10.0
+        assert MemoryDreamConfig().work_unit_timeout_seconds == 1500.0
         with pytest.raises(ValidationError, match="greater than 0"):
-            MemoryDreamConfig(candidate_page_timeout_seconds=0.0)
+            MemoryDreamConfig(work_unit_timeout_seconds=0.0)

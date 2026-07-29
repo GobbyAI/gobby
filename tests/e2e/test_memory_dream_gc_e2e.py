@@ -78,7 +78,7 @@ def _sweep_config() -> MemoryDreamConfig:
 
     The storage ``LocalMemoryManager`` implements the candidate query, stamping,
     and snapshot subset the keep/delete sweep needs; it has no ``reconcile_stores``,
-    so reconcile must stay off. All other defaults (page_size=200,
+    so reconcile must stay off. All other defaults (planner_batch_size=25,
     redream_after_hours=20, purge_delete_after_days=30) suit the test as-is.
     """
     return MemoryDreamConfig(reconcile_after_apply=False, reconcile_after_revert=False)

@@ -69,10 +69,13 @@ def register_memory_dream_cron(
         return 0
 
     async def _handler(_job: CronJob) -> str:
-        # Cooldown-throttled nightly sweep: fan out across every project with due
-        # memories via the shared service loop (also used by manual triggers).
-        # Admission owns the aggregate row, so a fire that overlaps an active
-        # run coalesces or skips instead of stacking a second sweep.
+        # Cooldown-throttled nightly sweep: round-robin work units across every
+        # scope with due memories via the shared coordinator (also used by
+        # manual triggers). Nightly mutating maintenance is the default; the
+        # admission window bounds the run and a window-exhausted partial is a
+        # normal outcome. Admission owns the aggregate row, so a fire that
+        # overlaps an active run coalesces or skips instead of stacking a
+        # second sweep.
         service = MemoryDreamService(
             memory_manager=memory_manager,
             dream_config=dream_config,
@@ -80,8 +83,7 @@ def register_memory_dream_cron(
             daemon_config=daemon_config,
             current_project_id=project_id,
         )
-        dry_run = not dream_config.allow_unattended_mutations
-        started = await service.start_all_due_projects_async(dry_run=dry_run)
+        started = await service.start_all_due_projects_async(dry_run=False)
         if started.get("coalesced"):
             run_id = started.get("run_id")
             logger.info("Memory dream cron coalesced onto active run %s", run_id)
@@ -97,14 +99,19 @@ def register_memory_dream_cron(
                 )
                 return f"memory dream skipped: active run {conflict.get('run_id')}"
             raise RuntimeError(str(started.get("error", "memory dream admission failed")))
-        result = await service.execute_all_due_projects_run(str(started["run_id"]), dry_run=dry_run)
+        result = await service.execute_all_due_projects_run(str(started["run_id"]), dry_run=False)
         if not result.get("success"):
             raise RuntimeError("memory dream failed for all targets")
         aggregate = result.get("aggregate") or {}
         completed = int(aggregate.get("completed", 0))
         mutations = int(aggregate.get("mutations", 0))
         failed = int(aggregate.get("failed", 0))
+        stop_reason = str(aggregate.get("stop_reason") or "drained")
         tail = f", {failed} failed" if failed else ""
+        # Early stops are already logged by the coordinator (INFO for window
+        # exhaustion, one WARNING for dependency failure) — report, don't warn.
+        if stop_reason != "drained":
+            tail += f", stopped: {stop_reason}"
         return f"memory dream: {completed} target(s), {mutations} mutation(s) total{tail}"
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)
@@ -118,7 +125,7 @@ def _ensure_system_job(
     project_id: str | None,
 ) -> None:
     existing = cron_storage.get_job_by_name(MEMORY_DREAM_CRON_JOB_NAME)
-    cron_expr = str(getattr(dream_config, "schedule_cron", "0 3 * * *"))
+    cron_expr = str(getattr(dream_config, "schedule_cron", "0 2 * * *"))
     target_project_id = project_id or PERSONAL_PROJECT_ID
     if existing is None:
         cron_storage.create_job(

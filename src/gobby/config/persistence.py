@@ -268,12 +268,8 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=True,
         description="Enable scheduled memory dream maintenance",
     )
-    allow_unattended_mutations: bool = Field(
-        default=False,
-        description="Allow scheduled memory dream runs to apply destructive mutations",
-    )
     schedule_cron: str = Field(
-        default="0 3 * * *",
+        default="0 2 * * *",
         description="Cron expression for the system memory dream job",
     )
     prompt_path: str = Field(
@@ -283,13 +279,6 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     max_tokens: int = Field(
         default=8192,
         description="Maximum tokens for memory dream planner responses",
-    )
-    scan_limit: int = Field(
-        default=500,
-        description=(
-            "Deprecated and ignored. The sweep now pages every active memory "
-            "via page_size; retained so existing configs still load."
-        ),
     )
     planner_batch_size: int = Field(
         default=25,
@@ -320,31 +309,38 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=True,
         description="Mark older related memories due after superseding writes",
     )
-    planner_max_concurrency: int = Field(
+    max_runtime_seconds: int = Field(
+        default=14400,
+        description=(
+            "Seconds from coordinator start during which new dream work units "
+            "may be admitted; the final admitted unit may still finish under "
+            "its own work-unit timeout"
+        ),
+    )
+    work_unit_timeout_seconds: float = Field(
+        default=1500.0,
+        description="Maximum seconds for one dream work unit, selection through apply",
+    )
+    evidence_channel_timeout_seconds: float = Field(
+        default=30.0,
+        description=(
+            "Total budget in seconds for one required-evidence channel attempt, "
+            "including connection-pool admission"
+        ),
+    )
+    evidence_retry_attempts: int = Field(
         default=3,
-        description="Maximum concurrent planner LLM calls per dream run",
-    )
-    max_scan_rows: int = Field(
-        default=5000,
         description=(
-            "Deprecated and ignored. The streaming page-and-apply loop is bounded "
-            "by page_size and the redream cooldown, not a global scan cap."
+            "Attempts per required evidence channel before the work unit stops "
+            "as a dependency failure"
         ),
     )
-    candidate_page_timeout_seconds: float = Field(
-        default=10.0,
-        description="Maximum seconds to wait for one stale-candidate memory page",
-    )
-    stale_age_days: int = Field(
-        default=30,
+    evidence_phase_timeout_seconds: float = Field(
+        default=210.0,
         description=(
-            "Deprecated and ignored. Dream now reviews every active memory once "
-            "per cooldown window instead of gating on row age."
+            "Ceiling in seconds for one work unit's whole evidence phase across "
+            "channels and retries"
         ),
-    )
-    page_size: int = Field(
-        default=200,
-        description="Active memories hydrated per page in the streaming dream sweep",
     )
     dry_run_max_candidates: int = Field(
         default=1000,
@@ -399,14 +395,11 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     )
 
     @field_validator(
-        "scan_limit",
         "planner_batch_size",
         "planner_batch_max_chars",
-        "planner_max_concurrency",
-        "max_scan_rows",
-        "stale_age_days",
         "max_tokens",
-        "page_size",
+        "max_runtime_seconds",
+        "evidence_retry_attempts",
         "dry_run_max_candidates",
         "redream_after_hours",
         "purge_delete_after_days",
@@ -420,7 +413,11 @@ class MemoryDreamConfig(FeatureDefaultConfig):
             raise ValueError("value must be at least 1")
         return v
 
-    @field_validator("candidate_page_timeout_seconds")
+    @field_validator(
+        "work_unit_timeout_seconds",
+        "evidence_channel_timeout_seconds",
+        "evidence_phase_timeout_seconds",
+    )
     @classmethod
     def validate_positive_float(cls, v: float) -> float:
         """Validate positive float settings."""

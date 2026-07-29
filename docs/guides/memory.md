@@ -318,12 +318,15 @@ memory:
     candidates: []
   dream:
     enabled: true
-    schedule_cron: "0 3 * * *"
+    schedule_cron: "0 2 * * *"
     prompt_path: memory/dream
     max_tokens: 8192
-    scan_limit: 500
-    max_scan_rows: 5000
-    stale_age_days: 30
+    planner_batch_size: 25
+    max_runtime_seconds: 14400
+    work_unit_timeout_seconds: 1500.0
+    evidence_channel_timeout_seconds: 30.0
+    evidence_retry_attempts: 3
+    evidence_phase_timeout_seconds: 210.0
     min_action_confidence: 0.72
     min_delete_confidence: 0.85
     include_global_memories: true

@@ -82,7 +82,7 @@ class _FakeDreamManager:
 def test_register_memory_dream_cron_creates_single_system_job() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
-    config = MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *")
+    config = MemoryDreamConfig(enabled=True)
 
     registered = register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
@@ -98,7 +98,8 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
     kwargs = cron_storage.created_jobs[0]
     assert kwargs["name"] == MEMORY_DREAM_CRON_JOB_NAME
     assert kwargs["schedule_type"] == "cron"
-    assert kwargs["cron_expr"] == "0 3 * * *"
+    # The default nightly schedule is 2:00 AM.
+    assert kwargs["cron_expr"] == "0 2 * * *"
     assert kwargs["action_config"] == {"handler": MEMORY_DREAM_CRON_HANDLER}
     assert kwargs["is_system"] is True
 
@@ -211,14 +212,8 @@ def _patch_dream_service(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("allow_unattended_mutations", "expected_dry_run"),
-    [(False, True), (True, False)],
-)
 async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     monkeypatch: pytest.MonkeyPatch,
-    allow_unattended_mutations: bool,
-    expected_dry_run: bool,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
@@ -231,9 +226,7 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
         memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
-        dream_config=MemoryDreamConfig(
-            allow_unattended_mutations=allow_unattended_mutations,
-        ),
+        dream_config=MemoryDreamConfig(),
         project_id="daemon-proj",
         daemon_config=DaemonConfig(),
     )
@@ -248,9 +241,10 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     assert captured["init"]["memory_manager"] is memory_manager
     # Nightly runs stay cooldown-throttled (full_sweep is not forced).
     assert captured["call"].get("full_sweep", False) is False
-    assert captured["call"]["dry_run"] is expected_dry_run
+    # Nightly mutating maintenance is the default: the cron never dry-runs.
+    assert captured["call"]["dry_run"] is False
     # The executor runs the row that admission created.
-    assert captured["start"]["dry_run"] is expected_dry_run
+    assert captured["start"]["dry_run"] is False
     assert captured["run_id"] == "run-agg"
 
 
@@ -339,6 +333,44 @@ async def test_memory_dream_cron_handler_reports_failed_targets(
     message = await handler(SimpleNamespace())
 
     assert message == "memory dream: 2 target(s), 4 mutation(s) total, 1 failed"
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_cron_handler_reports_window_exhaustion_without_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-a", "proj-b", None])
+    _patch_dream_service(
+        monkeypatch,
+        {
+            "success": True,
+            "targets": 3,
+            "completed": 2,
+            "failed": 0,
+            "mutations": 5,
+            "runs": [],
+            "stop_reason": "window_exhausted",
+        },
+    )
+    register_memory_dream_cron(
+        cron_storage=cast(CronJobStorage, cron_storage),
+        cron_executor=cron_executor,
+        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        dream_config=MemoryDreamConfig(),
+        project_id="proj-1",
+    )
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
+    caplog.set_level("INFO", logger="gobby.memory.dream.cron")
+
+    message = await handler(SimpleNamespace())
+
+    # A window-exhausted partial is a normal outcome: reported, never warned.
+    assert message == "memory dream: 2 target(s), 5 mutation(s) total, stopped: window_exhausted"
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert warnings == []
 
 
 @pytest.mark.asyncio

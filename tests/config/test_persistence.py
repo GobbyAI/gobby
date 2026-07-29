@@ -63,8 +63,7 @@ class TestMemoryConfigDefaults:
             FeatureProfile.LOW
         )
         assert config.dream.prompt_path == "memory/dream"
-        assert config.dream.schedule_cron == "0 3 * * *"
-        assert config.dream.scan_limit == 500
+        assert config.dream.schedule_cron == "0 2 * * *"
         assert config.dream.min_action_confidence == 0.72
         assert config.digest_shadow_usefulness is False
         assert "digest_memory_usefulness" not in MemoryConfig.model_fields
@@ -177,14 +176,25 @@ class TestMemoryDreamConfig:
         from gobby.config.persistence import MemoryDreamConfig
 
         config = MemoryDreamConfig()
-        assert config.allow_unattended_mutations is False
         assert config.planner_batch_max_chars == 100_000
-        assert config.page_size == 200
         assert config.redream_after_hours == 20
         assert config.purge_delete_after_days == 30
         assert config.purge_review_after_days == 90
         assert config.run_retention_days == 30
         assert config.min_rescope_confidence == 0.85
+
+    def test_dream_batch_window_field_defaults(self) -> None:
+        """The work-unit scheduler knobs carry the redesign defaults."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        config = MemoryDreamConfig()
+        assert config.schedule_cron == "0 2 * * *"
+        assert config.planner_batch_size == 25
+        assert config.max_runtime_seconds == 14400
+        assert config.work_unit_timeout_seconds == 1500.0
+        assert config.evidence_channel_timeout_seconds == 30.0
+        assert config.evidence_retry_attempts == 3
+        assert config.evidence_phase_timeout_seconds == 210.0
 
     def test_related_evidence_field_defaults(self) -> None:
         """Dream evidence and write-trigger knobs use the reconciliation defaults."""
@@ -217,36 +227,60 @@ class TestMemoryDreamConfig:
     @pytest.mark.parametrize(
         "field",
         [
+            "planner_batch_size",
             "planner_batch_max_chars",
-            "page_size",
+            "max_runtime_seconds",
+            "evidence_retry_attempts",
             "redream_after_hours",
             "purge_delete_after_days",
             "purge_review_after_days",
             "run_retention_days",
         ],
     )
-    def test_dream_gc_fields_reject_non_positive(self, field: str) -> None:
-        """Each new GC int is registered in validate_positive_int."""
+    def test_dream_int_fields_reject_non_positive(self, field: str) -> None:
+        """Each batch/window int is registered in validate_positive_int."""
         from gobby.config.persistence import MemoryDreamConfig
 
         with pytest.raises(ValidationError):
             MemoryDreamConfig(**{field: 0})
 
-    def test_deprecated_fields_still_accepted(self) -> None:
-        """Deprecated-ignored fields stay declared so existing configs still load.
-
-        FeatureDefaultConfig forbids extras, so removing these outright would break
-        startup for any user config that still sets them.
-        """
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "work_unit_timeout_seconds",
+            "evidence_channel_timeout_seconds",
+            "evidence_phase_timeout_seconds",
+        ],
+    )
+    def test_dream_timeout_fields_reject_non_positive(self, field: str) -> None:
+        """Each timeout float is registered in validate_positive_float."""
         from gobby.config.persistence import MemoryDreamConfig
 
-        config = MemoryDreamConfig(scan_limit=750, max_scan_rows=9000, stale_age_days=14)
-        assert config.scan_limit == 750
-        assert config.max_scan_rows == 9000
-        assert config.stale_age_days == 14
+        with pytest.raises(ValidationError):
+            MemoryDreamConfig(**{field: 0.0})
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "allow_unattended_mutations",
+            "planner_max_concurrency",
+            "page_size",
+            "candidate_page_timeout_seconds",
+            "scan_limit",
+            "max_scan_rows",
+            "stale_age_days",
+        ],
+    )
+    def test_removed_page_era_fields_rejected(self, field: str) -> None:
+        """Pre-0.5 schema change: removed page-era and deprecated fields no
+        longer load — the model forbids extras."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        with pytest.raises(ValidationError):
+            MemoryDreamConfig(**{field: 1})
 
     def test_unknown_field_still_forbidden(self) -> None:
-        """The base model forbids extras — that's why deprecated fields are kept."""
+        """The base model forbids extras."""
         from gobby.config.persistence import MemoryDreamConfig
 
         with pytest.raises(ValidationError):

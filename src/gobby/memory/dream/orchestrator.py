@@ -26,7 +26,11 @@ from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
-from gobby.memory.dream.related import RelatedEvidenceSession, gather_related_evidence
+from gobby.memory.dream.related import (
+    RelatedEvidenceError,
+    RelatedEvidenceSession,
+    gather_related_evidence,
+)
 from gobby.memory.dream.storage import MemoryDreamStore, dream_scope_key
 from gobby.storage.memories_scope import MemoryScope
 
@@ -47,6 +51,12 @@ class DreamDependencyError(RuntimeError):
     The failed unit's candidates keep their cooldown cursors untouched — no
     implicit keep actions, no stamps — so they remain due for a later run.
     """
+
+
+def _positive_float(value: Any, default: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return default
+    return float(value) if value > 0 else default
 
 
 def _positive_int(value: Any, default: int) -> int:
@@ -144,6 +154,10 @@ class WorkUnitOutcome:
     raw_plan_metadata: dict[str, Any]
     no_progress: bool = False
 
+    def drained(self, unit_size: int) -> bool:
+        """True when this unit ended its scope: empty, stuck, or a short page."""
+        return not self.candidates or self.no_progress or len(self.candidates) < unit_size
+
 
 class DreamSweepOrchestrator:
     """Run-scoped executor for sweep, dry-run, and inventory work units."""
@@ -162,6 +176,7 @@ class DreamSweepOrchestrator:
         truth_digest: str,
         run_started: datetime,
         related_session: RelatedEvidenceSession,
+        admission_deadline: float | None = None,
     ) -> None:
         self.memory_manager = memory_manager
         self.store = store
@@ -174,6 +189,16 @@ class DreamSweepOrchestrator:
         self.truth_digest = truth_digest
         self.run_started = run_started
         self.related_session = related_session
+        # Monotonic (event-loop clock) instant after which no new unit starts.
+        self.admission_deadline = admission_deadline
+        self.totals = SweepTotals()
+        self.stop_reason = "drained"
+        self._scope_key = dream_scope_key(options.to_dict())
+        self._previous_ids: set[str] | None = None
+        self._planned = 0
+        self._applied_actions = 0
+        self._last_dependency_failure: str | None = None
+        self._drained = False
 
     @property
     def unit_size(self) -> int:
@@ -183,86 +208,81 @@ class DreamSweepOrchestrator:
         )
         return min(configured, WORK_UNIT_MAX_CANDIDATES)
 
+    def window_open(self) -> bool:
+        """Whether the admission window still allows starting a new unit."""
+        if self.admission_deadline is None:
+            return True
+        return asyncio.get_running_loop().time() < self.admission_deadline
+
     async def run_sweep(self) -> SweepTotals:
         """Drain the run's scope in bounded work units, checkpointing each."""
-        totals = SweepTotals()
-        previous_ids: set[str] | None = None
-        scope_key = dream_scope_key(self.options.to_dict())
-        planned = 0
-        applied_actions = 0
-        last_dependency_failure: str | None = None
-        stop_reason = "drained"
-        while True:
-            try:
-                outcome = await self._run_unit(previous_ids=previous_ids)
-            except DreamDependencyError as exc:
-                last_dependency_failure = str(exc)
-                await self._persist_checkpoint(
-                    DreamCheckpoint(
-                        phase="sweep",
-                        scope=scope_key,
-                        batch_number=totals.pages,
-                        completed=totals.candidates_reviewed,
-                        planned=planned,
-                        actions=applied_actions,
-                        mutations=totals.mutations,
-                        stop_reason="dependency_failure",
-                        last_dependency_failure=last_dependency_failure,
-                    ),
-                )
-                raise
-            if not outcome.candidates:
+        while not self._drained:
+            if not self.window_open():
+                self.stop_reason = "window_exhausted"
                 break
-            if outcome.no_progress:
-                # Cursor failed to advance (e.g. persistent stamp failure); stop
-                # rather than loop forever.
-                logger.warning(
-                    "Memory dream sweep made no progress on run %s; stopping", self.run_id
-                )
-                stop_reason = "no_progress"
-                break
-            previous_ids = {candidate.id for candidate in outcome.candidates}
-            totals.add_page(
-                len(outcome.candidates),
-                outcome.actions,
-                outcome.page_summary,
-                outcome.raw_plan_metadata,
-            )
-            planned += len(outcome.actions)
-            applied_actions += sum(
-                int(count) for count in outcome.page_summary.get("actions", {}).values()
-            )
-            await self._persist_checkpoint(
-                DreamCheckpoint(
-                    phase="sweep",
-                    scope=scope_key,
-                    batch_number=totals.pages,
-                    selected=len(outcome.candidates),
-                    completed=totals.candidates_reviewed,
-                    planned=planned,
-                    actions=applied_actions,
-                    mutations=totals.mutations,
-                    last_dependency_failure=last_dependency_failure,
-                ),
-            )
-            if len(outcome.candidates) < self.unit_size:
-                break
-        await self._persist_checkpoint(
-            DreamCheckpoint(
-                phase="sweep",
-                scope=scope_key,
-                batch_number=totals.pages,
-                completed=totals.candidates_reviewed,
-                planned=planned,
-                actions=applied_actions,
-                mutations=totals.mutations,
-                stop_reason=stop_reason,
-                last_dependency_failure=last_dependency_failure,
-            ),
+            await self.run_unit()
+        return await self.finalize_sweep()
+
+    async def run_unit(self) -> WorkUnitOutcome:
+        """Execute one bounded work unit and fold it into the running totals.
+
+        A dependency failure persists its checkpoint and re-raises; callers own
+        the run-status transition. All other outcomes checkpoint progress and
+        mark the sweep drained once the scope stops yielding full units.
+        """
+        try:
+            outcome = await self._run_unit(previous_ids=self._previous_ids)
+        except DreamDependencyError as exc:
+            self._last_dependency_failure = str(exc)
+            self.stop_reason = "dependency_failure"
+            await self._persist_checkpoint(self._checkpoint(stop_reason=self.stop_reason))
+            raise
+        if not outcome.candidates:
+            self._drained = True
+            return outcome
+        if outcome.no_progress:
+            # Cursor failed to advance (e.g. persistent stamp failure); stop
+            # rather than loop forever.
+            logger.warning("Memory dream sweep made no progress on run %s; stopping", self.run_id)
+            self.stop_reason = "no_progress"
+            self._drained = True
+            return outcome
+        self._previous_ids = {candidate.id for candidate in outcome.candidates}
+        self.totals.add_page(
+            len(outcome.candidates),
+            outcome.actions,
+            outcome.page_summary,
+            outcome.raw_plan_metadata,
         )
-        if totals.mutations and self.dream_config.reconcile_after_apply:
-            await self._reconcile(totals)
-        return totals
+        self._planned += len(outcome.actions)
+        self._applied_actions += sum(
+            int(count) for count in outcome.page_summary.get("actions", {}).values()
+        )
+        await self._persist_checkpoint(self._checkpoint(selected=len(outcome.candidates)))
+        if len(outcome.candidates) < self.unit_size:
+            self._drained = True
+        return outcome
+
+    async def finalize_sweep(self) -> SweepTotals:
+        """Persist the final checkpoint and reconcile applied mutations."""
+        await self._persist_checkpoint(self._checkpoint(stop_reason=self.stop_reason))
+        if self.totals.mutations and self.dream_config.reconcile_after_apply:
+            await self._reconcile(self.totals)
+        return self.totals
+
+    def _checkpoint(self, *, selected: int = 0, stop_reason: str | None = None) -> DreamCheckpoint:
+        return DreamCheckpoint(
+            phase="sweep",
+            scope=self._scope_key,
+            batch_number=self.totals.pages,
+            selected=selected,
+            completed=self.totals.candidates_reviewed,
+            planned=self._planned,
+            actions=self._applied_actions,
+            mutations=self.totals.mutations,
+            stop_reason=stop_reason,
+            last_dependency_failure=self._last_dependency_failure,
+        )
 
     async def run_dry_run(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """Preview the run over an immutable ordered eligible-ID snapshot."""
@@ -344,8 +364,12 @@ class DreamSweepOrchestrator:
         dry_run: bool = False,
         previous_ids: set[str] | None = None,
     ) -> WorkUnitOutcome:
+        deadline = _positive_float(
+            getattr(self.dream_config, "work_unit_timeout_seconds", None),
+            WORK_UNIT_DEADLINE_SECONDS,
+        )
         try:
-            async with asyncio.timeout(WORK_UNIT_DEADLINE_SECONDS):
+            async with asyncio.timeout(deadline):
                 return await self._run_unit_inner(
                     candidate_ids=candidate_ids,
                     dry_run=dry_run,
@@ -353,7 +377,7 @@ class DreamSweepOrchestrator:
                 )
         except TimeoutError as exc:
             raise DreamDependencyError(
-                f"memory dream work unit exceeded {WORK_UNIT_DEADLINE_SECONDS:g}s deadline"
+                f"memory dream work unit exceeded {deadline:g}s deadline"
             ) from exc
 
     async def _run_unit_inner(
@@ -386,7 +410,10 @@ class DreamSweepOrchestrator:
             raise DreamDependencyError(
                 "memory dream planner unavailable: no LLM service configured"
             )
-        candidates = await self._attach_related_evidence(candidates)
+        try:
+            candidates = await self._attach_related_evidence(candidates)
+        except RelatedEvidenceError as exc:
+            raise DreamDependencyError(f"memory dream evidence failed: {exc}") from exc
         stamp = datetime.now(UTC).isoformat()
         raw_plan = await build_raw_plan(
             candidates=candidates,

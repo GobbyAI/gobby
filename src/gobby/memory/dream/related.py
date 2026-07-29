@@ -33,6 +33,7 @@ from gobby.storage.memories_scope import MemoryScope
 logger = logging.getLogger(__name__)
 
 RELATED_EVIDENCE_UNIT_SIZE = 25
+# Defaults for the MemoryDreamConfig evidence knobs; config values win when set.
 RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS = 30.0
 RELATED_EVIDENCE_RETRY_ATTEMPTS = 3
 RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS = (1.0, 4.0)
@@ -256,6 +257,8 @@ class _ChannelContext:
     scope: RetrievalScope
     unit_index: int
     run_id: str | None
+    channel_timeout_seconds: float
+    retry_attempts: int
 
 
 async def gather_related_evidence(
@@ -283,6 +286,19 @@ async def gather_related_evidence(
         dream_config, "related_evidence_fetch_limit", _DEFAULT_FETCH_LIMIT
     )
     top_k = _positive_config(dream_config, "related_evidence_top_k", _DEFAULT_TOP_K)
+    channel_timeout_seconds = _positive_float_config(
+        dream_config,
+        "evidence_channel_timeout_seconds",
+        RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
+    )
+    retry_attempts = _positive_config(
+        dream_config, "evidence_retry_attempts", RELATED_EVIDENCE_RETRY_ATTEMPTS
+    )
+    phase_timeout_seconds = _positive_float_config(
+        dream_config,
+        "evidence_phase_timeout_seconds",
+        RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS,
+    )
 
     enriched: list[DreamCandidate] = []
     for start in range(0, len(candidates), RELATED_EVIDENCE_UNIT_SIZE):
@@ -300,6 +316,9 @@ async def gather_related_evidence(
                 top_k=top_k,
                 unit_index=session.next_unit_index(),
                 run_id=run_id,
+                channel_timeout_seconds=channel_timeout_seconds,
+                retry_attempts=retry_attempts,
+                phase_timeout_seconds=phase_timeout_seconds,
             )
         )
     return enriched
@@ -318,11 +337,21 @@ async def _gather_unit(
     top_k: int,
     unit_index: int,
     run_id: str | None,
+    channel_timeout_seconds: float = RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
+    retry_attempts: int = RELATED_EVIDENCE_RETRY_ATTEMPTS,
+    phase_timeout_seconds: float = RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS,
 ) -> list[DreamCandidate]:
-    context = _ChannelContext(session=session, scope=scope, unit_index=unit_index, run_id=run_id)
+    context = _ChannelContext(
+        session=session,
+        scope=scope,
+        unit_index=unit_index,
+        run_id=run_id,
+        channel_timeout_seconds=channel_timeout_seconds,
+        retry_attempts=retry_attempts,
+    )
     unit_tasks: list[asyncio.Task[Any]] = []
     try:
-        async with asyncio.timeout(RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS):
+        async with asyncio.timeout(phase_timeout_seconds):
             keyword_task = session.create_task(
                 _run_channel(
                     "keyword",
@@ -332,6 +361,7 @@ async def _gather_unit(
                         db=db,
                         scope=scope,
                         fetch_limit=fetch_limit,
+                        deadline_seconds=channel_timeout_seconds,
                     ),
                     context=context,
                 ),
@@ -346,6 +376,7 @@ async def _gather_unit(
                         vector_store=vector_store,
                         scope=scope,
                         fetch_limit=fetch_limit,
+                        deadline_seconds=channel_timeout_seconds,
                     ),
                     context=context,
                 ),
@@ -370,7 +401,13 @@ async def _gather_unit(
                 hydration_task = session.create_task(
                     _run_channel(
                         "hydration",
-                        partial(_hydrate_hits, hydration_ids, db=db, scope=scope),
+                        partial(
+                            _hydrate_hits,
+                            hydration_ids,
+                            db=db,
+                            scope=scope,
+                            deadline_seconds=channel_timeout_seconds,
+                        ),
                         context=context,
                     ),
                     name=f"dream-related-hydration-unit-{unit_index}",
@@ -380,7 +417,7 @@ async def _gather_unit(
     except TimeoutError as exc:
         await _drain_tasks(unit_tasks)
         raise RelatedEvidencePhaseTimeoutError(
-            unit_index, timeout_seconds=RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS
+            unit_index, timeout_seconds=phase_timeout_seconds
         ) from exc
     except BaseException:
         await _drain_tasks(unit_tasks)
@@ -411,7 +448,7 @@ async def _run_channel[T](
 ) -> T:
     loop = asyncio.get_running_loop()
     detail = "unknown failure"
-    for attempt in range(1, RELATED_EVIDENCE_RETRY_ATTEMPTS + 1):
+    for attempt in range(1, context.retry_attempts + 1):
         metrics = _AttemptMetrics()
         started = loop.time()
         task = context.session.create_task(
@@ -420,7 +457,7 @@ async def _run_channel[T](
         )
         outcome = "error"
         try:
-            async with asyncio.timeout(RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS):
+            async with asyncio.timeout(context.channel_timeout_seconds):
                 return await task
         except TimeoutError as exc:
             task.cancel()
@@ -430,7 +467,7 @@ async def _run_channel[T](
             # completed with its own TimeoutError is a failed attempt.
             if task.cancelled():
                 outcome = "timeout"
-                detail = f"attempt exceeded {RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS:.0f}s"
+                detail = f"attempt exceeded {context.channel_timeout_seconds:.0f}s"
             else:
                 detail = f"{type(exc).__name__}: {exc}"
         except asyncio.CancelledError:
@@ -448,12 +485,10 @@ async def _run_channel[T](
             duration=loop.time() - started,
             outcome=outcome,
         )
-        if attempt < RELATED_EVIDENCE_RETRY_ATTEMPTS:
+        if attempt < context.retry_attempts:
             backoffs = RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS
             await asyncio.sleep(backoffs[min(attempt - 1, len(backoffs) - 1)])
-    raise RelatedEvidenceChannelError(
-        channel, attempts=RELATED_EVIDENCE_RETRY_ATTEMPTS, detail=detail
-    )
+    raise RelatedEvidenceChannelError(channel, attempts=context.retry_attempts, detail=detail)
 
 
 async def _drain_tasks(tasks: list[asyncio.Task[Any]]) -> None:
@@ -481,7 +516,7 @@ def _log_attempt_failure(
         context.unit_index,
         channel,
         attempt,
-        RELATED_EVIDENCE_RETRY_ATTEMPTS,
+        context.retry_attempts,
         f"{pool_wait:.3f}s" if pool_wait is not None else "n/a",
         duration,
         outcome,
@@ -538,6 +573,7 @@ async def _keyword_hits_bulk(
     db: Any,
     scope: RetrievalScope,
     fetch_limit: int,
+    deadline_seconds: float = RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
 ) -> dict[str, list[tuple[str, float]]]:
     stats = metrics or _AttemptMetrics()
     statement = render_bulk_keyword_statement(
@@ -560,7 +596,7 @@ async def _keyword_hits_bulk(
     rows = await run_bounded_db(
         execute,
         conninfo=db.conninfo,
-        deadline_seconds=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
+        deadline_seconds=deadline_seconds,
     )
     grouped: dict[str, list[tuple[int, str, float]]] = {}
     for row in rows:
@@ -580,13 +616,14 @@ async def _vector_hits(
     vector_store: Any,
     scope: RetrievalScope,
     fetch_limit: int,
+    deadline_seconds: float = RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
 ) -> dict[str, list[tuple[str, float]]]:
     (metrics or _AttemptMetrics()).mark_admitted()
     results = await vector_store.search_by_stored_vectors(
         [candidate.id for candidate in unit],
         limit=fetch_limit,
         query_filter=scope.vector_filter(),
-        timeout=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
+        timeout=deadline_seconds,
     )
     return {
         memory_id: [
@@ -602,6 +639,7 @@ async def _hydrate_hits(
     *,
     db: Any,
     scope: RetrievalScope,
+    deadline_seconds: float = RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
 ) -> list[Any]:
     stats = metrics or _AttemptMetrics()
     statement = render_get_memories_statement(
@@ -623,7 +661,7 @@ async def _hydrate_hits(
     rows = await run_bounded_db(
         execute,
         conninfo=db.conninfo,
-        deadline_seconds=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
+        deadline_seconds=deadline_seconds,
     )
     return map_get_memories_rows(rows, memory_ids)
 
@@ -694,6 +732,13 @@ def _attach_candidate_evidence(
 def _positive_config(config: Any, name: str, default: int) -> int:
     value = getattr(config, name, default)
     return value if isinstance(value, int) and value > 0 else default
+
+
+def _positive_float_config(config: Any, name: str, default: float) -> float:
+    value = getattr(config, name, default)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return default
+    return float(value) if value > 0 else default
 
 
 def _distinctive_terms(content: str, max_terms: int = 24) -> str:

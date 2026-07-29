@@ -52,10 +52,11 @@ const MEMORY_PATHS = [
   'memory.dream.schedule_cron',
   'memory.dream.prompt_path',
   'memory.dream.max_tokens',
-  'memory.dream.scan_limit',
-  'memory.dream.max_scan_rows',
-  'memory.dream.candidate_page_timeout_seconds',
-  'memory.dream.stale_age_days',
+  'memory.dream.max_runtime_seconds',
+  'memory.dream.work_unit_timeout_seconds',
+  'memory.dream.evidence_channel_timeout_seconds',
+  'memory.dream.evidence_retry_attempts',
+  'memory.dream.evidence_phase_timeout_seconds',
   'memory.dream.min_action_confidence',
   'memory.dream.min_delete_confidence',
   'memory.dream.include_global_memories',
@@ -302,7 +303,7 @@ function DreamGroup({ fields }: { fields: SettingsSectionFields }) {
         path="memory.dream.schedule_cron"
         label="Schedule (cron)"
         ariaLabel="Dream schedule (cron)"
-        placeholder="0 3 * * *"
+        placeholder="0 2 * * *"
       />
       <TextConfigField
         fields={fields}
@@ -320,27 +321,33 @@ function DreamGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <NumberConfigField
         fields={fields}
-        path="memory.dream.scan_limit"
-        label="Scan limit"
-        ariaLabel="Dream scan limit"
+        path="memory.dream.max_runtime_seconds"
+        label="Admission window (seconds)"
+        ariaLabel="Dream admission window (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="memory.dream.max_scan_rows"
-        label="Max scan rows"
-        ariaLabel="Dream max scan rows"
+        path="memory.dream.work_unit_timeout_seconds"
+        label="Work unit timeout (seconds)"
+        ariaLabel="Dream work unit timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="memory.dream.candidate_page_timeout_seconds"
-        label="Candidate page timeout (seconds)"
-        ariaLabel="Dream candidate page timeout (seconds)"
+        path="memory.dream.evidence_channel_timeout_seconds"
+        label="Evidence channel timeout (seconds)"
+        ariaLabel="Dream evidence channel timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="memory.dream.stale_age_days"
-        label="Stale memory age (days)"
-        ariaLabel="Stale memory age (days)"
+        path="memory.dream.evidence_retry_attempts"
+        label="Evidence retry attempts"
+        ariaLabel="Dream evidence retry attempts"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="memory.dream.evidence_phase_timeout_seconds"
+        label="Evidence phase timeout (seconds)"
+        ariaLabel="Dream evidence phase timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}

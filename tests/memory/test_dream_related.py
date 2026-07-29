@@ -223,6 +223,32 @@ async def test_all_channels_failing_raises_typed_failure() -> None:
 
 
 @pytest.mark.unit
+async def test_evidence_retry_attempts_config_bounds_channel_attempts() -> None:
+    candidate = _candidate()
+    session = RelatedEvidenceSession()
+    keyword = AsyncMock(side_effect=RuntimeError("postgres unavailable"))
+    vector = AsyncMock(return_value={})
+    with (
+        patch("gobby.memory.dream.related._keyword_hits_bulk", keyword),
+        patch("gobby.memory.dream.related._vector_hits", vector),
+    ):
+        with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+            await gather_related_evidence(
+                [candidate],
+                db=MagicMock(),
+                vector_store=MagicMock(),
+                dream_config=SimpleNamespace(evidence_retry_attempts=1),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
+    await session.aclose()
+
+    # The config knob replaces the module default: one attempt, no retries.
+    assert excinfo.value.attempts == 1
+    assert keyword.await_count == 1
+
+
+@pytest.mark.unit
 async def test_failed_channel_retries_while_success_preserved(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

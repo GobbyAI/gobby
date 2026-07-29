@@ -27,6 +27,9 @@ from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.orchestrator import (
     MAX_ACTION_SAMPLE,
     WORK_UNIT_MAX_CANDIDATES,
+    DreamDependencyError,
+    SweepTotals,
+    WorkUnitOutcome,
     _decode_raw_plan_metadata,
 )
 from gobby.memory.dream.plan import validate_dream_plan
@@ -40,6 +43,8 @@ from gobby.memory.dream.service import (
     MemoryDreamService,
     _completed_mutation_count,
     _result_run_id,
+    _scope_sweep_key,
+    _ScopeSweep,
 )
 from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
@@ -510,10 +515,9 @@ async def test_build_raw_plan_runs_planner_pages_serially() -> None:
         plan = await build_raw_plan(
             candidates=candidates,
             duplicate_groups=[],
-            # A configured concurrency knob is ignored: pages run one at a time
-            # so Dream can hold at most one host-wide spawn-cold generation
-            # slot, leaving the remaining slots for unrelated callers.
-            dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=3),
+            # Pages run one at a time so Dream can hold at most one host-wide
+            # spawn-cold generation slot, leaving the rest for other callers.
+            dream_config=SimpleNamespace(planner_batch_size=1),
             llm_service=MagicMock(),
             db=_planner_db(),
             project_id="proj-1",
@@ -1369,7 +1373,7 @@ def _execution_test_service() -> MemoryDreamService:
         memory_manager=_as_dream_manager(_FakeMemoryManager(_FakeDreamDB())),
         dream_config=MemoryDreamConfig(
             enabled=True,
-            page_size=2,
+            planner_batch_size=2,
             redream_after_hours=20,
             include_global_memories=False,
             reconcile_after_apply=False,
@@ -1868,7 +1872,7 @@ async def _capture_service_truth_digest(
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=MagicMock(),
         current_project_id=current_project_id,
     )
@@ -2377,7 +2381,7 @@ class _FakeSweepManager:
 
 def _sweep_config(
     *,
-    page_size: int = 2,
+    unit_size: int = 2,
     dry_run_max_candidates: int = 1000,
     redream_after_hours: int = 20,
     related_evidence_enabled: bool = False,
@@ -2389,10 +2393,8 @@ def _sweep_config(
         min_rescope_confidence=0.85,
         reconcile_after_apply=False,
         reconcile_after_revert=False,
-        page_size=page_size,
-        # Work units select planner_batch_size candidates; mirror the legacy
-        # page_size knob so pagination-shape assertions keep their arithmetic.
-        planner_batch_size=page_size,
+        # Work units select planner_batch_size candidates per page.
+        planner_batch_size=unit_size,
         dry_run_max_candidates=dry_run_max_candidates,
         redream_after_hours=redream_after_hours,
         include_global_memories=True,
@@ -2421,7 +2423,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=2),
+        dream_config=_sweep_config(unit_size=2),
         llm_service=MagicMock(),
     )
 
@@ -2463,7 +2465,7 @@ async def test_work_units_cap_selection_at_25_candidates() -> None:
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
         # A batch size above the ceiling must still select 25-candidate units.
-        dream_config=_sweep_config(page_size=100),
+        dream_config=_sweep_config(unit_size=100),
         llm_service=MagicMock(),
     )
 
@@ -2488,7 +2490,7 @@ async def test_planner_dependency_failure_leaves_candidates_due() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=MagicMock(),
     )
     failed_plan = {"actions": [], "planner_errors": ["provider fallback exhausted"]}
@@ -2519,7 +2521,7 @@ async def test_planner_absence_is_typed_dependency_failure() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=None,
     )
 
@@ -2541,7 +2543,7 @@ async def test_skip_consolidation_records_inventory_only() -> None:
     llm_service.call_json_feature = AsyncMock()
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10, related_evidence_enabled=True),
+        dream_config=_sweep_config(unit_size=10, related_evidence_enabled=True),
         llm_service=llm_service,
     )
 
@@ -2590,7 +2592,7 @@ async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=MagicMock(),
     )
     canned = {
@@ -2624,7 +2626,7 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=MagicMock(),
     )
     canned = {
@@ -2672,12 +2674,12 @@ async def test_sweeps_attach_related_evidence() -> None:
     ):
         live_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(live_db)),
-            dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
+            dream_config=_sweep_config(unit_size=2, related_evidence_enabled=True),
             llm_service=MagicMock(),
         )
         dry_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(dry_db)),
-            dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
+            dream_config=_sweep_config(unit_size=2, related_evidence_enabled=True),
             llm_service=MagicMock(),
         )
         await live_service.run(DreamRunOptions(project_id="proj-1"))
@@ -2696,7 +2698,7 @@ async def test_sweeps_skip_related_evidence_when_disabled(dry_run: bool) -> None
     db.memories = {f"m-{i}": _row(f"m-{i}", f"content {i}") for i in range(3)}
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(_FakeSweepManager(db)),
-        dream_config=_sweep_config(page_size=2, related_evidence_enabled=False),
+        dream_config=_sweep_config(unit_size=2, related_evidence_enabled=False),
         llm_service=MagicMock(),
     )
 
@@ -2718,7 +2720,7 @@ async def test_dry_run_full_coverage_pagination() -> None:
     db.memories = {f"m-{i:02d}": _row(f"m-{i:02d}", f"content {i}") for i in range(55)}
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(_FakeSweepManager(db)),
-        dream_config=_sweep_config(page_size=10, related_evidence_enabled=False),
+        dream_config=_sweep_config(unit_size=10, related_evidence_enabled=False),
         llm_service=MagicMock(),
     )
 
@@ -2755,7 +2757,7 @@ async def test_dry_run_candidate_limit_reports_truncation() -> None:
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(_FakeSweepManager(db)),
         dream_config=_sweep_config(
-            page_size=10,
+            unit_size=10,
             dry_run_max_candidates=25,
             related_evidence_enabled=False,
         ),
@@ -2794,7 +2796,7 @@ async def test_dry_run_snapshot_interleaving() -> None:
     deleted_id = snapshot_ids[-1]
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=2, related_evidence_enabled=False),
+        dream_config=_sweep_config(unit_size=2, related_evidence_enabled=False),
         llm_service=MagicMock(),
     )
     page_count = 0
@@ -2837,7 +2839,7 @@ async def test_global_only_run_persists_null_scope_and_selects_only_global() -> 
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=10),
+        dream_config=_sweep_config(unit_size=10),
         llm_service=MagicMock(),
     )
 
@@ -3144,7 +3146,7 @@ async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=2),
+        dream_config=_sweep_config(unit_size=2),
         llm_service=MagicMock(),
     )
 
@@ -3186,7 +3188,7 @@ async def test_full_sweep_cutoff_is_run_start_not_cooldown_window() -> None:
     manager = _RecordingSweepManager(db)
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
-        dream_config=_sweep_config(page_size=2, redream_after_hours=20),
+        dream_config=_sweep_config(unit_size=2, redream_after_hours=20),
         llm_service=MagicMock(),
     )
 
@@ -3276,30 +3278,202 @@ async def test_run_all_due_projects_loops_targets_with_per_target_scope(
     assert [r["run_id"] for r in result["runs"]] == ["run-1", "run-2", "run-3"]
 
 
-@pytest.mark.asyncio
-async def test_run_all_due_projects_isolates_target_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    manager = _FakeDueProjectsManager(["proj-ok", "proj-bad", None])
-    service = MemoryDreamService(
-        memory_manager=_as_dream_manager(manager), dream_config=_sweep_config()
+class _FakeScopeOrchestrator:
+    """Minimal per-scope orchestrator stand-in for coordinator seam tests."""
+
+    def __init__(self) -> None:
+        self.totals = SweepTotals()
+        self.stop_reason = "drained"
+
+    async def finalize_sweep(self) -> SweepTotals:
+        return self.totals
+
+
+class _FakeRelatedSession:
+    async def aclose(self) -> None:
+        return None
+
+
+def _unit(count: int) -> WorkUnitOutcome:
+    return WorkUnitOutcome(
+        candidates=[_candidate(f"m-{count}-{index}") for index in range(count)],
+        actions=[],
+        page_summary={"actions": {}},
+        raw_plan_metadata={},
     )
 
-    async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
-        if options.project_id == "proj-bad":
-            raise RuntimeError("boom")
-        return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
 
-    monkeypatch.setattr(service, "_run_nested_target", fake_run)
+def _coordinator_service(
+    targets: list[str | None],
+    unit_plan: dict[str, list[Any]],
+) -> tuple[MemoryDreamService, list[str]]:
+    """Round-robin harness: seam-patched service plus recorded visit order.
+
+    ``unit_plan`` maps scope keys to per-visit steps; an Exception step is
+    raised from the unit seam instead of returned. Child run rows are real
+    (created against the fake DB), so per-scope statuses are observable.
+    """
+    manager = _FakeDueProjectsManager(targets)
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        dream_config=_sweep_config(),
+    )
+    visits: list[str] = []
+
+    async def fake_open(scope: MemoryScope, **_kwargs: Any) -> _ScopeSweep:
+        run_id = service.store.create_run(
+            project_id=scope.project_id, dry_run=False, options={}, status="started"
+        )
+        return _ScopeSweep(
+            scope=scope,
+            options=DreamRunOptions(dry_run=False),
+            run_id=run_id,
+            orchestrator=cast(Any, _FakeScopeOrchestrator()),
+            related_session=cast(Any, _FakeRelatedSession()),
+            unit_size=2,
+        )
+
+    async def fake_unit(sweep: _ScopeSweep) -> WorkUnitOutcome:
+        key = _scope_sweep_key(sweep.scope)
+        visits.append(key)
+        step = unit_plan[key].pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return cast(WorkUnitOutcome, step)
+
+    _set_method(service, "_open_scope_sweep", fake_open)
+    _set_method(service, "_run_scope_unit", fake_unit)
+    return service, visits
+
+
+@pytest.mark.asyncio
+async def test_round_robin_gives_each_due_scope_one_unit_per_pass() -> None:
+    service, visits = _coordinator_service(
+        ["proj-a", "proj-b", None],
+        {
+            "project:proj-a": [_unit(2), _unit(2), _unit(1)],
+            "project:proj-b": [_unit(1)],
+            "global": [_unit(2), _unit(1)],
+        },
+    )
+
+    result = await service.run_all_due_projects()
+
+    # One unit per due scope per pass: proj-a's larger backlog cannot starve
+    # proj-b or the global bucket, and drained scopes drop out of later passes.
+    assert visits == [
+        "project:proj-a",
+        "project:proj-b",
+        "global",
+        "project:proj-a",
+        "global",
+        "project:proj-a",
+    ]
+    assert result["success"] is True
+    assert result["stop_reason"] == "drained"
+    assert result["passes"] == 3
+    assert result["completed"] == 3
+    assert result["failed"] == 0
+    statuses = {run["project_id"]: run["status"] for run in result["runs"]}
+    assert statuses == {"proj-a": "completed", "proj-b": "completed", None: "completed"}
+
+
+@pytest.mark.asyncio
+async def test_window_exhaustion_stops_new_units_and_records_partial(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, visits = _coordinator_service(
+        ["proj-a", "proj-b", None],
+        {
+            "project:proj-a": [_unit(2), _unit(2)],
+            "project:proj-b": [_unit(2)],
+            "global": [_unit(2)],
+        },
+    )
+    # Admission stays open for two units, then the window closes.
+    checks = iter([True, True, False])
+    _set_method(service, "_admission_window_open", lambda _deadline: next(checks))
+    run_id = service.store.create_run(project_id=None, dry_run=False, options={})
+    caplog.set_level("INFO", logger="gobby.memory.dream.service")
+
+    result = await service.execute_all_due_projects_run(run_id)
+
+    # No new unit starts after the deadline: the global scope never runs.
+    assert visits == ["project:proj-a", "project:proj-b"]
+    assert result["success"] is True
+    assert result["status"] == "partial"
+    aggregate = result["aggregate"]
+    assert aggregate["stop_reason"] == "window_exhausted"
+    assert [entry["status"] for entry in aggregate["runs"]] == ["partial", "partial"]
+    run = service.store.get_run(run_id)
+    assert run is not None
+    assert run["status"] == "partial"
+    assert run["summary"]["stop_reason"] == "window_exhausted"
+    checkpoint = run["checkpoint"]
+    assert checkpoint["phase"] == "coordinator"
+    assert checkpoint["stop_reason"] == "window_exhausted"
+    # A window-exhausted partial is a normal outcome: INFO only, no warnings.
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_failure_stops_coordinator_with_single_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    failure = DreamDependencyError(
+        "memory dream planner failed: provider fallback exhausted after 3 attempts"
+    )
+    service, visits = _coordinator_service(
+        ["proj-a", "proj-b", None],
+        {
+            "project:proj-a": [_unit(2), failure],
+            "project:proj-b": [_unit(1)],
+            "global": [_unit(2), _unit(1)],
+        },
+    )
+    caplog.set_level("INFO", logger="gobby.memory.dream.service")
+
+    result = await service.run_all_due_projects()
+
+    # Pass 1 visits every scope; proj-a's second unit fails and stops the
+    # coordinator before the global scope gets its second unit.
+    assert visits == ["project:proj-a", "project:proj-b", "global", "project:proj-a"]
+    assert result["success"] is True
+    assert result["stop_reason"] == "dependency_failure"
+    assert "provider fallback exhausted" in result["dependency_failure"]
+    entries = {run["project_id"]: run for run in result["runs"]}
+    assert entries["proj-a"]["status"] == "failed"
+    assert "provider fallback exhausted" in entries["proj-a"]["error"]
+    assert entries["proj-b"]["status"] == "completed"
+    # The cut-off global scope keeps its completed unit and records partial.
+    assert entries[None]["status"] == "partial"
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "provider fallback exhausted" in message
+    assert "remain due" in message
+
+
+@pytest.mark.asyncio
+async def test_run_all_due_projects_isolates_target_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, _visits = _coordinator_service(
+        ["proj-ok", "proj-bad", None],
+        {
+            "project:proj-ok": [_unit(1)],
+            "project:proj-bad": [RuntimeError("boom")],
+            "global": [_unit(1)],
+        },
+    )
     caplog.set_level("ERROR", logger="gobby.memory.dream.service")
 
     result = await service.run_all_due_projects()
 
-    assert result["success"] is True  # one failure does not fail the whole batch
+    assert result["success"] is True  # one structural failure does not fail the batch
     assert result["completed"] == 2
     assert result["failed"] == 1
-    assert result["mutations"] == 4
     bad = next(r for r in result["runs"] if r["project_id"] == "proj-bad")
     assert bad["success"] is False
     assert "boom" in bad["error"]
@@ -3307,18 +3481,14 @@ async def test_run_all_due_projects_isolates_target_failure(
 
 
 @pytest.mark.asyncio
-async def test_run_all_due_projects_all_failed_marks_aggregate_failed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = _FakeDueProjectsManager(["proj-bad", None])
-    service = MemoryDreamService(
-        memory_manager=_as_dream_manager(manager), dream_config=_sweep_config()
+async def test_run_all_due_projects_all_failed_marks_aggregate_failed() -> None:
+    service, _visits = _coordinator_service(
+        ["proj-bad", None],
+        {
+            "project:proj-bad": [RuntimeError("nope")],
+            "global": [RuntimeError("nope")],
+        },
     )
-
-    async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
-        raise RuntimeError("nope")
-
-    monkeypatch.setattr(service, "_run_nested_target", fake_run)
 
     result = await service.run_all_due_projects()
 
