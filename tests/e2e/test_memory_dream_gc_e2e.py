@@ -28,7 +28,7 @@ touch embeddings or Qdrant.
 
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -38,6 +38,7 @@ from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import run_memory_dream
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.e2e
 
@@ -86,8 +87,9 @@ def _sweep_config() -> MemoryDreamConfig:
 def _content_driven_planner(**kwargs: Any) -> dict[str, Any]:
     """Fake planner: delete obsolete-marker memories, keep the rest.
 
-    Patched in for ``gobby.memory.dream.service.build_raw_plan`` so the sweep is
-    deterministic without a live LLM while the real validate/apply path runs.
+    Patched in for ``gobby.memory.dream.orchestrator.build_raw_plan`` so the
+    sweep is deterministic without a live LLM while the real validate/apply
+    path runs.
     """
     candidates = kwargs["candidates"]
     actions: list[dict[str, Any]] = []
@@ -129,18 +131,20 @@ async def _list_by_visibility(
 
 async def _run_sweep(manager: LocalMemoryManager) -> dict[str, Any]:
     with patch(
-        "gobby.memory.dream.service.build_raw_plan",
+        "gobby.memory.dream.orchestrator.build_raw_plan",
         AsyncMock(side_effect=_content_driven_planner),
     ):
         # The storage manager covers the protocol subset this keep/delete sweep
         # exercises (candidates, mark_dreamed, snapshot store via .db); the
         # async consolidation/reconcile members are never reached here.
-        # These memories are global (no project_id); a sweep must carry an
-        # explicit scope, so target the NULL/global bucket directly.
+        # These memories are global (is_global=True on the personal project); a
+        # sweep must carry an explicit scope, so target the global bucket.
+        # Ordinary work units require a planner; the MagicMock stands in for
+        # the LLM service while the patched build_raw_plan supplies the plan.
         return await run_memory_dream(
             memory_manager=cast(MemoryDreamManagerProtocol, manager),
             dream_config=_sweep_config(),
-            llm_service=None,
+            llm_service=cast(Any, MagicMock()),
             global_only=True,
         )
 
@@ -153,9 +157,24 @@ async def test_dream_gc_soft_delete_lifecycle(
     # The test manager and the live daemon share the isolated worker schema, so
     # rows written here are served verbatim by the daemon's HTTP routes.
     manager = LocalMemoryManager(postgres_db)
-    neo4j = manager.create_memory(content=NEO4J_CONTENT, memory_type="fact")
-    mysql = manager.create_memory(content=MYSQL_CONTENT, memory_type="fact")
-    manager.create_memory(content=CURRENT_CONTENT, memory_type="fact")
+    neo4j = manager.create_memory(
+        content=NEO4J_CONTENT,
+        project_id=PERSONAL_PROJECT_ID,
+        memory_type="fact",
+        is_global=True,
+    )
+    mysql = manager.create_memory(
+        content=MYSQL_CONTENT,
+        project_id=PERSONAL_PROJECT_ID,
+        memory_type="fact",
+        is_global=True,
+    )
+    manager.create_memory(
+        content=CURRENT_CONTENT,
+        project_id=PERSONAL_PROJECT_ID,
+        memory_type="fact",
+        is_global=True,
+    )
 
     # All three are visible to agent recall before the sweep.
     active, _ = await _list_by_visibility(async_daemon_client, "active")

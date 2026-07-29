@@ -1,44 +1,40 @@
-"""Memory dream service orchestration.
+"""Memory dream service facade.
 
-The nightly run is a streaming page-and-apply sweep over *active* memories. Each
-page is fetched by the storage cooldown query, planned against the current-truth
-digest, validated (failures degrade to visible keep), applied, and stamped — so
-the cooldown cursor advances and the loop drains to zero. An immediate re-run is
-a no-op because every row was just stamped inside the cooldown window. Dry runs
-write no memory, snapshot, or stamp mutations. They materialize an immutable
-candidate-ID snapshot and hydrate it page by page so every start-of-run candidate
-is reviewed at most once.
+The service owns admission, status, revert, and execution entry points. The
+run bodies — mutating sweeps, dry runs, and skip-consolidation inventories —
+execute as bounded work units in ``gobby.memory.dream.orchestrator``: each
+unit selects at most 25 candidates from one scope, gathers required evidence,
+calls the planner serially, validates, applies, and checkpoints. The cooldown
+cursor advances per applied unit so a sweep drains to zero and an immediate
+re-run is a no-op. Dry runs write no memory, snapshot, or stamp mutations;
+they materialize an immutable candidate-ID snapshot and hydrate it unit by
+unit so every start-of-run candidate is reviewed at most once.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from weakref import WeakKeyDictionary
 
 from gobby.config.persistence import MemoryDreamConfig
-from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
-from gobby.memory.dream.candidates import list_sweep_candidates
-from gobby.memory.dream.models import DreamCandidate, DreamCheckpoint
+from gobby.memory.dream.apply import revert_dream_run
 from gobby.memory.dream.options import DreamRunOptions
-from gobby.memory.dream.plan import validate_dream_plan
-from gobby.memory.dream.planner import build_raw_plan
-from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
-from gobby.memory.dream.related import (
-    RelatedEvidenceSession,
-    gather_related_evidence,
+from gobby.memory.dream.orchestrator import (
+    DreamSweepOrchestrator,
+    SweepTotals,
+    _positive_int,
 )
+from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
+from gobby.memory.dream.related import RelatedEvidenceSession
 from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
     RUN_TERMINAL_STATUSES,
     DreamAdmission,
     MemoryDreamStore,
-    dream_scope_key,
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
@@ -62,82 +58,13 @@ def _execution_lock() -> asyncio.Lock:
     return lock
 
 
-DEFAULT_PAGE_SIZE = 200
 DEFAULT_REDREAM_AFTER_HOURS = 20
-MAX_ACTION_SAMPLE = 50
-MAX_ERROR_DETAILS = 50
-MAX_PLANNER_ERRORS = 50
 
 # A cutoff past every possible ``last_dreamed_at`` makes the due predicate match
 # every live memory, so ``list_dream_scopes`` returns every scope that has
 # memories — including ones fully within the cooldown window. The truth-change
 # trigger needs that full set so a digest change on a cooled project is caught.
 _ALL_MEMORIES_CUTOFF = "9999-12-31T23:59:59+00:00"
-
-
-@dataclass
-class _SweepTotals:
-    """Bounded accumulator for a streaming sweep's summary and run record."""
-
-    candidates_reviewed: int = 0
-    pages: int = 0
-    mutations: int = 0
-    snapshots: int = 0
-    errors: int = 0
-    action_counts: dict[str, int] = field(default_factory=dict)
-    error_details: list[dict[str, Any]] = field(default_factory=list)
-    planner_errors: list[str] = field(default_factory=list)
-    action_sample: list[dict[str, Any]] = field(default_factory=list)
-    reconcile: dict[str, Any] | None = None
-
-    def add_page(
-        self,
-        candidate_count: int,
-        actions: list[Any],
-        page_summary: dict[str, Any],
-        raw_plan_metadata: dict[str, Any],
-    ) -> None:
-        self.candidates_reviewed += candidate_count
-        self.pages += 1
-        self.mutations += int(page_summary.get("mutations", 0))
-        self.snapshots += int(page_summary.get("snapshots", 0))
-        self.errors += int(page_summary.get("errors", 0))
-        for name, count in page_summary.get("actions", {}).items():
-            self.action_counts[name] = self.action_counts.get(name, 0) + int(count)
-        for detail in page_summary.get("error_details", []):
-            if len(self.error_details) < MAX_ERROR_DETAILS:
-                self.error_details.append(detail)
-        for err in raw_plan_metadata.get("planner_errors", []):
-            if len(self.planner_errors) < MAX_PLANNER_ERRORS:
-                self.planner_errors.append(str(err))
-        for action in actions:
-            if len(self.action_sample) < MAX_ACTION_SAMPLE:
-                self.action_sample.append(action.to_dict())
-
-    def to_summary(self) -> dict[str, Any]:
-        summary: dict[str, Any] = {
-            "dry_run": False,
-            "actions": dict(self.action_counts),
-            "mutations": self.mutations,
-            "snapshots": self.snapshots,
-            "errors": self.errors,
-            "error_details": self.error_details,
-            "candidates_reviewed": self.candidates_reviewed,
-            "pages": self.pages,
-            "planner_errors": self.planner_errors,
-        }
-        if self.reconcile is not None:
-            summary["reconcile"] = self.reconcile
-        return summary
-
-    def to_plan(self) -> dict[str, Any]:
-        return {
-            "candidate_count": self.candidates_reviewed,
-            "pages": self.pages,
-            "action_counts": dict(self.action_counts),
-            "planner_errors": self.planner_errors,
-            "action_sample": self.action_sample,
-        }
 
 
 class MemoryDreamService:
@@ -608,9 +535,6 @@ class MemoryDreamService:
         related_session = RelatedEvidenceSession()
         try:
             run_started = datetime.now(UTC)
-            page_size = _positive_int(
-                getattr(self.dream_config, "page_size", DEFAULT_PAGE_SIZE), DEFAULT_PAGE_SIZE
-            )
             redream_hours = _positive_int(
                 getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
                 DEFAULT_REDREAM_AFTER_HOURS,
@@ -621,8 +545,8 @@ class MemoryDreamService:
                 else bool(getattr(self.dream_config, "include_global_memories", True))
             )
             # full_sweep pins the cutoff to run_start so the cooldown excludes
-            # only rows stamped during this run; the page loop still drains via
-            # per-page stamping. Cannot be expressed as redream_after_hours=0 —
+            # only rows stamped during this run; the unit loop still drains via
+            # per-unit stamping. Cannot be expressed as redream_after_hours=0 —
             # _positive_int coerces values < 1 back to the default.
             redream_cutoff = (
                 run_started.isoformat()
@@ -630,39 +554,35 @@ class MemoryDreamService:
                 else (run_started - timedelta(hours=redream_hours)).isoformat()
             )
             digest = await self._build_truth_digest_async(options)
-
-            if options.dry_run:
-                return await self._execute_dry_run(
-                    run_id,
-                    options,
-                    redream_cutoff,
-                    digest,
-                    page_size,
-                    include_global,
-                    run_started,
-                    related_session,
-                )
-
-            totals = await self._stream_sweep(
-                run_id,
-                options,
-                redream_cutoff,
-                digest,
-                page_size,
-                include_global,
-                run_started,
-                related_session,
+            orchestrator = DreamSweepOrchestrator(
+                memory_manager=self.memory_manager,
+                store=self.store,
+                dream_config=self.dream_config,
+                llm_service=self.llm_service,
+                run_id=run_id,
+                options=options,
+                include_global=include_global,
+                redream_cutoff=redream_cutoff,
+                truth_digest=digest,
+                run_started=run_started,
+                related_session=related_session,
             )
-            if totals.mutations and self.dream_config.reconcile_after_apply:
-                await self._reconcile(totals)
+
+            if options.skip_consolidation:
+                plan, summary = await orchestrator.run_inventory()
+            elif options.dry_run:
+                plan, summary = await orchestrator.run_dry_run()
+            else:
+                totals = await self._stream_sweep(orchestrator)
+                plan, summary = totals.to_plan(), totals.to_summary()
             completed_ts = datetime.now(UTC).isoformat()
             run = await asyncio.to_thread(
                 self.store.update_run,
                 run_id,
                 status="completed",
                 completed_at=completed_ts,
-                plan=totals.to_plan(),
-                summary=totals.to_summary(),
+                plan=plan,
+                summary=summary,
             )
             return {"success": True, "run_id": run_id, "run": run}
         except asyncio.CancelledError:
@@ -700,238 +620,9 @@ class MemoryDreamService:
         finally:
             await related_session.aclose()
 
-    async def _attach_related_evidence(
-        self,
-        candidates: list[DreamCandidate],
-        options: DreamRunOptions,
-        include_global: bool,
-        related_session: RelatedEvidenceSession,
-    ) -> list[DreamCandidate]:
-        if not self.dream_config.related_evidence_enabled:
-            return candidates
-        retrieval_scope = options.retrieval_scope(include_global=include_global)
-        if retrieval_scope is None:
-            return candidates
-        return await gather_related_evidence(
-            candidates,
-            db=self.memory_manager.db,
-            vector_store=getattr(self.memory_manager, "_vector_store", None),
-            dream_config=self.dream_config,
-            session=related_session,
-            scope=retrieval_scope,
-        )
-
-    async def _stream_sweep(
-        self,
-        run_id: str,
-        options: DreamRunOptions,
-        redream_cutoff: str,
-        digest: str,
-        page_size: int,
-        include_global: bool,
-        run_started: datetime,
-        related_session: RelatedEvidenceSession,
-    ) -> _SweepTotals:
-        totals = _SweepTotals()
-        previous_ids: set[str] | None = None
-        scope_key = dream_scope_key(options.to_dict())
-        planned = 0
-        applied_actions = 0
-        last_dependency_failure: str | None = None
-        stop_reason = "drained"
-        while True:
-            candidates = await list_sweep_candidates(
-                self.memory_manager,
-                limit=page_size,
-                redream_cutoff=redream_cutoff,
-                scope=options.memory_scope(include_global=include_global),
-                memory_type=options.memory_type,
-                now=run_started,
-            )
-            if not candidates:
-                break
-            candidates = await self._attach_related_evidence(
-                candidates, options, include_global, related_session
-            )
-            page_ids = {candidate.id for candidate in candidates}
-            if previous_ids is not None and page_ids == previous_ids:
-                # Cursor failed to advance (e.g. persistent stamp failure); stop
-                # rather than loop forever.
-                logger.warning("Memory dream sweep made no progress on run %s; stopping", run_id)
-                stop_reason = "no_progress"
-                break
-            previous_ids = page_ids
-            stamp = datetime.now(UTC).isoformat()
-            raw_plan = await build_raw_plan(
-                candidates=candidates,
-                duplicate_groups=[],
-                dream_config=self.dream_config,
-                llm_service=self.llm_service,
-                db=self.memory_manager.db,
-                project_id=options.project_id,
-                skip_consolidation=False,
-                truth_digest=digest,
-            )
-            raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
-            actions = validate_dream_plan(
-                raw_plan,
-                candidates,
-                min_action_confidence=self.dream_config.min_action_confidence,
-                min_delete_confidence=self.dream_config.min_delete_confidence,
-                min_rescope_confidence=self.dream_config.min_rescope_confidence,
-            )
-            page_summary = await apply_dream_plan(
-                memory_manager=self.memory_manager,
-                store=self.store,
-                run_id=run_id,
-                actions=actions,
-                candidates=candidates,
-                dry_run=False,
-                reconcile_after_apply=False,
-                when=stamp,
-            )
-            totals.add_page(len(candidates), actions, page_summary, raw_plan_metadata)
-            planned += len(actions)
-            applied_actions += sum(int(count) for count in page_summary.get("actions", {}).values())
-            planner_errors = raw_plan_metadata.get("planner_errors") or []
-            if planner_errors:
-                last_dependency_failure = str(planner_errors[-1])
-            await self._persist_checkpoint(
-                run_id,
-                DreamCheckpoint(
-                    phase="sweep",
-                    scope=scope_key,
-                    batch_number=totals.pages,
-                    selected=len(candidates),
-                    completed=totals.candidates_reviewed,
-                    planned=planned,
-                    actions=applied_actions,
-                    mutations=totals.mutations,
-                    last_dependency_failure=last_dependency_failure,
-                ),
-            )
-            if len(candidates) < page_size:
-                break
-        await self._persist_checkpoint(
-            run_id,
-            DreamCheckpoint(
-                phase="sweep",
-                scope=scope_key,
-                batch_number=totals.pages,
-                completed=totals.candidates_reviewed,
-                planned=planned,
-                actions=applied_actions,
-                mutations=totals.mutations,
-                stop_reason=stop_reason,
-                last_dependency_failure=last_dependency_failure,
-            ),
-        )
-        return totals
-
-    async def _persist_checkpoint(self, run_id: str, checkpoint: DreamCheckpoint) -> None:
-        await asyncio.to_thread(self.store.update_run, run_id, checkpoint=checkpoint.to_dict())
-
-    async def _execute_dry_run(
-        self,
-        run_id: str,
-        options: DreamRunOptions,
-        redream_cutoff: str,
-        digest: str,
-        page_size: int,
-        include_global: bool,
-        run_started: datetime,
-        related_session: RelatedEvidenceSession,
-    ) -> dict[str, Any]:
-        scope = options.memory_scope(include_global=include_global)
-        candidate_limit = self.dream_config.dry_run_max_candidates
-        candidate_ids = await asyncio.to_thread(
-            self.memory_manager.list_dream_candidate_ids,
-            redream_cutoff=redream_cutoff,
-            scope=scope,
-            memory_type=options.memory_type,
-            limit=candidate_limit + 1,
-        )
-        candidates_truncated = len(candidate_ids) > candidate_limit
-        candidate_ids = candidate_ids[:candidate_limit]
-        totals = _SweepTotals()
-        for offset in range(0, len(candidate_ids), page_size):
-            page_ids = candidate_ids[offset : offset + page_size]
-            candidates = await list_sweep_candidates(
-                self.memory_manager,
-                limit=page_size,
-                redream_cutoff=redream_cutoff,
-                scope=scope,
-                memory_type=options.memory_type,
-                candidate_ids=page_ids,
-                now=run_started,
-            )
-            if not candidates:
-                continue
-            candidates = await self._attach_related_evidence(
-                candidates, options, include_global, related_session
-            )
-            raw_plan = await build_raw_plan(
-                candidates=candidates,
-                duplicate_groups=[],
-                dream_config=self.dream_config,
-                llm_service=self.llm_service,
-                db=self.memory_manager.db,
-                project_id=options.project_id,
-                skip_consolidation=False,
-                truth_digest=digest,
-            )
-            raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
-            actions = validate_dream_plan(
-                raw_plan,
-                candidates,
-                min_action_confidence=self.dream_config.min_action_confidence,
-                min_delete_confidence=self.dream_config.min_delete_confidence,
-                min_rescope_confidence=self.dream_config.min_rescope_confidence,
-            )
-            page_summary = await apply_dream_plan(
-                memory_manager=self.memory_manager,
-                store=self.store,
-                run_id=run_id,
-                actions=actions,
-                candidates=candidates,
-                dry_run=True,
-                reconcile_after_apply=False,
-            )
-            totals.add_page(len(candidates), actions, page_summary, raw_plan_metadata)
-        action_count = sum(totals.action_counts.values())
-        summary = totals.to_summary()
-        summary["dry_run"] = True
-        summary["planned_actions"] = totals.action_sample
-        summary["planned_action_count"] = action_count
-        summary["candidates_truncated"] = candidates_truncated
-        summary["candidate_limit"] = candidate_limit
-        plan = totals.to_plan()
-        plan.update(
-            {
-                "dry_run": True,
-                "actions": totals.action_sample,
-                "action_count": action_count,
-                "candidates_truncated": candidates_truncated,
-                "candidate_limit": candidate_limit,
-            }
-        )
-        completed_ts = datetime.now(UTC).isoformat()
-        run = await asyncio.to_thread(
-            self.store.update_run,
-            run_id,
-            status="completed",
-            completed_at=completed_ts,
-            plan=plan,
-            summary=summary,
-        )
-        return {"success": True, "run_id": run_id, "run": run}
-
-    async def _reconcile(self, totals: _SweepTotals) -> None:
-        try:
-            totals.reconcile = await self.memory_manager.reconcile_stores(dry_run=False)
-        except Exception as exc:  # noqa: BLE001 - reconcile must not hide applied mutations
-            totals.reconcile = {"error": str(exc)}
-            logger.warning("Memory dream reconcile failed: %s", exc, exc_info=True)
+    async def _stream_sweep(self, orchestrator: DreamSweepOrchestrator) -> SweepTotals:
+        """Execution seam for the mutating sweep; lock/cancel tests intercept it."""
+        return await orchestrator.run_sweep()
 
     async def status(self, run_id: str) -> dict[str, Any]:
         await self._ensure_schema_async()
@@ -1003,16 +694,6 @@ def _admission_payload(admission: DreamAdmission) -> dict[str, Any]:
     }
 
 
-def _positive_int(value: Any, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed >= 1 else default
-
-
 def _result_run_id(result: object) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -1049,13 +730,3 @@ def _completed_mutation_count(result: object) -> int:
         )
         mutations = 0
     return mutations
-
-
-def _decode_raw_plan_metadata(raw_plan: Any) -> dict[str, Any]:
-    if isinstance(raw_plan, str):
-        try:
-            decoded = json.loads(raw_plan)
-        except json.JSONDecodeError:
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
-    return raw_plan if isinstance(raw_plan, dict) else {}

@@ -24,14 +24,21 @@ from gobby.memory.dream.models import (
     DuplicateGroup,
 )
 from gobby.memory.dream.options import DreamRunOptions
+from gobby.memory.dream.orchestrator import (
+    MAX_ACTION_SAMPLE,
+    WORK_UNIT_MAX_CANDIDATES,
+    _decode_raw_plan_metadata,
+)
 from gobby.memory.dream.plan import validate_dream_plan
-from gobby.memory.dream.planner import _render_candidates_json, build_raw_plan
+from gobby.memory.dream.planner import (
+    PLANNER_TOTAL_DEADLINE_SECONDS,
+    _render_candidates_json,
+    build_raw_plan,
+)
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import (
-    MAX_ACTION_SAMPLE,
     MemoryDreamService,
     _completed_mutation_count,
-    _decode_raw_plan_metadata,
     _result_run_id,
 )
 from gobby.memory.dream.storage import (
@@ -411,7 +418,7 @@ async def test_build_raw_plan_isolates_failed_page() -> None:
         plan = await build_raw_plan(
             candidates=candidates,
             duplicate_groups=[],
-            dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=1),
+            dream_config=SimpleNamespace(planner_batch_size=1),
             llm_service=MagicMock(),
             db=_planner_db(),
             project_id="proj-1",
@@ -486,44 +493,56 @@ async def test_build_raw_plan_rejects_cross_project_duplicate_group() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_raw_plan_limits_planner_concurrency() -> None:
+async def test_build_raw_plan_runs_planner_pages_serially() -> None:
     candidates = [_candidate(f"m{i}") for i in range(6)]
-    cap = 2
     active = 0
     max_active = 0
-    saturated = asyncio.Event()
-    release = asyncio.Event()
 
     async def fake_planner(**_kwargs: Any) -> dict[str, Any]:
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
-        if active >= cap:
-            saturated.set()
-        await release.wait()
+        await asyncio.sleep(0)
         active -= 1
         return {"actions": []}
 
     with patch("gobby.memory.dream.planner._call_llm_planner", fake_planner):
-        task = asyncio.create_task(
-            build_raw_plan(
-                candidates=candidates,
-                duplicate_groups=[],
-                dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=cap),
-                llm_service=MagicMock(),
-                db=_planner_db(),
-                project_id="proj-1",
-                skip_consolidation=False,
-            )
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=[],
+            # A configured concurrency knob is ignored: pages run one at a time
+            # so Dream can hold at most one host-wide spawn-cold generation
+            # slot, leaving the remaining slots for unrelated callers.
+            dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=3),
+            llm_service=MagicMock(),
+            db=_planner_db(),
+            project_id="proj-1",
+            skip_consolidation=False,
         )
-        # The first wave fills the cap; the semaphore must block any extra call.
-        await saturated.wait()
-        assert active == cap
-        release.set()
-        plan = await task
 
-    assert max_active == cap  # semaphore caps concurrent planner calls
+    assert max_active == 1  # exactly one planner call in flight at any moment
     assert plan["planner_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_planner_request_sets_overall_provider_deadline() -> None:
+    llm_service = MagicMock()
+    llm_service.call_json_feature = AsyncMock(return_value={"actions": []})
+
+    with patch("gobby.memory.dream.planner.PromptLoader.render", return_value="prompt"):
+        await build_raw_plan(
+            candidates=[_candidate("memory-1")],
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(prompt_path="memory/dream"),
+            llm_service=llm_service,
+            db=_planner_db(),
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    kwargs = llm_service.call_json_feature.await_args.kwargs
+    assert kwargs["total_timeout_seconds"] == PLANNER_TOTAL_DEADLINE_SECONDS
+    assert PLANNER_TOTAL_DEADLINE_SECONDS == 1200.0
 
 
 def test_plan_validation_degrades_bad_or_omitted_actions_to_keep() -> None:
@@ -1859,7 +1878,7 @@ async def _capture_service_truth_digest(
         captured["truth_digest"] = str(kwargs["truth_digest"])
         return {"actions": [], "planner_errors": []}
 
-    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=fake_plan):
+    with patch("gobby.memory.dream.orchestrator.build_raw_plan", side_effect=fake_plan):
         result = await service.run(options)
 
     assert result["success"] is True
@@ -2371,12 +2390,27 @@ def _sweep_config(
         reconcile_after_apply=False,
         reconcile_after_revert=False,
         page_size=page_size,
+        # Work units select planner_batch_size candidates; mirror the legacy
+        # page_size knob so pagination-shape assertions keep their arithmetic.
+        planner_batch_size=page_size,
         dry_run_max_candidates=dry_run_max_candidates,
         redream_after_hours=redream_after_hours,
         include_global_memories=True,
         related_evidence_enabled=related_evidence_enabled,
         related_evidence_top_k=3,
         related_evidence_fetch_limit=10,
+    )
+
+
+_EMPTY_PLAN: dict[str, Any] = {"actions": [], "planner_errors": []}
+
+
+def _keep_all_planner() -> Any:
+    """Patch the unit planner with an empty plan: validation degrades every
+    candidate to a visible keep, so sweeps stamp and drain like the old path."""
+    return patch(
+        "gobby.memory.dream.orchestrator.build_raw_plan",
+        AsyncMock(return_value=_EMPTY_PLAN),
     )
 
 
@@ -2388,10 +2422,11 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
         dream_config=_sweep_config(page_size=2),
-        llm_service=None,
+        llm_service=MagicMock(),
     )
 
-    result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+    with _keep_all_planner():
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
     summary = result["run"]["summary"]
@@ -2401,12 +2436,148 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     assert summary["actions"].get("keep") == 5
     assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
 
-    rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+    with _keep_all_planner():
+        rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     # Everything was just stamped inside the cooldown window, so the re-run is a no-op.
     assert rerun["success"] is True
     assert rerun["run"]["summary"]["candidates_reviewed"] == 0
     assert rerun["run"]["summary"]["pages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_work_units_cap_selection_at_25_candidates() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i:02d}": _row(f"m{i:02d}", f"content {i}") for i in range(30)}
+
+    class _RecordingManager(_FakeSweepManager):
+        def __init__(self, db: _FakeDreamDB) -> None:
+            super().__init__(db)
+            self.limits: list[int] = []
+
+        def list_dream_candidates(self, *, limit: int, **kwargs: Any) -> list[Any]:
+            self.limits.append(limit)
+            return super().list_dream_candidates(limit=limit, **kwargs)
+
+    manager = _RecordingManager(db)
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        # A batch size above the ceiling must still select 25-candidate units.
+        dream_config=_sweep_config(page_size=100),
+        llm_service=MagicMock(),
+    )
+
+    with _keep_all_planner():
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+
+    assert result["success"] is True
+    assert set(manager.limits) == {WORK_UNIT_MAX_CANDIDATES}
+    summary = result["run"]["summary"]
+    assert summary["candidates_reviewed"] == 30
+    assert summary["pages"] == 2  # 25 + 5
+    checkpoint = result["run"]["checkpoint"]
+    assert checkpoint["phase"] == "sweep"
+    assert checkpoint["stop_reason"] == "drained"
+    assert checkpoint["completed"] == 30
+
+
+@pytest.mark.asyncio
+async def test_planner_dependency_failure_leaves_candidates_due() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(3)}
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        dream_config=_sweep_config(page_size=10),
+        llm_service=MagicMock(),
+    )
+    failed_plan = {"actions": [], "planner_errors": ["provider fallback exhausted"]}
+
+    with patch(
+        "gobby.memory.dream.orchestrator.build_raw_plan",
+        AsyncMock(return_value=failed_plan),
+    ):
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+
+    assert result["success"] is False
+    assert "memory dream planner failed" in result["error"]
+    assert "provider fallback exhausted" in result["error"]
+    run = result["run"]
+    assert run["status"] == "failed"
+    # No implicit keeps, no snapshots, no cursor stamps: every candidate stays due.
+    assert db.snapshots == []
+    assert all(row["last_dreamed_at"] is None for row in db.memories.values())
+    checkpoint = run["checkpoint"]
+    assert checkpoint["stop_reason"] == "dependency_failure"
+    assert "provider fallback exhausted" in checkpoint["last_dependency_failure"]
+
+
+@pytest.mark.asyncio
+async def test_planner_absence_is_typed_dependency_failure() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"m0": _row("m0", "content 0")}
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        dream_config=_sweep_config(page_size=10),
+        llm_service=None,
+    )
+
+    result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+
+    assert result["success"] is False
+    assert "planner unavailable" in result["error"]
+    assert result["run"]["status"] == "failed"
+    assert db.memories["m0"]["last_dreamed_at"] is None
+    assert db.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_skip_consolidation_records_inventory_only() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(3)}
+    manager = _FakeSweepManager(db)
+    llm_service = MagicMock()
+    llm_service.call_json_feature = AsyncMock()
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        dream_config=_sweep_config(page_size=10, related_evidence_enabled=True),
+        llm_service=llm_service,
+    )
+
+    with (
+        patch("gobby.memory.dream.orchestrator.build_raw_plan", new_callable=AsyncMock) as planner,
+        patch(
+            "gobby.memory.dream.orchestrator.apply_dream_plan", new_callable=AsyncMock
+        ) as apply_plan,
+        patch(
+            "gobby.memory.dream.orchestrator.gather_related_evidence", new_callable=AsyncMock
+        ) as gather,
+    ):
+        result = await service.run(
+            DreamRunOptions(dry_run=False, skip_consolidation=True, project_id="proj-1")
+        )
+
+    assert result["success"] is True
+    planner.assert_not_awaited()
+    apply_plan.assert_not_awaited()
+    gather.assert_not_awaited()
+    llm_service.call_json_feature.assert_not_awaited()
+    run = result["run"]
+    assert run["status"] == "completed"
+    assert run["summary"]["skip_consolidation"] is True
+    assert run["summary"]["candidates_eligible"] == 3
+    assert run["summary"]["mutations"] == 0
+    assert run["plan"]["candidate_count"] == 3
+    assert sorted(run["plan"]["candidate_ids"]) == ["m0", "m1", "m2"]
+    # Zero snapshot, mutation, or cursor writes: inventory candidates remain due.
+    assert db.snapshots == []
+    assert all(row["last_dreamed_at"] is None for row in db.memories.values())
+    remaining = manager.list_dream_candidate_ids(
+        redream_cutoff=datetime.now(UTC).isoformat(),
+        scope=MemoryScope.project_visible("proj-1"),
+    )
+    assert sorted(remaining) == ["m0", "m1", "m2"]
 
 
 @pytest.mark.asyncio
@@ -2429,7 +2600,7 @@ async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
         "planner_errors": [],
     }
 
-    with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
+    with patch("gobby.memory.dream.orchestrator.build_raw_plan", AsyncMock(return_value=canned)):
         result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
@@ -2461,7 +2632,7 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
         "planner_errors": [],
     }
 
-    with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
+    with patch("gobby.memory.dream.orchestrator.build_raw_plan", AsyncMock(return_value=canned)):
         result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
 
     assert result["success"] is True
@@ -2494,19 +2665,20 @@ async def test_sweeps_attach_related_evidence() -> None:
             side_effect=[live_session, dry_session],
         ),
         patch(
-            "gobby.memory.dream.service.gather_related_evidence",
+            "gobby.memory.dream.orchestrator.gather_related_evidence",
             AsyncMock(side_effect=attach),
         ) as gather,
+        _keep_all_planner(),
     ):
         live_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(live_db)),
             dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
-            llm_service=None,
+            llm_service=MagicMock(),
         )
         dry_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(dry_db)),
             dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
-            llm_service=None,
+            llm_service=MagicMock(),
         )
         await live_service.run(DreamRunOptions(project_id="proj-1"))
         await dry_service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
@@ -2525,12 +2697,15 @@ async def test_sweeps_skip_related_evidence_when_disabled(dry_run: bool) -> None
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(_FakeSweepManager(db)),
         dream_config=_sweep_config(page_size=2, related_evidence_enabled=False),
-        llm_service=None,
+        llm_service=MagicMock(),
     )
 
-    with patch(
-        "gobby.memory.dream.service.gather_related_evidence", new_callable=AsyncMock
-    ) as gather:
+    with (
+        patch(
+            "gobby.memory.dream.orchestrator.gather_related_evidence", new_callable=AsyncMock
+        ) as gather,
+        _keep_all_planner(),
+    ):
         result = await service.run(DreamRunOptions(dry_run=dry_run, project_id="proj-1"))
 
     assert result["success"] is True
@@ -2556,7 +2731,7 @@ async def test_dry_run_full_coverage_pagination() -> None:
             "planner_errors": [],
         }
 
-    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page):
+    with patch("gobby.memory.dream.orchestrator.build_raw_plan", side_effect=plan_page):
         result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
 
     run = result["run"]
@@ -2596,7 +2771,7 @@ async def test_dry_run_candidate_limit_reports_truncation() -> None:
             "planner_errors": [],
         }
 
-    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page):
+    with patch("gobby.memory.dream.orchestrator.build_raw_plan", side_effect=plan_page):
         result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
 
     summary = result["run"]["summary"]
@@ -2640,7 +2815,7 @@ async def test_dry_run_snapshot_interleaving() -> None:
         }
 
     with (
-        patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page),
+        patch("gobby.memory.dream.orchestrator.build_raw_plan", side_effect=plan_page),
         patch("gobby.memory.dream.candidates.logger.info") as log_info,
     ):
         result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
@@ -2663,10 +2838,11 @@ async def test_global_only_run_persists_null_scope_and_selects_only_global() -> 
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
         dream_config=_sweep_config(page_size=10),
-        llm_service=None,
+        llm_service=MagicMock(),
     )
 
-    result = await service.run(DreamRunOptions(dry_run=False, global_only=True))
+    with _keep_all_planner():
+        result = await service.run(DreamRunOptions(dry_run=False, global_only=True))
 
     assert result["success"] is True
     run = result["run"]
@@ -2969,19 +3145,24 @@ async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
         dream_config=_sweep_config(page_size=2),
-        llm_service=None,
+        llm_service=MagicMock(),
     )
 
-    first = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+    with _keep_all_planner():
+        first = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert first["run"]["summary"]["candidates_reviewed"] == 5
 
     # A default rerun is a no-op: everything was just stamped inside the cooldown.
-    cooldown_rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+    with _keep_all_planner():
+        cooldown_rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert cooldown_rerun["run"]["summary"]["candidates_reviewed"] == 0
 
     # full_sweep bypasses the cooldown and reviews the whole corpus again, draining
-    # to completion (the page loop still terminates via per-page stamping).
-    full = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1", full_sweep=True))
+    # to completion (the unit loop still terminates via per-unit stamping).
+    with _keep_all_planner():
+        full = await service.run(
+            DreamRunOptions(dry_run=False, project_id="proj-1", full_sweep=True)
+        )
     assert full["success"] is True
     assert full["run"]["summary"]["candidates_reviewed"] == 5
     assert full["run"]["summary"]["pages"] == 3  # ceil(5 / 2)
@@ -3006,14 +3187,15 @@ async def test_full_sweep_cutoff_is_run_start_not_cooldown_window() -> None:
     service = MemoryDreamService(
         memory_manager=_as_dream_manager(manager),
         dream_config=_sweep_config(page_size=2, redream_after_hours=20),
-        llm_service=None,
+        llm_service=MagicMock(),
     )
 
-    await service.run(DreamRunOptions(project_id="proj-1"))  # cooldown: cutoff = run_start - 20h
-    normal_cutoff = datetime.fromisoformat(manager.cutoffs[0])
-    await service.run(
-        DreamRunOptions(project_id="proj-1", full_sweep=True)
-    )  # full path: cutoff = run_start
+    with _keep_all_planner():
+        # cooldown: cutoff = run_start - 20h
+        await service.run(DreamRunOptions(project_id="proj-1"))
+        normal_cutoff = datetime.fromisoformat(manager.cutoffs[0])
+        # full path: cutoff = run_start
+        await service.run(DreamRunOptions(project_id="proj-1", full_sweep=True))
     full_cutoff = datetime.fromisoformat(manager.cutoffs[-1])
 
     # full_sweep anchors the cutoff at run start; the cooldown path subtracts 20h.

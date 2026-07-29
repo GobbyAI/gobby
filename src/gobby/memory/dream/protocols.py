@@ -108,4 +108,5 @@ class MemoryDreamLLMProtocol(Protocol):
         system_prompt: str | None = None,
         *,
         caller: str | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> dict[str, Any]: ...

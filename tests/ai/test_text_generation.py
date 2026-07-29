@@ -3112,6 +3112,51 @@ async def test_text_generation_service_total_timeout_cancels_active_generation()
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_total_timeout_bounds_json_generation() -> None:
+    cancelled = asyncio.Event()
+
+    class CancelAwareJSONAdapter:
+        async def generate(self, request: TextGenerationRequest) -> str:
+            raise AssertionError("JSON path must not fall back to text generate")
+
+        async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="endpoint:slow",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"endpoint:slow": CancelAwareJSONAdapter()})
+
+    with pytest.raises(
+        FeatureGenerationUnavailableError,
+        match=r"JSON generation exceeded total timeout \(0\.01s\)",
+    ):
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="summarize",
+                provider="endpoint:slow",
+                model="slow-model",
+                total_timeout_seconds=0.01,
+            )
+        )
+
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_no_candidate_timeout_when_unset() -> None:
     registry = AICapabilityRegistry(
         [

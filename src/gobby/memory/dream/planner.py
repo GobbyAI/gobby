@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
 
+from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
 from gobby.prompts.loader import PromptLoader
@@ -17,13 +17,17 @@ DEFAULT_MIN_ACTION_CONFIDENCE = 0.72
 DEFAULT_MIN_DELETE_CONFIDENCE = 0.85
 DEFAULT_MIN_PROMOTE_CONFIDENCE = 0.85
 DEFAULT_PLANNER_BATCH_SIZE = 25
-DEFAULT_PLANNER_MAX_CONCURRENCY = 3
 DEFAULT_PLANNER_BATCH_MAX_CHARS = 100_000
+# The in-process Dream path enforces no provider-fallback deadline of its own
+# (LLMService never sets total_timeout_seconds), so the planner request must
+# carry the overall deadline explicitly for the work-unit ceiling to be sound.
+PLANNER_TOTAL_DEADLINE_SECONDS = 1200.0
 _EXPECTED_PLANNER_ERRORS = (
     json.JSONDecodeError,
     ValueError,
     TypeError,
     LLMProviderCancellation,
+    FeatureGenerationUnavailableError,
     OSError,
     TimeoutError,
     ConnectionError,
@@ -64,14 +68,6 @@ async def build_raw_plan(
             getattr(dream_config, "planner_batch_size", DEFAULT_PLANNER_BATCH_SIZE),
             DEFAULT_PLANNER_BATCH_SIZE,
         )
-        max_concurrency = _positive_int(
-            getattr(
-                dream_config,
-                "planner_max_concurrency",
-                DEFAULT_PLANNER_MAX_CONCURRENCY,
-            ),
-            DEFAULT_PLANNER_MAX_CONCURRENCY,
-        )
         batch_max_chars = _positive_int(
             getattr(
                 dream_config,
@@ -80,27 +76,22 @@ async def build_raw_plan(
             ),
             DEFAULT_PLANNER_BATCH_MAX_CHARS,
         )
-        semaphore = asyncio.Semaphore(max_concurrency)
         planner_pages = [
             split_page
             for page in _chunk(llm_candidates, batch_size)
             for split_page in _split_oversized_planner_page(page, batch_max_chars)
         ]
-        page_results = await asyncio.gather(
-            *(
-                _run_planner_page(
-                    page=page,
-                    dream_config=dream_config,
-                    llm_service=llm_service,
-                    db=db,
-                    project_id=project_id,
-                    semaphore=semaphore,
-                    truth_digest=truth_digest,
-                )
-                for page in planner_pages
+        # Pages run serially: Dream may hold at most one of the host-wide
+        # spawn-cold generation slots, leaving the rest for unrelated callers.
+        for page in planner_pages:
+            page_actions, error = await _run_planner_page(
+                page=page,
+                dream_config=dream_config,
+                llm_service=llm_service,
+                db=db,
+                project_id=project_id,
+                truth_digest=truth_digest,
             )
-        )
-        for page_actions, error in page_results:
             actions.extend(page_actions)
             if error is not None:
                 planner_errors.append(error)
@@ -118,7 +109,6 @@ async def _run_planner_page(
     llm_service: Any,
     db: HubDatabase,
     project_id: str | None,
-    semaphore: asyncio.Semaphore,
     truth_digest: str = "",
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Plan one page of candidates, isolating expected planner failures.
@@ -126,19 +116,18 @@ async def _run_planner_page(
     Returns ``(actions, error)``; ``error`` is set when the page failed so the
     caller can record it without losing the other pages' actions.
     """
-    async with semaphore:
-        try:
-            response = await _call_llm_planner(
-                candidates=page,
-                dream_config=dream_config,
-                llm_service=llm_service,
-                db=db,
-                project_id=project_id,
-                truth_digest=truth_digest,
-            )
-        except _EXPECTED_PLANNER_ERRORS as exc:
-            logger.warning("Memory dream planner unavailable: %s", exc)
-            return [], str(exc)
+    try:
+        response = await _call_llm_planner(
+            candidates=page,
+            dream_config=dream_config,
+            llm_service=llm_service,
+            db=db,
+            project_id=project_id,
+            truth_digest=truth_digest,
+        )
+    except _EXPECTED_PLANNER_ERRORS as exc:
+        logger.warning("Memory dream planner unavailable: %s", exc)
+        return [], str(exc)
     return _planner_response_actions(response, page, project_id), None
 
 
@@ -256,6 +245,7 @@ async def _call_llm_planner(
         dream_config,
         prompt,
         caller="memory.dream",
+        total_timeout_seconds=PLANNER_TOTAL_DEADLINE_SECONDS,
     )
     if not isinstance(response, dict):
         raise TypeError(f"memory.dream expected dict, got {type(response).__name__}")

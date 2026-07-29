@@ -44,6 +44,7 @@ def _feature_request(
     max_tokens: int | None = None,
     caller: str | None,
     cwd: str | None = None,
+    total_timeout_seconds: float | None = None,
     output_validator: Callable[[str], str | None] | None = None,
 ) -> TextGenerationRequest:
     candidates = tuple(getattr(feature_config, "candidates", ()) or ())
@@ -60,6 +61,7 @@ def _feature_request(
         cwd=cwd,
         candidate_timeout_seconds=candidate_timeout_seconds,
         cli_candidate_timeout_seconds=cli_candidate_timeout_seconds,
+        total_timeout_seconds=total_timeout_seconds,
         output_validator=output_validator,
     )
 
@@ -132,11 +134,13 @@ class LLMService:
         max_tokens: int | None = None,
         caller: str | None = None,
         cwd: str | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         """Call JSON generation for an LLM-backed feature.
 
         Uses profile/candidate fallback and provider-native JSON support where
-        the selected adapter exposes it.
+        the selected adapter exposes it. ``total_timeout_seconds`` bounds the
+        whole provider-fallback chain; without it only per-candidate caps apply.
         """
         return await self._text_generation.generate_json(
             _feature_request(
@@ -146,6 +150,7 @@ class LLMService:
                 max_tokens=max_tokens,
                 caller=caller,
                 cwd=cwd,
+                total_timeout_seconds=total_timeout_seconds,
             )
         )
 

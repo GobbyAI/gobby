@@ -397,6 +397,19 @@ class TextGenerationService:
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         """Select a text_generate binding and return structured JSON."""
+        if request.total_timeout_seconds is None:
+            return await self._generate_json(request)
+        try:
+            return await asyncio.wait_for(
+                self._generate_json(request),
+                timeout=request.total_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise FeatureGenerationUnavailableError(
+                f"JSON generation exceeded total timeout ({request.total_timeout_seconds:g}s)"
+            ) from exc
+
+    async def _generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: list[tuple[str, str]] = []
