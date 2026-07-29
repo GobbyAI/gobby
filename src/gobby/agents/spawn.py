@@ -27,6 +27,7 @@ from gobby.agents.spawners import (
     create_prompt_file,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.utils.local_token import read_local_api_token
 
 __all__ = [
     # Result dataclasses
@@ -386,6 +387,7 @@ def _prepare_run_for_session(
         max_agent_depth=max_agent_depth,
         prompt=prompt_env,
         prompt_file=prompt_file,
+        operator_token=read_local_api_token(),
     )
 
     return PreparedSpawn(

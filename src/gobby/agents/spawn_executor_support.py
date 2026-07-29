@@ -11,6 +11,7 @@ import psycopg
 
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
+    GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
     GOBBY_SESSION_ID,
@@ -62,6 +63,7 @@ _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS = (
     GOBBY_SESSION_ID,
     GOBBY_PROJECT_ID,
     GOBBY_AGENT_RUN_ID,
+    GOBBY_AGENT_API_TOKEN,
 )
 
 

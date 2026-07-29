@@ -139,6 +139,7 @@ class TestEnsureIsolationCodeIndex:
         assert result.wrapper_path == str(wrapper)
         assert result.runtime_home is not None
         assert result.env["PATH"].split(":")[0] == str(wrapper.parent)
+        assert result.env["GOBBY_CODE_INDEX_RUNTIME_HOME"] == result.runtime_home
         assert wrapper.read_text() == (
             f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
         )
@@ -148,10 +149,7 @@ class TestEnsureIsolationCodeIndex:
         assert "database_url_ref" not in bootstrap_text
         assert "bind_host: 127.0.0.1" in bootstrap_text
         assert "daemon_port: 61234" in bootstrap_text
-        copied_token = Path(result.runtime_home) / "local_cli_token"
-        assert copied_token.read_text() == "isolated-agent-token\n"
-        assert not copied_token.is_symlink()
-        assert copied_token.stat().st_mode & 0o777 == 0o600
+        assert not (Path(result.runtime_home) / "local_cli_token").exists()
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],

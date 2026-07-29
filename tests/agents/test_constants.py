@@ -10,6 +10,7 @@ import pytest
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
     CARGO_HOME,
+    GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_DEPTH,
     GOBBY_AGENT_RUN_ID,
     GOBBY_MAX_AGENT_DEPTH,
@@ -25,6 +26,7 @@ from gobby.agents.constants import (
     get_terminal_env_vars,
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
+from gobby.utils.local_token import local_token_path, verify_agent_api_token
 
 pytestmark = pytest.mark.unit
 _HASH_SUFFIX_RE = re.compile(r".+-[0-9a-f]{16}$")
@@ -70,6 +72,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_SESSION_ID,
             GOBBY_PARENT_SESSION_ID,
             GOBBY_AGENT_RUN_ID,
+            GOBBY_AGENT_API_TOKEN,
             GOBBY_WORKFLOW_NAME,
             GOBBY_PROJECT_ID,
             GOBBY_AGENT_DEPTH,
@@ -108,6 +111,28 @@ class TestGetTerminalEnvVars:
         assert cargo_home_parts[-1].startswith("sess-child-")
         assert _HASH_SUFFIX_RE.fullmatch(cargo_home_parts[-1])
         assert cargo_home_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
+
+    def test_includes_run_bound_agent_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        local_token_path().write_text("operator-token\n")
+
+        result = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+            operator_token="operator-token",
+        )
+
+        claims = verify_agent_api_token(result[GOBBY_AGENT_API_TOKEN], "operator-token")
+        assert claims is not None
+        assert claims.agent_run_id == "run-123"
+        assert claims.session_id == "sess-child"
+        assert claims.project_id == "proj-abc"
 
     def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """uv cache paths are writable temp paths scoped to safe session IDs."""

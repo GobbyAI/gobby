@@ -11,6 +11,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
+
 # ============================================================================
 # Terminal Mode Environment Variables
 # ============================================================================
@@ -29,6 +31,9 @@ GOBBY_PARENT_SESSION_ID = "GOBBY_PARENT_SESSION_ID"
 # Agent run record identifier
 # Links the terminal process back to its agent_runs record
 GOBBY_AGENT_RUN_ID = "GOBBY_AGENT_RUN_ID"
+
+# Run-bound daemon capability; never contains the operator's local CLI token.
+GOBBY_AGENT_API_TOKEN = GOBBY_AGENT_API_TOKEN_ENV
 
 # Workflow name to activate on session start
 # The hook reads this and activates the workflow for the session
@@ -104,6 +109,7 @@ def get_terminal_env_vars(
     max_agent_depth: int = 5,
     prompt: str | None = None,
     prompt_file: str | None = None,
+    operator_token: str | None = None,
 ) -> dict[str, str]:
     """
     Build environment variables dict for spawning a terminal-mode agent.
@@ -132,6 +138,13 @@ def get_terminal_env_vars(
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         **build_spawn_cache_env(session_id),
     }
+    if operator_token:
+        env[GOBBY_AGENT_API_TOKEN] = issue_agent_api_token(
+            operator_token,
+            agent_run_id=agent_run_id,
+            session_id=session_id,
+            project_id=project_id,
+        )
 
     if parent_session_id:
         env[GOBBY_PARENT_SESSION_ID] = parent_session_id
@@ -157,6 +170,7 @@ ALL_TERMINAL_ENV_VARS = [
     GOBBY_SESSION_ID,
     GOBBY_PARENT_SESSION_ID,
     GOBBY_AGENT_RUN_ID,
+    GOBBY_AGENT_API_TOKEN,
     GOBBY_WORKFLOW_NAME,
     GOBBY_PROJECT_ID,
     GOBBY_AGENT_DEPTH,

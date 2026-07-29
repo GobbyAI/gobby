@@ -511,6 +511,7 @@ class TestExecuteSpawn:
                 "GOBBY_SESSION_ID": "gobby-sess-123",
                 "GOBBY_PROJECT_ID": "proj",
                 "GOBBY_AGENT_RUN_ID": "run-abc123def456",
+                "GOBBY_AGENT_API_TOKEN": "scoped-token",
             },
         )
         mock_prepare = MagicMock(
@@ -569,6 +570,7 @@ class TestExecuteSpawn:
             assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="gobby-sess-123"' in command
             assert 'mcp_servers.gobby.env.GOBBY_PROJECT_ID="proj"' in command
             assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-abc123def456"' in command
+            assert 'mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="scoped-token"' in command
             assert not any("GOBBY_PARENT_SESSION_ID" in argument for argument in command)
             assert "--full-auto" not in command
 

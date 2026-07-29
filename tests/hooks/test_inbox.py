@@ -153,7 +153,10 @@ async def test_replay_attaches_token() -> None:
     client.post = AsyncMock(return_value=response)
 
     with (
-        patch("gobby.hooks.inbox.read_local_api_token", return_value="fresh-token"),
+        patch(
+            "gobby.hooks.inbox.daemon_auth_headers",
+            return_value={"Authorization": "Bearer fresh-token"},
+        ),
         patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=client),
     ):
         client.__aenter__ = AsyncMock(return_value=client)

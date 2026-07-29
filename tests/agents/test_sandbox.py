@@ -857,6 +857,7 @@ class TestComputeSandboxPaths:
         tmp_path: Path,
     ) -> None:
         gobby_home = tmp_path / "gobby-home"
+        runtime_home = gobby_home / "gcode-runtime" / "current"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
@@ -865,13 +866,17 @@ class TestComputeSandboxPaths:
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
-            env={"PATH": ""},
+            env={"PATH": "", "GOBBY_CODE_INDEX_RUNTIME_HOME": str(runtime_home)},
         )
 
         assert str(gobby_home.resolve()) not in paths.deny_read_paths
         assert str(gobby_home.resolve()) in paths.write_paths
         assert str(gobby_home.resolve()) in paths.read_paths
         assert str(Path.home().resolve()) in paths.deny_read_paths
+        assert str((gobby_home / "local_cli_token").resolve()) in paths.deny_read_paths
+        assert str((gobby_home / "local_cli_token").resolve()) in paths.deny_write_paths
+        assert str((gobby_home / "gcode-runtime").resolve()) in paths.deny_read_paths
+        assert str(runtime_home.resolve()) in paths.read_paths
         assert str(workspace.resolve()) in paths.write_paths
 
     def test_normalize_sandbox_path_tolerates_value_error(

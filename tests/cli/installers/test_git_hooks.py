@@ -17,7 +17,13 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _run_hook_body(work_dir: Path, token: str | None, *, jq_available: bool) -> list[str]:
+def _run_hook_body(
+    work_dir: Path,
+    token: str | None,
+    *,
+    jq_available: bool,
+    agent_token: str | None = None,
+) -> list[str]:
     home = work_dir / "home"
     gobby_home = work_dir / "gobby-home"
     fake_bin = work_dir / "bin"
@@ -51,6 +57,15 @@ def _run_hook_body(work_dir: Path, token: str | None, *, jq_available: bool) -> 
         "HOOK_ROOT": str(work_dir),
         "PATH": str(fake_bin),
     }
+    if agent_token is not None:
+        env.update(
+            {
+                "GOBBY_AGENT_API_TOKEN": agent_token,
+                "GOBBY_AGENT_RUN_ID": "run-123",
+                "GOBBY_PROJECT_ID": "project-123",
+                "GOBBY_SESSION_ID": "session-123",
+            }
+        )
     result = subprocess.run(
         ["/bin/bash", "-c", f"{_CODE_INDEX_REINDEX_BODY}\nwait"],
         capture_output=True,
@@ -80,3 +95,18 @@ def test_hook_body_includes_token(tmp_path: Path) -> None:
         assert token_args.count("-H") == 2
         assert anonymous_args.count("-H") == 1
         assert all(not arg.startswith("Authorization:") for arg in anonymous_args)
+
+
+def test_hook_body_prefers_scoped_agent_token_and_identity(tmp_path: Path) -> None:
+    args = _run_hook_body(
+        tmp_path,
+        "operator-token",
+        jq_available=True,
+        agent_token="scoped-agent-token",
+    )
+
+    assert "Authorization: Bearer scoped-agent-token" in args
+    assert "Authorization: Bearer operator-token" not in args
+    assert "X-Gobby-Agent-Run-Id: run-123" in args
+    assert "X-Gobby-Project-Id: project-123" in args
+    assert "X-Gobby-Session-Id: session-123" in args

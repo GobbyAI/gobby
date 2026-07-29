@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_audit import WorkflowAuditManager
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, daemon_health_unavailable
 
@@ -334,6 +335,16 @@ async def test_managed_spawn_uses_child_identity_for_schema_lease(
     monkeypatch.setenv("GOBBY_PROJECT_ID", PROJECT_ID)
     monkeypatch.setenv("GOBBY_SESSION_ID", child.id)
     monkeypatch.setenv("GOBBY_AGENT_RUN_ID", run.id)
+    operator_token = (daemon_instance.gobby_home / "local_cli_token").read_text().strip()
+    monkeypatch.setenv(
+        GOBBY_AGENT_API_TOKEN_ENV,
+        issue_agent_api_token(
+            operator_token,
+            agent_run_id=run.id,
+            session_id=child.id,
+            project_id=PROJECT_ID,
+        ),
+    )
     proxy = DaemonProxy(daemon_instance.http_port)
 
     try:

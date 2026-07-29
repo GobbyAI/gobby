@@ -16,7 +16,12 @@ from gobby.storage.auth import (
 )
 from gobby.storage.config_store import ConfigStore, is_secret_key_name
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.local_token import daemon_auth_headers, local_token_path, read_local_api_token
+from gobby.utils.local_token import (
+    GOBBY_AGENT_API_TOKEN_ENV,
+    daemon_auth_headers,
+    local_token_path,
+    read_local_api_token,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +55,17 @@ def test_local_token_helpers_return_bearer_header(local_token_home: None) -> Non
 
     assert read_local_api_token() == "local-token"
     assert daemon_auth_headers() == {"Authorization": "Bearer local-token"}
+
+
+def test_daemon_auth_headers_prefer_agent_capability(
+    local_token_home: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_token_path().write_text("operator-token\n")
+    monkeypatch.setenv(GOBBY_AGENT_API_TOKEN_ENV, "scoped-agent-token")
+
+    assert read_local_api_token() == "operator-token"
+    assert daemon_auth_headers() == {"Authorization": "Bearer scoped-agent-token"}
 
 
 def test_ensure_local_api_token_generates(

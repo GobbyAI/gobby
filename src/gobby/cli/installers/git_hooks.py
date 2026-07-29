@@ -42,16 +42,28 @@ if [ -n "$CHANGED_FILES" ]; then
                     DAEMON_URL="${DAEMON_URL%/}"
                     # Empty args ensure curl runs without Authorization when token file missing.
                     AUTH_HEADER_ARGS=()
+                    CONTEXT_HEADER_ARGS=()
+                    TOKEN="${GOBBY_AGENT_API_TOKEN:-}"
                     TOKEN_FILE="${GOBBY_HOME:-$HOME/.gobby}/local_cli_token"
-                    if [ -r "$TOKEN_FILE" ]; then
+                    if [ -z "$TOKEN" ] && [ -r "$TOKEN_FILE" ]; then
                         IFS= read -r TOKEN < "$TOKEN_FILE" || true
-                        if [ -n "$TOKEN" ]; then
-                            AUTH_HEADER_ARGS=(-H "Authorization: Bearer $TOKEN")
-                        fi
+                    fi
+                    if [ -n "$TOKEN" ]; then
+                        AUTH_HEADER_ARGS=(-H "Authorization: Bearer $TOKEN")
+                    fi
+                    if [ -n "$GOBBY_AGENT_RUN_ID" ]; then
+                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Agent-Run-Id: $GOBBY_AGENT_RUN_ID")
+                    fi
+                    if [ -n "$GOBBY_PROJECT_ID" ]; then
+                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Project-Id: $GOBBY_PROJECT_ID")
+                    fi
+                    if [ -n "$GOBBY_SESSION_ID" ]; then
+                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Session-Id: $GOBBY_SESSION_ID")
                     fi
                     if command -v jq >/dev/null 2>&1; then
                         if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
                             "${AUTH_HEADER_ARGS[@]}" \
+                            "${CONTEXT_HEADER_ARGS[@]}" \
                             -H "Content-Type: application/json" \
                             --data-binary @- \
                             "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
@@ -63,6 +75,7 @@ if [ -n "$CHANGED_FILES" ]; then
                         JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
                         if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
                             "${AUTH_HEADER_ARGS[@]}" \
+                            "${CONTEXT_HEADER_ARGS[@]}" \
                             -H "Content-Type: application/json" \
                             --data "{\"root_path\":\"$JSON_ROOT\"}" \
                             "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then

@@ -30,6 +30,7 @@ from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH, create_prompt_file
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
 _SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "grok", "qwen", "droid"})
@@ -318,6 +319,7 @@ class TmuxSpawner(TerminalSpawnerBase):
             max_agent_depth=max_agent_depth,
             prompt=prompt_env,
             prompt_file=prompt_file,
+            operator_token=read_local_api_token(),
         )
 
         # Merge command builder env and sandbox env

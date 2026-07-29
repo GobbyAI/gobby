@@ -25,21 +25,27 @@ from gobby.storage.auth import (
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.utils.local_token import issue_agent_api_token
 
 pytestmark = pytest.mark.unit
 
 
-def _request(headers: dict[str, str]) -> Request:
+def _request(
+    headers: dict[str, str],
+    *,
+    method: str = "GET",
+    path: str = "/",
+) -> Request:
     raw_headers = [(key.lower().encode(), value.encode()) for key, value in headers.items()]
     return Request(
         {
             "type": "http",
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
-            "path": "/",
-            "raw_path": b"/",
+            "path": path,
+            "raw_path": path.encode(),
             "query_string": b"",
             "headers": raw_headers,
             "client": ("testclient", 50000),
@@ -169,6 +175,56 @@ def test_is_request_authenticated_precedence(
         )
     )
     assert service.is_request_authenticated(_request({"Cookie": f"gobby_session={session_token}"}))
+
+
+def test_agent_bearer_is_bound_to_run_identity_and_routes(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    token = issue_agent_api_token(
+        "operator-token",
+        agent_run_id="run-123",
+        session_id="session-123",
+        project_id="project-123",
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Agent-Run-Id": "run-123",
+        "X-Gobby-Session-Id": "session-123",
+        "X-Gobby-Project-Id": "project-123",
+    }
+
+    assert service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/mcp/tools/call")
+    )
+    assert service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/code-index/codewiki/refresh")
+    )
+    assert service.is_request_authenticated(
+        _request(
+            {key: value for key, value in headers.items() if key != "X-Gobby-Agent-Run-Id"},
+            method="POST",
+            path="/api/hooks/execute",
+        )
+    )
+
+    assert not service.is_request_authenticated(
+        _request(
+            headers | {"X-Gobby-Session-Id": "operator-session"},
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+    assert not service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/mcp/servers")
+    )
+    assert not service.is_request_authenticated(
+        _request(headers, method="GET", path="/api/configuration/secrets")
+    )
 
 
 def test_local_token_refreshes_after_rotation(

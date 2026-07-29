@@ -22,7 +22,11 @@ from gobby.storage.auth import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.local_token import local_token_path
+from gobby.utils.local_token import (
+    AgentApiTokenClaims,
+    local_token_path,
+    verify_agent_api_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,44 @@ AuthMode = Literal["required", "disabled"]
 _SESSION_COOKIE = "gobby_session"
 _LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
 _NEVER_REFRESHED = float("-inf")
+
+
+def _agent_capability_allows(request: HTTPConnection) -> bool:
+    method = str(request.scope.get("method", "GET")).upper()
+    path = request.url.path
+    if method == "POST" and path in {
+        "/api/mcp/tools/schema",
+        "/api/mcp/tools/call",
+        "/api/hooks/execute",
+        "/api/code-index/codewiki/refresh",
+    }:
+        return True
+    if method == "GET" and path in {
+        "/api/mcp/servers",
+        "/api/mcp/tools",
+        "/api/mcp/status",
+    }:
+        return True
+    parts = path.strip("/").split("/")
+    if method == "GET":
+        return len(parts) == 4 and parts[:2] == ["api", "mcp"] and parts[3] == "tools"
+    return (
+        method == "POST" and len(parts) == 5 and parts[:2] == ["api", "mcp"] and parts[3] == "tools"
+    )
+
+
+def _agent_identity_matches(
+    request: HTTPConnection,
+    claims: AgentApiTokenClaims,
+) -> bool:
+    headers = request.headers
+    if headers.get("X-Gobby-Session-Id") != claims.session_id:
+        return False
+    if headers.get("X-Gobby-Project-Id") != claims.project_id:
+        return False
+    if request.url.path == "/api/hooks/execute":
+        return True
+    return headers.get("X-Gobby-Agent-Run-Id") == claims.agent_run_id
 
 
 def _optional_string(value: object) -> str | None:
@@ -94,7 +136,9 @@ class AuthService:
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
             if parts and parts[0].casefold() == "bearer":
-                return len(parts) == 2 and self.verify_bearer(parts[1])
+                if len(parts) != 2:
+                    return False
+                return self.verify_bearer(parts[1]) or self._verify_agent_request(request, parts[1])
 
         local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
         if local_token is not None:
@@ -105,6 +149,17 @@ class AuthService:
             return self.validate_session(session_token)
 
         return False
+
+    def _verify_agent_request(self, request: HTTPConnection, token: str) -> bool:
+        operator_token = self.local_token()
+        if operator_token is None:
+            return False
+        claims = verify_agent_api_token(token, operator_token)
+        return bool(
+            claims
+            and _agent_capability_allows(request)
+            and _agent_identity_matches(request, claims)
+        )
 
     def validate_session(self, token: str) -> bool:
         if not token:

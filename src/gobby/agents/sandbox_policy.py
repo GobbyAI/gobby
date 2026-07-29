@@ -86,12 +86,18 @@ def canonical_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
 def sensitive_home_roots() -> list[str]:
     """Return broad home roots denied before narrow read exceptions are applied.
 
-    ~/.gobby is deliberately absent: sandboxed agents get full access to the
-    Gobby home (daemon config, hooks, logs, personal project state) — the
-    boundary protects the rest of the operator home, not Gobby itself.
+    Sandboxed agents get broad access to Gobby state, with the operator token
+    and persistent gcode runtimes explicitly removed from that carveout.
     """
     home = Path.home().resolve(strict=False)
-    return [str(home)]
+    gobby_home = get_gobby_home()
+    return canonical_paths(
+        [
+            str(home),
+            str(gobby_home / "local_cli_token"),
+            str(gobby_home / "gcode-runtime"),
+        ]
+    )
 
 
 def sensitive_write_roots() -> list[str]:
@@ -103,6 +109,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".gnupg",
         home / ".kube",
         home / ".config" / "gcloud",
+        get_gobby_home() / "local_cli_token",
     ]
     return canonical_paths([str(path) for path in roots])
 
@@ -110,8 +117,8 @@ def sensitive_write_roots() -> list[str]:
 def gobby_write_exceptions() -> list[str]:
     """Return Gobby-owned roots agents must write at runtime.
 
-    Agents own their Gobby surface: hook spools, logs, personal project state,
-    and gcode/gwiki state all live under ~/.gobby.
+    Agents own hook spools, logs, personal project state, and gcode/gwiki
+    state under ~/.gobby. The operator token remains denied separately.
 
     Shared temp roots are deliberately absent. An agent's scratchpad is the
     per-run directory `srt_runtime` creates under the policy dir and grants
@@ -137,9 +144,12 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     """Return exact machine, hook, binary, and prompt resources needed by agents."""
     # The whole Gobby home: bootstrap.yaml is the root of trust for daemon
     # and hub discovery (ghook, `gobby mcp-server`, gcode, and gwiki re-read
-    # it per invocation), and agents read hook config, binaries, the local
-    # CLI token, and personal project state from here.
+    # it per invocation), and agents read hook config, binaries, and personal
+    # project state from here. Sensitive token locations are denied separately.
     paths = [get_gobby_home()]
+    runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
+    if runtime_home:
+        paths.append(Path(runtime_home))
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file:
         paths.append(Path(prompt_file))
