@@ -30,6 +30,31 @@ A plan that passes this review is ready for `gobby build` handoff.
 
 ---
 
+## The Canonical Artifact
+
+`.gobby/plans/<slug>.md` is the plan. Nothing else is.
+
+Review the artifact at the path the coordinator supplies, and confirm it is the
+canonical one before reading it. Scratchpad copies, provider plan-mode files
+(for example `~/.claude/plans/*.md`), pasted plan bodies, and any file outside
+the project's `.gobby/plans/` directory are display or working copies. They go
+stale silently — a mirror drifting dozens of lines behind the artifact while
+both look complete is the normal failure, not an exotic one. Reviewing one
+produces findings against text nobody will ship. If the supplied path is not a
+canonical artifact, say so and stop rather than reviewing the copy.
+
+Preparation pins this for you: `prepare_plan_review_round` normalizes the plan
+path inside the project root, rejects symlinks and escapes, and binds the
+evidence row to exactly one repository-relative path, so a later call naming a
+different file is refused. Your reviewed bytes come from that pinned path.
+
+**You never edit the plan.** Not the artifact, not a copy, not to demonstrate a
+fix. You return findings; the coordinator applies them and owns every byte that
+changes. Editing the artifact mid-round also invalidates the round, because
+approval re-verifies the reviewed sections against the sealed snapshot.
+
+---
+
 ## Plan-Coverage Contract Gate
 
 Mechanical parser rejection happens upstream of the adversary. Plan-authoring
