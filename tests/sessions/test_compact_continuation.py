@@ -102,7 +102,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
 ) -> None:
     prompt = "Continue the claimed task."
     mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
-    before_command = "Earlier output\nContext compacted\n›"
+    before_command = "Earlier output\n• Context compacted\n›"
 
     class ReadinessTmux(_FakeTmux):
         def __init__(self) -> None:
@@ -111,7 +111,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
                 [
                     before_command,
                     f"{before_command}\nCompacting conversation",
-                    f"{before_command}\nContext compacted\n›",
+                    f"{before_command}\n• Context compacted\n›",
                 ]
             )
 
@@ -143,7 +143,7 @@ async def test_codex_send_failure_restores_pending_marker(session_db: HubDatabas
 
     class FailingTmux(_FakeTmux):
         async def capture_pane(self, pane_id: str, *, lines: int) -> str:
-            return "Context compacted"
+            return "• Context compacted"
 
         async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
             self.sent_keys.append((pane_id, text, literal))
@@ -170,15 +170,51 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
 ) -> None:
     prompt = "Continue the claimed task."
     mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
-    before_command = "old\nContext compacted\nshared one\nshared two"
+    before_command = "old\n• Context compacted\nshared one\nshared two"
 
     class RollingTmux(_FakeTmux):
         async def capture_pane(self, pane_id: str, *, lines: int) -> str:
             assert pane_id == "%12"
             assert lines == 100
-            return "shared one\nshared two\nContext compacted\n›"
+            return "shared one\nshared two\n• Context compacted\n›"
 
     tmux = RollingTmux()
+
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        tmux=tmux,
+        target="%12",
+        pending_session_id=SESSION_ID,
+        before_command=before_command,
+        poll_seconds=0,
+    )
+
+    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+
+
+@pytest.mark.asyncio
+async def test_codex_ignores_compaction_marker_text_in_prose(
+    session_db: HubDatabase,
+) -> None:
+    prompt = "Continue the claimed task."
+    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    before_command = "Earlier output\n›"
+
+    class ProseTmux(_FakeTmux):
+        def __init__(self) -> None:
+            super().__init__()
+            self.capture_count = 0
+
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            assert pane_id == "%12"
+            assert lines == 100
+            self.capture_count += 1
+            if self.capture_count == 1:
+                return f"{before_command}\nWaiting until Context compacted appears."
+            assert not self.sent_keys
+            return f"{before_command}\n• Context compacted\n›"
+
+    tmux = ProseTmux()
 
     await _continue_after_codex_compaction_ready(
         session_db,

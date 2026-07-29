@@ -191,14 +191,6 @@ async def _send_terminal_compaction_command(
                 False,
                 None,
             )
-        if not schedule_continuation_readiness(readiness_before_command):
-            clear_continuation_pending()
-            return (
-                False,
-                "failed to schedule compact_self continuation readiness",
-                False,
-                None,
-            )
     ok, reason = await _send_compaction_command(tmux, target, command, session_id)
     if not ok:
         if continuation_pending:
@@ -218,6 +210,14 @@ async def _send_terminal_compaction_command(
         if continuation_pending:
             clear_continuation_pending()
         return False, rejection["rejection_message"], False, rejection
+    if schedule_continuation_readiness is not None and not schedule_continuation_readiness(
+        readiness_before_command
+    ):
+        logger.warning(
+            "Failed to schedule compact_self continuation readiness for session %s; "
+            "SessionStart fallback remains pending",
+            session_id,
+        )
     return True, None, continuation_pending, None
 
 

@@ -40,7 +40,7 @@ COMPACT_SELF_CONTINUE_PROMPT = (
 )
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
-_CODEX_COMPACT_READY_MARKER = "Context compacted"
+_CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
 LOADING_SKILLS_NAME = "loading-skills"
@@ -353,7 +353,7 @@ async def _continue_after_codex_compaction_ready(
     fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
 ) -> None:
     """Consume and submit only after Codex renders a fresh completion marker."""
-    baseline_count = before_command.count(_CODEX_COMPACT_READY_MARKER)
+    baseline_count = _count_codex_compact_ready_status_lines(before_command)
     deadline = asyncio.get_running_loop().time() + fresh_seconds
 
     while asyncio.get_running_loop().time() <= deadline:
@@ -390,8 +390,8 @@ async def _continue_after_codex_compaction_ready(
             _fresh_terminal_output(before_command, output) if isinstance(output, str) else ""
         )
         ready = isinstance(output, str) and (
-            output.count(_CODEX_COMPACT_READY_MARKER) > baseline_count
-            or _CODEX_COMPACT_READY_MARKER in fresh_output
+            _count_codex_compact_ready_status_lines(output) > baseline_count
+            or _count_codex_compact_ready_status_lines(fresh_output) > 0
         )
         if ready:
             if poll_seconds > 0:
@@ -428,6 +428,11 @@ async def _continue_after_codex_compaction_ready(
         "Timed out waiting for Codex compact readiness for session %s",
         pending_session_id,
     )
+
+
+def _count_codex_compact_ready_status_lines(output: str) -> int:
+    """Count complete Codex compaction status lines."""
+    return sum(line.strip() == _CODEX_COMPACT_READY_STATUS_LINE for line in output.splitlines())
 
 
 def _fresh_terminal_output(before: str, after: str) -> str:

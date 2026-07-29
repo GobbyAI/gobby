@@ -303,14 +303,23 @@ class TestCompactSelfTerminalPath:
         ]
 
     @pytest.mark.asyncio
-    async def test_codex_schedules_readiness_after_marker_before_compacting(self) -> None:
+    async def test_codex_schedules_readiness_only_after_compaction_submission(self) -> None:
         events: list[str] = []
+        command_submission_started = asyncio.Event()
+        finish_command_submission = asyncio.Event()
+        readiness_started = asyncio.Event()
         tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="before")
+
+        async def capture_pane(_target: str, *, lines: int) -> str:
+            events.append(f"capture:{lines}")
+            return "before"
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
             _ = literal
             events.append(keys)
+            if keys == "/compact\n":
+                command_submission_started.set()
+                await finish_command_submission.wait()
             return True
 
         def mark_pending() -> bool:
@@ -320,27 +329,46 @@ class TestCompactSelfTerminalPath:
         def schedule_readiness(before_command: str | None) -> bool:
             assert before_command == "before"
             events.append("readiness")
+            readiness_started.set()
             return True
 
+        tmux.capture_pane = AsyncMock(side_effect=capture_pane)
         tmux.send_keys = AsyncMock(side_effect=send_keys)
 
-        result = await _send_terminal_compaction_command(
-            tmux,
-            "%12",
-            "/compact",
-            "s1",
-            cli_source="codex",
-            mark_continuation_pending=mark_pending,
-            clear_continuation_pending=lambda: True,
-            schedule_continuation_readiness=schedule_readiness,
-            settle_seconds=0,
+        command_task = asyncio.create_task(
+            _send_terminal_compaction_command(
+                tmux,
+                "%12",
+                "/compact",
+                "s1",
+                cli_source="codex",
+                mark_continuation_pending=mark_pending,
+                clear_continuation_pending=lambda: True,
+                schedule_continuation_readiness=schedule_readiness,
+                continuation_readiness_capture_lines=100,
+                settle_seconds=0,
+            )
         )
+        await command_submission_started.wait()
 
+        assert not readiness_started.is_set()
+        finish_command_submission.set()
+        result = await command_task
         assert result == (True, None, True, None)
-        assert events == ["C-c", "mark", "readiness", "/compact\n"]
+        assert events == [
+            "C-c",
+            "capture:30",
+            "capture:100",
+            "mark",
+            "/compact\n",
+            "capture:30",
+            "readiness",
+        ]
 
     @pytest.mark.asyncio
-    async def test_codex_readiness_schedule_failure_aborts_before_compacting(self) -> None:
+    async def test_codex_readiness_schedule_failure_keeps_session_start_fallback(
+        self,
+    ) -> None:
         tmux = MagicMock()
         tmux.capture_pane = AsyncMock(return_value="before")
         tmux.send_keys = AsyncMock(return_value=True)
@@ -358,14 +386,12 @@ class TestCompactSelfTerminalPath:
             settle_seconds=0,
         )
 
-        assert result == (
-            False,
-            "failed to schedule compact_self continuation readiness",
-            False,
-            None,
-        )
-        clear_pending.assert_called_once_with()
-        assert tmux.send_keys.await_args_list == [call("%12", "C-c", literal=False)]
+        assert result == (True, None, True, None)
+        clear_pending.assert_not_called()
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "C-c", literal=False),
+            call("%12", "/compact\n", literal=True),
+        ]
 
     @pytest.mark.asyncio
     async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
