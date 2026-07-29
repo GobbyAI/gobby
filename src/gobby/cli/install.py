@@ -17,6 +17,7 @@ import click
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import update_bootstrap_yaml
+from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -430,6 +431,16 @@ def install(
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
 
+    falkordb_password: str | None = None
+    if falkordb_password_stdin:
+        falkordb_password = sys.stdin.read().strip()
+        if not falkordb_password:
+            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
+        try:
+            validate_falkordb_password(falkordb_password)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
     if project_flag and agy_flag:
@@ -518,18 +529,13 @@ def install(
             "\nYou can still install manually with --claude, --grok, --qwen, "
             "--agy, --codex, or --droid flags."
         )
+        sys.exit(1)
     for warning in preflight_warnings:
         click.echo(f"Warning: {warning}")
     if preflight_errors:
         for error in preflight_errors:
             click.echo(f"Error: {error}", err=True)
         sys.exit(1)
-
-    falkordb_password: str | None = None
-    if falkordb_password_stdin:
-        falkordb_password = sys.stdin.read().strip()
-        if not falkordb_password:
-            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
 
     if falkordb_flag:
         service_results: dict[str, dict[str, Any]] = {}

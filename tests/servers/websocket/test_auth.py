@@ -62,6 +62,8 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     runner.pipeline_executor = None
     runner.message_processor = None
     runner.agent_lifecycle_monitor = None
+    runner.attention_manager = None
+    runner.attention_metadata_store = None
     runner._dev_mode = False
 
     monkeypatch.setattr(runner_servers, "HTTPServer", FakeHTTPServer)

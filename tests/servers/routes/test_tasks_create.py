@@ -26,7 +26,11 @@ def test_post_simple_fix(temp_db, sample_project) -> None:
     with patch.object(server, "resolve_project_id", return_value=sample_project["id"]):
         response = TestClient(server.app).post(
             "/api/tasks",
-            json={"title": "Small fix", "task_type": "simple_fix"},
+            json={
+                "title": "Small fix",
+                "task_type": "simple_fix",
+                "validation_criteria": "The small fix is implemented and verified.",
+            },
         )
 
     assert response.status_code == 201
@@ -45,7 +49,11 @@ def test_post_review_anchor(temp_db, sample_project) -> None:
     with patch.object(server, "resolve_project_id", return_value=sample_project["id"]):
         response = TestClient(server.app).post(
             "/api/tasks",
-            json={"title": "Round anchor", "task_type": "review_anchor"},
+            json={
+                "title": "Round anchor",
+                "task_type": "review_anchor",
+                "validation_criteria": "The review anchor is recorded.",
+            },
         )
 
     assert response.status_code == 201

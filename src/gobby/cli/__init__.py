@@ -76,13 +76,15 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
     """Gobby - Local-first daemon for AI coding assistants."""
-    runtime = CliRuntime(config_file=config)
+    runtime = CliRuntime(
+        config_file=config,
+        config_loader=lambda config_file, database: load_full_config_from_db(
+            config_file,
+            database=database,
+        ),
+    )
     ctx.obj = runtime
     ctx.call_on_close(runtime.close)
-    runtime.config = load_full_config_from_db(
-        config,
-        database=runtime.require_database(),
-    )
 
 
 # Register commands

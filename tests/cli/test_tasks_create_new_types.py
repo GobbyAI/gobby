@@ -28,7 +28,15 @@ def test_create_simple_fix() -> None:
 
         result = CliRunner().invoke(
             cli,
-            ["tasks", "create", "Small fix", "--type", "simple_fix"],
+            [
+                "tasks",
+                "create",
+                "Small fix",
+                "--type",
+                "simple_fix",
+                "--validation-criteria",
+                "The small fix is implemented and verified.",
+            ],
         )
 
     assert result.exit_code == 0
@@ -51,7 +59,15 @@ def test_create_review_anchor() -> None:
 
         result = CliRunner().invoke(
             cli,
-            ["tasks", "create", "Round anchor", "--type", "review_anchor"],
+            [
+                "tasks",
+                "create",
+                "Round anchor",
+                "--type",
+                "review_anchor",
+                "--validation-criteria",
+                "The review anchor is recorded.",
+            ],
         )
 
     assert result.exit_code == 0

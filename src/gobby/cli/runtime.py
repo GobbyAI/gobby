@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,15 +16,47 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import get_project_context
 
 
-@dataclass
+def _load_runtime_config(config_file: str | None, database: HubDatabase) -> DaemonConfig:
+    from gobby.cli.utils import load_full_config_from_db
+
+    return load_full_config_from_db(config_file, database=database)
+
+
+@dataclass(init=False)
 class CliRuntime:
     """Own resources shared by one top-level CLI invocation."""
 
     config_file: str | None
-    config: DaemonConfig = field(default_factory=DaemonConfig)
+    config_loader: Callable[[str | None, HubDatabase], DaemonConfig] = _load_runtime_config
     exit_stack: ExitStack = field(default_factory=ExitStack)
+    _config: DaemonConfig | None = field(default=None, init=False, repr=False)
     _database: HubDatabase | None = field(default=None, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+
+    def __init__(
+        self,
+        config_file: str | None,
+        config: DaemonConfig | None = None,
+        config_loader: Callable[[str | None, HubDatabase], DaemonConfig] = _load_runtime_config,
+        exit_stack: ExitStack | None = None,
+    ) -> None:
+        self.config_file = config_file
+        self.config_loader = config_loader
+        self.exit_stack = exit_stack if exit_stack is not None else ExitStack()
+        self._config = config
+        self._database = None
+        self._closed = False
+
+    @property
+    def config(self) -> DaemonConfig:
+        """Load DB-backed configuration only when a command needs it."""
+        if self._config is None:
+            self._config = self.config_loader(self.config_file, self.require_database())
+        return self._config
+
+    @config.setter
+    def config(self, value: DaemonConfig) -> None:
+        self._config = value
 
     def require_database(self) -> HubDatabase:
         """Return the invocation's database, opening it on first use."""

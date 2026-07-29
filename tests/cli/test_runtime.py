@@ -13,7 +13,18 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.runtime import CliRuntime, require_cli_database, resolve_cli_project
-from gobby.config.app import DaemonConfig
+
+
+def test_subcommand_help_does_not_open_runtime_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_database = MagicMock()
+    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+
+    result = CliRunner().invoke(cli, ["skills", "--help"])
+
+    assert result.exit_code == 0
+    open_database.assert_not_called()
 
 
 def _database_context(database: MagicMock) -> Iterator[MagicMock]:
@@ -142,7 +153,7 @@ def test_failed_lazy_acquisition_can_retry(monkeypatch: pytest.MonkeyPatch) -> N
     runtime.close()
 
 
-def test_config_and_tasks_list_share_runtime_database(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tasks_list_reuses_one_runtime_database(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.tasks import crud
     from gobby.cli.tasks import main as tasks_main
     from gobby.cli.tasks._utils import config as task_config
@@ -160,14 +171,6 @@ def test_config_and_tasks_list_share_runtime_database(monkeypatch: pytest.Monkey
         finally:
             database.close()
 
-    def load_config(
-        config_file: str | None = None,
-        *,
-        database: object | None = None,
-    ) -> DaemonConfig:
-        seen.append(database)
-        return DaemonConfig()
-
     def task_manager(database_arg: object) -> MagicMock:
         seen.append(database_arg)
         return manager
@@ -181,7 +184,6 @@ def test_config_and_tasks_list_share_runtime_database(monkeypatch: pytest.Monkey
         return "rendered"
 
     monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
-    monkeypatch.setattr("gobby.cli.load_full_config_from_db", load_config)
     monkeypatch.setattr(tasks_main, "check_tasks_enabled", lambda: None)
     monkeypatch.setattr(task_config, "LocalTaskManager", task_manager)
     monkeypatch.setattr(crud, "resolve_project_ref", lambda ref: None)
@@ -194,5 +196,5 @@ def test_config_and_tasks_list_share_runtime_database(monkeypatch: pytest.Monkey
     result = CliRunner().invoke(cli, ["tasks", "list", "--limit", "1"])
 
     assert result.exit_code == 0, result.output
-    assert seen == [database, database, database, database]
+    assert seen == [database, database, database]
     database.close.assert_called_once_with()

@@ -27,7 +27,10 @@ def get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get daemon client from context config."""
     from gobby.cli.runtime import get_cli_runtime
 
-    get_cli_runtime(ctx)
+    try:
+        get_cli_runtime(ctx)
+    except RuntimeError as exc:
+        raise click.ClickException("Daemon config is unavailable") from exc
     return _shared_daemon_client()
 
 

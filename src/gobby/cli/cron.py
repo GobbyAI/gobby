@@ -11,10 +11,9 @@ import click
 import httpx
 from croniter import croniter
 
-from gobby.cli.runtime import get_cli_runtime, require_cli_database
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_client
-from gobby.config.app import DaemonConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_client import DaemonClient
@@ -47,13 +46,7 @@ def _resolve_job_id(storage: CronJobStorage, job_ref: str) -> str:
     return str(job.id)
 
 
-def _get_daemon_client(ctx: click.Context) -> DaemonClient:
-    config = get_cli_runtime(ctx).config
-    if not isinstance(config, DaemonConfig):
-        raise click.ClickException(
-            "Daemon configuration is unavailable. Run this command through the main "
-            "gobby CLI after the daemon has been configured and started."
-        )
+def _get_daemon_client(_ctx: click.Context) -> DaemonClient:
     return get_daemon_client()
 
 

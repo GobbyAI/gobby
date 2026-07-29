@@ -257,6 +257,7 @@ class TestMCPEndpointsWithManager:
         See _process_tool_proxy_result in routes/mcp/tools.py.
         """
         assert http_server_with_mcp.mcp_manager is not None
+        http_server_with_mcp.mcp_manager.connections["test-server"] = MagicMock()
         http_server_with_mcp.mcp_manager.call_tool = AsyncMock(
             side_effect=ValueError("Tool not found")
         )

@@ -7,12 +7,19 @@ import json
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import AI_EMBEDDINGS_CONFIG_PREFIX
 
 pytestmark = pytest.mark.unit
 
 embeddings_module = importlib.import_module("gobby.cli.embeddings")
+
+
+def _runtime(config: DaemonConfig) -> CliRuntime:
+    runtime = CliRuntime(config_file=None)
+    runtime.config = config
+    return runtime
 
 
 def test_doctor_json_redacts_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,7 +35,7 @@ def test_doctor_json_redacts_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     )
 
-    result = CliRunner().invoke(embeddings_module.embeddings, ["doctor"], obj={"config": config})
+    result = CliRunner().invoke(embeddings_module.embeddings, ["doctor"], obj=_runtime(config))
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -50,7 +57,9 @@ def test_doctor_exits_10_when_namespace_missing(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(embeddings_module, "_resolved_namespace", lambda: None)
 
     result = CliRunner().invoke(
-        embeddings_module.embeddings, ["doctor"], obj={"config": DaemonConfig()}
+        embeddings_module.embeddings,
+        ["doctor"],
+        obj=_runtime(DaemonConfig()),
     )
 
     assert result.exit_code == 10

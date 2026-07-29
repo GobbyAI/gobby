@@ -211,7 +211,7 @@ def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
     vector_store_cls.assert_called_once()
     memory_manager_cls.assert_called_once()
     assert memory_manager_cls.call_args.kwargs["embed_fn"] is None
-    assert runner.vector_store is vector_store_cls.return_value
+    assert runner.vector_store._inner is vector_store_cls.return_value
     assert runner.memory_manager is memory_manager_cls.return_value
     assert "Memory embeddings disabled" in caplog.text
     assert "Embedding configuration is incomplete" in caplog.text

@@ -1,4 +1,3 @@
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,12 +14,8 @@ from gobby.storage.auth import (
 
 @pytest.fixture
 def mock_stores():
-    @contextmanager
-    def fake_hub():
-        yield MagicMock()
-
     with (
-        patch("gobby.cli.auth.runtime_hub_database", return_value=fake_hub()),
+        patch("gobby.cli.auth.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.auth.ConfigStore") as mock_config,
         patch("gobby.cli.auth.SecretStore") as mock_secret,
     ):
@@ -33,7 +28,10 @@ def mock_stores():
 def test_auth_no_db(mock_stores):
     config, secret = mock_stores
     runner = CliRunner()
-    with patch("gobby.cli.auth.runtime_hub_database", side_effect=RuntimeError("hub missing")):
+    with patch(
+        "gobby.cli.auth.require_cli_database",
+        side_effect=RuntimeError("hub missing"),
+    ):
         result = runner.invoke(auth, ["credentials"])
     assert result.exit_code == 1
     assert "hub missing" in result.output

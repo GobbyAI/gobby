@@ -521,7 +521,11 @@ class TestWebChatLifecycle:
                     "tool_name": "close_task",
                     "arguments": {"task_id": closed_task.id},
                 },
-                "tool_output": {"success": True, "result": {"id": closed_task.id}},
+                "tool_output": {
+                    "success": True,
+                    "closed": True,
+                    "result": {"id": closed_task.id},
+                },
             },
         )
         evaluation_runtime.shutdown()

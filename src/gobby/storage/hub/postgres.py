@@ -260,7 +260,13 @@ class PostgresHubDatabase:
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
-        with _postgres_pool.transaction(self, self._native_transaction) as txn:
+        # PostgreSQL transactions can acquire additional advisory locks at any
+        # point, so they are always safe to reuse for transaction_immediate().
+        with _postgres_pool.transaction(
+            self,
+            self._native_transaction,
+            immediate=True,
+        ) as txn:
             yield txn
 
     @contextmanager

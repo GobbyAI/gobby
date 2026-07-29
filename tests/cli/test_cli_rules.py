@@ -1,7 +1,6 @@
 """Tests for gobby rules CLI commands."""
 
 import json
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -329,12 +328,8 @@ class TestImportRules:
 
         mock_db = MagicMock()
 
-        @contextmanager
-        def mock_runtime_db(**_kwargs):
-            yield mock_db
-
         with (
-            patch("gobby.cli.rules.runtime_hub_database", mock_runtime_db),
+            patch("gobby.cli.rules.require_cli_database", return_value=mock_db),
             patch("gobby.workflows.sync_rules.sync_rule_file") as mock_sync,
         ):
             mock_sync.return_value = {"success": True, "synced": 1, "updated": 0, "errors": []}

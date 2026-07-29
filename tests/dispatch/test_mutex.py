@@ -20,6 +20,7 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Runtime mutex",
+        validation_criteria="The dispatch mutex round trip completes without leaking.",
     )
     storage = TaskDispatchMutexManager(temp_db)
     storage.ensure_table()
@@ -48,6 +49,7 @@ def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Runtime terminal mutex",
+        validation_criteria="Terminal cleanup removes the dispatch mutex.",
     )
     storage = TaskDispatchMutexManager(temp_db)
     storage.ensure_table()
@@ -71,6 +73,7 @@ def test_runtime_mutex_uses_unique_holder_token_per_acquisition(temp_db, sample_
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Unique runtime mutex holder",
+        validation_criteria="Concurrent acquisitions use unique holder tokens.",
     )
     storage = TaskDispatchMutexManager(temp_db)
     barrier = Barrier(2)

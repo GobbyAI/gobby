@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 import click
 import psycopg
 
+from gobby.config.bootstrap import BootstrapConfigError
+
 logger = logging.getLogger(__name__)
 
 _EMBEDDING_INSTALLER_EXCEPTIONS = (
@@ -183,7 +185,7 @@ def _get_embedding_api_key(
                 existing = secrets.get(secret_name)
                 embedding_api_key = existing
                 click.echo("Using existing embedding API key from secrets")
-    except (ImportError, OSError, RuntimeError, psycopg.Error) as e:
+    except (BootstrapConfigError, ImportError, OSError, RuntimeError, psycopg.Error) as e:
         logger.warning("Failed to read existing embedding API key: %s", e, exc_info=True)
 
     if embedding_api_key:

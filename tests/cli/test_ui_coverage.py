@@ -9,11 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli.runtime import CliRuntime
 from gobby.cli.ui import (
     _ensure_npm_deps_installed,
     _get_ui_pid,
     ui,
 )
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -21,6 +23,12 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def _runtime(config: DaemonConfig) -> CliRuntime:
+    runtime = CliRuntime(config_file=None)
+    runtime.config = config
+    return runtime
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +107,7 @@ class TestUiStart:
     def test_ui_not_enabled(self, runner: CliRunner) -> None:
         config = MagicMock()
         config.ui.enabled = False
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
         assert "not enabled" in result.output.lower()
 
@@ -108,7 +116,7 @@ class TestUiStart:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "dev"
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
 
     @patch("gobby.cli.ui.spawn_ui_server", return_value=1234)
@@ -127,7 +135,7 @@ class TestUiStart:
         config.ui.host = "localhost"
         config.ui.port = 60889
         config.logging.dir = "~/.gobby/logs"
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "1234" in result.output
 
@@ -152,7 +160,7 @@ class TestUiStart:
         config.ui.port = 60889
         config.logging.dir = str(tmp_path / "logs")
 
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
 
         assert result.exit_code == 0
         mock_spawn.assert_called_once_with(
@@ -170,7 +178,7 @@ class TestUiStart:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "dev"
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
 
     @patch("gobby.cli.ui.spawn_ui_server", return_value=None)
@@ -189,7 +197,7 @@ class TestUiStart:
         config.ui.host = "localhost"
         config.ui.port = 60889
         config.logging.dir = "~/.gobby/logs"
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
         assert "Failed to start UI server" in result.output
 
@@ -197,7 +205,7 @@ class TestUiStart:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "production"
-        result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["start"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Production mode" in result.output
 
@@ -248,7 +256,7 @@ class TestUiRestart:
         config.ui.host = "localhost"
         config.ui.port = 60889
         config.logging.dir = "~/.gobby/logs"
-        result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["restart"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "UI dev server started" in result.output
 
@@ -267,7 +275,7 @@ class TestUiRestart:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "dev"
-        result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["restart"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
         assert "Failed to" in result.output
 
@@ -286,7 +294,7 @@ class TestUiRestart:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "dev"
-        result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["restart"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code != 0
         assert "already running" in result.output
 
@@ -298,7 +306,7 @@ class TestUiStatus:
     def test_status_disabled(self, runner: CliRunner) -> None:
         config = MagicMock()
         config.ui.enabled = False
-        result = runner.invoke(ui, ["status"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Disabled" in result.output
 
@@ -309,7 +317,7 @@ class TestUiStatus:
         config.ui.mode = "dev"
         config.ui.host = "localhost"
         config.ui.port = 60889
-        result = runner.invoke(ui, ["status"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "5555" in result.output
         assert "Running" in result.output
@@ -319,7 +327,7 @@ class TestUiStatus:
         config = MagicMock()
         config.ui.enabled = True
         config.ui.mode = "dev"
-        result = runner.invoke(ui, ["status"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Stopped" in result.output
 
@@ -328,7 +336,7 @@ class TestUiStatus:
         config.ui.enabled = True
         config.ui.mode = "production"
         config.daemon_port = 60888
-        result = runner.invoke(ui, ["status"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Served by daemon" in result.output
 
@@ -354,14 +362,14 @@ class TestUiDev:
         mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
         config = MagicMock()
-        result = runner.invoke(ui, ["dev"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Starting dev server" in result.output
         mock_find.assert_called_once_with(config, require_source=True)
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_dev_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
-        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code != 0
         assert "not found" in result.output
 
@@ -381,7 +389,7 @@ class TestUiDev:
         (web_dir / "package.json").write_text("{}")
         mock_find.return_value = web_dir
         mock_run.side_effect = KeyboardInterrupt
-        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code == 0
         assert result.exception is None
 
@@ -401,7 +409,7 @@ class TestUiDev:
         (web_dir / "package.json").write_text("{}")
         mock_find.return_value = web_dir
         mock_run.side_effect = subprocess.CalledProcessError(returncode=2, cmd="npm")
-        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code == 2
         assert isinstance(result.exception, SystemExit)
 
@@ -412,7 +420,7 @@ class TestUiDev:
 class TestUiBuild:
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_build_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
-        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code != 0
         assert "not found" in result.output
 
@@ -431,7 +439,7 @@ class TestUiBuild:
         web_dir.mkdir()
         mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
-        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Build complete" in result.output
 
@@ -450,7 +458,7 @@ class TestUiBuild:
         web_dir.mkdir()
         mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=1)
-        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code != 0
         assert "Build failed" in result.output
 
@@ -462,7 +470,7 @@ class TestUiBuild:
         web_dir = tmp_path / "web"
         web_dir.mkdir()
         mock_find.return_value = web_dir
-        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
         assert result.exit_code != 0
 
 
@@ -473,7 +481,7 @@ class TestUiInstallDeps:
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_install_deps_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
-            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+            ui, ["install-deps"], obj=_runtime(MagicMock()), catch_exceptions=False
         )
         assert result.exit_code != 0
         assert "not found" in result.output
@@ -485,7 +493,7 @@ class TestUiInstallDeps:
     ) -> None:
         mock_find.return_value = tmp_path
         result = runner.invoke(
-            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+            ui, ["install-deps"], obj=_runtime(MagicMock()), catch_exceptions=False
         )
         assert result.exit_code == 0
         assert "installed" in result.output.lower()
@@ -497,6 +505,6 @@ class TestUiInstallDeps:
     ) -> None:
         mock_find.return_value = tmp_path
         result = runner.invoke(
-            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+            ui, ["install-deps"], obj=_runtime(MagicMock()), catch_exceptions=False
         )
         assert result.exit_code != 0
