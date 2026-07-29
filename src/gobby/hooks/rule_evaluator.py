@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.telemetry.tracing import create_span
+from gobby.workflows.block_audit import audit_source_block_sync
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
 
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
@@ -109,6 +110,11 @@ class WorkflowRuleEvaluator:
                 extra_context,
             )
             if block_override:
+                self._audit_source_block(
+                    event,
+                    block_override,
+                    rule_id="hook-dispatch-safety",
+                )
                 self._log_workflow_evaluation(event, block_override, mcp_calls)
                 return None, block_override
 
@@ -141,11 +147,34 @@ class WorkflowRuleEvaluator:
         except Exception as exc:
             self.logger.exception("Workflow evaluation failed: %s", exc)
             if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
-                return None, HookResponse(
+                response = HookResponse(
                     decision="block",
                     reason="Workflow evaluation failed; blocking stop for safety.",
                 )
+                self._audit_source_block(
+                    event,
+                    response,
+                    rule_id="hook-stop-safety",
+                )
+                return None, response
             return None, None
+
+    def _audit_source_block(
+        self,
+        event: HookEvent,
+        response: HookResponse,
+        *,
+        rule_id: str,
+    ) -> None:
+        try:
+            audit_source_block_sync(
+                self.workflow_handler,
+                event,
+                rule_id=rule_id,
+                reason=response.reason or "",
+            )
+        except Exception as exc:
+            self.logger.warning("Workflow block audit failed: %s", exc, exc_info=True)
 
     def _process_dispatch_results(
         self,

@@ -264,13 +264,15 @@ class TestWorkflowRuleEvaluator:
             logger=MagicMock(),
         )
 
-        context, blocking = evaluator.evaluate(_event())
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = evaluator.evaluate(_event())
 
         assert context is None
         assert blocking == HookResponse(
             decision="block",
             reason="Auto-heal prerequisite failed: _proxy/list_tools: server missing",
         )
+        audit.assert_called_once()
 
 
 class TestBroadcastScheduling:

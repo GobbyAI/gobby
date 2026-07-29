@@ -154,6 +154,7 @@ class WorkflowAuditManager:
         result: str,
         reason: str | None = None,
         context: dict[str, Any] | None = None,
+        tool_name: str | None = None,
     ) -> int | None:
         """Log a rule evaluation.
 
@@ -165,6 +166,7 @@ class WorkflowAuditManager:
             result: 'allow', 'block', 'skip'
             reason: Why the rule fired/didn't fire
             context: Additional context
+            tool_name: Canonical tool name for tool-related rules
 
         Returns:
             Row ID or None.
@@ -178,6 +180,7 @@ class WorkflowAuditManager:
             rule_id=rule_id,
             condition=condition,
             context=context,
+            tool_name=tool_name,
         )
 
     def log_transition(

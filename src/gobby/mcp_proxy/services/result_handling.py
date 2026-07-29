@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.workflows.block_audit import audit_source_block
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -170,6 +171,13 @@ async def apply_before_tool_enforcement(
             tool_name,
             exc,
             exc_info=True,
+        )
+        await audit_source_block(
+            workflow_handler,
+            event,
+            rule_id="proxy-evaluation-failure",
+            reason=f"Workflow evaluation failed: {exc}",
+            tool_name=f"{server_name}:{tool_name}",
         )
         return (
             server_name,

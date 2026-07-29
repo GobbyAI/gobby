@@ -522,10 +522,14 @@ class TestCancelledErrorHandling:
         event = self._make_event(HookEventType.STOP)
         runtime = MagicMock()
         runtime.run.side_effect = concurrent.futures.CancelledError()
-        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+        with (
+            patch("asyncio.get_running_loop", side_effect=RuntimeError),
+            patch("gobby.workflows.hooks.audit_source_block_sync") as audit,
+        ):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.evaluate(event)
             assert result.decision == "block"
+            audit.assert_called_once()
 
     def test_cancelled_error_allows_non_stop_evaluate(self) -> None:
         """CancelledError on non-STOP event should allow (fail-open)."""
@@ -1334,12 +1338,16 @@ class TestStopFailsClosedOnVariableLoadError:
 
         handler = WorkflowHookHandler(rule_engine=rule_engine)
         handler._session_var_manager = mock_var_manager
+        rule_engine.workflow_audit.log_rule_eval = MagicMock(return_value=1)
 
         event = self._make_stop_event()
         response = await handler._evaluate_rules(event)
 
         assert response.decision == "block"
         assert "Could not load session state" in response.reason
+        assert rule_engine.workflow_audit.log_rule_eval.call_args.kwargs["rule_id"] == (
+            "variable-load-failure"
+        )
 
     @pytest.mark.asyncio
     async def test_non_stop_is_read_only_when_get_variables_fails(self, rule_engine) -> None:
@@ -1367,11 +1375,15 @@ class TestStopFailsClosedOnVariableLoadError:
         task_manager = MagicMock()
         task_manager.list_tasks.side_effect = psycopg.OperationalError("DB locked")
         handler = WorkflowHookHandler(rule_engine=rule_engine, task_manager=task_manager)
+        rule_engine.workflow_audit.log_rule_eval = MagicMock(return_value=1)
 
         response = await handler._evaluate_rules(self._make_stop_event())
 
         assert response.decision == "block"
         assert "Could not reconcile claimed tasks" in response.reason
+        assert rule_engine.workflow_audit.log_rule_eval.call_args.kwargs["rule_id"] == (
+            "reconciliation-failure"
+        )
 
     @pytest.mark.asyncio
     async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine) -> None:

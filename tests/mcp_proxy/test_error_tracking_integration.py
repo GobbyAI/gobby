@@ -168,7 +168,13 @@ async def test_before_tool_return_sites_carry_structural_outcome_class(
         workflow_handler.evaluate.return_value = handler_result
     proxy, mcp_manager, _ = _proxy(result={"success": True}, workflow_handler=workflow_handler)
 
-    with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
+    with (
+        patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking,
+        patch(
+            "gobby.mcp_proxy.services.result_handling.audit_source_block",
+            new_callable=AsyncMock,
+        ) as audit_source_block,
+    ):
         result = await proxy.call_tool(
             "server-a",
             "run",
@@ -179,6 +185,10 @@ async def test_before_tool_return_sites_carry_structural_outcome_class(
     assert result["success"] is False
     assert tracking.call_args.args[-1] == expected_class
     mcp_manager.call_tool.assert_not_awaited()
+    if handler_error is not None:
+        audit_source_block.assert_awaited_once()
+    else:
+        audit_source_block.assert_not_awaited()
 
 
 @pytest.mark.asyncio

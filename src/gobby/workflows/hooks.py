@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.step_context import get_active_step_workflow_context
 
 if TYPE_CHECKING:
@@ -496,10 +497,17 @@ class WorkflowHookHandler:
         """Handle CancelledError by logging and returning appropriate response."""
         logger.warning("Workflow evaluation cancelled for %s", event.event_type)
         if event.event_type == HookEventType.STOP:
-            return HookResponse(
+            response = HookResponse(
                 decision="block",
                 reason="Workflow evaluation was cancelled; blocking stop for safety.",
             )
+            audit_source_block_sync(
+                self,
+                event,
+                rule_id="workflow-evaluation-cancelled",
+                reason=response.reason or "",
+            )
+            return response
         return HookResponse(decision="allow")
 
     def _run_observers(
@@ -650,10 +658,17 @@ class WorkflowHookHandler:
                                 e,
                                 exc_info=True,
                             )
-                            return HookResponse(
+                            response = HookResponse(
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
+                            await audit_source_block(
+                                self,
+                                event,
+                                rule_id="variable-load-failure",
+                                reason=response.reason or "",
+                            )
+                            return response
                         variable_load_failed = True
                         logger.debug(
                             "Could not load session variables for rules session=%s event=%s: %s",
@@ -841,10 +856,18 @@ class WorkflowHookHandler:
                     event.event_type == HookEventType.STOP
                     and "reconcile_claimed_tasks" in observer_failures
                 ):
-                    return HookResponse(
+                    response = HookResponse(
                         decision="block",
                         reason="Could not reconcile claimed tasks. Try again.",
                     )
+                    await audit_source_block(
+                        self,
+                        event,
+                        rule_id="reconciliation-failure",
+                        reason=response.reason or "",
+                        variables=variables,
+                    )
+                    return response
 
                 response = await self.rule_engine.evaluate(
                     event=event,

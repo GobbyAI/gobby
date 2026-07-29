@@ -79,7 +79,12 @@ def test_log_helpers(audit_manager) -> None:
 
     # log_rule_eval
     audit_manager.log_rule_eval(
-        session_id=SESS_1, step="exec", rule_id="r1", condition="always", result="allow"
+        session_id=SESS_1,
+        step="exec",
+        rule_id="r1",
+        condition="always",
+        result="allow",
+        tool_name="gobby-tasks:close_task",
     )
 
     # log_transition
@@ -94,6 +99,10 @@ def test_log_helpers(audit_manager) -> None:
     )
 
     assert audit_manager.get_entry_count() == 5
+    rule_entry = next(
+        entry for entry in audit_manager.get_entries() if entry.event_type == "rule_eval"
+    )
+    assert rule_entry.tool_name == "gobby-tasks:close_task"
 
 
 def test_get_entries_filtering(audit_manager) -> None:

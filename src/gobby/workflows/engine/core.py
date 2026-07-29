@@ -228,7 +228,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                                             variables=variables,
                                         ),
                                     )
-                                    return self._finalize_block_response(
+                                    return await self._finalize_block_response(
                                         resp,
                                         evaluation,
                                         span,
@@ -322,7 +322,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        return self._finalize_block_response(
+                        return await self._finalize_block_response(
                             agent_block,
                             evaluation,
                             span,
@@ -349,7 +349,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        return self._finalize_block_response(
+                        return await self._finalize_block_response(
                             step_block,
                             evaluation,
                             span,
@@ -426,7 +426,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         block_gates=[],
                         include_rule_outputs=False,
                     )
-                    return self._finalize_block_response(resp, evaluation, span)
+                    return await self._finalize_block_response(resp, evaluation, span)
 
                 # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
@@ -458,7 +458,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                             "rules.mcp_calls",
                             [f"{c.get('server')}/{c.get('tool')}" for c in mcp_calls],
                         )
-                return self._finalize_block_response(resp, evaluation, span)
+                return await self._finalize_block_response(
+                    resp,
+                    evaluation,
+                    span,
+                    block_gates=block_gates,
+                )
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)

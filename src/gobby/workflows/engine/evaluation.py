@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.workflows.block_audit import log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.blocked_tool_recovery import (
     CONSECUTIVE_TOOL_BLOCK_RULE,
@@ -29,6 +30,9 @@ from gobby.workflows.engine.event_utils import (
     _get_tool_identity,
     _is_write_like_event_data,
 )
+
+if TYPE_CHECKING:
+    from gobby.storage.workflow_audit import WorkflowAuditManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ class BlockGate:
 
     rule_name: str
     reason: str
+    condition: Any | None = None
     acknowledge_variable: str | None = None
 
 
@@ -60,6 +65,7 @@ class EvaluationMixin:
     """Mixin providing the RuleEngine evaluation loop and response assembly."""
 
     _event_store: Any
+    workflow_audit: "WorkflowAuditManager"
 
     if TYPE_CHECKING:
 
@@ -132,7 +138,7 @@ class EvaluationMixin:
             if _is_write_like_event_data(event.data) or not had_pending_failure:
                 _clear_edit_write_state(variables)
 
-    def _finalize_block_response(
+    async def _finalize_block_response(
         self,
         response: HookResponse,
         evaluation: EvaluationContext,
@@ -140,6 +146,7 @@ class EvaluationMixin:
         *,
         source: str | None = None,
         rule_name: str | None = None,
+        block_gates: list[BlockGate] | None = None,
         fallback_reason: str | None = None,
         warn_detail: str = "block response omitted reason",
     ) -> HookResponse:
@@ -173,6 +180,28 @@ class EvaluationMixin:
                 rule_name=resolved_rule_name,
                 reason=response.reason,
             )
+            gates = block_gates or []
+            audit_rows = [
+                (
+                    gate.rule_name,
+                    gate.condition,
+                    gate.reason,
+                )
+                for gate in gates
+            ]
+            if resolved_rule_name not in {gate.rule_name for gate in gates}:
+                audit_rows.append((resolved_rule_name, None, response.reason or ""))
+            for audit_rule_name, audit_condition, audit_reason in audit_rows:
+                await log_enforcement_block(
+                    self.workflow_audit,
+                    session_id=evaluation.session_id,
+                    current_step=evaluation.variables.get("current_step"),
+                    rule_id=audit_rule_name,
+                    condition=audit_condition,
+                    result=response.decision,
+                    reason=audit_reason,
+                    tool_name=blocked_tool_name,
+                )
             if evaluation.is_before_tool and resolved_rule_name != CONSECUTIVE_TOOL_BLOCK_RULE:
                 remember_blocked_tool_recovery_state(
                     evaluation.variables,
@@ -294,6 +323,7 @@ class EvaluationMixin:
                         BlockGate(
                             rule_name=row.name,
                             reason=reason,
+                            condition=effect.when or body.when,
                             acknowledge_variable=effect.acknowledge_variable,
                         )
                     )
@@ -338,7 +368,13 @@ class EvaluationMixin:
                 )
                 if inline_block_reason:
                     rule_blocked = True
-                    block_gates.append(BlockGate(rule_name=row.name, reason=inline_block_reason))
+                    block_gates.append(
+                        BlockGate(
+                            rule_name=row.name,
+                            reason=inline_block_reason,
+                            condition=effect.when or body.when,
+                        )
+                    )
 
             # Now apply deferred block (if any)
             if deferred_block is not None:
@@ -356,6 +392,7 @@ class EvaluationMixin:
                         BlockGate(
                             rule_name=row.name,
                             reason=rendered_block_reason,
+                            condition=deferred_block.when or body.when,
                             acknowledge_variable=deferred_block.acknowledge_variable,
                         )
                     )

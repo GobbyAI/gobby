@@ -906,7 +906,8 @@ class TestEvaluateWorkflowRules:
         event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Bash"})
         event.metadata["_platform_session_id"] = "session-123"
 
-        context, blocking = manager._evaluate_workflow_rules(event)
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = manager._evaluate_workflow_rules(event)
 
         assert context is None
         assert blocking == HookResponse(decision=decision, reason="Blocked by rule")
@@ -915,6 +916,7 @@ class TestEvaluateWorkflowRules:
         debug_message = manager.logger.debug.call_args[0][0]
         assert f"decision={decision}" in debug_message
         assert "reason=Blocked by rule" in debug_message
+        audit.assert_not_called()
 
     def test_advisory_workflow_evaluation_exception_fails_open(
         self,
@@ -943,13 +945,15 @@ class TestEvaluateWorkflowRules:
         manager._workflow_handler.handle.side_effect = RuntimeError("Workflow engine error")
 
         event = make_event(event_type=event_type)
-        context, blocking = manager._evaluate_workflow_rules(event)
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = manager._evaluate_workflow_rules(event)
 
         assert context is None
         assert blocking == HookResponse(
             decision="block",
             reason="Workflow evaluation failed; blocking stop for safety.",
         )
+        audit.assert_called_once()
 
 
 class TestShutdown:
