@@ -11,7 +11,11 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    assemble_requirements_bundle,
+    build_request_anchor,
+)
 from gobby.workflows.observer_plan_mode import resolve_plan_mode
 
 SESSION_ID = "00000000-0000-0000-0000-000000000001"
@@ -42,7 +46,9 @@ def _event(
     )
 
 
-def test_entry_observer_owns_request_anchor() -> None:
+def test_entry_observer_accumulates_request_anchor_into_taskless_bundle(
+    tmp_path: Path,
+) -> None:
     variables: dict[str, Any] = {
         "chat_mode": "normal",
         "mode_level": 1,
@@ -65,7 +71,7 @@ def test_entry_observer_owns_request_anchor() -> None:
 
     anchor = variables[REQUEST_ANCHOR_VARIABLE]
     assert anchor["anchor_id"] == "observed-request"
-    assert anchor["content"] == "Observed initiating request"
+    assert anchor["content"] == ["Observed initiating request"]
     assert anchor["captured_by"] == "plan_mode_observer"
 
     later = _event(
@@ -77,7 +83,26 @@ def test_entry_observer_owns_request_anchor() -> None:
         },
     )
     resolve_plan_mode(later, variables, SESSION_ID, _SessionManager(None))
-    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
+    appended = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert anchor["content"] == ["Observed initiating request"]
+    assert appended["content"] == [
+        "Observed initiating request",
+        "Later request",
+    ]
+
+    first_bundle = assemble_requirements_bundle(
+        project_root=tmp_path,
+        plan_snapshot=b"# Plan\n",
+        request_anchor=appended,
+    )
+    second_bundle = assemble_requirements_bundle(
+        project_root=tmp_path,
+        plan_snapshot=b"# Plan\n",
+        request_anchor=appended,
+    )
+    assert first_bundle == second_bundle
+    sources = cast(list[dict[str, object]], first_bundle["sources"])
+    assert json.loads(cast(str, sources[0]["content"])) == appended["content"]
 
 
 @pytest.mark.parametrize(
@@ -145,7 +170,7 @@ def test_anchor_written_on_every_entry_branch(
     assert variables["plan_mode"] is True
     anchor = variables[REQUEST_ANCHOR_VARIABLE]
     assert anchor["anchor_id"] == f"request-{branch}"
-    assert anchor["content"] == prompt
+    assert anchor["content"] == [prompt]
 
 
 def test_existing_request_anchor_is_reused() -> None:

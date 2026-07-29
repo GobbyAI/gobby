@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from gobby.hooks.events import HookEvent, SessionSource
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import capture_request_anchor
+from gobby.plans.review_requirements import append_request_anchor, capture_request_anchor
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -277,6 +277,8 @@ def _apply_resolved_mode(
             request_anchor_id=request_anchor_id,
             request_content=request_content,
         )
+    elif is_plan and request_content is not None:
+        append_request_anchor(variables, content=request_content)
     if persist_mode:
         variables["chat_mode"] = mode
     if level_changed:

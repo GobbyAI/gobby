@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import cast
 
@@ -355,5 +356,14 @@ def test_anchor_reuse_and_missing_anchor_fails_closed(
 def test_request_anchor_hashes_exact_content() -> None:
     content = "Exact request bytes: 🧪\n"
     anchor = build_request_anchor("request-1", content)
-    assert anchor["content"] == content
-    assert anchor["content_sha256"] == hashlib.sha256(content.encode()).hexdigest()
+    assert anchor["content"] == [content]
+    encoded = json.dumps([content], separators=(",", ":"), ensure_ascii=False).encode()
+    assert anchor["content_sha256"] == hashlib.sha256(encoded).hexdigest()
+
+    forged = {**anchor, "captured_by": "plan_coordinator"}
+    with pytest.raises(ReviewEvidenceError, match="not owned by the plan-mode entry observer"):
+        assemble_requirements_bundle(
+            project_root=Path.cwd(),
+            plan_snapshot=b"# Plan\n",
+            request_anchor=forged,
+        )

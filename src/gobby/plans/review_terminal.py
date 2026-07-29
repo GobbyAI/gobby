@@ -239,7 +239,11 @@ def terminalize_plan_review_run(
             result=encoded,
         )
 
-    if result.get("verdict") == "inconclusive" and updated is not None:
+    verdict = result.get("verdict")
+    retryable_result = verdict == "inconclusive" or (
+        evidence.task_id is None and verdict == "needs_requirements"
+    )
+    if retryable_result and updated is not None:
         PlanReviewEvidenceService(database).expire_plan_review_evidence(evidence.evidence_id)
         expired = True
         _restore_staged_review(database, evidence.task_id)

@@ -14,6 +14,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    append_request_anchor,
+)
 from gobby.plans.review_telemetry import (
     deterministic_review_message_id,
     enrich_round_result,
@@ -28,6 +32,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import (
     StageReviewSetup,
     coverage_attestation,
@@ -159,7 +164,10 @@ async def test_no_terminal_route_bypasses_guard(
     stored_result = json.loads(completed.run.result)
     assert stored_result["convergence_telemetry"]["state"] == "enriched"
     assert stored_result["convergence_telemetry"]["daemon"]["tool_calls"] == 9
-    assert PlanReviewEvidenceService(temp_db).get_evidence(delivered.evidence_id).is_live
+    assert (
+        PlanReviewEvidenceService(temp_db).get_evidence(delivered.evidence_id).expired_at
+        is not None
+    )
 
     unbound_run = manager.create(
         parent_session_id=delivered.parent_session_id,
@@ -348,8 +356,62 @@ async def test_no_terminal_route_bypasses_guard(
             route_evidence = PlanReviewEvidenceService(temp_db).get_evidence(
                 route_bound.evidence_id
             )
-            assert (route_evidence.expired_at is not None) is not delivered_state
+            assert route_evidence.expired_at is not None
             assert notifications == [route_bound.run_id], route
+
+
+def test_taskless_needs_requirements_retries_with_improved_anchor(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    manager = LocalAgentRunManager(temp_db)
+    bound = bound_review(temp_db, tmp_path, suffix="-requirements-retry")
+    persist_delivered_round_result(
+        temp_db,
+        run_id=bound.run_id,
+        round_result=_delivered_result(bound.evidence_id),
+    )
+
+    outcome = terminalize_plan_review_run(
+        manager,
+        run_id=bound.run_id,
+        action="complete",
+        tool_calls_count=3,
+        turns_used=2,
+    )
+
+    assert outcome.expired is True
+    evidence_service = PlanReviewEvidenceService(temp_db)
+    expired = evidence_service.get_evidence(bound.evidence_id)
+    assert expired.expired_at is not None
+
+    variables = SessionVariableManager(temp_db)
+    parent_variables = variables.get_variables(bound.parent_session_id)
+    append_request_anchor(
+        parent_variables,
+        content="The authoritative source is the user request.",
+    )
+    variables.merge_variables(
+        bound.parent_session_id,
+        {
+            REQUEST_ANCHOR_VARIABLE: parent_variables[REQUEST_ANCHOR_VARIABLE],
+        },
+    )
+
+    retried = evidence_service.prepare_plan_review_round(
+        project_id=expired.project_id,
+        plan_path=expired.plan_path,
+        round_number=2,
+        session_id=bound.parent_session_id,
+    )
+    retried_evidence = evidence_service.get_evidence(retried.evidence_id)
+    context = cast(dict[str, object], retried_evidence.prior_round_context)
+    bundle = cast(dict[str, object], context["requirements_bundle"])
+    sources = cast(list[dict[str, object]], bundle["sources"])
+    assert json.loads(cast(str, sources[0]["content"])) == [
+        "Review the terminal plan",
+        "The authoritative source is the user request.",
+    ]
 
 
 @pytest.mark.asyncio
