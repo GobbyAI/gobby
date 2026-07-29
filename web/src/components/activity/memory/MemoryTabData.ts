@@ -181,10 +181,14 @@ export function extractGraphLimits(values: unknown): GraphLimits {
   const rawEntities = (ui as { knowledge_graph_limit?: unknown }).knowledge_graph_limit;
   const rawRelationships = (ui as { knowledge_graph_relationship_limit?: unknown })
     .knowledge_graph_relationship_limit;
+  const numericLimit = (value: unknown) =>
+    typeof value === "number" || (typeof value === "string" && value.trim() !== "")
+      ? Number(value)
+      : Number.NaN;
   return {
-    entities: sanitizeGraphLimit(Number(rawEntities), DEFAULT_GRAPH_LIMITS.entities),
+    entities: sanitizeGraphLimit(numericLimit(rawEntities), DEFAULT_GRAPH_LIMITS.entities),
     relationships: sanitizeGraphLimit(
-      Number(rawRelationships),
+      numericLimit(rawRelationships),
       DEFAULT_GRAPH_LIMITS.relationships,
     ),
   };

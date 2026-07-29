@@ -1,4 +1,12 @@
-import { forwardRef, type ButtonHTMLAttributes, type MouseEvent } from 'react'
+import {
+  cloneElement,
+  forwardRef,
+  isValidElement,
+  type ButtonHTMLAttributes,
+  type MouseEvent,
+  type MouseEventHandler,
+  type ReactElement,
+} from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
@@ -49,6 +57,16 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       }
       onClick?.(event)
     }
+    const renderedChildren =
+      asChild && isDisabled && isValidElement(children)
+        ? cloneElement(
+            children as ReactElement<{
+              onClick?: MouseEventHandler<HTMLElement>
+              onClickCapture?: MouseEventHandler<HTMLElement>
+            }>,
+            { onClick: undefined, onClickCapture: undefined },
+          )
+        : children
     return (
       <Comp
         {...props}
@@ -64,7 +82,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           // Radix Slot enforces a single element child, so the spinner is
           // never injected as a sibling here. State still propagates via the
           // disabled / aria-busy props above.
-          children
+          renderedChildren
         ) : (
           <>
             {loading && (

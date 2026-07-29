@@ -69,6 +69,8 @@ export function useEditableContent({
       const ok = await onSave(editContent)
       if (ok) setIsEditing(false)
       return ok
+    } catch {
+      return false
     } finally {
       setSaving(false)
     }

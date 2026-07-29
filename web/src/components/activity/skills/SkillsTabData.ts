@@ -1,3 +1,5 @@
+import { skillResponseError } from "./SkillsTabResponse";
+
 export type SkillSegment = "installed" | "hub";
 export type SkillSourceFilter = "all" | "installed" | "project" | "hub" | "deleted";
 
@@ -172,7 +174,7 @@ export async function loadSkillFiles(skillId: string): Promise<SkillFileMeta[]> 
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files`,
   );
   if (!response.ok) {
-    throw new Error(`Failed to load skill files (${response.status})`);
+    throw await skillResponseError(response, `Failed to load skill files (${response.status})`);
   }
   const data = (await response.json()) as { files?: SkillFileMeta[] };
   return data.files ?? [];
@@ -187,7 +189,7 @@ export async function loadSkillFileContent(skillId: string, path: string): Promi
     `${getBaseUrl()}/api/skills/${encodeURIComponent(skillId)}/files/${encodeSkillFilePath(path)}`,
   );
   if (!response.ok) {
-    throw new Error(`Failed to load skill file (${response.status})`);
+    throw await skillResponseError(response, `Failed to load skill file (${response.status})`);
   }
   const data = (await response.json()) as { content?: string };
   if (typeof data.content !== "string") {

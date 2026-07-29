@@ -229,6 +229,11 @@ describe("extractGraphLimits (#19157)", () => {
     expect(extractGraphLimits({ ui: {} })).toEqual(DEFAULT_GRAPH_LIMITS);
     expect(
       extractGraphLimits({
+        ui: { knowledge_graph_limit: null, knowledge_graph_relationship_limit: "" },
+      }),
+    ).toEqual(DEFAULT_GRAPH_LIMITS);
+    expect(
+      extractGraphLimits({
         ui: { knowledge_graph_limit: "lots", knowledge_graph_relationship_limit: -5 },
       }),
     ).toEqual(DEFAULT_GRAPH_LIMITS);

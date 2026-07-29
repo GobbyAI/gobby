@@ -78,6 +78,16 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
   });
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
+  const confirmDiscardChanges = useCallback(
+    () =>
+      confirm({
+        title: "Discard unsaved changes?",
+        description: "Your edits to the current skill file will be lost.",
+        confirmLabel: "Discard",
+        destructive: true,
+      }),
+    [confirm],
+  );
 
   const refreshSkills = useCallback(async () => {
     setIsLoading(true);
@@ -441,6 +451,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
                 onConfirmLeaveChange={(handler) => {
                   confirmLeaveRef.current = handler;
                 }}
+                confirmDiscardChanges={confirmDiscardChanges}
               />
             </div>
           )}

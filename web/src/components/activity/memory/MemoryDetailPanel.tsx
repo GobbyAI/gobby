@@ -67,7 +67,7 @@ export function MemoryDetailPanel({
   });
   const { draft, dirty, saving, serverChanged, save, discard, confirmIfDirty } = detailDraft;
   const [restoring, setRestoring] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     onConfirmLeaveChange(confirmIfDirty);
@@ -122,11 +122,11 @@ export function MemoryDetailPanel({
               disabled={restoring}
               onClick={() => {
                 setRestoring(true);
-                setRestoreError(null);
+                setActionError(null);
                 void Promise.resolve()
                   .then(() => onRestore(memory))
                   .catch((error) => {
-                    setRestoreError(
+                    setActionError(
                       error instanceof Error ? error.message : "Failed to restore memory",
                     );
                   })
@@ -138,14 +138,14 @@ export function MemoryDetailPanel({
           )}
         </div>
       )}
-      {restoreError && (
+      {actionError && (
         <button
           type="button"
           className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
-          onClick={() => setRestoreError(null)}
-          aria-label={`Dismiss restore error: ${restoreError}`}
+          onClick={() => setActionError(null)}
+          aria-label={`Dismiss error: ${actionError}`}
         >
-          {restoreError}
+          {actionError}
         </button>
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
@@ -178,7 +178,16 @@ export function MemoryDetailPanel({
           value={memory.is_global}
           disabled={memory.is_global || promoting}
           onChange={(next) => {
-            if (next && onPromote) void onPromote(memory);
+            if (next && onPromote) {
+              setActionError(null);
+              void Promise.resolve()
+                .then(() => onPromote(memory))
+                .catch((error: unknown) => {
+                  setActionError(
+                    error instanceof Error ? error.message : "Failed to promote memory",
+                  );
+                });
+            }
           }}
         />
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-[var(--bg-secondary)] p-3 text-xs">

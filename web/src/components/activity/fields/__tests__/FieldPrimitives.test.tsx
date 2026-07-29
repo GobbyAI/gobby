@@ -83,16 +83,25 @@ describe("draft field primitives (#17014)", () => {
     // Compact chip-box canon (#19151): the add input stays at the dense
     // control height instead of promoting the whole box to the 44px floor.
     const addInput = screen.getByLabelText("Add Labels");
-    expect(addInput).toHaveClass("min-h-7");
-    expect(addInput).not.toHaveClass("min-h-11");
+  expect(addInput).toHaveClass("min-h-7");
+  expect(addInput).not.toHaveClass("min-h-11");
+  const removeButton = screen.getByLabelText("Remove web");
+  expect(removeButton).toHaveClass(
+    "pointer-coarse:min-h-11",
+    "pointer-coarse:min-w-11",
+  );
+  expect(removeButton.parentElement).toHaveClass(
+    "pointer-coarse:min-h-11",
+    "pointer-coarse:min-w-11",
+  );
 
-    fireEvent.change(addInput, {
+  fireEvent.change(addInput, {
       target: { value: "ui" },
     });
     fireEvent.keyDown(addInput, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith(["web", "ui"]);
 
-    fireEvent.click(screen.getByLabelText("Remove web"));
+  fireEvent.click(removeButton);
     expect(onChange).toHaveBeenCalledWith([]);
   });
 

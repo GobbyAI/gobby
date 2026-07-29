@@ -144,14 +144,17 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
 
   const existingNames = useMemo(() => data.rules.map((rule) => rule.name), [data.rules]);
 
+  const guardedRun = useCallback((next: () => void) => {
+    confirmLeaveRef.current(next);
+  }, []);
+
   useEffect(() => {
     const keep =
       selectedName !== null &&
-      data.filteredRules.some((rule) => rule.name === selectedName);
+      data.rules.some((rule) => rule.name === selectedName);
     const next = keep ? selectedName : data.filteredRules[0]?.name ?? null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- default-selection sync with the filtered list (SkillsTab pattern); settles in one pass.
-    if (next !== selectedName) setSelectedName(next);
-  }, [data.filteredRules, selectedName]);
+    if (next !== selectedName) guardedRun(() => setSelectedName(next));
+  }, [data.filteredRules, data.rules, guardedRun, selectedName]);
 
   useEffect(() => {
     if (!selectedName) return;
@@ -183,10 +186,6 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     };
   }, [detailRefreshToken, fetchRuleDetail, selectedName]);
 
-  const guardedRun = useCallback((next: () => void) => {
-    confirmLeaveRef.current(next);
-  }, []);
-
   const handleSelect = useCallback(
     (rule: RuleSummary) => {
       void guardedRun(() => setSelectedName(rule.name));
@@ -213,6 +212,15 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     setSearchOpen(false);
     data.setSearch("");
   };
+  const toggleFilters = () => {
+    const opening = !showFilters;
+    setShowFilters(opening);
+    if (opening) closeSearch();
+  };
+  const openSearch = () => {
+    setShowFilters(false);
+    setSearchOpen(true);
+  };
 
   useRegisterActivityActions(
     {
@@ -224,13 +232,13 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       },
       filter: {
         open: showFilters,
-        onToggle: () => setShowFilters((value) => !value),
+        onToggle: toggleFilters,
         ariaLabel: "Filter rules",
         activeCount: data.activeFilterCount,
       },
       search: {
         open: searchOpen,
-        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        onToggle: searchOpen ? closeSearch : openSearch,
         ariaLabel: "Search rules",
       },
     },

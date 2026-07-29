@@ -227,6 +227,7 @@ export const SessionsTab = memo(function SessionsTab({
   const closeSearch = () => {
     setSearchOpen(false);
     setSearchInput("");
+    setSearch("");
   };
 
   useRegisterActivityActions(

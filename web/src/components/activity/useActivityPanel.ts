@@ -187,8 +187,10 @@ export function useActivityPanel(isMobile: boolean) {
   // full-screen panel overlay.
   const openTerminal = useCallback(() => {
     setTerminalOpen(true)
-    if (isMobile) setMobileView('chat')
-  }, [isMobile])
+    if (isMobile) {
+      void dirtyGuard.guardedRun(() => setMobileView('chat'))
+    }
+  }, [dirtyGuard, isMobile])
 
   const closeTerminal = useCallback(() => {
     setTerminalOpen(false)

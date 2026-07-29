@@ -1,6 +1,7 @@
 import { useId, useState, type KeyboardEvent } from "react";
 
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
 import type { DraftFieldBaseProps, FieldOption } from "./types";
 
 interface TextFieldProps extends DraftFieldBaseProps {
@@ -268,22 +269,23 @@ export function TagsField({
         {value.map((tag) => (
           <span
             key={tag}
-            className="inline-flex h-5 items-center gap-1 rounded-full bg-accent-tint px-2 text-2xs font-semibold text-accent"
+            className="inline-flex h-5 items-center gap-1 rounded-full bg-accent-tint px-2 text-2xs font-semibold text-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
           >
             {tag}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               className={cn(
-                "inline-flex items-center justify-center rounded-full text-muted-foreground",
+                "min-h-5 w-5 rounded-full text-muted-foreground",
                 "hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
               )}
               aria-label={`Remove ${tag}`}
               disabled={disabled}
               onClick={() => onChange(value.filter((item) => item !== tag))}
             >
               ×
-            </button>
+            </Button>
           </span>
         ))}
         <input

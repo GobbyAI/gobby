@@ -11,13 +11,34 @@ export function getSessionTitleText(title?: string | null): string {
   return trimmed ? trimmed : DEFAULT_SESSION_TITLE;
 }
 
-export function getSessionDisplayTitle(session: SessionTitleLike): string {
-  const titleText = getSessionTitleText(session.title);
+function getSessionRef(session: SessionTitleLike): string | null {
   if (session.seq_num != null) {
-    return `#${session.seq_num}: ${titleText}`;
+    return `#${session.seq_num}`;
   }
-  if (session.ref) {
-    return `${session.ref}: ${titleText}`;
+  return session.ref?.trim() || null;
+}
+
+function stripMatchingSessionRef(title: string, ref: string): string | null {
+  if (title === ref) {
+    return "";
   }
-  return titleText;
+  if (title.startsWith(`${ref}:`)) {
+    return title.slice(ref.length + 1).trimStart();
+  }
+  if (title.startsWith(`${ref} `)) {
+    return title.slice(ref.length).trimStart();
+  }
+  return null;
+}
+
+export function getSessionDisplayTitle(
+  session: SessionTitleLike,
+): string {
+  const titleText = getSessionTitleText(session.title);
+  const ref = getSessionRef(session);
+  if (!ref) {
+    return titleText;
+  }
+  const titleWithoutRef = stripMatchingSessionRef(titleText, ref) ?? titleText;
+  return `${ref}: ${getSessionTitleText(titleWithoutRef)}`;
 }

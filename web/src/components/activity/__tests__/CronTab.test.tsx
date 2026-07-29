@@ -228,7 +228,9 @@ describe('CronTab', () => {
     cronMock.selectedJob = job
     render(<CronTab projectId="p" />)
 
-    expect(screen.getByTitle('gobby:wiki-prune')).toHaveTextContent('gobby:wiki-prune')
+    const rawIdentifier = screen.getByTitle('gobby:wiki-prune')
+    expect(rawIdentifier).toHaveTextContent('gobby:wiki-prune')
+    expect(rawIdentifier.previousElementSibling).toHaveTextContent('Wiki prune')
   })
 
   it('labels the row menu toggle Enable for disabled jobs (#19152)', async () => {

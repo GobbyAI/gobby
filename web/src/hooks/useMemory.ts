@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { DEFAULT_GRAPH_LIMITS } from '../components/activity/memory/KnowledgeGraphModel'
 
 function normalizeTags(tags: unknown): string[] | null {
   if (Array.isArray(tags)) return tags
@@ -384,7 +385,10 @@ export function useMemory(projectId?: string | null) {
     fetchStats()
   }, [fetchMemories, fetchStats])
 
-  const fetchKnowledgeGraph = useCallback(async (limit = 500, relationshipLimit = 2000): Promise<KnowledgeGraphData | null> => {
+  const fetchKnowledgeGraph = useCallback(async (
+    limit = DEFAULT_GRAPH_LIMITS.entities,
+    relationshipLimit = DEFAULT_GRAPH_LIMITS.relationships,
+  ): Promise<KnowledgeGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams({

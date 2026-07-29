@@ -145,11 +145,14 @@ describe('CSS token integrity', () => {
 
   it('keeps the typography ladder defined once, in tokens.css', () => {
     const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')
+    const tokens = readFileSync(join(process.cwd(), 'src/styles/tokens.css'), 'utf8')
 
     expect(theme).not.toMatch(/--text-[0-9a-z]+:\s*calc\(/)
     expect(theme).not.toMatch(/--text-[0-9a-z]+:\s*var\(--font-size-base\)/)
     for (const step of ['2xs', 'xs', 'sm', 'md', 'base', 'lg', 'xl', '2xl', '3xl', '4xl']) {
       expect(theme).toContain(`--text-${step}: var(--text-${step});`)
+      expect(theme.match(new RegExp(`^\\s*--text-${step}:`, 'gm'))).toHaveLength(1)
+      expect(tokens.match(new RegExp(`^\\s*--text-${step}:`, 'gm'))).toHaveLength(1)
     }
   })
 

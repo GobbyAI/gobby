@@ -34,10 +34,11 @@ describe('Button', () => {
 
   it('blocks activation when asChild is disabled', () => {
     const onClick = vi.fn()
+    const childOnClick = vi.fn()
 
     render(
       <Button asChild disabled onClick={onClick}>
-        <a href="/tasks">Tasks</a>
+        <a href="/tasks" onClick={childOnClick}>Tasks</a>
       </Button>,
     )
 
@@ -48,5 +49,6 @@ describe('Button', () => {
     fireEvent.click(link)
 
     expect(onClick).not.toHaveBeenCalled()
+    expect(childOnClick).not.toHaveBeenCalled()
   })
 })

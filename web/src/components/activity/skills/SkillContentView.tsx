@@ -21,8 +21,6 @@ import {
 } from "./SkillsTabData";
 
 const SKILL_CONTENT_PATH = "SKILL.md";
-const DISCARD_UNSAVED_CHANGES_MESSAGE = "Discard unsaved changes?";
-
 interface SkillContentViewProps {
   skill: ActivitySkill;
   /** Deleted skills stay readable but never editable. */
@@ -30,6 +28,7 @@ interface SkillContentViewProps {
   onError: (message: string | null) => void;
   /** Persist new SKILL.md content through the detail draft; true on success. */
   onSaveContent: (next: string) => Promise<boolean>;
+  confirmDiscardChanges: () => Promise<boolean>;
 }
 
 export function SkillContentView({
@@ -37,6 +36,7 @@ export function SkillContentView({
   disabled,
   onError,
   onSaveContent,
+  confirmDiscardChanges,
 }: SkillContentViewProps) {
   const [files, setFiles] = useState<SkillFileMeta[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -115,16 +115,18 @@ export function SkillContentView({
   const { cancelEdit } = editState;
 
   const selectPath = useCallback(
-    (path: string | null) => {
+    async (path: string | null) => {
       if (path === selectedPath) return;
-      if (editState.dirty && !window.confirm(DISCARD_UNSAVED_CHANGES_MESSAGE)) return;
+      if (editState.dirty && !(await confirmDiscardChanges())) {
+        return;
+      }
       cancelEdit();
       setSelectedPath(path);
       setFileContent(null);
       setFileError(null);
       setFileLoading(path !== null);
     },
-    [cancelEdit, editState.dirty, selectedPath],
+    [cancelEdit, confirmDiscardChanges, editState.dirty, selectedPath],
   );
 
   const activeLabel = selectedPath ?? SKILL_CONTENT_PATH;
@@ -148,7 +150,7 @@ export function SkillContentView({
             ? "bg-[var(--accent-soft)] text-foreground"
             : "text-muted-foreground"
         }`}
-        onClick={() => selectPath(path)}
+        onClick={() => void selectPath(path)}
       >
         {label}
       </Button>

@@ -237,6 +237,11 @@ describe("Integrations activity tab", () => {
       "name",
       "search-integrations",
     );
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search integrations" }),
+      "incident",
+    );
+    expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Filter integrations" }));
     expect(screen.getByRole("combobox", { name: "Platform filter" })).toHaveAttribute(
       "name",
@@ -246,16 +251,27 @@ describe("Integrations activity tab", () => {
       "name",
       "integration-status-filter",
     );
+    expect(
+      screen.queryByRole("searchbox", { name: "Search integrations" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Release alerts" })).toBeInTheDocument();
 
     const incident = screen.getByRole("button", { name: "Select Incident bridge" });
     incident.focus();
     await user.keyboard("{Enter}");
     expect(incident.parentElement).toHaveClass("activity-list-row--selected");
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Platform filter" }), "telegram");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Platform filter" }),
+      "telegram",
+    );
     expect(screen.queryByText("Release alerts")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();
 
+    await openSearch(user);
+    expect(
+      screen.queryByRole("combobox", { name: "Platform filter" }),
+    ).not.toBeInTheDocument();
     await user.clear(screen.getByRole("searchbox", { name: "Search integrations" }));
     await user.type(screen.getByRole("searchbox", { name: "Search integrations" }), "incident");
     expect(screen.getByRole("button", { name: "Select Incident bridge" })).toBeInTheDocument();

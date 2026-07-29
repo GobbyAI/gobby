@@ -94,6 +94,21 @@ describe('useActivityPanel — desktop', () => {
     expect(localStorage.getItem('gobby-terminal-dock-open')).toBe('false')
   })
 
+  it('opens the terminal dock without running a panel-leave guard on desktop', () => {
+    const confirmLeave = vi.fn(async () => false)
+    const { result } = renderHook(() => useActivityPanel(false))
+    const unregister = result.current.dirtyGuard.registerDirtyGuard({
+      isDirty: () => true,
+      confirmLeave,
+    })
+
+    act(() => result.current.openTerminal())
+
+    expect(result.current.terminalOpen).toBe(true)
+    expect(confirmLeave).not.toHaveBeenCalled()
+    unregister()
+  })
+
   it('restores the persisted dock-open preference', () => {
     localStorage.setItem('gobby-terminal-dock-open', 'true')
 
@@ -286,6 +301,28 @@ describe('useActivityPanel — mobile', () => {
     const { result } = renderHook(() => useActivityPanel(true))
 
     expect(result.current.effectiveMode).toBe('chat')
+  })
+
+  it('opens the terminal while guarding the mobile panel-to-chat transition', async () => {
+    const confirmLeave = vi.fn(async () => false)
+    const { result } = renderHook(() => useActivityPanel(true))
+
+    await act(async () => result.current.toggleFromChat())
+    expect(result.current.effectiveMode).toBe('panel')
+    const unregister = result.current.dirtyGuard.registerDirtyGuard({
+      isDirty: () => true,
+      confirmLeave,
+    })
+
+    await act(async () => {
+      result.current.openTerminal()
+      await Promise.resolve()
+    })
+
+    expect(result.current.terminalOpen).toBe(true)
+    expect(result.current.effectiveMode).toBe('panel')
+    expect(confirmLeave).toHaveBeenCalledTimes(1)
+    unregister()
   })
 
   it('does not write the desktop layout key on initial mobile render', () => {

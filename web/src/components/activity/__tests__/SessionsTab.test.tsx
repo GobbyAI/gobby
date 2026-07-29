@@ -769,8 +769,31 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("#203: Expired Terminal")).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("button", { name: "Session actions" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
+  });
+
+  it("renders provisional titles with one session ref", async () => {
+    render(
+      <SessionsTab
+        sessions={[
+          makeSession({
+            id: "provisional-title",
+            ref: "#9829",
+            seq_num: 9829,
+            title: "#9829 Codex",
+          }),
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#9829: Codex")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("#9829: #9829 Codex")).toBeNull();
   });
 
   it("orders session entries by ref (#N) descending, not by recency", async () => {

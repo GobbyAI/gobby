@@ -204,6 +204,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -219,6 +221,8 @@ jobs:
       - name: Run vitest with coverage
         run: npx vitest run --coverage
         working-directory: web
+        env:
+          STYLE_RATCHET_TARGET_REF: ${{ github.event.pull_request.base.sha }}
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

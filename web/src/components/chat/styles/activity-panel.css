@@ -17,13 +17,13 @@
   container-name: activity-panel;
 }
 
-/* Scrollbar policy: activity-pane surfaces scroll without visible scrollbar
-   chrome — content stays scrollable via wheel/trackpad/touch. */
-.activity-panel * {
+/* Keep the narrow tab strip scrollable without adding permanent chrome.
+   Descendant editors and textareas retain their own scrollbar affordances. */
+.activity-panel-tab-strip {
   scrollbar-width: none;
 }
 
-.activity-panel *::-webkit-scrollbar {
+.activity-panel-tab-strip::-webkit-scrollbar {
   display: none;
 }
 

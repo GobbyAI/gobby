@@ -1,5 +1,9 @@
 import { render, type RenderOptions } from '@testing-library/react'
 import { type ReactElement } from 'react'
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from '../components/activity/ActivityActionsContext'
 
 /**
  * Render helper that wraps components with any necessary providers.
@@ -11,6 +15,21 @@ export function renderWithProviders(
   options?: Omit<RenderOptions, 'wrapper'>,
 ) {
   return render(ui, { ...options })
+}
+
+export function renderWithActivityActions(
+  ui: ReactElement,
+  options?: Omit<RenderOptions, 'wrapper'>,
+) {
+  return render(ui, {
+    ...options,
+    wrapper: ({ children }) => (
+      <ActivityActionsProvider>
+        <ActivityActionButtons />
+        {children}
+      </ActivityActionsProvider>
+    ),
+  })
 }
 
 export { render }

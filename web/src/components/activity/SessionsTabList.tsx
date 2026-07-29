@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 
+import { getSessionDisplayTitle } from "../../lib/sessionTitle";
 import { SourceIcon } from "../shared/SourceIcon";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
@@ -81,7 +82,10 @@ function SessionEntryRow({
   onSelect,
 }: SessionEntryRowProps) {
   const isPaused = entry.status !== "active";
-  const displayLabel = entry.seqNum ? `#${entry.seqNum}: ${entry.label}` : entry.label;
+  const displayLabel = getSessionDisplayTitle({
+    title: entry.label,
+    seq_num: entry.seqNum,
+  });
 
   return (
     <div
@@ -115,17 +119,15 @@ function SessionEntryRow({
       </div>
       <div className="flex items-center gap-1.5">
         {renderBadges(entry)}
-        {entry.status !== "expired" && (
-          <button
-            className="session-more-btn"
-            onClick={(event) => onMenuButtonClick(event, entry)}
-            title="Session actions"
-            aria-label="Session actions"
-            aria-haspopup="menu"
-          >
-            <KebabIcon />
-          </button>
-        )}
+        <button
+          className="session-more-btn"
+          onClick={(event) => onMenuButtonClick(event, entry)}
+          title="Session actions"
+          aria-label="Session actions"
+          aria-haspopup="menu"
+        >
+          <KebabIcon />
+        </button>
       </div>
     </div>
   );

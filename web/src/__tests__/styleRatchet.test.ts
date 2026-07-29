@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -21,6 +22,7 @@ const STYLE_GUIDE = 'docs/guides/frontend-style-guide.md'
 const ALLOWLIST = 'src/__tests__/styleRatchet.allowlist.ts'
 const SKIP_DIRS = new Set(['__tests__', '__visual__', '__fixtures__', '__mocks__', 'test'])
 const UI_PRIMITIVES_DIR = 'src/components/ui/'
+const ALLOWLIST_REPO_PATH = `web/${ALLOWLIST}`
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
@@ -132,7 +134,167 @@ function ratchet(
   return failures
 }
 
+interface AllowlistSnapshot {
+  counts: Map<string, number>
+  cssFiles: Set<string>
+  cssTotalLineCeiling: number
+}
+
+function delimitedBody(
+  source: string,
+  marker: string,
+  openChar: '{' | '[',
+  closeChar: '}' | ']',
+): string {
+  const markerIndex = source.indexOf(marker)
+  if (markerIndex < 0) throw new Error(`Missing ${marker} in style ratchet allowlist`)
+  const openIndex = source.indexOf(openChar, markerIndex + marker.length)
+  if (openIndex < 0) throw new Error(`Missing ${openChar} after ${marker}`)
+  let depth = 0
+  for (let index = openIndex; index < source.length; index += 1) {
+    if (source[index] === openChar) depth += 1
+    if (source[index] === closeChar) depth -= 1
+    if (depth === 0) return source.slice(openIndex + 1, index)
+  }
+  throw new Error(`Unclosed ${openChar} after ${marker}`)
+}
+
+function pathCounts(body: string): Map<string, number> {
+  return new Map(
+    [...body.matchAll(/'([^']+)':\s*(\d+)/g)].map((match) => [match[1], Number(match[2])]),
+  )
+}
+
+function parseAllowlistSnapshot(source: string): AllowlistSnapshot {
+  const counts = new Map<string, number>()
+  for (const name of ['BTN_CLASS_ALLOWLIST', 'CLS_CONSTANT_ALLOWLIST', 'IMPORTANT_ALLOWLIST']) {
+    for (const [file, count] of pathCounts(delimitedBody(source, `export const ${name}`, '{', '}'))) {
+      counts.set(`${name}:${file}`, count)
+    }
+  }
+
+  const rawBody = delimitedBody(source, 'export const RAW_ELEMENT_ALLOWLIST', '{', '}')
+  for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+    for (const [file, count] of pathCounts(delimitedBody(rawBody, `${element}:`, '{', '}'))) {
+      counts.set(`RAW_ELEMENT_ALLOWLIST:${element}:${file}`, count)
+    }
+  }
+
+  const cssFiles = new Set(
+    [...delimitedBody(source, 'export const CSS_FILE_ALLOWLIST', '[', ']').matchAll(/'([^']+)'/g)]
+      .map((match) => match[1]),
+  )
+  const ceilingMatch = source.match(/export const CSS_TOTAL_LINE_CEILING\s*=\s*(\d+)/)
+  if (!ceilingMatch) throw new Error('Missing CSS_TOTAL_LINE_CEILING in style ratchet allowlist')
+
+  return {
+    counts,
+    cssFiles,
+    cssTotalLineCeiling: Number(ceilingMatch[1]),
+  }
+}
+
+function allowlistPath(path: string): string {
+  return path.startsWith('web/') ? path.slice('web/'.length) : path
+}
+
+function renamedAllowlistPaths(targetRef: string): Map<string, string> {
+  const diff = execFileSync(
+    'git',
+    ['diff', '--name-status', '-M', targetRef, 'HEAD', '--', 'web/src'],
+    { encoding: 'utf8' },
+  )
+  const renames = new Map<string, string>()
+  for (const line of diff.split('\n')) {
+    const [status, targetPath, currentPath] = line.split('\t')
+    if (!status?.startsWith('R') || !targetPath || !currentPath) continue
+    renames.set(allowlistPath(currentPath), allowlistPath(targetPath))
+  }
+  return renames
+}
+
+function targetKeyForCurrent(key: string, renames: ReadonlyMap<string, string>): string {
+  for (const [currentPath, targetPath] of renames) {
+    const suffix = `:${currentPath}`
+    if (key.endsWith(suffix)) {
+      return `${key.slice(0, -currentPath.length)}${targetPath}`
+    }
+  }
+  return key
+}
+
+function targetBranchFailures(
+  current: AllowlistSnapshot,
+  target: AllowlistSnapshot,
+  renames: ReadonlyMap<string, string> = new Map(),
+): string[] {
+  const failures: string[] = []
+  for (const [key, count] of current.counts) {
+    const targetCount = target.counts.get(targetKeyForCurrent(key, renames))
+    if (targetCount === undefined) {
+      failures.push(`${key}: new allowlist entry; migrate the debt instead`)
+    } else if (count > targetCount) {
+      failures.push(`${key}: allowance increased from ${targetCount} to ${count}`)
+    }
+  }
+  for (const file of current.cssFiles) {
+    if (!target.cssFiles.has(renames.get(file) ?? file)) {
+      failures.push(`CSS_FILE_ALLOWLIST:${file}: new recorded stylesheet`)
+    }
+  }
+  if (current.cssTotalLineCeiling > target.cssTotalLineCeiling) {
+    failures.push(
+      `CSS_TOTAL_LINE_CEILING: increased from ${target.cssTotalLineCeiling} ` +
+        `to ${current.cssTotalLineCeiling}`,
+    )
+  }
+  return failures
+}
+
 describe('style ratchet', () => {
+  it('never loosens the allowlist relative to the pull request target branch', () => {
+    const targetRef = process.env.STYLE_RATCHET_TARGET_REF?.trim()
+    if (!targetRef) return
+    const targetSource = execFileSync(
+      'git',
+      ['show', `${targetRef}:${ALLOWLIST_REPO_PATH}`],
+      { encoding: 'utf8' },
+    )
+    const currentSource = readFileSync(ALLOWLIST, 'utf8')
+
+    expect(
+      targetBranchFailures(
+        parseAllowlistSnapshot(currentSource),
+        parseAllowlistSnapshot(targetSource),
+        renamedAllowlistPaths(targetRef),
+      ),
+    ).toEqual([])
+  })
+
+  it('keeps verified file renames under the target branch debt ceiling', () => {
+    const target: AllowlistSnapshot = {
+      counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/OldPanel.tsx', 2]]),
+      cssFiles: new Set(['styles/old-panel.css']),
+      cssTotalLineCeiling: 10,
+    }
+    const current: AllowlistSnapshot = {
+      counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/NewPanel.tsx', 2]]),
+      cssFiles: new Set(['styles/new-panel.css']),
+      cssTotalLineCeiling: 10,
+    }
+    const renames = new Map([
+      ['src/NewPanel.tsx', 'src/OldPanel.tsx'],
+      ['styles/new-panel.css', 'styles/old-panel.css'],
+    ])
+
+    expect(targetBranchFailures(current, target, renames)).toEqual([])
+
+    current.counts.set('RAW_ELEMENT_ALLOWLIST:select:src/NewPanel.tsx', 3)
+    expect(targetBranchFailures(current, target, renames)).toEqual([
+      'RAW_ELEMENT_ALLOWLIST:select:src/NewPanel.tsx: allowance increased from 2 to 3',
+    ])
+  })
+
   it('keeps .btn class usage at or below the recorded per-file counts', () => {
     expect(
       ratchet(

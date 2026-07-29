@@ -117,18 +117,23 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
 
   const saveFileContent = useCallback(async (next: string) => {
     if (!projectId || !selectedFile || fileError) return false
-    const baseUrl = getBaseUrl()
-    const response = await fetch(`${baseUrl}/api/files/write`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, path: selectedFile, content: next }),
-    })
-    if (!response.ok) {
-      console.error(`Save failed (${response.status}):`, await response.text().catch(() => ''))
+    try {
+      const baseUrl = getBaseUrl()
+      const response = await fetch(`${baseUrl}/api/files/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, path: selectedFile, content: next }),
+      })
+      if (!response.ok) {
+        console.error(`Save failed (${response.status}):`, await response.text().catch(() => ''))
+        return false
+      }
+      setFileContent(next)
+      return true
+    } catch (error) {
+      console.error('Save failed:', error)
       return false
     }
-    setFileContent(next)
-    return true
   }, [projectId, selectedFile, fileError])
 
   const editState = useEditableContent({ content: fileContent ?? '', onSave: saveFileContent })

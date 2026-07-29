@@ -1,7 +1,5 @@
-import type { ReactElement, ReactNode } from "react";
 import {
   fireEvent,
-  render as baseRender,
   screen,
   waitFor,
   within,
@@ -9,28 +7,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  ActivityActionButtons,
-  ActivityActionsProvider,
-} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { SkillsTab } from "../../SkillsTab";
+import { renderWithActivityActions as render } from "../../../../test/helpers";
 import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
-
-// The tab's toolbar (selector / Filter / Search) renders in the shared panel
-// header in the real layout; mount it alongside the tab so those controls are
-// reachable in tests.
-function HeaderHarness({ children }: { children: ReactNode }) {
-  return (
-    <ActivityActionsProvider>
-      <ActivityActionButtons />
-      {children}
-    </ActivityActionsProvider>
-  );
-}
-
-const render = (ui: ReactElement) =>
-  baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),

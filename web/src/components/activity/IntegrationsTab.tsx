@@ -19,7 +19,7 @@ import {
 } from "./integrations/IntegrationsTabData";
 import { ChannelDetailPanel } from "./integrations/ChannelDetailPanel";
 import { ChannelsList } from "./integrations/ChannelsList";
-import { IntegrationsFilterPanel } from "./integrations/IntegrationsTabToolbar";
+import { IntegrationsFilterPanel } from "./integrations/IntegrationsFilterPanel";
 import { MessagesView } from "./integrations/MessagesView";
 import {
   filterChannels,
@@ -181,6 +181,15 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     setSearchOpen(false);
     setFilters({ ...filters, search: "" });
   };
+  const toggleFilters = () => {
+    const opening = !showFilters;
+    setShowFilters(opening);
+    if (opening) closeSearch();
+  };
+  const openSearch = () => {
+    setShowFilters(false);
+    setSearchOpen(true);
+  };
   const activeFilterCount =
     (filters.channelType === "all" ? 0 : 1) + (filters.status === "all" ? 0 : 1);
 
@@ -188,13 +197,13 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     {
       filter: {
         open: showFilters,
-        onToggle: () => setShowFilters((value) => !value),
+        onToggle: toggleFilters,
         ariaLabel: "Filter integrations",
         activeCount: activeFilterCount,
       },
       search: {
         open: searchOpen,
-        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        onToggle: searchOpen ? closeSearch : openSearch,
         ariaLabel: "Search integrations",
       },
       onAdd: handleAdd,

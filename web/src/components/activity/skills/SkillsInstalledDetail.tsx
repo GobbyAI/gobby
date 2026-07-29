@@ -27,6 +27,7 @@ interface SkillsInstalledDetailProps {
   onSave: (draft: ActivitySkill) => Promise<boolean>;
   onError: (message: string | null) => void;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
+  confirmDiscardChanges: () => Promise<boolean>;
 }
 
 const INJECTION_FORMAT_OPTIONS = [
@@ -40,6 +41,7 @@ export function SkillsInstalledDetail({
   onSave,
   onError,
   onConfirmLeaveChange,
+  confirmDiscardChanges,
 }: SkillsInstalledDetailProps) {
   const [viewMode, setViewMode] = useState<DetailViewMode>("detail");
   const handleSave = useCallback(
@@ -113,6 +115,7 @@ export function SkillsInstalledDetail({
           disabled={disabled}
           onError={onError}
           onSaveContent={(next) => draftState.save({ ...draft, content: next })}
+          confirmDiscardChanges={confirmDiscardChanges}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">

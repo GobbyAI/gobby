@@ -6,6 +6,7 @@ import { SegmentedControl } from "../../ui/SegmentedControl";
 import {
   DetailPaneHeader,
   SelectField,
+  SwitchField,
   TagsField,
   TextAreaField,
   TextField,
@@ -277,6 +278,12 @@ export function RulesDetailPanel({
               value={draft.agent_scope}
               placeholder="Add agent"
               onChange={(value) => draftState.setField("agent_scope", value)}
+            />
+            <SwitchField
+              label="Enabled"
+              ariaLabel="Rule enabled"
+              value={draft.enabled}
+              onChange={(value) => draftState.setField("enabled", value)}
             />
             <div className="flex min-h-8 items-center gap-2">
               <span className="text-sm font-medium text-muted-foreground">Source</span>

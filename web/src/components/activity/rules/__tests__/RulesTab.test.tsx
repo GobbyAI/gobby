@@ -279,8 +279,9 @@ describe("Rules activity tab", () => {
     expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
     expect(within(rulesList).queryByText("alpha-rule")).not.toBeInTheDocument();
 
-    await user.clear(screen.getByRole("searchbox", { name: "Search rules" }));
     await user.click(screen.getByRole("button", { name: "Filter rules" }));
+    expect(screen.queryByRole("searchbox", { name: "Search rules" })).not.toBeInTheDocument();
+    expect(await within(rulesList).findByText("alpha-rule")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Filter by event"), "before_tool");
     await user.selectOptions(screen.getByLabelText("Filter by group"), "guardrails");
     await user.selectOptions(screen.getByLabelText("Filter by source"), "project");
@@ -296,7 +297,7 @@ describe("Rules activity tab", () => {
     render(<RulesTab />);
 
     expect(await screen.findByLabelText("Rule name")).toHaveValue("alpha-rule");
-    expect(screen.queryByRole("switch", { name: "Rule enabled" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Rule enabled" })).toBeChecked();
   });
 
   it("exposes row actions and retries copy name collisions once", async () => {
@@ -413,6 +414,7 @@ describe("Rules activity tab", () => {
     // Read-only by default — an explicit Edit click opens the buffered editor.
     expect(yamlEditor).toHaveAttribute("readonly");
     await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Rule YAML")).not.toHaveAttribute("readonly");
 
     fireEvent.change(screen.getByLabelText("Rule YAML"), {
       target: {

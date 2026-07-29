@@ -1,7 +1,5 @@
 import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
-import {
-  type IntegrationFilters,
-} from "./IntegrationsTabModel";
+import { type IntegrationFilters } from "./IntegrationsTabModel";
 
 interface IntegrationsFilterPanelProps {
   filters: IntegrationFilters;
