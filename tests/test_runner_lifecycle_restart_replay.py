@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -504,12 +505,142 @@ class TestReclassifyReconciliationPendingRuns:
             reclassified = await _reclassify_reconciliation_pending_runs(runner)
 
         assert reclassified == 0
-        barrier.assert_not_awaited()
+        assert barrier.await_count == 0
         run_storage.merge_resume_metadata.assert_not_called()
         run_storage.list_reconciliation_pending.assert_called_once_with(limit=_RUN_REPLAY_PAGE_SIZE)
 
     @pytest.mark.asyncio
-    async def test_barrier_timeout_fences_live_runs_without_cancelling(self) -> None:
+    @pytest.mark.parametrize("agent_services_available", [True, False])
+    async def test_barrier_timeout_without_identities_is_non_blocking(
+        self,
+        agent_services_available: bool,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        run_storage = SimpleNamespace(
+            get=MagicMock(),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        if not agent_services_available:
+            runner.agent_runner = None
+        barrier_result = HookInboxBarrierResult(
+            replayed=3,
+            timed_out=True,
+            unresolved_run_ids=(),
+            unresolved_session_ids=(),
+        )
+
+        with (
+            patch(
+                "gobby.hooks.inbox.drain_hook_inbox_barrier",
+                new=AsyncMock(return_value=barrier_result),
+            ),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
+        ):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is True
+        run_storage.get.assert_not_called()
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert any(
+            record.levelno == logging.INFO
+            and "replaying 3 envelope(s)" in record.getMessage()
+            and "0 session identity/identities" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_barrier_timeout_session_without_agent_run_is_non_blocking(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        session_id = "019fac30-b716-73c2-934e-7d4fb8aa42d0"
+        run_storage = SimpleNamespace(
+            get=MagicMock(),
+            merge_resume_metadata=MagicMock(),
+        )
+        session_manager = SimpleNamespace(
+            get=MagicMock(return_value=SimpleNamespace(agent_run_id=None))
+        )
+        runner = self._runner(run_storage)
+        runner.session_manager = session_manager
+        barrier_result = HookInboxBarrierResult(
+            replayed=2,
+            timed_out=True,
+            unresolved_run_ids=(),
+            unresolved_session_ids=(session_id,),
+        )
+
+        with (
+            patch(
+                "gobby.hooks.inbox.drain_hook_inbox_barrier",
+                new=AsyncMock(return_value=barrier_result),
+            ),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
+        ):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is True
+        session_manager.get.assert_called_once_with(session_id)
+        run_storage.get.assert_not_called()
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert any(
+            "replaying 2 envelope(s)" in record.getMessage()
+            and "1 session identity/identities" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("missing_service", ["agent", "session"])
+    async def test_barrier_timeout_with_identities_requires_resolution_services(
+        self,
+        missing_service: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        run_storage = SimpleNamespace(
+            get=MagicMock(),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        unresolved_run_ids: tuple[str, ...] = ()
+        unresolved_session_ids: tuple[str, ...] = ()
+        if missing_service == "agent":
+            runner.agent_runner = None
+            unresolved_run_ids = (self._RUN_ID,)
+        else:
+            unresolved_session_ids = ("019fac30-b716-73c2-934e-7d4fb8aa42d0",)
+        barrier_result = HookInboxBarrierResult(
+            replayed=0,
+            timed_out=True,
+            unresolved_run_ids=unresolved_run_ids,
+            unresolved_session_ids=unresolved_session_ids,
+        )
+
+        with (
+            patch(
+                "gobby.hooks.inbox.drain_hook_inbox_barrier",
+                new=AsyncMock(return_value=barrier_result),
+            ),
+            caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
+        ):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is False
+        run_storage.get.assert_not_called()
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert any(
+            record.levelno == logging.WARNING
+            and f"{missing_service} services were unavailable" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_barrier_timeout_fences_live_runs_without_cancelling(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         running_run = SimpleNamespace(id=self._RUN_ID, status="running")
         cancelled_run = SimpleNamespace(id=self._OTHER_RUN_ID, status="cancelled")
         runs = {run.id: run for run in (running_run, cancelled_run)}
@@ -527,7 +658,10 @@ class TestReclassifyReconciliationPendingRuns:
         )
         drain = AsyncMock(return_value=barrier_result)
 
-        with patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain):
+        with (
+            patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain),
+            caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
+        ):
             settled = await _run_agent_hook_replay_barrier(runner, timeout_seconds=1.0)
 
         assert settled is False
@@ -538,6 +672,10 @@ class TestReclassifyReconciliationPendingRuns:
             self._RUN_ID, {"reconciliation_pending": True}
         )
         run_storage.cancel.assert_not_called()
+        assert any(
+            record.levelno == logging.WARNING and "2 unresolved run(s)" in record.getMessage()
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_settled_barrier_reconciles_then_clears_fences(self) -> None:
@@ -662,5 +800,5 @@ class TestReclassifyReconciliationPendingRuns:
 
         assert reclassified == 0
         barrier.assert_awaited_once()
-        reconcile_mock.assert_not_awaited()
+        assert reconcile_mock.await_count == 0
         run_storage.merge_resume_metadata.assert_not_called()

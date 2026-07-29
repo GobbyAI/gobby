@@ -574,20 +574,33 @@ async def _run_agent_hook_replay_barrier(
     )
     if not result.timed_out:
         return True
-    if agent_runner is None:
-        logger.warning("Hook replay timed out while agent services were unavailable")
-        return False
 
-    run_storage = agent_runner.run_storage
     unresolved_run_ids = set(result.unresolved_run_ids)
+    unresolved_session_ids = result.unresolved_session_ids
     session_manager = getattr(runner, "session_manager", None)
+    if unresolved_session_ids and session_manager is None:
+        logger.warning("Hook replay timed out while session services were unavailable")
+        return False
     if session_manager is not None:
-        for session_id in result.unresolved_session_ids:
+        for session_id in unresolved_session_ids:
             session = await _run_db(runner, session_manager.get, session_id)
             run_id = getattr(session, "agent_run_id", None)
             if isinstance(run_id, str) and run_id:
                 unresolved_run_ids.add(run_id)
 
+    if not unresolved_run_ids:
+        logger.info(
+            "Hook inbox replay timed out after replaying %d envelope(s); "
+            "%d session identity/identities produced no agent runs",
+            result.replayed,
+            len(unresolved_session_ids),
+        )
+        return True
+    if agent_runner is None:
+        logger.warning("Hook replay timed out while agent services were unavailable")
+        return False
+
+    run_storage = agent_runner.run_storage
     for run_id in unresolved_run_ids:
         try:
             run = await _run_db(runner, run_storage.get, run_id)
