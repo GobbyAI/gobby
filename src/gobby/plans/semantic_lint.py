@@ -250,6 +250,9 @@ def normalize_file_path(value: str) -> str | None:
     if ":" in candidate and "/" not in candidate:
         return None
     suffix = _suffix(candidate)
+    if candidate.rsplit("/", 1)[-1] == suffix:
+        # A bare extension such as `.tsx` names a file type, not a file.
+        return None
     if "/" in candidate:
         if candidate.endswith("/") or suffix not in _KNOWN_FILE_SUFFIXES:
             return None

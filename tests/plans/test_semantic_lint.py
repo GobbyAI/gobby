@@ -159,6 +159,40 @@ def test_dotted_symbols_do_not_emit_fake_path_tokens(tmp_path: Path) -> None:
     assert not any("hashlib.sh" in error for error in errors)
 
 
+def test_bare_extensions_are_not_concrete_paths(tmp_path: Path) -> None:
+    """`.tsx` names a file type; only a named file can appear in a target inventory."""
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update `src/app.py`; non-test `.ts`, `.tsx`, and `.css` files stay
+        under 1,000 lines, and `web/src/.tsx` is not a file either.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert errors == []
+
+
+def test_dotfiles_with_extensions_are_concrete_paths(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update `.impeccable.md` alongside `src/app.py`.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert any(".impeccable.md" in error for error in errors)
+
+
 def test_multiple_targets_entries_parse(tmp_path: Path) -> None:
     errors = _lint(
         tmp_path,

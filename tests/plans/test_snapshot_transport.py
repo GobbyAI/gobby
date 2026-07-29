@@ -239,7 +239,9 @@ def test_page_union_and_local_hash_verification() -> None:
 
 
 def test_sidecar_records_paged_and_bounded() -> None:
-    snapshot = (REPO_ROOT / ".gobby/plans/adversary-convergence-improvements.md").read_bytes()
+    # Synthesized rather than read from `.gobby/plans/`: a repository plan artifact
+    # is a moving target, and deleting one used to break this test (#19252).
+    snapshot = _valid_plan_bytes(extra=("sidecar page\n" * 15_000))
     large_value = 'immutable sidecar 🧪 "quoted" \\\\ value\n' * 1_200
     requirements_bundle = assemble_requirements_bundle(
         project_root=REPO_ROOT,
