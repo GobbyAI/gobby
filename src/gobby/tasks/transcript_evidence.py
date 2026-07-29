@@ -345,16 +345,21 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     if not _inside_window(completed_at, state.window_start):
         return
     pending = state.pending.get(outcome.outer_call_id)
-    if pending is not None and _tool_basename(pending.name) != "exec":
-        # Direct exec_command calls also pass through Codex's execution-chain
-        # parser. Their ParsedMessage result carries the authoritative terminal
-        # envelope, so ignore the provisional nested projection.
-        return
+    direct_pending = pending is not None and _tool_basename(pending.name) != "exec"
     order = state.next_order()
     match = classify_validation_command(outcome.command, state.detection_config)
     if match is None:
         return
     status, exit_code, unknown_reason = _extract_outcome(outcome.result)
+    if direct_pending:
+        if status == "unknown":
+            # Keep the call pending so ParsedMessage can recover structured
+            # direct results that the execution-chain parser cannot certify.
+            return
+        # The execution-chain parser accepts direct terminal outcomes only from
+        # the exact native envelope. Consume the call before ParsedMessage sees
+        # the same function_call_output and records a duplicate result.
+        state.pending.pop(outcome.outer_call_id, None)
     if status == "unknown":
         state.degraded.append(
             f"codex could not recover a definitive outcome for {match.label}: "

@@ -168,6 +168,33 @@ def _codex_response_item(payload: dict[str, Any], timestamp: datetime) -> dict[s
     return {"type": "response_item", "timestamp": timestamp.isoformat(), "payload": payload}
 
 
+def _codex_direct_exec_pair(
+    *,
+    command: str,
+    result: Any,
+    call_id: str = "direct-1",
+) -> list[dict[str, Any]]:
+    return [
+        _codex_response_item(
+            {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": command}),
+            },
+            BASE_TIME,
+        ),
+        _codex_response_item(
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result,
+            },
+            BASE_TIME + timedelta(seconds=1),
+        ),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
@@ -224,29 +251,53 @@ async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exit_code", "expected_outcome"),
+    [(0, "success"), (7, "failure")],
+)
+async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
+    tmp_path: Path,
+    exit_code: int,
+    expected_outcome: str,
+) -> None:
+    transcript = tmp_path / "codex-direct-native.jsonl"
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
+    envelope = (
+        "Chunk ID: 1d32cc\n"
+        "Wall time: 2.9618 seconds\n"
+        f"Process exited with code {exit_code}\n"
+        "Original token count: 169\n"
+        "Output:\n"
+        "focused validation output\n"
+    )
+    _write_jsonl(
+        transcript,
+        _codex_direct_exec_pair(command=command, result=envelope),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code, run.command) for run in evidence.validation_runs] == [
+        (expected_outcome, exit_code, command)
+    ]
+    assert not evidence.degraded_capabilities
+
+
+@pytest.mark.asyncio
 async def test_codex_direct_exec_command_uses_structured_result(tmp_path: Path) -> None:
     transcript = tmp_path / "codex-direct.jsonl"
     _write_jsonl(
         transcript,
-        [
-            _codex_response_item(
-                {
-                    "type": "function_call",
-                    "call_id": "direct-1",
-                    "name": "exec_command",
-                    "arguments": json.dumps({"cmd": "uv run ruff check src/gobby"}),
-                },
-                BASE_TIME,
-            ),
-            _codex_response_item(
-                {
-                    "type": "function_call_output",
-                    "call_id": "direct-1",
-                    "output": {"exit_code": 1, "output": "lint failed"},
-                },
-                BASE_TIME + timedelta(seconds=1),
-            ),
-        ],
+        _codex_direct_exec_pair(
+            command="uv run ruff check src/gobby",
+            result={"exit_code": 1, "output": "lint failed"},
+        ),
     )
 
     evidence = await derive_transcript_evidence(
@@ -260,6 +311,82 @@ async def test_codex_direct_exec_command_uses_structured_result(tmp_path: Path) 
     assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
         ("failure", 1, ("lint", "type_check"))
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(
+            (
+                "Chunk ID: still-running\n"
+                "Wall time: 30.001 seconds\n"
+                "Process running with session ID 92\n"
+                "Original token count: 5\n"
+                "Output:\n"
+                "still running\n"
+            ),
+            id="running",
+        ),
+        pytest.param(
+            (
+                "Chunk ID: malformed\n"
+                "Wall time: 0.5 seconds\n"
+                "Process exited with code 0\n"
+                "Original token count: nope\n"
+                "Output:\n"
+            ),
+            id="malformed",
+        ),
+        pytest.param(
+            [
+                (
+                    "Chunk ID: duplicate-1\n"
+                    "Wall time: 0.5 seconds\n"
+                    "Process exited with code 0\n"
+                    "Output:\n"
+                ),
+                (
+                    "Chunk ID: duplicate-2\n"
+                    "Wall time: 0.5 seconds\n"
+                    "Process exited with code 0\n"
+                    "Output:\n"
+                ),
+            ],
+            id="duplicate",
+        ),
+        pytest.param(
+            (
+                "ordinary command output\n"
+                "Chunk ID: spoofed\n"
+                "Wall time: 0.5 seconds\n"
+                "Process exited with code 0\n"
+                "Output:\n"
+            ),
+            id="output-spoofed",
+        ),
+    ],
+)
+async def test_codex_direct_exec_command_keeps_non_authoritative_envelopes_unknown(
+    tmp_path: Path,
+    result: Any,
+) -> None:
+    transcript = tmp_path / "codex-direct-unknown.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_direct_exec_pair(command="uv run pytest tests/tasks -q", result=result),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("unknown", None)]
+    assert evidence.degraded_capabilities
 
 
 @pytest.mark.asyncio

@@ -213,10 +213,14 @@ def _validation_events(
             "payload": {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": {
-                    "exit_code": outcome,
-                    "output": "passed" if outcome == 0 else "failed",
-                },
+                "output": (
+                    "Chunk ID: 1d32cc\n"
+                    "Wall time: 2.9618 seconds\n"
+                    f"Process exited with code {outcome}\n"
+                    "Original token count: 169\n"
+                    "Output:\n"
+                    f"{'passed' if outcome == 0 else 'failed'}\n"
+                ),
             },
         },
     ]
