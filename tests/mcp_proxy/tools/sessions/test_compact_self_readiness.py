@@ -22,7 +22,7 @@ class _TestRegistry(InternalToolRegistry):
 
 
 @pytest.mark.asyncio
-async def test_terminal_compact_self_waits_for_compact_session_start_without_pane_watcher() -> None:
+async def test_terminal_compact_self_schedules_codex_marker_watcher() -> None:
     registry = _TestRegistry(name="test", description="test")
     session = MagicMock()
     session.id = "s1"
@@ -34,7 +34,7 @@ The compact handoff summary is ready, and the terminal session can proceed with 
 
 ## Next Steps
 
-Send the compact command and wait for the compact SessionStart hook.
+Send the compact command and watch for the provider's completion marker.
 """
     session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
@@ -71,7 +71,7 @@ Send the compact command and wait for the compact SessionStart hook.
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal."
             "schedule_codex_compact_self_continuation_readiness",
-            create=True,
+            return_value=True,
         ) as mock_schedule_readiness,
         session_context_for_test("s1"),
     ):
@@ -79,4 +79,9 @@ Send the compact command and wait for the compact SessionStart hook.
 
     assert result["compacted"] is True
     assert result["continuation_pending"] is True
-    mock_schedule_readiness.assert_not_called()
+    mock_schedule_readiness.assert_called_once_with(
+        db,
+        pending_session_id="s1",
+        target_session=session,
+        before_command="",
+    )
