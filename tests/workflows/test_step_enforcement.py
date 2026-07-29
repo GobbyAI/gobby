@@ -488,6 +488,8 @@ class TestStepMCPToolBlocking:
         assert response.decision == "block"
         assert response.reason is not None
         assert "gobby-tasks:close_task" in response.reason
+        assert "Abandon this call" in response.reason
+        assert "do not retry the same blocked tool in this step" in response.reason
 
     @pytest.mark.parametrize(
         ("allowed_mcp_tools", "blocked_mcp_tools", "expected_decision"),

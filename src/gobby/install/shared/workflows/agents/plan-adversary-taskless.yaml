@@ -293,7 +293,10 @@ steps:
       Review artifact_path. Return verdict approved, needs_review, or
       needs_requirements to the parent. Every reviewer-produced result must include
       the complete delivered convergence_telemetry object. Send that exact JSON with
-      send_message, then call end_agent_run.
+      send_message, then call end_agent_run. Persist validated durable implementation
+      facts discovered during review with project-scoped
+      gobby-memory:create_memory(memory_type="fact", is_global=false); bugs and
+      speculative proposals remain findings.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:create_task"
@@ -315,6 +318,7 @@ steps:
       - "gobby-plans:expire_plan_review_evidence"
       - "gobby-review-learning:recall_review_lessons_by_class"
       - "gobby-review-learning:list_check_keys"
+      - "gobby-memory:create_memory"
       - "gobby-skills:get_skill"
     on_mcp_success:
       - server: gobby-agents

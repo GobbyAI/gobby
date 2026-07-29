@@ -26,6 +26,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
 
+def _step_tool_block_guidance(step_name: str) -> str:
+    return (
+        f"\nThis capability is unavailable for the rest of the '{step_name}' step. "
+        "Abandon this call, continue with an allowed operation, and do not retry "
+        "the same blocked tool in this step."
+    )
+
+
 class EnforcementCheckMixin:
     """Tool restriction checks for agent and step workflow enforcement."""
 
@@ -192,6 +200,7 @@ class EnforcementCheckMixin:
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Variable '{variable_name}' is managed by the step workflow runtime."
+                    f"{_step_tool_block_guidance(step.name)}"
                 )
                 self._audit_step_tool_call(
                     session_id,
@@ -217,6 +226,7 @@ class EnforcementCheckMixin:
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
                     f"Allowed tools: {', '.join(step.allowed_tools)}{guidance}"
+                    f"{_step_tool_block_guidance(step.name)}"
                 )
                 self._audit_step_tool_call(
                     session_id,
@@ -236,6 +246,7 @@ class EnforcementCheckMixin:
             reason = (
                 f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                 f"Tool '{tool_name}' is blocked in the '{step.name}' step."
+                f"{_step_tool_block_guidance(step.name)}"
             )
             self._audit_step_tool_call(
                 session_id,
@@ -275,6 +286,7 @@ class EnforcementCheckMixin:
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
+                            f"{_step_tool_block_guidance(step.name)}"
                         )
                         self._audit_step_tool_call(
                             session_id,
@@ -301,6 +313,7 @@ class EnforcementCheckMixin:
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
                             f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
+                            f"{_step_tool_block_guidance(step.name)}"
                         )
                         self._audit_step_tool_call(
                             session_id,
@@ -329,6 +342,7 @@ class EnforcementCheckMixin:
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"Variable '{variable_name}' is managed by the step workflow runtime."
+                            f"{_step_tool_block_guidance(step.name)}"
                         )
                         self._audit_step_tool_call(
                             session_id,

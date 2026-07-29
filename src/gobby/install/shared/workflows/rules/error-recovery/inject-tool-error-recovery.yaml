@@ -16,6 +16,7 @@ rules:
           The previous tool call failed. This is NON-FATAL — do NOT stop or give up.
           If you made multiple parallel tool calls, some may have SUCCEEDED — use those results and continue working.
           You MUST change your approach for the failed call — do NOT retry with identical or near-identical arguments.
+          If workflow-step enforcement says a tool is blocked or unavailable, abandon that call and continue with an allowed operation. Do not retry the blocked tool in the same step.
           1. Read the error message — it tells you what went wrong
           2. Try a different approach (different command, different arguments, different tool)
           3. If you assumed something (column exists, file path, API shape), verify it first
