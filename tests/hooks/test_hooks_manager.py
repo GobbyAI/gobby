@@ -269,9 +269,21 @@ class TestHookManagerHandle:
             cwd=str(temp_dir),
         )
 
-        response = manager.handle(event)
+        status_at_reconciliation: list[str] = []
+
+        def observe_reconciliation(*_args: Any, **_kwargs: Any) -> None:
+            current = manager.session_manager.get(session.id)
+            assert current is not None
+            status_at_reconciliation.append(current.status)
+
+        with patch(
+            "gobby.hooks.hook_manager.reconcile_session_activation",
+            side_effect=observe_reconciliation,
+        ):
+            response = manager.handle(event)
 
         assert response.decision == "allow"
+        assert status_at_reconciliation == ["active"]
         revived = manager.session_manager.get(session.id)
         assert revived is not None
         assert revived.status == "active"

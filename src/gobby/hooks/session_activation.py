@@ -148,6 +148,12 @@ def _reconcile_session_activation(
             missing=("stored_session",),
             reason="session_not_found",
         )
+    session_status = getattr(session, "status", None)
+    if session_status in {"expired", "deleted"}:
+        return ActivationReconciliationResult(
+            changed=False,
+            reason=f"session_status_terminal:{session_status}",
+        )
 
     db = getattr(session_manager, "db", None)
     if db is None:

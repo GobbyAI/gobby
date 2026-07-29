@@ -227,6 +227,41 @@ def test_before_agent_fast_noop_when_current(
     assert result.reason == "current"
 
 
+@pytest.mark.parametrize("status", ["expired", "deleted"])
+def test_terminal_session_status_skips_reconciliation(
+    status: str,
+    tmp_path: Path,
+) -> None:
+    session = SimpleNamespace(id="terminal-session", status=status)
+    db_access = MagicMock(side_effect=AssertionError("terminal session touched database"))
+
+    class TerminalSessionManager:
+        def get(self, _session_id: str) -> Any:
+            return session
+
+        @property
+        def db(self) -> Any:
+            db_access()
+            raise AssertionError("terminal session touched database")
+
+    handler = SimpleNamespace(_session_manager=TerminalSessionManager())
+    event = _event(HookEventType.BEFORE_AGENT, "terminal-session", tmp_path)
+
+    with (
+        patch("gobby.workflows.state_manager.SessionVariableManager") as variable_manager,
+        patch("gobby.hooks.session_activation._recover_agent_run") as recover_agent_run,
+        patch("gobby.hooks.session_activation._activate_agent") as activate_agent,
+    ):
+        result = reconcile_session_activation(event, handler)
+
+    assert result.changed is False
+    assert result.reason == f"session_status_terminal:{status}"
+    db_access.assert_not_called()
+    variable_manager.assert_not_called()
+    recover_agent_run.assert_not_called()
+    activate_agent.assert_not_called()
+
+
 def test_expired_session_resumes_across_turn_start_and_end(
     db: HubDatabase,
     session_manager: SessionManager,
