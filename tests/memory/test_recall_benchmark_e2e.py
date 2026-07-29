@@ -28,9 +28,14 @@ baseline, with at least one newly included relevant id carrying ``graph`` in
 ``search_via`` and no MRR regression on the returned order.
 
 Run:
-    GOBBY_TEST_FALKOR_PASSWORD="$(awk '/^falkordb_password:/{print $2}' ~/.gobby/bootstrap.yaml)" \\
-        GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_recall_benchmark_e2e.py \\
-        -m integration -v -s
+GOBBY_TEST_FALKOR_PASSWORD="$(
+uv run python -c 'from pathlib import Path
+from gobby.cli.installers.compose_env import resolve_compose_runtime
+runtime = resolve_compose_runtime(Path.home() / ".gobby", profiles=("falkordb",))
+print(runtime.environment["GOBBY_FALKORDB_PASSWORD"])'
+)" \\
+GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_recall_benchmark_e2e.py \\
+-m integration -v -s
 
 Connection is read from GOBBY_TEST_FALKOR_HOST (default 127.0.0.1),
 GOBBY_TEST_FALKOR_PORT (default 16379), GOBBY_TEST_FALKOR_PASSWORD. The test runs in a

@@ -241,9 +241,13 @@ def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
     return _publish_private_file(salt_file, salt)
 
 
-def _get_or_create_salt() -> bytes:
+def _secret_material_home(gobby_home: Path | None = None) -> Path:
+    return get_gobby_home() if gobby_home is None else gobby_home.expanduser()
+
+
+def _get_or_create_salt(gobby_home: Path | None = None) -> bytes:
     """Get or atomically create the legacy machine_id encryption salt."""
-    salt_file = get_gobby_home() / _SALT_FILENAME
+    salt_file = _secret_material_home(gobby_home) / _SALT_FILENAME
     salt_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -342,9 +346,9 @@ def _read_kek_file(kek_file: Path) -> bytes:
     return key
 
 
-def _get_or_create_kek_file_key() -> bytes:
+def _get_or_create_kek_file_key(gobby_home: Path | None = None) -> bytes:
     """Return the default key-file KEK, creating it with 0600 permissions."""
-    kek_file = get_gobby_home() / _KEK_FILENAME
+    kek_file = _secret_material_home(gobby_home) / _KEK_FILENAME
     kek_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         return _read_kek_file(kek_file)
@@ -390,8 +394,15 @@ class SecretStore:
     All secret names are normalized to lowercase for case-insensitive matching.
     """
 
-    def __init__(self, db: HubDatabase, *, kek_passphrase: str | None = None):
+    def __init__(
+        self,
+        db: HubDatabase,
+        *,
+        gobby_home: Path | None = None,
+        kek_passphrase: str | None = None,
+    ) -> None:
         self.db = db
+        self.gobby_home = _secret_material_home(gobby_home)
         self.kek_passphrase = kek_passphrase
         self._fernet: Fernet | None = None
 
@@ -450,7 +461,13 @@ class SecretStore:
     ) -> tuple[Fernet, str | None, int | None, int | None, int | None]:
         posture = _normalize_posture(posture)
         if posture == POSTURE_KEY_FILE:
-            return Fernet(_get_or_create_kek_file_key()), None, None, None, None
+            return (
+                Fernet(_get_or_create_kek_file_key(self.gobby_home)),
+                None,
+                None,
+                None,
+                None,
+            )
 
         salt = os.urandom(16) if salt_text is None else _decode_bytes(salt_text)
         resolved_n = n or SCRYPT_N
@@ -559,7 +576,7 @@ class SecretStore:
         machine_id = get_machine_id()
         if not machine_id:
             raise RuntimeError("Cannot migrate legacy secrets: machine ID unavailable")
-        return Fernet(_derive_fernet_key(machine_id, _get_or_create_salt()))
+        return Fernet(_derive_fernet_key(machine_id, _get_or_create_salt(self.gobby_home)))
 
     def _initialize_envelope(
         self,

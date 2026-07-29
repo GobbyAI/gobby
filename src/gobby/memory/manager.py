@@ -102,12 +102,18 @@ class MemoryManager(MemoryManagerFacadeMethods):
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
-        self._falkor_client = self._build_falkor_client(
-            falkordb_host=falkordb_host,
-            falkordb_port=falkordb_port,
-            falkordb_password=falkordb_password,
-            falkordb_graph_name=falkordb_graph_name,
-        )
+        self._graph_initialization_error: BaseException | None = None
+        try:
+            self._falkor_client = self._build_falkor_client(
+                falkordb_host=falkordb_host,
+                falkordb_port=falkordb_port,
+                falkordb_password=falkordb_password,
+                falkordb_graph_name=falkordb_graph_name,
+            )
+        except Exception as exc:
+            self._graph_initialization_error = exc
+            self._falkor_client = None
+            logger.exception("Failed to initialize FalkorDB graph subsystem")
         self._dedup_service = self._build_dedup_service(vector_store, embed_fn)
         self._kg_service = self._build_kg_service(
             llm_service=llm_service,
@@ -324,8 +330,10 @@ class MemoryManager(MemoryManagerFacadeMethods):
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service
-        except Exception as e:
-            logger.warning("Failed to initialize KnowledgeGraphService: %s", e)
+        except Exception as exc:
+            self._graph_initialization_error = exc
+            self._falkor_client = None
+            logger.exception("Failed to initialize KnowledgeGraphService")
             return None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -394,6 +402,11 @@ class MemoryManager(MemoryManagerFacadeMethods):
     def falkor_client(self) -> FalkorClient | None:
         """Shared FalkorDB client for graph-backed subsystems, when configured."""
         return self._falkor_client
+
+    @property
+    def graph_initialization_failed(self) -> bool:
+        """Whether configured graph construction failed while core memory stayed available."""
+        return self._graph_initialization_error is not None
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""

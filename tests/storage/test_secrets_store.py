@@ -534,6 +534,45 @@ def test_secret_material_paths_treat_blank_gobby_home_as_unset(
 # =============================================================================
 
 
+def test_secret_store_explicit_home_binds_kek_and_legacy_salt(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_machine_id: str,
+) -> None:
+    ambient_home = tmp_path / "ambient-home"
+    explicit_home = tmp_path / "explicit-home"
+    monkeypatch.setenv("GOBBY_HOME", str(ambient_home))
+
+    store = SecretStore(temp_db, gobby_home=explicit_home)
+    store.set("bound_secret", "value")
+    store._legacy_fernet()
+
+    assert SecretStore(temp_db, gobby_home=explicit_home).get("bound_secret") == "value"
+    assert (explicit_home / ".secret_kek").exists()
+    assert (explicit_home / ".secret_salt").exists()
+    assert not (ambient_home / ".secret_kek").exists()
+    assert not (ambient_home / ".secret_salt").exists()
+
+
+def test_secret_store_default_home_binds_ambient_home(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_machine_id: str,
+) -> None:
+    ambient_home = tmp_path / "ambient-home"
+    monkeypatch.setenv("GOBBY_HOME", str(ambient_home))
+
+    store = SecretStore(temp_db)
+    store._kek_fernet(POSTURE_KEY_FILE)
+    store._legacy_fernet()
+
+    assert store.gobby_home == ambient_home
+    assert (ambient_home / ".secret_kek").exists()
+    assert (ambient_home / ".secret_salt").exists()
+
+
 class TestDeriveFernetKey:
     def test_returns_valid_fernet_key(self) -> None:
         salt = os.urandom(16)

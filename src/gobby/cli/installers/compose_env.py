@@ -148,7 +148,7 @@ def _service_environment(
 
     try:
         store = ConfigStore(db)
-        secret_store = SecretStore(db)
+        secret_store = SecretStore(db, gobby_home=gobby_home)
         keys = set(store.list_keys())
         values: dict[str, str] = {}
 

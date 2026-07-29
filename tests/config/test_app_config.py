@@ -1562,7 +1562,7 @@ class TestBootstrapConfig:
 
         bootstrap = load_bootstrap(str(bootstrap_file))
 
-        assert bootstrap.falkordb_password == "gobbyfalkor"
+        assert not hasattr(bootstrap, "falkordb_password")
 
     def test_to_config_dict(self) -> None:
         """Test bootstrap converts to DaemonConfig-compatible dict."""

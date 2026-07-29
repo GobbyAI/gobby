@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gobby.cli.installers import compose_env
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -41,9 +45,10 @@ class _ConfigStore:
 
 class _SecretStore:
     values: dict[str, str] = {}
+    gobby_homes: list[Path | None] = []
 
-    def __init__(self, _db: object) -> None:
-        pass
+    def __init__(self, _db: object, *, gobby_home: Path | None = None) -> None:
+        self.gobby_homes.append(gobby_home)
 
     def exists(self, name: str) -> bool:
         return name in self.values
@@ -112,6 +117,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     db = _Db()
+    _SecretStore.gobby_homes = []
     _ConfigStore.values = {
         "databases.qdrant.url": "http://localhost:7333",
         "databases.qdrant.port": 7333,
@@ -135,7 +141,47 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
         "GOBBY_FALKORDB_PASSWORD": "falkor-secret",
         "GOBBY_FALKORDB_PORT": "17000",
     }
+    assert _SecretStore.gobby_homes == [tmp_path]
     assert db.closed is True
+
+
+def test_service_environment_decrypts_falkor_secret_from_explicit_home(
+    hub_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ambient_home = tmp_path / "ambient"
+    explicit_home = tmp_path / "managed"
+    monkeypatch.setenv("GOBBY_HOME", str(ambient_home))
+
+    store = ConfigStore(hub_db)
+    secret_store = SecretStore(hub_db, gobby_home=explicit_home)
+    store.set("databases.falkordb.host", "127.0.0.1", source="test")
+    store.set("databases.falkordb.port", 16379, source="test")
+    store.set_secret(
+        "databases.falkordb.password",
+        "managed-secret",
+        secret_store,
+        source="test",
+    )
+
+    opened_bootstrap_paths: list[str | Path] = []
+
+    def open_db(bootstrap_path: str | Path, **_kwargs: object) -> object:
+        opened_bootstrap_paths.append(bootstrap_path)
+        return nullcontext(hub_db)
+
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_db)
+
+    env = compose_env._service_environment(
+        explicit_home,
+        required_profiles=("falkordb",),
+    )
+
+    assert opened_bootstrap_paths == [str(explicit_home / "bootstrap.yaml")]
+    assert env["GOBBY_FALKORDB_PASSWORD"] == "managed-secret"
+    assert (explicit_home / ".secret_kek").exists()
+    assert not (ambient_home / ".secret_kek").exists()
 
 
 def test_missing_falkordb_secret_is_actionable_without_generating(

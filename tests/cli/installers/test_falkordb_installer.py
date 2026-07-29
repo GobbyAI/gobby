@@ -212,7 +212,7 @@ class TestInstallFalkorDB:
     ) -> None:
         module = _falkor_module()
         store = ConfigStore(hub_db)
-        secret_store = SecretStore(hub_db)
+        secret_store = SecretStore(hub_db, gobby_home=tmp_path)
         store.set("databases.falkordb.host", "127.0.0.1", source="test")
         store.set("databases.falkordb.port", 16379, source="test")
         store.set_secret(
@@ -279,6 +279,7 @@ class TestInstallFalkorDB:
         assert json.loads(row["value"]) == "$secret:falkordb_password"
         assert row["is_secret"] is True
         assert hub_db.fetchone("SELECT 1 FROM secrets WHERE name = %s", ("falkordb_password",))
+        assert SecretStore(hub_db, gobby_home=tmp_path).get("falkordb_password") == "secret"
 
     def test_installer_stops_before_compose_when_config_store_update_fails(
         self,
@@ -401,7 +402,7 @@ class TestUninstallFalkorDB:
             result = module.uninstall_falkordb(gobby_home=tmp_path)
 
             store = ConfigStore(hub_db)
-            secret_store = SecretStore(hub_db)
+            secret_store = SecretStore(hub_db, gobby_home=tmp_path)
             assert result["success"] is True
             assert store.get("databases.falkordb.host") is None
             assert store.get("databases.falkordb.port") is None

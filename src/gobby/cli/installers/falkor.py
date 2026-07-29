@@ -78,7 +78,7 @@ def _resolve_falkordb_password(
         from gobby.storage.secrets import SecretStore
 
         store = ConfigStore(db)
-        secret_store = SecretStore(db)
+        secret_store = SecretStore(db, gobby_home=home)
         keys = set(store.list_keys())
         required = {
             "databases.falkordb.host",
@@ -329,7 +329,7 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
         from gobby.storage.secrets import SecretStore
 
         store = ConfigStore(db)
-        secret_store = SecretStore(db)
+        secret_store = SecretStore(db, gobby_home=gobby_home)
         with db.transaction():
             store.set("databases.falkordb.host", host, source="install")
             store.set("databases.falkordb.port", port, source="install")
@@ -351,7 +351,7 @@ def _clear_config(*, gobby_home: Path) -> None:
         from gobby.storage.secrets import SecretStore
 
         store = ConfigStore(db)
-        secret_store = SecretStore(db)
+        secret_store = SecretStore(db, gobby_home=gobby_home)
         store.clear_secret("databases.falkordb.password", secret_store)
         for key in ("databases.falkordb.host", "databases.falkordb.port"):
             store.delete(key)

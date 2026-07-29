@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,9 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.runner_init import services
 
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
+
 pytestmark = pytest.mark.unit
 
 
@@ -19,6 +23,37 @@ def _mock_llm_service() -> MagicMock:
     llm_service = MagicMock()
     llm_service.call_json_feature = AsyncMock(return_value={"entities": [], "relations": []})
     return llm_service
+
+
+def _runner_for_graph(falkordb: object | None) -> SimpleNamespace:
+    databases = SimpleNamespace(
+        qdrant=SimpleNamespace(
+            url="http://qdrant:6333",
+            api_key=None,
+            collection_prefix="code_",
+        )
+    )
+    if falkordb is not None:
+        databases.falkordb = falkordb
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            memory=MemoryConfig(),
+            knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
+            embeddings=SimpleNamespace(
+                dim=768,
+                model="nomic-embed-text",
+                api_key=None,
+                api_base=None,
+            ),
+            databases=databases,
+        ),
+        database=MagicMock(),
+        db_executor=SimpleNamespace(run=AsyncMock()),
+        llm_service=None,
+        secret_store=MagicMock(),
+        vector_store=None,
+        memory_manager=None,
+    )
 
 
 def test_memory_manager_constructor_uses_falkordb_kwargs() -> None:
@@ -77,6 +112,28 @@ def test_memory_manager_constructs_knowledge_graph_service_with_falkor_client() 
     assert call_kwargs["llm_service"] is llm_service
     assert call_kwargs["feature_config"] is manager.config.kg
     assert manager.falkor_client is falkor_client
+
+
+def test_memory_manager_preserves_core_services_when_falkor_construction_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with patch(
+        "gobby.memory.manager.FalkorClient",
+        side_effect=RuntimeError("authentication rejected"),
+    ):
+        manager = MemoryManager(
+            db=MagicMock(),
+            config=MemoryConfig(),
+            falkordb_host="127.0.0.1",
+            falkordb_password="wrong-secret",
+        )
+
+    assert manager.storage is not None
+    assert manager.falkor_client is None
+    assert manager.kg_service is None
+    assert manager.graph_initialization_failed is True
+    assert "Failed to initialize FalkorDB graph subsystem" in caplog.text
+    assert "authentication rejected" in caplog.text
 
 
 def test_memory_manager_clear_graph_clients_clears_every_falkor_reference() -> None:
@@ -153,7 +210,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
         vector_store_cls.return_value = MagicMock()
         enabled.return_value = True
 
-        services._init_memory_stack(runner)
+        services._init_memory_stack(cast("GobbyRunner", runner))
 
     enabled.assert_called_once_with(runner.config.databases)
     memory_manager_cls.assert_called_once()
@@ -167,6 +224,65 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
     assert kwargs["falkordb_rrf_k"] == 71
     assert "neo4j_url" not in kwargs
     assert "neo4j_auth" not in kwargs
+    assert "memory_knowledge_graph" not in getattr(runner, "degraded_services", set())
+
+
+def test_runner_memory_stack_marks_configured_graph_failure_degraded() -> None:
+    falkordb = SimpleNamespace(
+        host="127.0.0.1",
+        port=16379,
+        password="wrong-secret",
+        graph_name="gobby_kg",
+        graph_search=True,
+        graph_min_score=0.5,
+        rrf_k=60,
+    )
+    runner = _runner_for_graph(falkordb)
+    manager = MagicMock(graph_initialization_failed=True, falkor_client=None)
+
+    with (
+        patch("gobby.runner_init.services.VectorStore"),
+        patch("gobby.runner_init.services.MemoryManager", return_value=manager),
+        patch("gobby.runner_init.services.is_falkordb_enabled", return_value=True),
+    ):
+        services._init_memory_stack(cast("GobbyRunner", runner))
+
+    assert runner.memory_manager is manager
+    assert runner.degraded_services == {"memory_knowledge_graph"}
+    manager.start_projection_scope_repair.assert_called_once_with()
+
+
+def test_runner_memory_stack_leaves_unconfigured_graph_healthy() -> None:
+    runner = _runner_for_graph(None)
+    manager = MagicMock(graph_initialization_failed=False, falkor_client=None)
+
+    with (
+        patch("gobby.runner_init.services.VectorStore"),
+        patch("gobby.runner_init.services.MemoryManager", return_value=manager) as manager_cls,
+        patch("gobby.runner_init.services.is_falkordb_enabled", return_value=False),
+    ):
+        services._init_memory_stack(cast("GobbyRunner", runner))
+
+    assert runner.memory_manager is manager
+    assert manager_cls.call_args.kwargs["falkordb_host"] is None
+    assert "memory_knowledge_graph" not in getattr(runner, "degraded_services", set())
+
+
+def test_runner_memory_stack_marks_core_initialization_failure_degraded() -> None:
+    runner = _runner_for_graph(None)
+
+    with (
+        patch("gobby.runner_init.services.VectorStore"),
+        patch(
+            "gobby.runner_init.services.MemoryManager",
+            side_effect=RuntimeError("core initialization failed"),
+        ),
+        patch("gobby.runner_init.services.is_falkordb_enabled", return_value=False),
+    ):
+        services._init_memory_stack(cast("GobbyRunner", runner))
+
+    assert runner.memory_manager is None
+    assert runner.degraded_services == {"memory_manager"}
 
 
 def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
@@ -206,7 +322,7 @@ def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
         patch("gobby.runner_init.services.is_falkordb_enabled", return_value=False),
     ):
         embedding_service_cls.return_value.is_configured.return_value = False
-        services._init_memory_stack(runner)
+        services._init_memory_stack(cast("GobbyRunner", runner))
 
     vector_store_cls.assert_called_once()
     memory_manager_cls.assert_called_once()

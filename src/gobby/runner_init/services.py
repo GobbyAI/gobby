@@ -177,6 +177,11 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 ),
                 project_write_fence=runner.project_write_fence,
             )
+            if falkor_cfg and (
+                runner.memory_manager.graph_initialization_failed is True
+                or runner.memory_manager.falkor_client is None
+            ):
+                mark_service_degraded(runner, "memory_knowledge_graph")
             runner.memory_manager.start_projection_scope_repair()
         except Exception:
             mark_service_degraded(runner, "memory_manager")

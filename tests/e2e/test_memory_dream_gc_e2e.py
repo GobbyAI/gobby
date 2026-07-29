@@ -19,20 +19,24 @@ dream service code — only the LLM planner is faked (the matrix mandates no
 live LLM), so the real validator, apply, ``mark_dreamed``, snapshot, and purge
 paths all execute.
 
-The daemon only builds its memory manager when embedding configuration is
-present (``_init_memory_stack`` validates it), so this module injects a dummy
-local embedding ``api_base`` before the daemon starts. It is a pure config
-check that is never probed — the DB-backed list/restore/count routes never
-touch embeddings or Qdrant.
+Before daemon startup, the fixture resolves managed FalkorDB credentials from
+the authoritative config and secret stores, verifies authentication, and binds
+an isolated graph with teardown cleanup. Daemon health must report the graph
+subsystem as healthy before the memory and dream/GC assertions run.
 """
 
+import asyncio
+import hashlib
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from falkordb.asyncio import FalkorDB
 
+from gobby.cli.installers.compose_env import resolve_compose_runtime
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import run_memory_dream
@@ -52,36 +56,91 @@ CURRENT_CONTENT = "Gobby is a local-first daemon that unifies AI coding tools."
 
 
 @pytest.fixture
-def e2e_pre_daemon_setup(e2e_config: tuple[Any, int, int], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Enable the daemon's memory manager by configuring an embedding api_base.
-
-    Overrides the conftest no-op hook (runs after DB reset, before daemon
-    start). Without an embedding config the daemon's ``_init_memory_stack``
-    raises and leaves ``memory_manager`` unset, so the ``/api/memories`` routes
-    return 500. The base is never contacted — it only satisfies the config
-    presence check guarding memory-manager construction.
-    """
-    from gobby.config.bootstrap import load_bootstrap
-
+def e2e_pre_daemon_setup(
+    e2e_config: tuple[Path, int, int],
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_schema: str,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Require managed FalkorDB and configure an isolated authenticated graph."""
     config_path, _http_port, _ws_port = e2e_config
-    monkeypatch.setenv("GOBBY_FALKORDB_PASSWORD", load_bootstrap().falkordb_password)
-    with open(config_path, "a") as handle:
-        handle.write(
-            '\nembeddings:\n  api_base: "http://127.0.0.1:9/v1"\n'
-            'databases:\n  qdrant:\n    url: "http://127.0.0.1:6333"\n'
-            '  falkordb:\n    password: "${GOBBY_FALKORDB_PASSWORD}"\n'
+    monkeypatch.delenv("GOBBY_FALKORDB_PASSWORD", raising=False)
+    try:
+        runtime = resolve_compose_runtime(
+            Path.home() / ".gobby",
+            profiles=("falkordb",),
         )
+        password = runtime.environment["GOBBY_FALKORDB_PASSWORD"]
+        port = int(runtime.environment["GOBBY_FALKORDB_PORT"])
+        asyncio.run(_verify_falkordb_prerequisite("127.0.0.1", port, password))
+    except Exception as exc:
+        pytest.fail(
+            "Memory dream/GC E2E requires a complete managed local install with "
+            f"authenticated FalkorDB: {exc}"
+        )
+
+    graph_identity = hashlib.sha256(postgres_schema.encode()).hexdigest()[:16]
+    graph_name = f"gobby_memory_e2e_{graph_identity}"
+
+    def cleanup_graph() -> None:
+        asyncio.run(
+            _delete_falkordb_graph(
+                host="127.0.0.1",
+                port=port,
+                password=password,
+                graph_name=graph_name,
+            )
+        )
+
+    request.addfinalizer(cleanup_graph)
+    monkeypatch.setenv("GOBBY_FALKORDB_PASSWORD", password)
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "\ndatabases:\n"
+            '  qdrant:\n    url: "http://127.0.0.1:6333"\n'
+            "  falkordb:\n"
+            '    host: "127.0.0.1"\n'
+            f"    port: {port}\n"
+            '    password: "${GOBBY_FALKORDB_PASSWORD}"\n'
+            f'    graph_name: "{graph_name}"\n'
+        )
+
+
+async def _verify_falkordb_prerequisite(host: str, port: int, password: str) -> None:
+    client = FalkorDB(host=host, port=port, password=password)
+    try:
+        await client.list_graphs()
+    finally:
+        await client.aclose()
+
+
+async def _delete_falkordb_graph(
+    *,
+    host: str,
+    port: int,
+    password: str,
+    graph_name: str,
+) -> None:
+    client = FalkorDB(host=host, port=port, password=password)
+    try:
+        if graph_name in await client.list_graphs():
+            await client.select_graph(graph_name).delete()
+    finally:
+        await client.aclose()
 
 
 def _sweep_config() -> MemoryDreamConfig:
     """Real dream config with secondary-store reconcile disabled.
 
     The storage ``LocalMemoryManager`` implements the candidate query, stamping,
-    and snapshot subset the keep/delete sweep needs; it has no ``reconcile_stores``,
-    so reconcile must stay off. All other defaults (planner_batch_size=25,
-    redream_after_hours=20, purge_delete_after_days=30) suit the test as-is.
+    and snapshot subset the keep/delete sweep needs. Reconcile and vector-backed
+    related evidence stay off. All remaining defaults suit the test as-is.
     """
-    return MemoryDreamConfig(reconcile_after_apply=False, reconcile_after_revert=False)
+    return MemoryDreamConfig(
+        reconcile_after_apply=False,
+        reconcile_after_revert=False,
+        related_evidence_enabled=False,
+    )
 
 
 def _content_driven_planner(**kwargs: Any) -> dict[str, Any]:
@@ -154,9 +213,14 @@ async def test_dream_gc_soft_delete_lifecycle(
     async_daemon_client: httpx.AsyncClient,
     postgres_db: HubDatabase,
 ) -> None:
+    status_response = await async_daemon_client.get("/api/admin/status")
+    assert status_response.status_code == 200, status_response.text
+    assert "memory_knowledge_graph" not in status_response.json()["degraded_services"]
+
     # The test manager and the live daemon share the isolated worker schema, so
     # rows written here are served verbatim by the daemon's HTTP routes.
     manager = LocalMemoryManager(postgres_db)
+    cast(Any, manager).notify_memory_changed = manager.notify_changed
     neo4j = manager.create_memory(
         content=NEO4J_CONTENT,
         project_id=PERSONAL_PROJECT_ID,
@@ -182,7 +246,7 @@ async def test_dream_gc_soft_delete_lifecycle(
 
     # 1. Full sweep: obsolete memories are soft-hidden, the current one kept.
     result = await _run_sweep(manager)
-    assert result["success"] is True
+    assert result["success"] is True, result
     summary = result["run"]["summary"]
     assert summary["candidates_reviewed"] == 3
     assert summary["mutations"] == 2

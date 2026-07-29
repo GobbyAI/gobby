@@ -65,7 +65,6 @@ class BootstrapConfig:
     bind_host: str = DEFAULT_DAEMON_BIND_HOST
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
-    falkordb_password: str = "gobbyfalkor"
     auth_mode: AuthMode = "required"
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
@@ -159,7 +158,6 @@ def load_bootstrap(
                 data.get("websocket_port", BootstrapConfig.websocket_port), "websocket_port"
             ),
             ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
-            falkordb_password=_load_falkordb_password(data),
             auth_mode=auth_mode,
             hub_backend=hub_backend,
             database_url=database_url,
@@ -173,16 +171,8 @@ def load_bootstrap(
         return _default_bootstrap_config()
 
 
-def _load_falkordb_password(data: dict[str, Any]) -> str:
-    """Load the FalkorDB bootstrap password from the current key or env fallback."""
-    if "falkordb_password" in data:
-        return _parse_str(data["falkordb_password"], "falkordb_password")
-
-    return os.environ.get("GOBBY_FALKORDB_PASSWORD", BootstrapConfig.falkordb_password)
-
-
 def _default_bootstrap_config() -> BootstrapConfig:
-    return BootstrapConfig(falkordb_password=_load_falkordb_password({}))
+    return BootstrapConfig()
 
 
 def _parse_auth_mode(value: object) -> AuthMode:
