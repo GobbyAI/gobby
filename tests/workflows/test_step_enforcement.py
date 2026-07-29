@@ -489,6 +489,65 @@ class TestStepMCPToolBlocking:
         assert response.reason is not None
         assert "gobby-tasks:close_task" in response.reason
 
+    @pytest.mark.parametrize(
+        ("allowed_mcp_tools", "blocked_mcp_tools", "expected_decision"),
+        [
+            (["gobby-tasks:claim_task"], [], "allow"),
+            (
+                ["gobby-tasks:claim_task"],
+                ["gobby-sessions:compact_self"],
+                "block",
+            ),
+            ("all", [], "allow"),
+        ],
+        ids=["restrictive-allowlist", "explicit-block", "all-tools"],
+    )
+    @pytest.mark.asyncio
+    async def test_compact_self_step_enforcement(
+        self,
+        db: "HubDatabase",
+        manager: LocalWorkflowDefinitionManager,
+        engine: RuleEngine,
+        instance_mgr: WorkflowInstanceManager,
+        allowed_mcp_tools: list[str] | str,
+        blocked_mcp_tools: list[str],
+        expected_decision: str,
+    ) -> None:
+        step: dict[str, Any] = {
+            "name": "work",
+            "allowed_mcp_tools": allowed_mcp_tools,
+            "blocked_mcp_tools": blocked_mcp_tools,
+        }
+        workflow = {
+            "name": "test-compact-self",
+            "version": "2.0",
+            "enabled": False,
+            "steps": [step],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="work",
+            workflow_data=workflow,
+        )
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "compact_self",
+                },
+            }
+        )
+
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == expected_decision
+        if blocked_mcp_tools:
+            assert response.reason is not None
+            assert "blocked" in response.reason.lower()
+
     @pytest.mark.asyncio
     async def test_skill_load_blocks_wrong_mcp_tool_with_recovery_guidance(
         self,

@@ -269,13 +269,12 @@ class EnforcementCheckMixin:
 
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
 
-                if mcp_key and step.allowed_mcp_tools != "all":
-                    if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
-                        guidance = skill_load_block_guidance(step)
+                # Explicit blocks override default grants and allow-list exemptions.
+                if mcp_key and step.blocked_mcp_tools:
+                    if self._mcp_tool_matches(mcp_key, step.blocked_mcp_tools):
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                            f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
-                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
+                            f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
                         )
                         self._audit_step_tool_call(
                             session_id,
@@ -291,11 +290,17 @@ class EnforcementCheckMixin:
                             reason=reason,
                         )
 
-                if mcp_key and step.blocked_mcp_tools:
-                    if self._mcp_tool_matches(mcp_key, step.blocked_mcp_tools):
+                # Self-compaction preserves the active agent and is capability-neutral.
+                if mcp_tool_name == "compact_self":
+                    return None
+
+                if mcp_key and step.allowed_mcp_tools != "all":
+                    if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
+                        guidance = skill_load_block_guidance(step)
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                            f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
+                            f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
+                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
                         )
                         self._audit_step_tool_call(
                             session_id,
