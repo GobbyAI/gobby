@@ -388,7 +388,5 @@ that need real machines:
 - 4.1.2 - Manual checklist for items 1-2 and 8 ships in the runbook. behavior: "M0 acceptance checklist" in `docs/guides/shared-stack.md`.
 
 ## V1 Plan Changelog
-`kind: verification`
 
-No review rounds yet. Draft validated for format only (2026-07-26); enhancement and
-adversarial review deliberately deferred to the next session.
+`kind: verification`
