@@ -47,13 +47,14 @@ CLI_EXTERNAL_IDS = {
     "grok": "cccccccc-0000-4000-8000-000000000005",
 }
 TERMINAL_CONTEXT = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+_DEFAULT_TERMINAL_CONTEXT = object()
 
 
 def _make_row(
     *,
     session_id: str = "sess-123",
     status: str = "handoff_ready",
-    terminal_context: dict[str, Any] | None = None,
+    terminal_context: dict[str, Any] | None | object = _DEFAULT_TERMINAL_CONTEXT,
 ) -> MagicMock:
     row = MagicMock()
     row.id = session_id
@@ -64,7 +65,11 @@ def _make_row(
     row.project_id = "project-1"
     row.parent_session_id = None
     row.transcript_path = "/canonical/transcript.jsonl"
-    row.terminal_context = dict(TERMINAL_CONTEXT) if terminal_context is None else terminal_context
+    row.terminal_context = (
+        dict(TERMINAL_CONTEXT)
+        if terminal_context is _DEFAULT_TERMINAL_CONTEXT
+        else terminal_context
+    )
     return row
 
 
@@ -195,7 +200,7 @@ class TestResolveSessionStartIdentity:
 
         assert not resolution.is_compact
         assert resolution.session_source == "startup"
-        assert "source" not in input_data or input_data.get("source") != "compact"
+        assert "source" not in input_data
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_active_row_without_compact_source_stays_normal(
@@ -270,7 +275,6 @@ class TestResolveSessionStartIdentity:
     def test_insufficient_terminal_identity_never_blocks(self, mock_sv_mgr_cls: MagicMock) -> None:
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
         row = _make_row(terminal_context=None)
-        row.terminal_context = None
         handler = _make_resolver_handler(row)
         input_data: dict[str, Any] = {
             "source": "compact",

@@ -12,13 +12,20 @@ import pytest
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.normalization import normalize_tool_fields
 
+pytestmark = pytest.mark.unit
+
 FIXTURE_PATH = (
     Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "file-mutation-hooks.jsonl"
 )
+WORKSPACE_ROOT = Path(__file__).parents[2].resolve()
 
 
 def _contract_records() -> list[dict[str, Any]]:
-    return [json.loads(line) for line in FIXTURE_PATH.read_text().splitlines() if line.strip()]
+    fixture_text = FIXTURE_PATH.read_text(encoding="utf-8").replace(
+        "<WORKSPACE>",
+        str(WORKSPACE_ROOT),
+    )
+    return [json.loads(line) for line in fixture_text.splitlines() if line.strip()]
 
 
 @pytest.mark.parametrize(
@@ -31,7 +38,7 @@ def test_provider_mutation_contracts_produce_ordered_canonical_paths(
 ) -> None:
     data = deepcopy(record["payload"])
     if record["provider"] == "grok":
-        data = GrokAdapter()._normalize_event_data(data)
+        data = GrokAdapter().translate_to_hook_event(data).data
     else:
         normalize_tool_fields(data)
 

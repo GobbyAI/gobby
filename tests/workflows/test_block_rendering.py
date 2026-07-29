@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +14,18 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from gobby.workflows.engine.blocked_tool_recovery import (
+    _ACTION_WORD_RE as ACTION_WORD_RE,
+)
+from gobby.workflows.engine.blocked_tool_recovery import (
+    _BACKTICK_FORM_RE as BACKTICK_FORM_RE,
+)
+from gobby.workflows.engine.blocked_tool_recovery import (
+    _CALL_FORM_RE as CALL_FORM_RE,
+)
+from gobby.workflows.engine.blocked_tool_recovery import (
+    _balanced_call_end,
+)
 from gobby.workflows.engine.core import RuleEngine
 
 SESSION_ID = str(uuid.uuid4())
@@ -22,14 +33,6 @@ RULES_ROOT = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rul
 TERSE_REASON = (
     "Rule enforced by Gobby: [repeat-block] (full reason shown earlier this turn — scroll up)."
 )
-ACTION_WORD_RE = re.compile(
-    r"\b(?:ask|call|claim|clear|continue|create|load|retrieve|retry|run|use)\b",
-    re.IGNORECASE,
-)
-CALL_FORM_RE = re.compile(
-    r"\b(?:call_tool|get_tool_schema|set_variable|[a-z_]+_(?:memory|review|stage|task))\s*\("
-)
-BACKTICK_FORM_RE = re.compile(r"`[^`\n]+`")
 
 
 @pytest.fixture
@@ -134,34 +137,6 @@ def _enabled_actionable_reasons() -> list[tuple[str, str]]:
                 if isinstance(reason, str) and ACTION_WORD_RE.search(reason):
                     inventory.append((str(rule_name), reason))
     return inventory
-
-
-def _balanced_call_end(text: str, start: int) -> int | None:
-    open_at = text.find("(", start)
-    if open_at < 0:
-        return None
-    depth = 0
-    quote: str | None = None
-    escaped = False
-    for index in range(open_at, len(text)):
-        char = text[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-        if char in {'"', "'"}:
-            quote = char
-        elif char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-    return None
 
 
 def _assert_complete_calls(directive: str) -> None:

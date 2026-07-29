@@ -77,9 +77,14 @@ def test_transcript_close_checklist_migration_removes_receipt_contract() -> None
     cleanup = (
         SRC_ROOT / "storage" / "migrations" / "344_transcript_close_checklist.sql"
     ).read_text(encoding="utf-8")
+    validation_constraint = criteria_migration.split(
+        "ADD CONSTRAINT tasks_require_validation_criteria",
+        maxsplit=1,
+    )[1].split("ALTER TABLE verification_receipts", maxsplit=1)[0]
 
-    assert "tasks_require_validation_criteria" in criteria_migration
-    assert "task_type = 'epic'" in criteria_migration
+    assert "task_type = 'epic'" in validation_constraint
+    assert "NULLIF(BTRIM(validation_criteria), '') IS NOT NULL" in validation_constraint
+    assert "NOT VALID" in validation_constraint
     trigger = "DROP TRIGGER sessions_delete_unassigned_verification_receipts ON sessions"
     function = "DROP FUNCTION delete_unassigned_verification_receipts_for_session()"
     table = "DROP TABLE verification_receipts"

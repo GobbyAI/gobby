@@ -1587,28 +1587,28 @@ class TestLocalTaskManager:
         task = _planning_needs_review(task_manager, project_id, session.id)
         task_before = task_manager.get_task(task.id)
         events_before = task_manager.lifecycle_events.list_lifecycle_events(task.id)
-        task_manager.db.execute(
-            """
-            CREATE OR REPLACE FUNCTION fail_plan_enhancement_update_fn()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                RAISE EXCEPTION 'plan enhancement update boom';
-            END;
-            $$
-            """
-        )
-        task_manager.db.execute(
-            """
-            CREATE TRIGGER fail_plan_enhancement_update
-            BEFORE UPDATE OF description ON tasks
-            FOR EACH ROW
-            EXECUTE FUNCTION fail_plan_enhancement_update_fn()
-            """
-        )
-
         try:
+            task_manager.db.execute(
+                """
+                CREATE OR REPLACE FUNCTION fail_plan_enhancement_update_fn()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'plan enhancement update boom';
+                END;
+                $$
+                """
+            )
+            task_manager.db.execute(
+                """
+                CREATE TRIGGER fail_plan_enhancement_update
+                BEFORE UPDATE OF description ON tasks
+                FOR EACH ROW
+                EXECUTE FUNCTION fail_plan_enhancement_update_fn()
+                """
+            )
+
             with pytest.raises(RaiseException, match="plan enhancement update boom"):
                 task_manager.record_plan_enhancement(
                     task.id,

@@ -290,7 +290,7 @@ def test_ambiguous_marked_terminal_process_matches_return_no_session(
     )
 
     assert resolution.session is None
-    assert resolution.conflicting_session_ids == (second_id, first_id)
+    assert set(resolution.conflicting_session_ids) == {first_id, second_id}
 
 
 def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -> None:

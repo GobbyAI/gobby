@@ -506,7 +506,7 @@ class TestSessionManagerLifecycle:
             (session.id,),
         )
         assert row is not None
-        assert row["transcript_processed"] == 0
+        assert row["transcript_processed"] is False
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
 
@@ -551,7 +551,7 @@ class TestSessionManagerLifecycle:
             (older.id,),
         )
         assert transcript_row is not None
-        assert transcript_row["transcript_processed"] == 1
+        assert transcript_row["transcript_processed"] is True
         suppressed = [
             record
             for record in caplog.records
@@ -657,7 +657,7 @@ class TestSessionManagerLifecycle:
             (current.id,),
         )
         assert transcript_row is not None
-        assert transcript_row["transcript_processed"] == 1
+        assert transcript_row["transcript_processed"] is True
 
     @pytest.mark.parametrize(
         ("newer_machine_id", "newer_socket_path"),
@@ -822,7 +822,7 @@ class TestSessionManagerLifecycle:
             (session.id,),
         )
         assert row is not None
-        assert row["transcript_processed"] == 0
+        assert row["transcript_processed"] is False
 
     def test_update_parent_session_id(
         self,

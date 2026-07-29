@@ -147,6 +147,8 @@ def test_anchor_written_on_every_entry_branch(
     assert anchor["anchor_id"] == f"request-{branch}"
     assert anchor["content"] == prompt
 
+
+def test_existing_request_anchor_is_reused() -> None:
     persisted = build_request_anchor("request-persisted", "Persisted request")
     reused_variables: dict[str, Any] = {
         "chat_mode": "normal",
@@ -165,6 +167,8 @@ def test_anchor_written_on_every_entry_branch(
     )
     assert reused_variables[REQUEST_ANCHOR_VARIABLE] == persisted
 
+
+def test_plan_mode_without_request_anchor_raises() -> None:
     with pytest.raises(ReviewEvidenceError) as missing:
         resolve_plan_mode(
             _event(

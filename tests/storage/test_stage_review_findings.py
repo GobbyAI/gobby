@@ -68,8 +68,10 @@ def _repair_submission() -> dict[str, object]:
 
 
 def _apply_round_one_repairs(setup: StageReviewSetup) -> dict[str, object]:
+    plan_text = setup.plan_path.read_text(encoding="utf-8")
+    assert "Implemented." in plan_text
     setup.plan_path.write_text(
-        setup.plan_path.read_text(encoding="utf-8").replace(
+        plan_text.replace(
             "Implemented.",
             "Implemented with rollback before retry.",
         ),

@@ -17,6 +17,8 @@ from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
 
+pytestmark = pytest.mark.unit
+
 
 def _seed_parked_run(
     temp_db: Any,
@@ -463,7 +465,7 @@ def test_increment_failure_count_increments_numeric_value(
     _sessions, runs, _parent, _child, original = _seed_parked_run(temp_db, sample_project)
     merged = runs.merge_resume_metadata(
         original.id,
-        {"daemon_stop_resume_failure_count": "2"},
+        {"daemon_stop_resume_failure_count": 2},
     )
     assert merged is not None
 

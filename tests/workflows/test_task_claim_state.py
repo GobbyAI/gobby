@@ -131,8 +131,16 @@ class TestActiveTaskIdForEdit:
 
 
 class TestTargetTaskHasEdits:
+    def test_missing_task_id_short_circuits(self) -> None:
+        assert target_task_has_edits({"task_edited_files": {"task-1": []}}, None) is False
+
     def test_missing_task_key_means_no_mutation_observed(self) -> None:
         assert target_task_has_edits({"task_edited_files": {}}, "task-1") is False
+
+    def test_non_list_task_entry_means_no_mutation_observed(self) -> None:
+        assert (
+            target_task_has_edits({"task_edited_files": {"task-1": "file.py"}}, "task-1") is False
+        )
 
     def test_empty_task_entry_means_mutation_paths_unavailable(self) -> None:
         variables: dict[str, Any] = {"task_edited_files": {"task-1": []}}

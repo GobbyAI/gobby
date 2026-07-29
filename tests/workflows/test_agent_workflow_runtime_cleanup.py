@@ -39,8 +39,8 @@ PARKED_RUN_ID = "44444444-4444-4444-8444-444444444444"
 
 @pytest.mark.asyncio
 async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     temp_db.execute(
         """
@@ -100,8 +100,8 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
 
 @pytest.mark.asyncio
 async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_skips_delivery(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """A parked (cancelled/daemon_stop) run must keep its workflow rows and
     never be reported to completion subscribers as a workflow-terminate success."""
