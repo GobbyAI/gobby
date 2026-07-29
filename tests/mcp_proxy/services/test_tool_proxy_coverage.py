@@ -474,8 +474,10 @@ class TestCallToolInternal:
 
     @pytest.mark.asyncio
     async def test_call_tool_internal_ignores_route_timeout(
-        self, mock_mcp_manager, mock_internal_manager
-    ):
+        self,
+        mock_mcp_manager: MagicMock,
+        mock_internal_manager: MagicMock,
+    ) -> None:
         """The HTTP route's timeout budget never bounds an internal registry call.
 
         ``_execute_tool`` returns from the internal branch before the ``timeout``

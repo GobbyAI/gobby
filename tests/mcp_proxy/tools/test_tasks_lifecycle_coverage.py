@@ -36,9 +36,12 @@ def _contract_task() -> Any:
 def create_task_registry(
     task_manager: Any,
     *args: Any,
+    with_passing_validator: bool = False,
     **kwargs: Any,
 ) -> Any:
-    if not args and "task_validator" not in kwargs:
+    if with_passing_validator:
+        assert not args
+        assert "task_validator" not in kwargs
         validator = AsyncMock()
         validator.validate_task.return_value = CloseVerdict(
             status="valid",
@@ -160,7 +163,10 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -240,7 +246,10 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -280,7 +289,10 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "ambient-head"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -368,7 +380,10 @@ class TestCloseTaskTool:
 
             # Build the registry inside the patch so RegistryContext picks up
             # the mocked LocalProjectManager.
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -655,7 +670,10 @@ class TestCloseTaskTool:
                     "550e8400-e29b-41d4-a716-446655440000": ["wiki/knowledge/topics/x.md"],
                 },
             }
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -706,7 +724,10 @@ class TestCloseTaskTool:
             MockSVManager.return_value.get_variables.return_value = {
                 "task_edited_files": {"other-task": ["src/other.py"]},
             }
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             result = await registry.call(
                 "close_task",
@@ -771,7 +792,10 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             mock_task = _contract_task()
             mock_task.id = task_uuid
@@ -852,7 +876,10 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             mock_task = _contract_task()
             mock_task.id = task_uuid
@@ -1011,7 +1038,10 @@ class TestCloseTaskTool:
             mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
             mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.claimed_by_session_id = "owner-session"
@@ -1268,7 +1298,10 @@ class TestSessionVariableMirroring:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
-            registry = create_task_registry(mock_task_manager)
+            registry = create_task_registry(
+                mock_task_manager,
+                with_passing_validator=True,
+            )
 
             mock_task = _contract_task()
             mock_task.id = task_uuid

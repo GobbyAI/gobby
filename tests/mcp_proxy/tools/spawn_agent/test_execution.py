@@ -1124,12 +1124,21 @@ class TestSpawnAgentPreRegistration:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("health_result", "expected_success"),
+        [
+            ((True, None), True),
+            ((False, "fatal pane output"), False),
+        ],
+    )
     async def test_live_tmux_spawn_starts_without_sessionstart_wait(
         self,
         mock_runner,
         agent_body,
-    ):
-        """A verified live pane starts the run even before SessionStart arrives."""
+        health_result: tuple[bool, str | None],
+        expected_success: bool,
+    ) -> None:
+        """Live-pane verification starts healthy runs and explains failed panes."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.mcp_proxy.tools.spawn_agent._health import _health_check_tasks
 
@@ -1158,7 +1167,7 @@ class TestSpawnAgentPreRegistration:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
                 new_callable=AsyncMock,
-                return_value=(True, None),
+                return_value=health_result,
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
@@ -1188,18 +1197,24 @@ class TestSpawnAgentPreRegistration:
             )
 
         _health_check_tasks.discard(health_task)
-        assert result["success"] is True
-        assert str(uuid.UUID(result["run_id"])) == result["run_id"]
-        mock_runner.run_storage.update_child_session.assert_called_once_with(ANY, "child-456")
-        mock_runner.run_storage.update_runtime.assert_called_once_with(
-            ANY,
-            pid=12345,
-            tmux_session_name="gobby-agent-timeout",
-            worktree_id=None,
-            clone_id=None,
-        )
-        mock_runner.run_storage.start.assert_called_once()
-        mock_runner.run_storage.fail.assert_not_called()
+        assert result["success"] is expected_success
+        if expected_success:
+            assert str(uuid.UUID(result["run_id"])) == result["run_id"]
+            mock_runner.run_storage.update_child_session.assert_called_once_with(ANY, "child-456")
+            mock_runner.run_storage.update_runtime.assert_called_once_with(
+                ANY,
+                pid=12345,
+                tmux_session_name="gobby-agent-timeout",
+                worktree_id=None,
+                clone_id=None,
+            )
+            mock_runner.run_storage.start.assert_called_once()
+            mock_runner.run_storage.fail.assert_not_called()
+        else:
+            assert "failed live-pane verification" in result["error"]
+            assert "Pane output:\nfatal pane output" in result["error"]
+            mock_runner.run_storage.start.assert_not_called()
+            mock_runner.run_storage.fail.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_status_not_transitioned_on_spawn_failure(self, mock_runner, agent_body):

@@ -238,6 +238,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     db: HubDatabase,
     tmp_path: Path,

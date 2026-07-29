@@ -76,6 +76,18 @@ def test_classification_provenance() -> None:
         validate_convergence_telemetry(missing_inputs)
 
 
+def test_delivered_telemetry_nested_payloads_are_independent() -> None:
+    telemetry = cast(dict[str, Any], delivered_telemetry())
+    reviewer = telemetry["reviewer"]
+
+    reviewer["reviewer_miss"]["classifications"][0]["finding_ids"].append("mutated")
+    reviewer["remedy_scope"]["finding_ids"].append("mutated")
+
+    assert reviewer["repeated_check_keys"]["classifications"][0]["finding_ids"] == ["finding-7"]
+    assert reviewer["ledger_entries_carried"]["finding_ids"] == ["finding-7"]
+    assert reviewer["artifact_growth"]["finding_ids"] == ["finding-7"]
+
+
 @pytest.mark.parametrize("terminal_status", ["success", "timeout", "error"])
 def test_daemon_derived_aggregates_across_terminal_states(terminal_status: str) -> None:
     started_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -149,7 +150,7 @@ def delivered_telemetry() -> dict[str, object]:
             "status": "available",
             "reviewer_miss": {
                 "count": 1,
-                "classifications": [classification],
+                "classifications": [deepcopy(classification)],
             },
             "fixer_induced": {
                 "count": 0,
@@ -157,21 +158,21 @@ def delivered_telemetry() -> dict[str, object]:
             },
             "repeated_check_keys": {
                 "count": 1,
-                "classifications": [classification],
+                "classifications": [deepcopy(classification)],
             },
             "remedy_scope": {
                 "scope": "cross_section",
-                **provenance,
+                **deepcopy(provenance),
             },
             "ledger_entries_carried": {
                 "count": 1,
-                **provenance,
+                **deepcopy(provenance),
             },
             "artifact_growth": {
                 "section_delta": 1,
                 "target_delta": 2,
                 "acceptance_delta": 3,
-                **provenance,
+                **deepcopy(provenance),
             },
         },
     }

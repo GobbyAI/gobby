@@ -37,6 +37,17 @@ def _clear_app_context_between_tests() -> Iterator[None]:
     clear_app_context()
 
 
+def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
+    server.started = True
+    server.should_exit = False
+
+    async def serve() -> None:
+        while not server.should_exit:
+            await asyncio.sleep(0)
+
+    return AsyncMock(side_effect=serve)
+
+
 def test_pipeline_heartbeat_without_startup_project_is_cross_project(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -4313,14 +4324,3 @@ async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() ->
     assert await_args is not None
     assert await_args.args[1] is runner
     assert await_args.kwargs == {"include_fenced": True}
-
-
-def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
-    server.started = True
-    server.should_exit = False
-
-    async def serve() -> None:
-        while not server.should_exit:
-            await asyncio.sleep(0)
-
-    return AsyncMock(side_effect=serve)

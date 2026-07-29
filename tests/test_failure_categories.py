@@ -16,10 +16,12 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("status", "category", "expected"),
     [
+        ("invalid", None, "invalid"),
         ("invalid", FailureCategory.PROVIDER, "error"),
         ("invalid", FailureCategory.TIMEOUT, "error"),
         ("invalid", FailureCategory.CODE, "invalid"),
         ("valid", None, "valid"),
+        ("pending", None, "pending"),
         ("error", FailureCategory.PROVIDER, "error"),
     ],
 )

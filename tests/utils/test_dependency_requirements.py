@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,43 @@ from gobby.utils.dependency_requirements import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _raise_srt_runtime_error(message: str) -> None:
+    raise SrtRuntimeError(message)
+
+
+def _collect_dependency_report(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    managed_services: bool,
+) -> tuple[requirements.DependencyReport, DependencyStatus, list[str | None]]:
+    healthy = DependencyStatus(
+        state="healthy",
+        installed_version="99.0.0",
+        minimum_version=None,
+        expected_version=None,
+        path="/bin/tool",
+        error=None,
+    )
+    compose_minimums: list[str | None] = []
+
+    def command_status(**kwargs: object) -> DependencyStatus:
+        if kwargs["arguments"] == ("compose", "version", "--short"):
+            minimum = kwargs.get("minimum_version")
+            compose_minimums.append(minimum if isinstance(minimum, str) else None)
+        return healthy
+
+    monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_command_status", command_status)
+    monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
+
+    report = requirements.collect_dependency_report(
+        managed_services=managed_services,
+        include_srt=False,
+    )
+    return report, healthy, compose_minimums
 
 
 @pytest.mark.parametrize(
@@ -107,7 +145,7 @@ def test_exact_version_contract_rejects_wrong_srt_version() -> None:
     )
 
     assert status.state == "invalid"
-    assert status.expected_version == "0.0.66"
+    assert status.expected_version == SRT_RELEASE.version
 
 
 def test_srt_status_healthy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -134,7 +172,7 @@ def test_srt_status_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setattr(
         srt_runtime,
         "verify_srt_installation",
-        lambda: (_ for _ in ()).throw(SrtRuntimeError("missing")),
+        partial(_raise_srt_runtime_error, "missing"),
     )
 
     status = srt_dependency_status()
@@ -170,7 +208,7 @@ def test_srt_status_invalid_installations(
     monkeypatch.setattr(
         srt_runtime,
         "verify_srt_installation",
-        lambda: (_ for _ in ()).throw(SrtRuntimeError(verification_error)),
+        partial(_raise_srt_runtime_error, verification_error),
     )
 
     status = srt_dependency_status()
@@ -181,30 +219,9 @@ def test_srt_status_invalid_installations(
 
 
 def test_external_services_skip_compose_requirement(monkeypatch: pytest.MonkeyPatch) -> None:
-    healthy = DependencyStatus(
-        state="healthy",
-        installed_version="99.0.0",
-        minimum_version=None,
-        expected_version=None,
-        path="/bin/tool",
-        error=None,
-    )
-    compose_minimums: list[str | None] = []
-
-    def command_status(**kwargs: object) -> DependencyStatus:
-        if kwargs["arguments"] == ("compose", "version", "--short"):
-            minimum = kwargs.get("minimum_version")
-            compose_minimums.append(minimum if isinstance(minimum, str) else None)
-        return healthy
-
-    monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
-    monkeypatch.setattr(requirements, "_command_status", command_status)
-    monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
-    monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
-
-    report = requirements.collect_dependency_report(
+    report, healthy, compose_minimums = _collect_dependency_report(
+        monkeypatch,
         managed_services=False,
-        include_srt=False,
     )
 
     assert "docker_compose" not in report.required
@@ -213,30 +230,9 @@ def test_external_services_skip_compose_requirement(monkeypatch: pytest.MonkeyPa
 
 
 def test_managed_services_require_compose(monkeypatch: pytest.MonkeyPatch) -> None:
-    healthy = DependencyStatus(
-        state="healthy",
-        installed_version="99.0.0",
-        minimum_version=None,
-        expected_version=None,
-        path="/bin/tool",
-        error=None,
-    )
-    compose_minimums: list[str | None] = []
-
-    def command_status(**kwargs: object) -> DependencyStatus:
-        if kwargs["arguments"] == ("compose", "version", "--short"):
-            minimum = kwargs.get("minimum_version")
-            compose_minimums.append(minimum if isinstance(minimum, str) else None)
-        return healthy
-
-    monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
-    monkeypatch.setattr(requirements, "_command_status", command_status)
-    monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
-    monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
-
-    report = requirements.collect_dependency_report(
+    report, healthy, compose_minimums = _collect_dependency_report(
+        monkeypatch,
         managed_services=True,
-        include_srt=False,
     )
 
     assert report.runtime == {"python": healthy}
@@ -248,21 +244,28 @@ def test_managed_services_require_compose(monkeypatch: pytest.MonkeyPatch) -> No
     assert report.services["docker_running"] is True
 
 
-def test_native_windows_is_unsupported_and_wsl_is_posix(
+@pytest.mark.parametrize(
+    ("os_name", "platform_name", "error_fragment", "requires_tmux"),
+    [
+        ("nt", "Windows", "WSL 2", False),
+        ("posix", "Linux", None, True),
+    ],
+)
+def test_platform_support_and_tmux_requirement(
     monkeypatch: pytest.MonkeyPatch,
+    os_name: str,
+    platform_name: str,
+    error_fragment: str | None,
+    requires_tmux: bool,
 ) -> None:
-    monkeypatch.setattr("gobby.utils.dependency_requirements.os.name", "nt")
+    monkeypatch.setattr("gobby.utils.dependency_requirements.os.name", os_name)
     monkeypatch.setattr(
         "gobby.utils.dependency_requirements.platform.system",
-        lambda: "Windows",
+        lambda: platform_name,
     )
-    assert "WSL 2" in (requirements.unsupported_platform_error() or "")
-    assert requirements.requires_tmux() is False
-
-    monkeypatch.setattr("gobby.utils.dependency_requirements.os.name", "posix")
-    monkeypatch.setattr(
-        "gobby.utils.dependency_requirements.platform.system",
-        lambda: "Linux",
-    )
-    assert requirements.unsupported_platform_error() is None
-    assert requirements.requires_tmux() is True
+    error = requirements.unsupported_platform_error()
+    if error_fragment is None:
+        assert error is None
+    else:
+        assert error_fragment in (error or "")
+    assert requirements.requires_tmux() is requires_tmux

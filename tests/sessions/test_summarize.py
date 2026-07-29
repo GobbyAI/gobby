@@ -502,8 +502,8 @@ class TestGenerateSessionSummaries:
                 )
                 for _ in range(20)
             ]
-            await generation_started.wait()
-            await all_callers_joined.wait()
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
+            await asyncio.wait_for(all_callers_joined.wait(), timeout=1)
             release_generation.set()
             results = await asyncio.gather(*callers)
 
@@ -554,9 +554,9 @@ class TestGenerateSessionSummaries:
             patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
         ):
             first = asyncio.create_task(generate_session_summaries("sess-deep-copy", manager))
-            await generation_started.wait()
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
             second = asyncio.create_task(generate_session_summaries("sess-deep-copy", manager))
-            await joiner_attached.wait()
+            await asyncio.wait_for(joiner_attached.wait(), timeout=1)
             release_generation.set()
             first_result, second_result = await asyncio.gather(first, second)
 
@@ -777,7 +777,7 @@ class TestGenerateSessionSummaries:
                     session_manager=manager,
                 )
             )
-            await generation_started.wait()
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
             surviving_waiter = asyncio.create_task(
                 generate_session_summaries(
                     session_id=session.id,
@@ -847,14 +847,14 @@ class TestGenerateSessionSummaries:
                     session_manager=manager,
                 )
             )
-            await generation_started.wait()
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
             second_waiter = asyncio.create_task(
                 generate_session_summaries(
                     session_id=session.id,
                     session_manager=manager,
                 )
             )
-            await second_waiter_joined.wait()
+            await asyncio.wait_for(second_waiter_joined.wait(), timeout=1)
             release_failure.set()
             failures = await asyncio.gather(first_waiter, second_waiter, return_exceptions=True)
             retry_result = await generate_session_summaries(
@@ -943,7 +943,7 @@ class TestGenerateSessionSummaries:
                     output_path="unused",
                 )
             )
-            await generation_started.wait()
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
             first_file = asyncio.create_task(
                 generate_session_summaries(
                     session_id=session.id,
@@ -960,7 +960,7 @@ class TestGenerateSessionSummaries:
                     write_file=True,
                 )
             )
-            await file_callers_joined.wait()
+            await asyncio.wait_for(file_callers_joined.wait(), timeout=1)
             release_generation.set()
             results = await asyncio.gather(status_only, first_file, second_file)
 

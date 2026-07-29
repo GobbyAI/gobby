@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -94,9 +95,8 @@ class TestAgentRestartReconciliation:
         )
         run_storage = SimpleNamespace(
             list_active=MagicMock(return_value=[]),
-            list_provisional_daemon_resumes=MagicMock(return_value=[run]),
         )
-        runner = self._runner(run_storage)
+        runner = self._runner(run_storage, provisional_runs=[run])
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
 
         with (
@@ -114,7 +114,7 @@ class TestAgentRestartReconciliation:
         rollback.assert_not_called()
         assert rollback.call_count == 0
         assert tmux_manager.list_sessions.await_count == 1
-        assert run_storage.list_provisional_daemon_resumes.call_count == 1
+        assert runner.agent_runner.run_storage.list_provisional_daemon_resumes.call_count == 1
 
     def test_list_active_agent_runs_paginates_offsets(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
@@ -229,13 +229,17 @@ class TestAgentRestartReconciliation:
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_session_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            tmux_session_name="gobby-run-1",
+            pid=111,
+            resume_metadata_json={},
+            child_session_id="child-1",
         )
         run_storage = SimpleNamespace(
             list_active=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
         )
-        runner = self._runner(run_storage)
+        runner = self._runner(run_storage, parked_run=run)
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
         resolved_run_ids: set[str] = set()
 
@@ -270,10 +274,14 @@ class TestAgentRestartReconciliation:
     @pytest.mark.asyncio
     async def test_reconcile_dead_tmux_pane_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            tmux_session_name="gobby-run-1",
+            pid=111,
+            resume_metadata_json={},
+            child_session_id="child-1",
         )
         run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
-        runner = self._runner(run_storage)
+        runner = self._runner(run_storage, parked_run=run)
         tmux_manager = SimpleNamespace(
             list_sessions=AsyncMock(
                 return_value=[
@@ -433,23 +441,19 @@ class TestAgentRestartReconciliation:
         with pytest.raises(RuntimeError, match="runner.agent_runner is not configured"):
             _list_active_agent_runs_once(runner)
 
-    def _runner(self, run_storage: Any, db: object | None = None) -> Any:
-        if not hasattr(run_storage, "list_provisional_daemon_resumes"):
-            run_storage.list_provisional_daemon_resumes = MagicMock(return_value=[])
-        list_active = run_storage.list_active
-        if isinstance(list_active, MagicMock):
-            returned = list_active.return_value
-            active = returned if isinstance(returned, list) else []
-        else:
-            active = list_active(limit=1, offset=0)
-        parked = active[0] if active else None
-        if parked is not None:
-            if not hasattr(parked, "resume_metadata_json"):
-                parked.resume_metadata_json = {}
-            if not hasattr(parked, "child_session_id"):
-                parked.child_session_id = "child-1"
-        if not hasattr(run_storage, "get"):
-            run_storage.get = MagicMock(return_value=parked)
+    def _runner(
+        self,
+        run_storage: Any,
+        db: object | None = None,
+        *,
+        parked_run: Any | None = None,
+        provisional_runs: list[Any] | None = None,
+    ) -> Any:
+        storage = copy(run_storage) if isinstance(run_storage, SimpleNamespace) else run_storage
+        if not hasattr(storage, "list_provisional_daemon_resumes"):
+            storage.list_provisional_daemon_resumes = MagicMock(return_value=provisional_runs or [])
+        if not hasattr(storage, "get"):
+            storage.get = MagicMock(return_value=parked_run)
         terminalize_cancelled_run = AsyncMock(return_value=True)
         return SimpleNamespace(
             database=db,
@@ -457,7 +461,7 @@ class TestAgentRestartReconciliation:
             session_manager=MagicMock(),
             agent_runner=SimpleNamespace(
                 child_session_manager=MagicMock(),
-                run_storage=run_storage,
+                run_storage=storage,
             ),
             agent_lifecycle_monitor=SimpleNamespace(
                 terminalize_cancelled_run=terminalize_cancelled_run,

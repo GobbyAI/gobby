@@ -70,34 +70,55 @@ def test_authorizes_root_terminal_with_live_session_skill() -> None:
 
 
 @pytest.mark.parametrize(
-    ("ctx", "expected_error"),
+    ("session_type", "agent_run_id", "agent_depth", "loaded_skills", "expected_error"),
     [
         pytest.param(
-            _context(session_type="agent"),
+            "agent",
+            None,
+            0,
+            ("live-session",),
             "interactive terminal",
             id="non-terminal",
         ),
         pytest.param(
-            _context(agent_run_id="run-1"),
+            "terminal",
+            "run-1",
+            0,
+            ("live-session",),
             "Spawned and automated",
             id="agent-run",
         ),
         pytest.param(
-            _context(agent_depth=1),
+            "terminal",
+            None,
+            1,
+            ("live-session",),
             "Spawned and automated",
             id="agent-depth",
         ),
         pytest.param(
-            _context(loaded_skills=[]),
+            "terminal",
+            None,
+            0,
+            [],
             "Load the live-session skill",
             id="skill-not-loaded",
         ),
     ],
 )
 def test_rejects_unauthorized_session_shapes(
-    ctx: RegistryContext,
+    session_type: str,
+    agent_run_id: str | None,
+    agent_depth: int,
+    loaded_skills: object,
     expected_error: str,
 ) -> None:
+    ctx = _context(
+        session_type=session_type,
+        agent_run_id=agent_run_id,
+        agent_depth=agent_depth,
+        loaded_skills=loaded_skills,
+    )
     error = live_session_label_change_error(
         ctx,
         [],

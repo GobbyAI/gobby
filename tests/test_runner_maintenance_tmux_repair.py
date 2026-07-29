@@ -213,7 +213,7 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repair_loop_redirects_stale_child_candidate_to_live_expired_owner() -> None:
+async def test_repair_loop_enforces_resolved_owner() -> None:
     parent = SimpleNamespace(
         id="codex-parent",
         status="expired",

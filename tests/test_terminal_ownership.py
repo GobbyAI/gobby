@@ -8,8 +8,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import psutil
+import pytest
 
 from gobby.terminal_ownership import resolve_pane_ownership
+
+pytestmark = pytest.mark.unit
 
 
 @dataclass
@@ -151,6 +154,20 @@ def test_multiple_lifecycle_fallback_candidates_are_ambiguous() -> None:
 
     assert decision.owner is None
     assert decision.reason == "ambiguous_lifecycle_fallback"
+
+
+def test_requested_session_absent_from_candidates_does_not_own_pane() -> None:
+    owner = _session("owner", pid=100, create_time=10.0)
+
+    decision = resolve_pane_ownership(
+        [owner],
+        requested_session_id="missing",
+        process_factory=_ProcessFactory(_FakeProcess(100, 10.0)),
+    )
+
+    assert decision.owner is owner
+    assert decision.reason == "validated_live_process"
+    assert decision.requested_session_owns_pane is False
 
 
 def test_distinct_machine_socket_or_pane_identities_cannot_be_resolved_together() -> None:

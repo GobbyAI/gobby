@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.sessions.liveness_monitor import SessionLivenessMonitor
+from gobby.sessions.liveness_monitor import _LOG_SAMPLE_LIMIT, SessionLivenessMonitor
 from gobby.terminal_ownership import PaneOwnershipDecision
 
 pytestmark = pytest.mark.unit
@@ -463,7 +463,7 @@ class TestCheckSessions:
                     "tmux_socket_path": "/tmp/tmux",
                 },
             )
-            for index in range(3)
+            for index in range(_LOG_SAMPLE_LIMIT + 2)
         ]
         monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
         monkeypatch.setattr(
@@ -479,9 +479,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         assert [call.args[0] for call in expire.await_args_list] == [
-            "active-0",
-            "active-1",
-            "active-2",
+            f"active-{index}" for index in range(_LOG_SAMPLE_LIMIT + 2)
         ]
         events = [
             record
@@ -489,13 +487,13 @@ class TestCheckSessions:
             if getattr(record, "event", None) == "session_liveness_missing_panes_expired"
         ]
         assert len(events) == 1
-        assert getattr(events[0], "session_count", None) == 3
-        assert getattr(events[0], "sample_session_ids", None) == (
-            "active-0",
-            "active-1",
-            "active-2",
+        assert getattr(events[0], "session_count", None) == _LOG_SAMPLE_LIMIT + 2
+        assert getattr(events[0], "sample_session_ids", None) == tuple(
+            f"active-{index}" for index in range(_LOG_SAMPLE_LIMIT)
         )
-        assert getattr(events[0], "sample_tmux_panes", None) == ("%0", "%1", "%2")
+        assert getattr(events[0], "sample_tmux_panes", None) == tuple(
+            f"%{index}" for index in range(_LOG_SAMPLE_LIMIT)
+        )
 
     @pytest.mark.asyncio
     async def test_tmux_command_failure_falls_back_to_live_pid(

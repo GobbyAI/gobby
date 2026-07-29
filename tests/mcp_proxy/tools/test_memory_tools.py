@@ -73,7 +73,7 @@ class MockMemory:
 
 
 @pytest.fixture
-def mock_memory_manager():
+def mock_memory_manager() -> MagicMock:
     """Create a mock memory manager."""
     manager = MagicMock()
     manager.create_memory = AsyncMock(return_value=MockMemory())
@@ -95,7 +95,7 @@ def mock_memory_manager():
 
 
 @pytest.fixture
-def memory_registry(mock_memory_manager):
+def memory_registry(mock_memory_manager: MagicMock) -> InternalToolRegistry:
     """Create a memory registry with mocked dependencies."""
     return create_memory_registry(mock_memory_manager)
 
@@ -654,8 +654,8 @@ class TestPromoteMemoryToGlobal:
     @pytest.mark.asyncio
     async def test_promote_global_memory_requires_owner_project(
         self,
-        memory_registry,
-        mock_memory_manager,
+        memory_registry: InternalToolRegistry,
+        mock_memory_manager: MagicMock,
     ) -> None:
         mock_memory_manager.get_memory.return_value = MockMemory(
             project_id="owner-project",

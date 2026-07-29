@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from gobby.utils.dependency_requirements import STARTING_GRACE_SECONDS
 from gobby.utils.status import (
     fetch_rich_status,
     format_startup_summary,
@@ -136,7 +137,7 @@ class TestStatusUtils:
         assert "Daemon control plane:" in msg
         assert "HTTP control plane unavailable at localhost:8080" in msg
 
-    @pytest.mark.parametrize("age", [0.0, 6.0, 119.999])
+    @pytest.mark.parametrize("age", [0.0, 6.0, STARTING_GRACE_SECONDS - 0.001])
     def test_format_status_message_starting_during_control_plane_grace(
         self,
         age: float,
@@ -156,7 +157,7 @@ class TestStatusUtils:
             running=True,
             pid=1234,
             control_plane_error="HTTP control plane unavailable",
-            process_uptime_seconds=120.0,
+            process_uptime_seconds=STARTING_GRACE_SECONDS,
         )
 
         assert "Degraded (PID: 1234; HTTP unavailable)" in msg

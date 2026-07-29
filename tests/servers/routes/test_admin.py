@@ -1113,8 +1113,8 @@ class TestWorkflowsReloadEndpoint:
 
     def test_reload_workflows_manager_exception(
         self,
-        client,
-        mock_server,
+        client: TestClient,
+        mock_server: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_server._internal_manager.get_all_registries.side_effect = RuntimeError(
@@ -1237,7 +1237,11 @@ class TestTestEndpoints:
     # --- register-agent ---
 
     @patch("gobby.storage.agents.LocalAgentRunManager")
-    def test_register_agent_success(self, mock_arm_cls, client) -> None:
+    def test_register_agent_success(
+        self,
+        mock_arm_cls: MagicMock,
+        client: TestClient,
+    ) -> None:
         mock_arm = MagicMock()
         mock_run = MagicMock()
         mock_run.to_dict.return_value = {
@@ -1296,9 +1300,9 @@ class TestTestEndpoints:
     @patch("gobby.storage.agents.LocalAgentRunManager")
     def test_unregister_agent_success(
         self,
-        mock_arm_cls,
+        mock_arm_cls: MagicMock,
         mock_deliver_terminal_run: AsyncMock,
-        client,
+        client: TestClient,
     ) -> None:
         mock_arm = MagicMock()
         mock_arm.get.return_value = MagicMock()  # agent found
@@ -1314,7 +1318,11 @@ class TestTestEndpoints:
         mock_deliver_terminal_run.assert_awaited_once()
 
     @patch("gobby.storage.agents.LocalAgentRunManager")
-    def test_unregister_agent_not_found(self, mock_arm_cls, client) -> None:
+    def test_unregister_agent_not_found(
+        self,
+        mock_arm_cls: MagicMock,
+        client: TestClient,
+    ) -> None:
         mock_arm = MagicMock()
         mock_arm.get.return_value = None  # agent not found
         mock_arm_cls.return_value = mock_arm
