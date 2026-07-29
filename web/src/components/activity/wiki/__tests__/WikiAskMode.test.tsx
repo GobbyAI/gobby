@@ -7,7 +7,7 @@
  * callout; history persists to sessionStorage with restore/rerun/delete.
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -279,7 +279,9 @@ describe("staged progress and cancel (5.1.1)", () => {
     expect(progress).toHaveTextContent(/can take a few minutes/);
     expect(composer).toBeDisabled();
 
-    vi.advanceTimersByTime(9_000);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
     await waitFor(() => expect(progress).toHaveTextContent(/Synthesizing…/));
     expect(progress).toHaveTextContent(/0:0\d|0:1\d/);
 

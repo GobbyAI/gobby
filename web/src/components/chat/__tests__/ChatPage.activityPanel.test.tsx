@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPage } from "../ChatPage";
@@ -123,8 +124,9 @@ describe("ChatPage – activity panel wiring", () => {
     expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("threads terminal focus request handling into the terminal dock", () => {
+  it("threads terminal focus request handling into the terminal dock", async () => {
     terminalOpenState.value = true;
+    const user = userEvent.setup();
     render(
       <ChatPage
         chat={createChat()}
@@ -133,14 +135,14 @@ describe("ChatPage – activity panel wiring", () => {
       />,
     );
 
-    expect(screen.getByTestId("terminal-dock-focus-session-id")).toHaveTextContent(
-      "terminal-focus",
-    );
-    fireEvent.click(screen.getByTestId("handle-terminal-focus"));
+    expect(
+      await screen.findByTestId("terminal-dock-focus-session-id"),
+    ).toHaveTextContent("terminal-focus");
+    await user.click(screen.getByTestId("handle-terminal-focus"));
     expect(clearTerminalSessionRequestSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does not render the terminal dock when it is closed", () => {
+  it("does not render the terminal dock when it is closed", async () => {
     render(
       <ChatPage
         chat={createChat()}
@@ -149,10 +151,11 @@ describe("ChatPage – activity panel wiring", () => {
       />,
     );
 
+    await screen.findByTestId("command-bar-panel-toggle");
     expect(screen.queryByTestId("terminal-dock")).not.toBeInTheDocument();
   });
 
-  it("dispatches terminal activity only for a viewed terminal with a database session", () => {
+  it("dispatches terminal activity only for a viewed terminal with a database session", async () => {
     const terminalMeta = {
       ref: "#220",
       source: "codex",
@@ -169,6 +172,7 @@ describe("ChatPage – activity panel wiring", () => {
       sessionType: "terminal" as const,
     };
     const onShowActivityTab = vi.fn();
+    const user = userEvent.setup();
     window.addEventListener("gobby:show-activity-tab", onShowActivityTab);
 
     const { rerender } = render(
@@ -182,7 +186,7 @@ describe("ChatPage – activity panel wiring", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("agent-status-open-terminal"));
+    await user.click(await screen.findByTestId("agent-status-open-terminal"));
 
     const event = onShowActivityTab.mock.calls[0]?.[0] as CustomEvent;
     expect(event).toBeInstanceOf(CustomEvent);
@@ -191,28 +195,34 @@ describe("ChatPage – activity panel wiring", () => {
       sessionId: "terminal-db-1",
     });
 
-    rerender(
-      <ChatPage
-        chat={createChat({
-          dbSessionId: null,
-          viewingSessionMeta: terminalMeta,
-        })}
-        conversations={createConversations()}
-        voice={createVoice()}
-      />,
-    );
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={createChat({
+            dbSessionId: null,
+            viewingSessionMeta: terminalMeta,
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+      await Promise.resolve();
+    });
     expect(screen.queryByTestId("agent-status-open-terminal")).toBeNull();
 
-    rerender(
-      <ChatPage
-        chat={createChat({
-          dbSessionId: "web-db-1",
-          viewingSessionMeta: { ...terminalMeta, sessionType: "web_chat" },
-        })}
-        conversations={createConversations()}
-        voice={createVoice()}
-      />,
-    );
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={createChat({
+            dbSessionId: "web-db-1",
+            viewingSessionMeta: { ...terminalMeta, sessionType: "web_chat" },
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+      await Promise.resolve();
+    });
     expect(screen.queryByTestId("agent-status-open-terminal")).toBeNull();
 
     window.removeEventListener("gobby:show-activity-tab", onShowActivityTab);

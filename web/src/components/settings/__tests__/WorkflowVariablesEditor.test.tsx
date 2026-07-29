@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { WorkflowVariablesEditor } from '../WorkflowVariablesEditor'
 import { parseVariableInput, variableDisplayValue } from '../workflowVariables'
@@ -9,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   isLoading: false,
   fetchWorkflows: vi.fn(async (_params?: { workflow_type?: string }) => true),
   createWorkflow: vi.fn(async (_params: Record<string, unknown>) => null),
-  toggleEnabled: vi.fn(async (_id: string) => null),
+  toggleEnabled: vi.fn(async (_id: string): Promise<WorkflowDetail | null> => null),
   deleteWorkflow: vi.fn(async (_id: string) => true),
 }))
 
@@ -147,12 +148,14 @@ describe('WorkflowVariablesEditor', () => {
     expect(mocks.createWorkflow).not.toHaveBeenCalled()
   })
 
-  it('toggles a variable through the hook', () => {
+  it('toggles a variable through the hook', async () => {
     mocks.workflows = [makeVariable()]
+    mocks.toggleEnabled.mockResolvedValue(makeVariable({ enabled: false }))
+    const user = userEvent.setup()
     render(<WorkflowVariablesEditor />)
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Toggle max_retries' }))
-    expect(mocks.toggleEnabled).toHaveBeenCalledWith('var-1')
+    await user.click(screen.getByRole('switch', { name: 'Toggle max_retries' }))
+    await waitFor(() => expect(mocks.toggleEnabled).toHaveBeenCalledWith('var-1'))
   })
 
   it('deletes a deletable variable after confirmation', () => {

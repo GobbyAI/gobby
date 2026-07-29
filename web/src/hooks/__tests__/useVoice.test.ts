@@ -679,7 +679,7 @@ describe('useVoice', () => {
     getUserMediaMock
       .mockReturnValueOnce(firstStreamPromise)
       .mockResolvedValueOnce({ getTracks: () => [{ stop: secondTrackStop }] })
-    const { result } = renderHook(() => useVoice(
+    const { result, unmount } = renderHook(() => useVoice(
       wsRef as any,
       'conv-restart-startup',
       0,
@@ -706,6 +706,8 @@ describe('useVoice', () => {
     expect(secondTrackStop).not.toHaveBeenCalled()
     expect(audioContexts).toHaveLength(1)
     expect(result.current.isRecording).toBe(true)
+    unmount()
+    expectVoiceLog('ptt_cancel', { bufferedChunks: 0, sampleRate: 48_000 })
   })
 
   it('closes startup resources when unmounted during AudioWorklet loading', async () => {
@@ -1297,7 +1299,7 @@ describe('useVoice', () => {
     expect(playedMarkers).toEqual([1, 2])
   })
 
-  it('detaches a stopped TTS source before starting replacement playback', () => {
+  it('detaches a stopped TTS source before starting replacement playback', async () => {
     const { result } = renderHook(() => useVoice(
       wsRef as any,
       'conv-tts-barge-in',
@@ -1307,7 +1309,7 @@ describe('useVoice', () => {
       true,
     ))
 
-    act(() => {
+    await act(async () => {
       result.current.handleVoiceMessage({
         type: 'tts_audio',
         sample_rate: 24_000,
@@ -1315,7 +1317,9 @@ describe('useVoice', () => {
         chunk_index: 1,
       })
       result.current.handleBinaryMessage(pcmChunk(1))
+      await Promise.resolve()
     })
+    await waitFor(() => expect(startedSources).toHaveLength(1))
     const stoppedSource = startedSources[0]
 
     act(() => {
@@ -1325,7 +1329,7 @@ describe('useVoice', () => {
     expect(stoppedSource.stop).toHaveBeenCalledOnce()
     expect(stoppedSource.onended).toBeNull()
 
-    act(() => {
+    await act(async () => {
       result.current.handleVoiceMessage({
         type: 'tts_audio',
         sample_rate: 24_000,
@@ -1334,9 +1338,10 @@ describe('useVoice', () => {
       })
       result.current.handleBinaryMessage(pcmChunk(2))
       stoppedSource.onended?.(new Event('ended'))
+      await Promise.resolve()
     })
 
-    expect(startedSources).toHaveLength(2)
+    await waitFor(() => expect(startedSources).toHaveLength(2))
     expect(Math.round((startedSources[1].buffer?.getChannelData(0)[0] ?? 0) * 32768)).toBe(2)
   })
 

@@ -90,12 +90,13 @@ describe('CodeGraphExplorer', () => {
     localStorage.removeItem('gobby-cg-limit')
   })
 
-  it('uses the persisted graph limit without fetching configuration', () => {
+  it('uses the persisted graph limit without fetching configuration', async () => {
     localStorage.setItem('gobby-cg-limit', '80')
     codeGraphMock.fetchFileGraph.mockResolvedValue(graph('base', 'Base node'))
 
     render(<CodeGraphExplorer projectId="project" />)
 
+    expect(await screen.findByText('Base node')).toBeInTheDocument()
     expect(codeGraphMock.fetchFileGraph).toHaveBeenCalledWith('project', 80)
     expect(fetch).not.toHaveBeenCalled()
   })

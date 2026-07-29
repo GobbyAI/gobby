@@ -27,6 +27,9 @@ describe('useFiles saves', () => {
           }),
         } as Response
       }
+      if (url.includes('/api/files/git-status?')) {
+        return { ok: true, json: async () => ({}) } as Response
+      }
       if (url.endsWith('/api/files/write')) {
         writeAttempts += 1
         return writeAttempts === 1
@@ -102,6 +105,9 @@ describe('useFiles saves', () => {
             size: 8,
           }),
         } as Response
+      }
+      if (url.includes('/api/files/git-status?')) {
+        return { ok: true, json: async () => ({}) } as Response
       }
       if (url.endsWith('/api/files/write')) {
         return writeResponse

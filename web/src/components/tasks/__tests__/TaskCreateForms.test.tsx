@@ -13,7 +13,9 @@ describe('task creation forms', () => {
 
   it('shows TaskCreateForm submission failures and keeps the form open', async () => {
     const onClose = vi.fn()
-    const onSubmit = vi.fn().mockRejectedValue(new Error('Task service unavailable'))
+    const submissionError = new Error('Task service unavailable')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onSubmit = vi.fn().mockRejectedValue(submissionError)
 
     render(
       <TaskCreateForm
@@ -29,6 +31,7 @@ describe('task creation forms', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Task service unavailable')
     expect(onClose).not.toHaveBeenCalled()
+    expect(consoleError).toHaveBeenCalledWith('Failed to create task:', submissionError)
   })
 
   it('closes TaskCreateForm after a successful submission', async () => {
@@ -53,6 +56,7 @@ describe('task creation forms', () => {
 
   it('shows QuickCaptureTask request failures and keeps the form open', async () => {
     const onClose = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
 
     render(<QuickCaptureTask isOpen onClose={onClose} />)
@@ -62,6 +66,7 @@ describe('task creation forms', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Failed to create task (503)')
     expect(onClose).not.toHaveBeenCalled()
+    expect(consoleError).toHaveBeenCalledWith('Failed to create task:', 503)
   })
 
   it('promotes QuickCaptureTask controls for coarse pointers', () => {

@@ -36,6 +36,7 @@ describe('useTraces request lifecycle', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -64,6 +65,7 @@ describe('useTraces request lifecycle', () => {
   })
 
   it('clears detail state on selection and exposes only the current request error', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const traceB = deferredResponse()
     const fetchMock = vi
       .fn()
@@ -81,6 +83,11 @@ describe('useTraces request lifecycle', () => {
     )
     await act(async () => undefined)
     expect(result.current.error).toBe('Failed to fetch trace detail (500)')
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to fetch trace detail:',
+      500,
+      'Internal Server Error',
+    )
 
     rerender({ traceId: 'trace-b' })
     expect(result.current.error).toBeNull()
@@ -162,6 +169,7 @@ describe('useTraces request lifecycle', () => {
   })
 
   it('keeps loaded traces and exposes an error when refetch fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ traces: [{ trace_id: 'trace-1' }] }))
@@ -181,9 +189,15 @@ describe('useTraces request lifecycle', () => {
 
     expect(result.current.traces).toEqual([{ trace_id: 'trace-1' }])
     expect(result.current.error).toBe('Failed to fetch traces (500)')
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to fetch traces:',
+      500,
+      'Internal Server Error',
+    )
   })
 
   it('clears a list error when a retry starts', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const retry = deferredResponse()
     const fetchMock = vi
       .fn()
@@ -198,6 +212,11 @@ describe('useTraces request lifecycle', () => {
     const { result } = renderHook(() => useTraces('project-123'))
     await act(async () => undefined)
     expect(result.current.error).toBe('Failed to fetch traces (503)')
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to fetch traces:',
+      503,
+      'Service Unavailable',
+    )
 
     let retryPromise!: Promise<void>
     act(() => {

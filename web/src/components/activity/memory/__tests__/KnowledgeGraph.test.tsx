@@ -5,7 +5,14 @@ import type { KnowledgeGraphData } from "../../../../hooks/useMemory";
 
 // The 3D stack never renders in these unit tests — stub it so importing the
 // component module stays cheap and jsdom-safe.
-vi.mock("react-force-graph-3d", () => ({ default: () => null }));
+vi.mock("react-force-graph-3d", async () => {
+  const ReactModule = await import("react");
+  return {
+    default: ReactModule.forwardRef(function MockForceGraph(_props, _ref) {
+      return null;
+    }),
+  };
+});
 vi.mock("three-spritetext", () => ({ default: class SpriteText {} }));
 vi.mock("three", () => ({
   SphereGeometry: class {},

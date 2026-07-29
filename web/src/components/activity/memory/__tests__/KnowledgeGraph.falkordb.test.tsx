@@ -16,28 +16,34 @@ class MockResizeObserver {
   disconnect() {}
 }
 
-vi.mock('react-force-graph-3d', () => ({
-  default: (props: ForceGraphProps) => {
-    const nodeLabel = props.graphData?.nodes[0]
-      ? props.nodeLabel?.(props.graphData.nodes[0])
-      : undefined
-  const linkLabel = props.graphData?.links[0]
-    ? props.linkLabel?.(props.graphData.links[0])
-    : undefined
-  const linkColor = props.graphData?.links[0]
-    ? props.linkColor?.(props.graphData.links[0])
-    : undefined
+vi.mock('react-force-graph-3d', async () => {
+  const ReactModule = await import('react')
+  return {
+    default: ReactModule.forwardRef(function MockForceGraph(
+      props: ForceGraphProps,
+      _ref,
+    ) {
+      const nodeLabel = props.graphData?.nodes[0]
+        ? props.nodeLabel?.(props.graphData.nodes[0])
+        : undefined
+      const linkLabel = props.graphData?.links[0]
+        ? props.linkLabel?.(props.graphData.links[0])
+        : undefined
+      const linkColor = props.graphData?.links[0]
+        ? props.linkColor?.(props.graphData.links[0])
+        : undefined
 
-  return (
-    <div
-      data-link-color={linkColor}
-      data-link-label={linkLabel}
-        data-node-label={nodeLabel}
-        data-testid="force-graph"
-      />
-    )
-  },
-}))
+      return (
+        <div
+          data-link-color={linkColor}
+          data-link-label={linkLabel}
+          data-node-label={nodeLabel}
+          data-testid="force-graph"
+        />
+      )
+    }),
+  }
+})
 
 vi.mock('three-spritetext', () => ({
   default: class SpriteText {
@@ -56,8 +62,10 @@ vi.mock('three-spritetext', () => ({
 describe('KnowledgeGraph', () => {
   it('shows a retryable error when the graph fetch fails', async () => {
     vi.stubGlobal('ResizeObserver', MockResizeObserver)
+    const graphError = new Error('network unavailable')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const fetchKnowledgeGraph = vi.fn()
-      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockRejectedValueOnce(graphError)
       .mockResolvedValueOnce({ entities: [], relationships: [] })
 
     render(
@@ -76,6 +84,8 @@ describe('KnowledgeGraph', () => {
 
     await waitFor(() => expect(screen.getByText('No entities found')).toBeInTheDocument())
     expect(fetchKnowledgeGraph).toHaveBeenCalledTimes(2)
+    expect(consoleError).toHaveBeenCalledWith('Failed to load knowledge graph', graphError)
+    consoleError.mockRestore()
   })
 
   it('mentions FalkorDB in the empty-state copy', async () => {

@@ -130,8 +130,10 @@ describe('selection fetch race protection', () => {
     })
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
-    void result.current.fetchWorkflows({ project_id: 'project-a' })
-    void result.current.fetchWorkflows({ project_id: 'project-b' })
+    act(() => {
+      void result.current.fetchWorkflows({ project_id: 'project-a' })
+      void result.current.fetchWorkflows({ project_id: 'project-b' })
+    })
     await act(async () => {
       filteredB.resolve(jsonResponse({ definitions: [{ id: 'workflow-b' }] }))
     })
@@ -140,8 +142,10 @@ describe('selection fetch race protection', () => {
     })
     expect(result.current.workflows.map(workflow => workflow.id)).toEqual(['workflow-b'])
 
-    void result.current.selectWorkflow('workflow-a')
-    void result.current.selectWorkflow('workflow-b')
+    act(() => {
+      void result.current.selectWorkflow('workflow-a')
+      void result.current.selectWorkflow('workflow-b')
+    })
     await act(async () => {
       detailB.resolve(jsonResponse({ definition: { id: 'workflow-b' } }))
     })

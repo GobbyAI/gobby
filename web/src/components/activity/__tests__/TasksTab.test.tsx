@@ -8,6 +8,7 @@ import {
   afterEach,
 } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   ActivityActionButtons,
   ActivityActionsProvider,
@@ -734,9 +735,10 @@ describe("TasksTab", () => {
   });
 
   it("shows the selected task ref while its detail is loading", async () => {
+    const user = userEvent.setup();
     render(<TasksTab projectId="proj-1" />);
 
-    fireEvent.click(await screen.findByText("Review approved task"));
+    await user.click(await screen.findByText("Review approved task"));
     await screen.findByText("Review approved task detail");
     expect(screen.getByText("Task #401")).toBeInTheDocument();
 
@@ -747,10 +749,12 @@ describe("TasksTab", () => {
       return originalFetch?.(input, init);
     });
 
-    fireEvent.click(screen.getByText("Open task 2"));
+    await user.click(screen.getByText("Open task 2"));
 
-    expect(screen.getByText("Task #411")).toBeInTheDocument();
-    expect(screen.queryByText("Task #401")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText("Task #411")).toBeInTheDocument();
+      expect(screen.queryByText("Task #401")).toBeNull();
+    });
   });
 
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {

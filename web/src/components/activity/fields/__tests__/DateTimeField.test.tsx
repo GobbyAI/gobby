@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useProjects, type ProjectWithStats } from "../../../../hooks/useProjects";
@@ -181,9 +188,7 @@ describe("DateTimeField (#17015)", () => {
     expect(onChange).toHaveBeenCalledWith(localInputValueToUtcIso("2026-03-09T09:45"));
   });
 
-  it("drives native picker color-scheme from the resolved theme", () => {
-    document.documentElement.setAttribute("data-theme", "light");
-
+  it("drives native picker color-scheme from the resolved theme", async () => {
     render(
       <DateTimeField
         label="Start"
@@ -195,6 +200,18 @@ describe("DateTimeField (#17015)", () => {
 
     const input = screen.getByLabelText("Start") as HTMLInputElement;
     expect(input.type).toBe("datetime-local");
-    expect(input.style.colorScheme).toBe("light");
+    expect(input.style.colorScheme).toBe("dark");
+
+    await act(async () => {
+      document.documentElement.setAttribute("data-theme", "light");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(input.style.colorScheme).toBe("light"));
+
+    await act(async () => {
+      document.documentElement.removeAttribute("data-theme");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(input.style.colorScheme).toBe("dark"));
   });
 });

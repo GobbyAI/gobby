@@ -240,6 +240,23 @@ vi.mock("../SessionInteractionModal", () => ({
 
 let mockFetch: MockFetchInstance;
 
+function mockAttentionRoster() {
+  mockFetch.mockJsonResponse("/api/attention/roster", {
+    epoch: "test",
+    seq: 0,
+    entries: [],
+  });
+}
+
+function mockProviderRegistry() {
+  mockFetch.mockJsonResponse("/api/providers", {
+    providers: [
+      { name: "claude", available: true },
+      { name: "codex", available: true },
+    ],
+  });
+}
+
 function makeSession(overrides: Partial<GobbySession>): GobbySession {
   return {
     id: "session-1",
@@ -471,12 +488,8 @@ describe("SessionsTab", () => {
     });
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
-    mockFetch.mockJsonResponse("/api/providers", {
-      providers: [
-        { name: "claude", available: true },
-        { name: "codex", available: true },
-      ],
-    });
+    mockAttentionRoster();
+    mockProviderRegistry();
   });
 
   afterEach(() => {
@@ -488,6 +501,7 @@ describe("SessionsTab", () => {
   it("keeps registry providers on empty filtered pages and prunes stale selections", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
+    mockAttentionRoster();
     mockFetch.mockJsonResponse("/api/providers", {
       providers: [
         { name: "qwen", available: false },
@@ -536,6 +550,8 @@ describe("SessionsTab", () => {
   it("preserves running agents and surfaces polling errors until recovery", async () => {
     vi.useFakeTimers();
     mockFetch.resetRoutes();
+    mockAttentionRoster();
+    mockProviderRegistry();
     mockFetch.mockJsonResponse("/api/agents/running", {
       agents: [
         {
@@ -553,14 +569,23 @@ describe("SessionsTab", () => {
     expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
 
     mockFetch.resetRoutes();
+    mockAttentionRoster();
+    mockProviderRegistry();
     mockFetch.mockErrorResponse("/api/agents/running", 500);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
     expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to fetch running agents:",
+      expect.any(Error),
+    );
 
     mockFetch.resetRoutes();
+    mockAttentionRoster();
+    mockProviderRegistry();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -572,6 +597,8 @@ describe("SessionsTab", () => {
   it("rejects a non-array running-agents payload without replacing prior agents", async () => {
     vi.useFakeTimers();
     mockFetch.resetRoutes();
+    mockAttentionRoster();
+    mockProviderRegistry();
     mockFetch.mockJsonResponse("/api/agents/running", {
       agents: [
         {
@@ -588,12 +615,19 @@ describe("SessionsTab", () => {
     });
 
     mockFetch.resetRoutes();
+    mockAttentionRoster();
+    mockProviderRegistry();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: {} });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(screen.getByRole("alert")).toHaveTextContent("Failed to load running agents");
     expect(getSessionEntry("#206: Running Agent Terminal")).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to fetch running agents:",
+      expect.any(Error),
+    );
     vi.useRealTimers();
   });
 

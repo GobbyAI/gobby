@@ -50,10 +50,15 @@ describe('SessionsTab Phase 1 chip contract', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (): Promise<{ ok: true; json: () => Promise<{ agents: unknown[] }> }> => ({
-        ok: true,
-        json: async () => ({ agents: [] }),
-      })) as unknown as typeof fetch,
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const body = url.endsWith('/api/attention/roster')
+          ? { epoch: 'test', seq: 0, entries: [] }
+          : url.endsWith('/api/providers')
+            ? { providers: [] }
+            : { agents: [] }
+        return { ok: true, json: async () => body } as Response
+      }),
     )
   })
 

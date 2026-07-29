@@ -61,7 +61,7 @@ describe("ResumeSessionModal", () => {
     vi.unstubAllGlobals();
   });
 
-  it("names the dialog with its visible title", () => {
+  it("names the dialog with its visible title", async () => {
     fetchMock.mockResolvedValue(responseWith([]));
 
     render(
@@ -74,6 +74,7 @@ describe("ResumeSessionModal", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Resume Session" })).toBeInTheDocument();
+    expect(await screen.findByText("No resumable sessions")).toBeInTheDocument();
   });
 
   it("aborts the previous request and ignores its stale response", async () => {
