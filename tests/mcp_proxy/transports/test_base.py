@@ -218,6 +218,7 @@ class TestBaseTransportConnectionHealthCheck:
         result = await base_transport.health_check()
 
         assert result is False
+        assert base_transport.last_health_error == "Connection is not active"
 
     @pytest.mark.asyncio
     async def test_health_check_returns_false_when_no_session(
@@ -230,6 +231,7 @@ class TestBaseTransportConnectionHealthCheck:
         result = await base_transport.health_check()
 
         assert result is False
+        assert base_transport.last_health_error == "Connection is not active"
 
     @pytest.mark.asyncio
     async def test_health_check_returns_true_on_success(
@@ -268,11 +270,13 @@ class TestBaseTransportConnectionHealthCheck:
         base_transport._state = ConnectionState.CONNECTED
         base_transport._session = mock_session
         base_transport._consecutive_failures = 5
+        base_transport._last_health_error = "Previous failure"
 
         result = await base_transport.health_check()
 
         assert result is True
         assert base_transport._consecutive_failures == 0
+        assert base_transport.last_health_error is None
 
     @pytest.mark.asyncio
     async def test_health_check_returns_false_on_timeout(
@@ -294,6 +298,7 @@ class TestBaseTransportConnectionHealthCheck:
 
         assert result is False
         assert base_transport._consecutive_failures == 1
+        assert base_transport.last_health_error == "list_tools timed out after 0.1s"
 
     @pytest.mark.asyncio
     async def test_health_check_returns_false_on_exception(
@@ -309,6 +314,24 @@ class TestBaseTransportConnectionHealthCheck:
 
         assert result is False
         assert base_transport._consecutive_failures == 1
+        assert base_transport.last_health_error == "RuntimeError: Connection lost"
+
+    @pytest.mark.asyncio
+    async def test_health_check_normalizes_and_bounds_exception_detail(
+        self, base_transport: BaseTransportConnection, mock_session: MagicMock
+    ) -> None:
+        """Health-check errors are safe to expose in logs and status output."""
+        mock_session.list_tools = AsyncMock(side_effect=RuntimeError(f"first line\n{'x' * 600}"))
+        base_transport._state = ConnectionState.CONNECTED
+        base_transport._session = mock_session
+
+        result = await base_transport.health_check()
+
+        assert result is False
+        assert base_transport.last_health_error is not None
+        assert base_transport.last_health_error.startswith("RuntimeError: first line ")
+        assert "\n" not in base_transport.last_health_error
+        assert len(base_transport.last_health_error) == 500
 
     @pytest.mark.asyncio
     async def test_health_check_increments_consecutive_failures(

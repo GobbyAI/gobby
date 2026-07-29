@@ -564,11 +564,13 @@ def format_status_message(
         if info.get("internal"):
             continue
         health = info.get("health")
+        last_error = _safe_status_text(info.get("last_error"))
+        error_suffix = f": {last_error}" if last_error else ""
         if health and health not in ("healthy", None):
-            health_issues.append(f"MCP: {name} — {health}")
+            health_issues.append(f"MCP: {name} — {health}{error_suffix}")
         elif info.get("consecutive_failures", 0) > 0:
             health_issues.append(
-                f"MCP: {name} — {info['consecutive_failures']} consecutive failures"
+                f"MCP: {name} — {info['consecutive_failures']} consecutive failures{error_suffix}"
             )
 
     provider_models = data.get("provider_models", {})

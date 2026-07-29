@@ -115,15 +115,35 @@ class TestFormatStatusMessage:
             running=True,
             api_data={
                 "mcp_servers": {
-                    "server1": {"health": "error", "consecutive_failures": 3},
+                    "server1": {
+                        "health": "error",
+                        "consecutive_failures": 3,
+                        "last_error": "list_tools timed out after 5s",
+                    },
                     "server2": {"health": "healthy", "consecutive_failures": 0},
                 },
             },
         )
 
         assert "Health Issues:" in result
-        assert "server1" in result
+        assert "MCP: server1 — error: list_tools timed out after 5s" in result
         assert "server2" not in result.split("Health Issues:")[1]
+
+    def test_mcp_pre_degraded_failure_includes_last_error(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "mcp_servers": {
+                    "server1": {
+                        "health": "healthy",
+                        "consecutive_failures": 2,
+                        "last_error": "Connection reset",
+                    }
+                }
+            },
+        )
+
+        assert "MCP: server1 — 2 consecutive failures: Connection reset" in result
 
     def test_sessions_in_active_work(self) -> None:
         result = format_status_message(

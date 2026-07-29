@@ -1747,12 +1747,16 @@ class TestMCPClientManagerHealthCheck:
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
+            consecutive_failures=2,
+            last_error="Previous failure",
         )
 
         result = await manager.health_check_all()
 
         assert result["test-server"] is True
         mock_connection.health_check.assert_called_once_with(timeout=5.0)
+        assert manager.health["test-server"].consecutive_failures == 0
+        assert manager.health["test-server"].last_error is None
 
     @pytest.mark.asyncio
     async def test_health_check_all_records_failures(self) -> None:
@@ -1779,6 +1783,31 @@ class TestMCPClientManagerHealthCheck:
 
         assert result["test-server"] is False
         assert manager.health["test-server"].consecutive_failures == 1
+        assert manager.health["test-server"].last_error == "Health check failed"
+
+    @pytest.mark.asyncio
+    async def test_health_check_all_formats_raised_failure(self) -> None:
+        """Unexpected probe exceptions retain their type and normalized message."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.side_effect = RuntimeError("probe failed\nhard")
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+        )
+
+        result = await manager.health_check_all()
+
+        assert result["test-server"] is False
+        assert manager.health["test-server"].last_error == "RuntimeError: probe failed hard"
 
 
 class TestMCPClientManagerReconnect:
@@ -2113,6 +2142,7 @@ class TestMCPClientManagerServerHealth:
             last_health_check=datetime.now(),
             response_time_ms=42.5,
             consecutive_failures=0,
+            last_error="list_tools timed out after 5s",
         )
 
         health = manager.get_server_health()
@@ -2122,6 +2152,7 @@ class TestMCPClientManagerServerHealth:
         assert health["test-server"]["health"] == "healthy"
         assert health["test-server"]["response_time_ms"] == 42.5
         assert health["test-server"]["failures"] == 0
+        assert health["test-server"]["last_error"] == "list_tools timed out after 5s"
 
 
 class TestMCPClientManagerMonitorHealth:
@@ -2228,6 +2259,7 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
+        mock_connection.last_health_error = "list_tools timed out after 5s"
         manager._connections["test-server"] = mock_connection
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
@@ -2243,6 +2275,7 @@ class TestMCPClientManagerMonitorHealth:
             await manager._monitor_health()
 
         assert manager.health["test-server"].consecutive_failures == 1
+        assert manager.health["test-server"].last_error == "list_tools timed out after 5s"
         assert "Health check failed for test-server" not in caplog.text
 
     @pytest.mark.asyncio
@@ -2297,6 +2330,7 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection = AsyncMock()
         mock_connection.is_connected = True
         mock_connection.health_check.return_value = False
+        mock_connection.last_health_error = "list_tools timed out after 5s"
         manager._connections["test-server"] = mock_connection
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
@@ -2327,6 +2361,7 @@ class TestMCPClientManagerMonitorHealth:
         assert record_context["server_name"] == "test-server"
         assert record_context["previous_health"] == HealthState.UNHEALTHY.value
         assert record_context["consecutive_failures"] == 6
+        assert record_context["last_error"] == "list_tools timed out after 5s"
 
     @pytest.mark.asyncio
     async def test_monitor_health_continues_when_no_connections(self) -> None:

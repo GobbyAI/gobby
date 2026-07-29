@@ -249,6 +249,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                             else None
                         ),
                         "response_time_ms": health.response_time_ms if health else None,
+                        "last_error": health.last_error if health else None,
                         "tool_count": len(config.tools) if config.tools else 0,
                     }
             except Exception as e:
@@ -270,6 +271,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "consecutive_failures": 0,
                     "last_health_check": None,
                     "response_time_ms": None,
+                    "last_error": None,
                     "internal": True,  # Flag to distinguish from downstream servers
                     "tool_count": len(tools),
                 }

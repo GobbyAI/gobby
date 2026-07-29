@@ -11,6 +11,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 
 from gobby.config.persistence import DatabasesConfig
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
+from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.admin import create_admin_router
 from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
 from gobby.telemetry import health_metrics
@@ -151,8 +152,25 @@ class TestAdminRoutes:
         mock_config.name = "test-server"
         mock_config.enabled = True
         mock_config.transport = "stdio"
-        mock_server.mcp_manager.server_configs = [mock_config]
+        mock_config.tools = []
+        pending_config = MagicMock()
+        pending_config.name = "pending-server"
+        pending_config.enabled = True
+        pending_config.transport = "http"
+        pending_config.tools = []
+        mock_server.mcp_manager.server_configs = [mock_config, pending_config]
         mock_server.mcp_manager.connections = ["test-server"]
+        mock_server.mcp_manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+            health=HealthState.DEGRADED,
+            consecutive_failures=3,
+            last_error="list_tools timed out after 5s",
+        )
+        internal_registry = MagicMock()
+        internal_registry.name = "gobby-test"
+        internal_registry.list_tools.return_value = []
+        mock_server._internal_manager.get_all_registries.return_value = [internal_registry]
 
         with patch(
             "gobby.storage.pipelines.LocalPipelineExecutionManager"
@@ -173,6 +191,9 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+        assert data["mcp_servers"]["test-server"]["last_error"] == "list_tools timed out after 5s"
+        assert data["mcp_servers"]["pending-server"]["last_error"] is None
+        assert data["mcp_servers"]["gobby-test"]["last_error"] is None
         assert data["pipelines"] == {
             "running": 2,
             "waiting_approval": 3,

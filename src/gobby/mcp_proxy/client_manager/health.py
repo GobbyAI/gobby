@@ -14,6 +14,9 @@ class _HealthConnection(Protocol):
     @property
     def is_connected(self) -> bool: ...
 
+    @property
+    def last_health_error(self) -> str | None: ...
+
     def health_check(self, timeout: float = 5.0) -> Coroutine[Any, Any, bool]: ...
 
 
@@ -60,15 +63,29 @@ def _reconnect_done_callback(
         logger.exception("Reconnect task failed")
 
 
+def _health_failure_reason(connection: _HealthConnection, result: Any) -> str:
+    if isinstance(result, BaseException):
+        message = " ".join(str(result).split())
+        detail = f"{type(result).__name__}: {message}" if message else type(result).__name__
+    else:
+        connection_error = getattr(connection, "last_health_error", None)
+        detail = connection_error if isinstance(connection_error, str) else ""
+
+    normalized = " ".join(detail.split())
+    return normalized[:500] if normalized else "Health check failed"
+
+
 async def health_check_all(manager: _HealthManager) -> dict[str, Any]:
     """Perform an immediate health check on all connected transports."""
     tasks: list[Awaitable[Any]] = []
     server_names: list[str] = []
+    connections: list[_HealthConnection] = []
 
     for name, connection in manager._connections.items():
         if connection.is_connected:
             tasks.append(connection.health_check(timeout=5.0))
             server_names.append(name)
+            connections.append(connection)
 
     if not tasks:
         return {}
@@ -76,9 +93,10 @@ async def health_check_all(manager: _HealthManager) -> dict[str, Any]:
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     health_status: dict[str, bool] = {}
-    for name, result in zip(server_names, results, strict=True):
-        if isinstance(result, Exception) or result is False:
-            manager.health[name].record_failure("Health check failed")
+    for name, connection, result in zip(server_names, connections, results, strict=True):
+        if isinstance(result, BaseException) or result is False:
+            reason = _health_failure_reason(connection, result)
+            manager.health[name].record_failure(reason)
             health_status[name] = False
         else:
             manager.health[name].record_success()
@@ -99,21 +117,24 @@ async def monitor_health(
 
             tasks: list[Awaitable[Any]] = []
             server_names: list[str] = []
+            connections: list[_HealthConnection] = []
 
             for name, connection in manager._connections.items():
                 if connection.is_connected:
                     tasks.append(connection.health_check(timeout=5.0))
                     server_names.append(name)
+                    connections.append(connection)
 
             if not tasks:
                 continue
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for name, result in zip(server_names, results, strict=True):
-                if isinstance(result, Exception) or result is False:
+            for name, connection, result in zip(server_names, connections, results, strict=True):
+                if isinstance(result, BaseException) or result is False:
                     previous_health = manager.health[name].health
-                    manager.health[name].record_failure("Health check failed")
+                    reason = _health_failure_reason(connection, result)
+                    manager.health[name].record_failure(reason)
                     failure_context = {
                         "server_name": name,
                         "previous_health": previous_health.value,
@@ -170,6 +191,7 @@ def get_server_health(manager: Any) -> dict[str, dict[str, Any]]:
                 status.last_health_check.isoformat() if status.last_health_check else None
             ),
             "failures": status.consecutive_failures,
+            "last_error": status.last_error,
             "response_time_ms": status.response_time_ms,
         }
         for name, status in manager.health.items()
