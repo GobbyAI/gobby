@@ -184,6 +184,10 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     await asyncio.to_thread(config_store.get, "rules.aggregate_blocks") is not False
                 )
 
+                if eval_context is None:
+                    eval_context = {}
+                eval_context.setdefault("foreign_staged_commit_conflict", "")
+
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
