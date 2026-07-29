@@ -36,11 +36,11 @@ from gobby.memory.dream.orchestrator import (
 )
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.related import RelatedEvidenceSession
-from gobby.memory.dream.storage import (
+from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage_runs import (
     INTERRUPTED_CANCELLED_ERROR,
     RUN_TERMINAL_STATUSES,
     DreamAdmission,
-    MemoryDreamStore,
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,

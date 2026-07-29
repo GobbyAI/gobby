@@ -20,7 +20,8 @@ from gobby.memory.dream.orchestrator import (
 )
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.related import RelatedEvidenceSession
-from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
+from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage_runs import INTERRUPTED_CANCELLED_ERROR
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 
 logger = logging.getLogger(__name__)

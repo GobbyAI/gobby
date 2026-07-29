@@ -30,7 +30,7 @@ from gobby.memory.dream.models import (
     DreamCheckpoint,
     DuplicateGroup,
 )
-from gobby.memory.dream.options import DreamRunOptions
+from gobby.memory.dream.options import DreamRunOptions, normalize_dream_options
 from gobby.memory.dream.orchestrator import (
     MAX_ACTION_SAMPLE,
     WORK_UNIT_MAX_CANDIDATES,
@@ -48,13 +48,12 @@ from gobby.memory.dream.planner import (
 )
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import MemoryDreamService
-from gobby.memory.dream.storage import (
+from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage_runs import (
     INTERRUPTED_CANCELLED_ERROR,
     INTERRUPTED_RESTART_ERROR,
     PLATFORM_TRUTH_SCOPE,
     RUN_TERMINAL_STATUSES,
-    MemoryDreamStore,
-    normalize_dream_options,
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
@@ -1770,7 +1769,7 @@ def test_migration_baseline_and_ensure_schema_share_admission_contract() -> None
     baseline = (repo_root / "src/gobby/storage/postgres_baseline_schema.sql").read_text(
         encoding="utf-8"
     )
-    runtime = (repo_root / "src/gobby/memory/dream/storage.py").read_text(encoding="utf-8")
+    runtime = (repo_root / "src/gobby/memory/dream/storage_schema.py").read_text(encoding="utf-8")
 
     for label, content in (("migration", migration), ("baseline", baseline), ("runtime", runtime)):
         for fragment in (

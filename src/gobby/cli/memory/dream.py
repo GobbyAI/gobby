@@ -8,7 +8,7 @@ import click
 import httpx
 
 from gobby.cli.memory.common import _get_daemon_client
-from gobby.memory.dream.storage import RUN_TERMINAL_STATUSES
+from gobby.memory.dream.storage_runs import RUN_TERMINAL_STATUSES
 from gobby.storage.memories import MEMORY_TYPE_VALUES
 
 # The trigger and status calls are plain HTTP round trips; the sweep itself

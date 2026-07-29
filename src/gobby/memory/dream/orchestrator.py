@@ -22,7 +22,7 @@ from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan
 from gobby.memory.dream.candidates import list_sweep_candidates
 from gobby.memory.dream.models import DreamAction, DreamCandidate, DreamCheckpoint
-from gobby.memory.dream.options import DreamRunOptions
+from gobby.memory.dream.options import DreamRunOptions, dream_scope_key
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
@@ -31,7 +31,7 @@ from gobby.memory.dream.related import (
     RelatedEvidenceSession,
     gather_related_evidence,
 )
-from gobby.memory.dream.storage import MemoryDreamStore, dream_scope_key
+from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.memories_scope import MemoryScope
 
 logger = logging.getLogger(__name__)
