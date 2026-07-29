@@ -16,8 +16,9 @@ These are enforced by hooks, rules and workflows.
    your task begins is excluded and remains owned by the session or agent that
    dirtied it: do not modify, format, stage, commit, or destructively roll back that
    path. Resolve its holder from session/task file-attribution metadata and notify
-   that session or agent with the exact failing command, diagnostics, and affected
-   paths. If no holder can be resolved, notify the user or project operator.
+   that session or agent via `gobby-agents:send_message` with the exact failing
+   command, diagnostics, and affected paths. If no holder can be resolved, notify
+   the user or project operator.
    Failures confined to excluded dirty paths do not block your task's validation or
    close gates. The only exception for an owned path is something that genuinely
    requires multi-session architectural planning; even then, investigate thoroughly
@@ -31,3 +32,4 @@ These are enforced by hooks, rules and workflows.
 15. **NEVER guess or assume unless explicitly asked.** Only state things you *KNOW* to be true, otherwise challenge your guess or assumption through exploration, research, and/or tool use.
 16. **DO NOT CREATE BACKWARD COMPATIBILITY.** We haven't shipped 0.5.0 yet. There is no backward compatibility to maintain.
 17. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
+18. **ALWAYS use `gobby-agents:send_message` for direct cross-session agent communication.** Reserve `gobby-sessions:send_keys` for terminal control.

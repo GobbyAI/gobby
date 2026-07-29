@@ -369,6 +369,8 @@ def register_terminal_tools(
         name="send_keys",
         description=(
             "Send keystrokes to a session's tmux terminal. "
+            "This is for terminal control; use `gobby-agents:send_message` for direct "
+            "cross-session agent communication. "
             "Targets must be the caller, in the same project, or in the same agent tree. "
             "Use literal=true (default) to paste text — one or more trailing \\n characters "
             "produce exactly one Enter after the literal paste settles. "

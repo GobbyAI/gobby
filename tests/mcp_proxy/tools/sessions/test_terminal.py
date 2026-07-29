@@ -182,6 +182,10 @@ class TestRegisterTerminalTools:
             "one or more trailing \\n characters produce exactly one Enter after the literal paste settles"
             in send_keys_metadata.description
         )
+        assert (
+            "use `gobby-agents:send_message` for direct cross-session agent communication"
+            in send_keys_metadata.description
+        )
         send_keys = send_keys_metadata.func
         assert send_keys is not None
 
