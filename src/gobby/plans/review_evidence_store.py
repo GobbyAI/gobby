@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError, SectionHash
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 
+MAX_REVIEW_EVIDENCE_LIST_LIMIT = 500
+
 
 class PlanReviewEvidenceStore:
     """Typed access to the daemon-owned plan_review_evidence table."""
@@ -124,6 +126,38 @@ class PlanReviewEvidenceStore:
             {suffix}
             """,  # nosec B608
             (project_id, plan_path),
+        ).fetchall()
+        return [PlanReviewEvidence.from_row(row) for row in rows]
+
+    def list_recent(
+        self,
+        *,
+        project_id: str,
+        plan_path: str | None = None,
+        live_only: bool = False,
+        limit: int = 50,
+    ) -> list[PlanReviewEvidence]:
+        if not 1 <= limit <= MAX_REVIEW_EVIDENCE_LIST_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_REVIEW_EVIDENCE_LIST_LIMIT}")
+
+        conditions = ["project_id = %s"]
+        parameters: list[object] = [project_id]
+        if plan_path is not None:
+            conditions.append("plan_path = %s")
+            parameters.append(plan_path)
+        if live_only:
+            conditions.extend(["finalized_at IS NULL", "expired_at IS NULL"])
+        parameters.append(limit)
+
+        rows = self.db.execute(
+            f"""
+            SELECT *
+            FROM plan_review_evidence
+            WHERE {" AND ".join(conditions)}
+            ORDER BY created_at DESC, evidence_id
+            LIMIT %s
+            """,  # nosec B608 - conditions contain only fixed SQL fragments.
+            tuple(parameters),
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]
 

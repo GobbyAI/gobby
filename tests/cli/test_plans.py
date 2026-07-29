@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,9 +11,12 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.plans import _root_ref_from_file, plans
+from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
+from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -77,6 +81,98 @@ class _FakeCodeIndexStorage:
         if project_id == "project-1" and symbol_ids == ("sym-do-work",):
             return [{"file_path": "src/api.py"}, {"file_path": "tests/test_api.py"}]
         return []
+
+
+def _seed_review_evidence(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> tuple[str, Path, Path, list[PlanReviewEvidence]]:
+    project = LocalProjectManager(temp_db).create(
+        name="review-evidence-cli",
+        repo_path=str(tmp_path),
+    )
+    session = SessionManager(temp_db).register(
+        external_id="review-evidence-cli",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+    )
+    plan_dir = tmp_path / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    first_plan = plan_dir / "first.md"
+    second_plan = plan_dir / "second.md"
+    first_plan.write_text("# First\n", encoding="utf-8")
+    second_plan.write_text("# Second\n", encoding="utf-8")
+
+    store = PlanReviewEvidenceStore(temp_db)
+    sections = (SectionHash(section_id="1.1", section_hash="section-hash"),)
+    with temp_db.transaction() as transaction:
+        first = store.insert(
+            transaction=transaction,
+            project_id=project.id,
+            plan_path=".gobby/plans/first.md",
+            plan_hash="first-hash",
+            sections=sections,
+            snapshot=b"first",
+            round_number=1,
+            lease_seconds=300,
+            session_id=session.id,
+            task_id=None,
+            stage=None,
+        )
+        finalized = store.insert(
+            transaction=transaction,
+            project_id=project.id,
+            plan_path=".gobby/plans/temporary.md",
+            plan_hash="finalized-hash",
+            sections=sections,
+            snapshot=b"finalized",
+            round_number=2,
+            lease_seconds=300,
+            session_id=session.id,
+            task_id=None,
+            stage=None,
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET plan_path = '.gobby/plans/first.md',
+                finalized_at = TIMESTAMPTZ '2026-07-28 12:00:00+00',
+                created_at = TIMESTAMPTZ '2026-07-28 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (finalized.evidence_id,),
+        )
+        second = store.insert(
+            transaction=transaction,
+            project_id=project.id,
+            plan_path=".gobby/plans/second.md",
+            plan_hash="second-hash",
+            sections=sections,
+            snapshot=b"second",
+            round_number=3,
+            lease_seconds=300,
+            session_id=session.id,
+            task_id=None,
+            stage=None,
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET created_at = TIMESTAMPTZ '2026-07-29 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (second.evidence_id,),
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET created_at = TIMESTAMPTZ '2026-07-27 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (first.evidence_id,),
+        )
+    return project.id, first_plan, second_plan, [second, finalized, first]
 
 
 def _write_contract_plan(tmp_path: Path, *, target_line: str = "Target: `docs/demo.md`") -> Path:
@@ -455,3 +551,107 @@ def test_validate_cli_reports_consumer_sweep_failures(
 
     assert result["valid"] is False
     assert result["errors"] == ["Consumer sweep failed: index unavailable"]
+
+
+def test_review_evidence_command_lists_filters_and_emits_json(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, first_plan, _second_plan, expected = _seed_review_evidence(temp_db, tmp_path)
+    monkeypatch.setattr(
+        plans_module,
+        "resolve_project_ref",
+        lambda *_args, **_kwargs: project_id,
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
+
+    listed = CliRunner().invoke(plans, ["review-evidence"])
+
+    assert listed.exit_code == 0
+    assert "Evidence" in listed.output
+    positions = [listed.output.index(row.evidence_id[:8]) for row in expected]
+    assert positions == sorted(positions)
+
+    filtered = CliRunner().invoke(
+        plans,
+        ["review-evidence", "--plan", str(first_plan), "--open"],
+    )
+
+    assert filtered.exit_code == 0
+    assert expected[2].evidence_id[:8] in filtered.output
+    assert expected[1].evidence_id[:8] not in filtered.output
+    assert expected[0].evidence_id[:8] not in filtered.output
+
+    json_result = CliRunner().invoke(plans, ["review-evidence", "--json"])
+
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    rows = payload["evidence"]
+    assert [row["evidence_id"] for row in rows] == [row.evidence_id for row in expected]
+    assert rows[0]["created_at"] == "2026-07-29T12:00:00+00:00"
+    assert rows[1]["state"] == "finalized"
+    assert rows[2]["state"] == "live"
+    assert all(row["binding_kind"] == "session" for row in rows)
+    assert all(len(row["session_id"]) == 36 for row in rows)
+
+
+def test_review_evidence_command_limits_and_empty_output(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, _first_plan, _second_plan, expected = _seed_review_evidence(temp_db, tmp_path)
+    empty_plan = tmp_path / ".gobby" / "plans" / "empty.md"
+    empty_plan.write_text("# Empty\n", encoding="utf-8")
+    monkeypatch.setattr(
+        plans_module,
+        "resolve_project_ref",
+        lambda *_args, **_kwargs: project_id,
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
+
+    limited = CliRunner().invoke(plans, ["review-evidence", "--limit", "1", "--json"])
+
+    assert limited.exit_code == 0
+    assert json.loads(limited.output)["evidence"][0]["evidence_id"] == expected[0].evidence_id
+
+    empty = CliRunner().invoke(
+        plans,
+        ["review-evidence", "--plan", str(empty_plan)],
+    )
+
+    assert empty.exit_code == 0
+    assert empty.output == "No plan review evidence found.\n"
+
+    invalid = CliRunner().invoke(plans, ["review-evidence", "--limit", "501"])
+
+    assert invalid.exit_code == 2
+    assert "501 is not in the range 1<=x<=500" in invalid.output
+
+
+def test_review_evidence_command_uses_default_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _CaptureStore:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def list_recent(self, **kwargs: object) -> list[PlanReviewEvidence]:
+            captured.update(kwargs)
+            return []
+
+    monkeypatch.setattr(
+        plans_module,
+        "resolve_project_ref",
+        lambda *_args, **_kwargs: "project-1",
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "PlanReviewEvidenceStore", _CaptureStore)
+
+    result = CliRunner().invoke(plans, ["review-evidence"])
+
+    assert result.exit_code == 0
+    assert captured["limit"] == 50

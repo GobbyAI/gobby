@@ -1276,8 +1276,8 @@ def test_inventory_first_call_succeeds(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, evidence_id, _plan_path, inventory, universe = (
-        _prepare_integration_repair_round(review_setup, monkeypatch)
+    service, evidence_id, _plan_path, inventory, universe = _prepare_integration_repair_round(
+        review_setup, monkeypatch
     )
 
     context = service.get_evidence(evidence_id).prior_round_context
@@ -1296,8 +1296,8 @@ def test_round_context_records_no_index_generation(
     so nothing records one. A change that actually moves the plan surface is a
     finding for the reviewer to report.
     """
-    service, evidence_id, _plan_path, _inventory, _universe = (
-        _prepare_integration_repair_round(review_setup, monkeypatch)
+    service, evidence_id, _plan_path, _inventory, _universe = _prepare_integration_repair_round(
+        review_setup, monkeypatch
     )
 
     restarted = PlanReviewEvidenceService(service.db)
@@ -1496,8 +1496,8 @@ def test_snapshot_carries_prior_round_context(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service, evidence_id, _plan_path, _inventory, _universe = (
-        _prepare_integration_repair_round(review_setup, monkeypatch)
+    service, evidence_id, _plan_path, _inventory, _universe = _prepare_integration_repair_round(
+        review_setup, monkeypatch
     )
     expected = service.get_evidence(evidence_id).prior_round_context
 
@@ -1847,3 +1847,91 @@ def test_inconclusive_terminal_replaces_run(
         != service.get_evidence(old.evidence_id).snapshot
     )
     assert service.get_evidence(replacement.evidence_id).round_result is None
+
+
+def test_list_recent_orders_filters_and_bounds_results(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    temp_db: HubDatabase,
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    first_prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+    first = service.get_evidence(first_prepared.evidence_id)
+
+    with temp_db.transaction() as transaction:
+        second = service.store.insert(
+            transaction=transaction,
+            project_id=project_id,
+            plan_path=".gobby/plans/temporary.md",
+            plan_hash="second-plan-hash",
+            sections=first.section_manifest,
+            snapshot=first.snapshot,
+            round_number=2,
+            lease_seconds=300,
+            session_id=session_id,
+            task_id=None,
+            stage=None,
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET plan_path = %s,
+                finalized_at = TIMESTAMPTZ '2026-07-28 12:00:00+00',
+                created_at = TIMESTAMPTZ '2026-07-28 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (first.plan_path, second.evidence_id),
+        )
+        third = service.store.insert(
+            transaction=transaction,
+            project_id=project_id,
+            plan_path=".gobby/plans/other.md",
+            plan_hash="third-plan-hash",
+            sections=first.section_manifest,
+            snapshot=first.snapshot,
+            round_number=3,
+            lease_seconds=300,
+            session_id=session_id,
+            task_id=None,
+            stage=None,
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET created_at = TIMESTAMPTZ '2026-07-28 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (third.evidence_id,),
+        )
+        transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET created_at = TIMESTAMPTZ '2026-07-27 12:00:00+00'
+            WHERE evidence_id = %s
+            """,
+            (first.evidence_id,),
+        )
+
+    tied_ids = sorted([second.evidence_id, third.evidence_id])
+    assert [row.evidence_id for row in service.store.list_recent(project_id=project_id)] == [
+        *tied_ids,
+        first.evidence_id,
+    ]
+    assert [
+        row.evidence_id
+        for row in service.store.list_recent(
+            project_id=project_id,
+            plan_path=first.plan_path,
+        )
+    ] == [second.evidence_id, first.evidence_id]
+    assert {
+        row.evidence_id for row in service.store.list_recent(project_id=project_id, live_only=True)
+    } == {first.evidence_id, third.evidence_id}
+    assert len(service.store.list_recent(project_id=project_id, limit=2)) == 2
+
+    with pytest.raises(ValueError, match="limit must be between 1 and 500"):
+        service.store.list_recent(project_id=project_id, limit=501)

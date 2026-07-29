@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,9 +14,17 @@ import psycopg
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.consumer_sweep import ConsumerInventoryError, run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
+from gobby.plans.review_evidence_io import normalize_plan_path
+from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
+from gobby.plans.review_evidence_store import (
+    MAX_REVIEW_EVIDENCE_LIST_LIMIT,
+    PlanReviewEvidenceStore,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
+from gobby.storage.projects import LocalProjectManager
 from gobby.tasks.expansion._validate import validate_plan_file
+from gobby.utils.json_helpers import json_dumps
 
 from ._plan_validation_output import emit_plan_validation_messages, raise_plan_validation_failed
 from .utils import resolve_project_ref
@@ -186,6 +195,45 @@ def archive_plan_command(plan_id: str, reason: str | None, project: str | None) 
     click.echo(f"Archived {record.plan_id}: {record.plan_path}")
 
 
+@plans.command("review-evidence")
+@click.option("--plan", "plan_path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--open", "live_only", is_flag=True, help="Show only live evidence.")
+@click.option("--json", "json_format", is_flag=True, help="Emit a stable JSON envelope.")
+@click.option(
+    "--limit",
+    type=click.IntRange(1, MAX_REVIEW_EVIDENCE_LIST_LIMIT),
+    default=50,
+    show_default=True,
+)
+def review_evidence_command(
+    plan_path: Path | None,
+    live_only: bool,
+    json_format: bool,
+    limit: int,
+) -> None:
+    """List recent plan-review evidence."""
+
+    db = _open_db()
+    project_id = cast(str, _project_id(None, required=True))
+    normalized_plan_path = _normalized_evidence_plan_path(db, project_id, plan_path)
+    evidence = PlanReviewEvidenceStore(db).list_recent(
+        project_id=project_id,
+        plan_path=normalized_plan_path,
+        live_only=live_only,
+        limit=limit,
+    )
+
+    if json_format:
+        click.echo(
+            json_dumps({"evidence": [_evidence_json_row(row) for row in evidence]}, indent=2)
+        )
+        return
+    if not evidence:
+        click.echo("No plan review evidence found.")
+        return
+    click.echo(_render_evidence_table(evidence))
+
+
 @plans.command("review-runs")
 @click.argument("planning_task_ref")
 def review_runs_command(planning_task_ref: str) -> None:
@@ -201,6 +249,100 @@ def _open_db() -> HubDatabase:
     from gobby.cli.runtime import require_cli_database
 
     return require_cli_database()
+
+
+def _normalized_evidence_plan_path(
+    db: HubDatabase,
+    project_id: str,
+    plan_path: Path | None,
+) -> str | None:
+    if plan_path is None:
+        return None
+    project = LocalProjectManager(db).get(project_id)
+    if project is None or project.repo_path is None:
+        raise click.ClickException(f"Project {project_id} has no repository path")
+    root = Path(project.repo_path).expanduser().resolve()
+    try:
+        return normalize_plan_path(root, plan_path).relative_to(root).as_posix()
+    except (OSError, ReviewEvidenceError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _evidence_state(evidence: PlanReviewEvidence) -> str:
+    if evidence.expired_at is not None:
+        return "expired"
+    if evidence.finalized_at is not None:
+        return "finalized"
+    return "live"
+
+
+def _evidence_binding_kind(evidence: PlanReviewEvidence) -> str:
+    return "session" if evidence.session_id is not None else "task+stage"
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    return value.astimezone(UTC).isoformat() if value is not None else None
+
+
+def _evidence_json_row(evidence: PlanReviewEvidence) -> dict[str, object]:
+    return {
+        "evidence_id": evidence.evidence_id,
+        "plan_path": evidence.plan_path,
+        "round": evidence.round_number,
+        "binding_kind": _evidence_binding_kind(evidence),
+        "session_id": evidence.session_id,
+        "task_id": evidence.task_id,
+        "stage": evidence.stage,
+        "dispatch_run_id": evidence.dispatch_run_id,
+        "state": _evidence_state(evidence),
+        "lease_expires_at": _utc_iso(evidence.lease_expires_at),
+        "manifest_state": evidence.manifest_state,
+        "lesson_mint_status": evidence.lesson_mint_status,
+        "created_at": _utc_iso(evidence.created_at),
+    }
+
+
+def _render_evidence_table(evidence: list[PlanReviewEvidence]) -> str:
+    headers = (
+        "Evidence",
+        "Plan",
+        "Round",
+        "Binding",
+        "Run",
+        "State",
+        "Lease",
+        "Manifest",
+        "Lesson",
+        "Created",
+    )
+    body = [
+        (
+            row.evidence_id[:8],
+            row.plan_path,
+            str(row.round_number),
+            _evidence_binding_kind(row),
+            row.dispatch_run_id[:8] if row.dispatch_run_id else "-",
+            _evidence_state(row),
+            (_utc_iso(row.lease_expires_at) or "-")[:19],
+            row.manifest_state or "-",
+            row.lesson_mint_status or "-",
+            (_utc_iso(row.created_at) or "-")[:19],
+        )
+        for row in evidence
+    ]
+    widths = [
+        max(len(headers[index]), *(len(item[index]) for item in body))
+        for index in range(len(headers))
+    ]
+    lines = [
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)),
+        "  ".join("-" * width for width in widths),
+    ]
+    lines.extend(
+        "  ".join(item[index].ljust(widths[index]) for index in range(len(headers)))
+        for item in body
+    )
+    return "\n".join(lines)
 
 
 def _validate_plan_for_cli(
