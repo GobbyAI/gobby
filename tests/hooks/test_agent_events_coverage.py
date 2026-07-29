@@ -562,14 +562,18 @@ class TestInterceptSkillCommand:
         assert "User arguments:" not in result
         assert "CodeRabbit finding 1" not in result
 
-    def test_gobby_plan_does_not_inline_oversized_skill_body(self) -> None:
+    @pytest.mark.parametrize(
+        "command",
+        ["/gobby plan draft auth", "$gobby plan draft auth"],
+    )
+    def test_gobby_plan_does_not_inline_oversized_skill_body(self, command: str) -> None:
         handler = _TestHandler()
         mock_skill = MagicMock()
         mock_skill.name = "plan"
         mock_skill.content = "# Plan\n" + ("x" * 20_000)
         handler._skill_manager.resolve_skill_name.return_value = mock_skill
 
-        result = handler._intercept_skill_command("/gobby plan draft auth")
+        result = handler._intercept_skill_command(command)
 
         assert result is not None
         assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"})' in result

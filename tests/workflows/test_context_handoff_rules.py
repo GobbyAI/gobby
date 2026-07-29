@@ -353,13 +353,13 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_six_effects(self, db, manager) -> None:
-        """Should have 6 set_variable effects."""
+    def test_has_eight_effects(self, db, manager) -> None:
+        """Should have 8 set_variable effects."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 6
+        assert len(effects) == 8
         assert all(e.type == "set_variable" for e in effects)
 
     def test_resets_injected_memory_ids(self, db, manager) -> None:
@@ -391,7 +391,7 @@ class TestPreserveContextOnCompact:
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
 
-    def test_resets_context_nudge_cooldown(
+    def test_resets_context_guidance_epoch(
         self,
         db: HubDatabase,
         manager: LocalWorkflowDefinitionManager,
@@ -414,12 +414,26 @@ class TestPreserveContextOnCompact:
             for e in effects
             if e.type == "set_variable" and e.variable == "context_compact_mid_turn_pressure_band"
         ]
+        shown_kinds = [
+            e
+            for e in effects
+            if e.type == "set_variable" and e.variable == "context_compact_guidance_shown_kinds"
+        ]
+        consider_guard = [
+            e
+            for e in effects
+            if e.type == "set_variable" and e.variable == "gobby_plan_consider_shown"
+        ]
         assert len(compacted_turn) == 1
         assert compacted_turn[0].value == "variables.get('parent_turn_seq') or 0"
         assert len(turns_since) == 1
         assert turns_since[0].value == 0
         assert len(mid_turn_band) == 1
         assert mid_turn_band[0].value == "none"
+        assert len(shown_kinds) == 1
+        assert shown_kinds[0].value == []
+        assert len(consider_guard) == 1
+        assert consider_guard[0].value is False
 
 
 class TestNudgeCompactOnContextPressure:
@@ -451,7 +465,7 @@ class TestNudgeCompactOnContextPressure:
         _sync_bundled(db)
         handler = WorkflowHookHandler(
             rule_engine=RuleEngine(db),
-            session_manager=_SessionManagerWithContextRatio(0.65),
+            session_manager=_SessionManagerWithContextRatio(0.70),
         )
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
@@ -467,7 +481,7 @@ class TestNudgeCompactOnContextPressure:
 
         variables = SessionVariableManager(db).get_variables(SESSION_ID)
         guidance = variables["context_compact_guidance_message"]
-        assert "Context pressure is 65%" in guidance
+        assert "Context pressure is 70%" in guidance
         assert response.context is not None
         assert guidance in response.context
 
@@ -503,7 +517,7 @@ class TestNudgeCompactOnContextPressure:
         )
 
         injections: list[str] = []
-        for ratio in (0.39, 0.40, 0.55, 0.60, 0.65, 0.80):
+        for ratio in (0.39, 0.40, 0.55, 0.69, 0.70, 0.80):
             session_manager.ratio = ratio
             response = await handler._evaluate_rules(event)
             if response.context is not None:
@@ -511,10 +525,11 @@ class TestNudgeCompactOnContextPressure:
 
         assert len(injections) == 2
         assert "Context pressure is 40%" in injections[0]
-        assert "Context pressure is 60%" in injections[1]
+        assert "Context pressure is 70%" in injections[1]
         variables = variable_manager.get_variables(SESSION_ID)
         assert variables["parent_turn_seq"] == 15
         assert variables["context_compact_mid_turn_pressure_band"] == "strong"
+        assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
 
     def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}
@@ -524,26 +539,22 @@ class TestNudgeCompactOnContextPressure:
 
         assert variables["context_compact_guidance_kind"] == "soft"
         assert "40%" in variables["context_compact_guidance_message"]
-        assert variables["last_compact_nudge_turn_seq"] == 5
+        assert variables["context_compact_guidance_shown_kinds"] == ["soft"]
 
-    def test_strong_nudge_uses_two_turn_cooldown(self) -> None:
-        variables = {
-            "parent_turn_seq": 8,
-            "chat_mode": "normal",
-            "last_compact_nudge_turn_seq": 8,
-        }
+    def test_strong_nudge_is_emitted_once_per_compaction_epoch(self) -> None:
+        variables = {"parent_turn_seq": 8, "chat_mode": "normal"}
         session_manager = _SessionManagerWithContextRatio(0.9)
 
         detect_context_compact_guidance(variables, "session-1", session_manager)
 
-        assert variables["context_compact_guidance_message"] == ""
+        assert variables["context_compact_guidance_kind"] == "strong"
+        assert "90%" in variables["context_compact_guidance_message"]
+        assert variables["context_compact_guidance_shown_kinds"] == ["strong"]
 
         variables["parent_turn_seq"] = 9
         detect_context_compact_guidance(variables, "session-1", session_manager)
 
-        assert variables["context_compact_guidance_kind"] == "strong"
-        assert "90%" in variables["context_compact_guidance_message"]
-        assert variables["last_compact_nudge_turn_seq"] == 10
+        assert variables["context_compact_guidance_message"] == ""
 
     def test_plan_mode_skips_guidance(self) -> None:
         variables = {"parent_turn_seq": 1, "chat_mode": "plan"}
@@ -563,6 +574,14 @@ class TestNudgeCompactOnContextPressure:
 
         assert variables["context_compact_guidance_kind"] == "unknown"
         assert "unknown for 10 non-plan turns" in variables["context_compact_guidance_message"]
+        assert variables["context_compact_guidance_shown_kinds"] == ["unknown"]
+
+        variables["parent_turn_seq"] = 10
+        detect_context_compact_guidance(
+            variables, "session-1", _SessionManagerWithContextRatio(None)
+        )
+
+        assert variables["context_compact_guidance_message"] == ""
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 ---
 name: plan
-description: Artifact-first /gobby plan workflow. Drafts and revises a plan with the user, runs a constructive enhancement pass and then taskless adversarial review after approval, records enhancement and review history in the plan, and hands approved plans to gobby build.
-version: "3.3.0"
+description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
+version: "3.4.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -12,10 +12,58 @@ metadata:
 
 # /gobby plan
 
-`/gobby plan` creates and revises a plan artifact. It does not create a planning
-epic, review-anchor task, or per-round review tasks.
+Both `$gobby plan` and `/gobby plan` invoke this workflow.
 
-The drafting methodology lives in `plan-draft`. Load it before drafting:
+## Depth Selection and Required Elicitation
+
+1. Investigate the request and repository before recommending a planning depth.
+   Resolve discoverable facts with repository inspection, using `gcode` for code
+   navigation. Do not ask the user for facts the repository can answer.
+2. Assess these complexity signals:
+   - multiple dependent deliverables or subsystems;
+   - public API, schema, migration, security, or destructive-risk work;
+   - material unresolved product decisions;
+   - multi-agent coordination or durable handoff requirements; or
+   - an explicit desire for an artifact, lifecycle automation, or adversarial
+     review.
+3. Recommend **Full** when one or more signals materially affect the work.
+   Recommend **Lightweight** for localized, low-risk work. Ask the user to choose
+   between the two depths. If the user already selected a depth in response to
+   the Plan Mode Consider prompt, honor that choice without asking again.
+4. Load `elicit` for every Gobby plan:
+
+```text
+get_skill(name="elicit") on gobby-skills
+```
+
+Run its grill-me protocol in both depths. Resolve discoverable facts through
+repository inspection, ask one material decision at a time with a recommendation,
+and finish with a confirmed Decision Record before drafting either plan.
+
+## Lightweight Workflow
+
+Load `plan-draft` and use its Plan-Coverage Contract as formatting guidance:
+
+```text
+get_skill(name="plan-draft") on gobby-skills
+```
+
+Produce a conversational, decision-complete plan. Keep concrete deliverables,
+dependencies, file or subsystem targets, validation, risks, and explicit
+out-of-scope boundaries. Lightweight depth has no plan artifact, artifact
+validation, enhancement pass, adversarial review, or build handoff. End after
+the user receives the conversational plan.
+
+## Full Workflow
+
+Full depth is artifact-first: it creates and revises a plan artifact. Full depth
+does not create a planning epic, review-anchor task, or per-round review tasks.
+
+Choosing Full authorizes investigation, elicitation, and drafting only. Obtain
+the explicit approvals described below before enhancement, adversarial review,
+or build handoff. Selecting Full alone never launches any of those phases.
+
+Load the drafting methodology before drafting:
 
 ```text
 get_skill(name="plan-draft") on gobby-skills
@@ -26,15 +74,10 @@ The adversarial review methodology lives in `plan-review`. The taskless
 
 The constructive enhancement methodology lives in `plan-enhance`. The taskless
 `plan-enhancer-taskless` agent loads it during the enhancement phase (step 4.5),
-which runs after approval and before the unchanged adversary gate.
+which runs after enhancement approval and before the adversary gate.
 
-## Workflow
-
-1. Gather requirements, constraints, risks, and success criteria. When
-   requirements are ambiguous or the user asks to be grilled or interviewed,
-   load `elicit` (`get_skill(name="elicit")` on gobby-skills) and run the
-   interview before drafting; the confirmed Decision Record feeds the draft.
-   Elicitation is opt-in and never gates drafting.
+1. Use the confirmed Decision Record as the requirements, constraints, risks,
+   and success-criteria source.
 2. Draft `.gobby/plans/<slug>.md` using the Plan-Coverage Contract from
    `plan-draft`.
 3. Run plan verification locally:
@@ -43,11 +86,11 @@ which runs after approval and before the unchanged adversary gate.
    uv run gobby plans validate <plan-file>
    ```
 
-4. Ask the user to approve the draft for adversarial review.
+4. Ask the user to approve the validated draft for the enhancement phase.
 
-   **Step 4.5 — Enhancement phase** (default on, `max_enhancement_rounds = 1`):
-   after approval and before the adversary gate, run the constructive
-   Better/Bigger pass.
+**Step 4.5 — Enhancement phase** (default on, `max_enhancement_rounds = 1`):
+after approval and before the adversary gate, run the constructive
+Better/Bigger pass.
 
    1. Spawn `plan-enhancer-taskless` without `task_id` and with
       `isolation="none"`. Pass `artifact_path`, `round_number`,
@@ -75,7 +118,8 @@ which runs after approval and before the unchanged adversary gate.
       Changelog` entry with `kind: enhancement`.
    5. Stop on `converged: true`, all suggestions declined, or the
       `max_enhancement_rounds` cap. The enhancer never gates; control then
-      proceeds to the unchanged adversary gate in step 5.
+      returns to the user. Ask for separate approval before starting
+      adversarial review in step 5.
 5. After the enhancement phase, call `prepare_plan_review_round` immediately
 before you spawn `plan-adversary-taskless` without `task_id` and with
 `isolation="none"`. Do not pass provider or model: the reviewer model is the
@@ -180,7 +224,8 @@ resulting `## M1 Task Manifest` passes expansion-mode validation:
    uv run gobby plans validate <plan-file> --mode expansion
    ```
 
-9. Hand the approved artifact to build:
+9. Offer build handoff as an optional final step. Run it only after the user
+explicitly approves the handoff:
 
 ```bash
 uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
@@ -363,7 +408,8 @@ Use build seed inputs for plan-file handoff:
 - `planning_seed_state=approved`: start directly at expansion.
 
 `/gobby expand` remains available for manual expansion, debugging, and targeted
-reruns. `/gobby plan` should hand approved artifacts to `gobby build`.
+reruns. Full planning offers approved artifacts to `gobby build` only after the
+user approves the optional handoff.
 
 ## Boundaries
 

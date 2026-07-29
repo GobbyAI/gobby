@@ -2,14 +2,34 @@ tags: [plan-mode, state-tracking, gobby, default]
 
 rules:
   handle-plan-mode-entry:
-    description: "Prompt for plan skill when plan mode is active"
+    description: "Consider Gobby planning once per interactive Plan Mode epoch"
     event: turn_start
     enabled: true
     priority: 10
-    when: "variables.get('plan_mode') and not skill_loaded('plan')"
+    agent_scope: [default]
+    when: "variables.get('plan_mode') and not variables.get('gobby_plan_consider_shown')"
     effects:
-      - type: load_skill
-        skill: plan
+      - type: inject_context
+        template: |
+          Investigate the user's request and repository before mentioning Gobby planning.
+
+          After investigation, suggest Gobby planning only when there is a strong signal:
+          - multiple dependent deliverables or subsystems;
+          - public API, schema, migration, security, or destructive-risk work;
+          - material unresolved product decisions;
+          - multi-agent coordination or durable handoff requirements; or
+          - an explicit desire for an artifact, lifecycle automation, or adversarial review.
+
+          For localized, low-risk work, continue with normal conversational Plan Mode and do not prompt for Gobby planning.
+
+          When a strong signal exists, recommend one depth and ask the user to choose:
+          - **Full:** artifact-first plan, validation, enhancement, separately approved adversarial review, and optional build handoff.
+          - **Lightweight:** Gobby elicitation and improved decision-complete formatting, with no artifact, review, or build workflow.
+
+          Do not load the `plan` skill until the user chooses Gobby planning or explicitly invokes `$gobby plan` or `/gobby plan`.
+      - type: set_variable
+        variable: gobby_plan_consider_shown
+        value: true
 
   teach-qwen-gcode-plan-mode:
     description: "Teach Qwen that gcode is allowed for code navigation in plan mode"

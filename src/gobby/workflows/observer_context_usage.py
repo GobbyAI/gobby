@@ -8,18 +8,23 @@ from typing import Any, Protocol
 logger = logging.getLogger(__name__)
 
 DEFAULT_SOFT_CONTEXT_RATIO = 0.40
-DEFAULT_STRONG_CONTEXT_RATIO = 0.60
+DEFAULT_STRONG_CONTEXT_RATIO = 0.70
 LARGE_CONTEXT_SOFT_RATIO = 0.30
 LARGE_CONTEXT_STRONG_RATIO = 0.40
 LARGE_CONTEXT_WINDOW = 1_000_000
-STRONG_NUDGE_COOLDOWN_TURNS = 2
 UNKNOWN_USAGE_TURN_FALLBACK = 10
+GUIDANCE_KINDS = frozenset({"soft", "strong", "unknown"})
 
 
 class _SessionValue(Protocol):
-    context_usage_ratio: object
-    context_used_tokens: object
-    context_window: object
+    @property
+    def context_usage_ratio(self) -> object: ...
+
+    @property
+    def context_used_tokens(self) -> object: ...
+
+    @property
+    def context_window(self) -> object: ...
 
 
 class _SessionManager(Protocol):
@@ -52,14 +57,9 @@ def detect_context_compact_guidance(
     session = _load_session(session_manager, session_id)
     ratio = _ratio_from_session(session)
     if ratio is None:
-        if turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK and _cooldown_elapsed(
-            variables,
-            turn_seq,
-            UNKNOWN_USAGE_TURN_FALLBACK,
-        ):
+        if turns_since_compact >= UNKNOWN_USAGE_TURN_FALLBACK:
             _set_guidance(
                 variables,
-                turn_seq,
                 "unknown",
                 (
                     "Context usage has been unknown for 10 non-plan turns. "
@@ -76,22 +76,19 @@ def detect_context_compact_guidance(
     )
 
     if ratio >= strong_ratio:
-        if _cooldown_elapsed(variables, turn_seq, STRONG_NUDGE_COOLDOWN_TURNS):
-            _set_guidance(
-                variables,
-                turn_seq,
-                "strong",
-                (
-                    f"Context pressure is {_percent(ratio)}. "
-                    "Call `gobby-sessions:compact_self` at the next clean boundary."
-                ),
-            )
-        return
-
-    if ratio >= soft_ratio and not variables.get("last_compact_nudge_turn_seq"):
         _set_guidance(
             variables,
-            turn_seq,
+            "strong",
+            (
+                f"Context pressure is {_percent(ratio)}. "
+                "Call `gobby-sessions:compact_self` at the next clean boundary."
+            ),
+        )
+        return
+
+    if ratio >= soft_ratio:
+        _set_guidance(
+            variables,
             "soft",
             (
                 f"Context pressure is {_percent(ratio)}. "
@@ -124,11 +121,9 @@ def detect_mid_turn_context_compact_guidance(
     if _pressure_band_rank(current_band) <= _pressure_band_rank(previous_band):
         return
 
-    turn_seq = _next_turn_seq(variables)
     if current_band == "strong":
         _set_guidance(
             variables,
-            turn_seq,
             "strong",
             (
                 f"Context pressure is {_percent(ratio)}. "
@@ -139,7 +134,6 @@ def detect_mid_turn_context_compact_guidance(
 
     _set_guidance(
         variables,
-        turn_seq,
         "soft",
         (
             f"Context pressure is {_percent(ratio)}. "
@@ -184,13 +178,27 @@ def _thresholds_from_session(session: _SessionValue | None) -> tuple[float, floa
 
 def _set_guidance(
     variables: dict[str, Any],
-    turn_seq: int,
     kind: str,
     message: str,
 ) -> None:
+    shown_kinds = _shown_guidance_kinds(variables)
+    if kind in shown_kinds or (kind == "soft" and "strong" in shown_kinds):
+        return
     variables["context_compact_guidance_kind"] = kind
     variables["context_compact_guidance_message"] = message
-    variables["last_compact_nudge_turn_seq"] = turn_seq
+    shown_kinds.append(kind)
+    variables["context_compact_guidance_shown_kinds"] = shown_kinds
+
+
+def _shown_guidance_kinds(variables: dict[str, Any]) -> list[str]:
+    raw_kinds = variables.get("context_compact_guidance_shown_kinds")
+    if not isinstance(raw_kinds, list):
+        return []
+    return list(
+        dict.fromkeys(
+            kind for kind in raw_kinds if isinstance(kind, str) and kind in GUIDANCE_KINDS
+        )
+    )
 
 
 def _is_plan_mode(variables: dict[str, Any]) -> bool:
@@ -209,11 +217,6 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     current = previous + 1
     variables["_context_usage_turn_seq"] = current
     return current
-
-
-def _cooldown_elapsed(variables: dict[str, Any], turn_seq: int, cooldown: int) -> bool:
-    last = _int_or_none(variables.get("last_compact_nudge_turn_seq"))
-    return last is None or turn_seq - last >= cooldown
 
 
 def _pressure_band(ratio: float, soft_ratio: float, strong_ratio: float) -> str:

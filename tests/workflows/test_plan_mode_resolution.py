@@ -176,6 +176,55 @@ def test_turn_start_resolves_mode_before_context_pressure_accounting() -> None:
     assert variables["turns_since_compact"] == 3
 
 
+@pytest.mark.parametrize(
+    ("source", "mode_key"),
+    [
+        (SessionSource.AGY, "currentMode"),
+        (SessionSource.CLAUDE, "permission_mode"),
+        (SessionSource.CODEX, None),
+        (SessionSource.DROID, "approvalMode"),
+        (SessionSource.GROK, "current_mode"),
+        (SessionSource.QWEN, "mode"),
+    ],
+)
+def test_first_turn_resolves_authoritative_plan_mode_with_empty_variables(
+    source: SessionSource,
+    mode_key: str | None,
+    tmp_path: Path,
+) -> None:
+    data: dict[str, object] = {"prompt": "first prompt"}
+    session = SimpleNamespace(
+        session_type="terminal",
+        context_usage_ratio=None,
+        context_used_tokens=None,
+        context_window=None,
+        transcript_path=None,
+    )
+    if mode_key is None:
+        transcript = tmp_path / "codex.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {"type": "turn_context", "payload": {"collaboration_mode": {"mode": "plan"}}}
+            )
+            + "\n"
+        )
+        session.transcript_path = str(transcript)
+    else:
+        data[mode_key] = "plan"
+    event = _event(source, data=data, metadata={"session_type": "terminal"})
+    variables: dict[str, object] = {}
+
+    failures = WorkflowHookHandler(session_manager=_SessionManager(session))._run_observers(
+        event, SESSION_ID, variables
+    )
+
+    assert failures == set()
+    assert variables["mode_level"] == 0
+    assert variables["plan_mode"] is True
+    assert variables["context_compact_guidance_message"] == ""
+    assert "turns_since_compact" not in variables
+
+
 def test_structured_hook_mode_precedes_provider_state_and_prompt_markers() -> None:
     variables = {"chat_mode": "bypass", "mode_level": 2, "plan_mode": False}
     event = _event(

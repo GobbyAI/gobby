@@ -31,12 +31,14 @@ class _SessionManager:
     [
         (999_999, 0.399, ""),
         (999_999, 0.40, "soft"),
-        (999_999, 0.60, "strong"),
+        (999_999, 0.699, "soft"),
+        (999_999, 0.70, "strong"),
         (1_000_000, 0.299, ""),
         (1_000_000, 0.30, "soft"),
         (1_000_000, 0.40, "strong"),
         (None, 0.40, "soft"),
-        (None, 0.60, "strong"),
+        (None, 0.699, "soft"),
+        (None, 0.70, "strong"),
     ],
 )
 def test_threshold_boundaries(window: int | None, ratio: float, expected_kind: str) -> None:
@@ -71,6 +73,43 @@ def test_soft_guidance_is_emitted_once() -> None:
     assert variables["context_compact_guidance_kind"] == "soft"
 
     variables["parent_turn_seq"] = 1
+    detect_context_compact_guidance(variables, "session-1", manager)
+    assert variables["context_compact_guidance_message"] == ""
+    assert variables["context_compact_guidance_shown_kinds"] == ["soft"]
+
+
+def test_strong_guidance_follows_soft_once_and_suppresses_later_soft() -> None:
+    variables = {"parent_turn_seq": 0, "chat_mode": "normal"}
+    manager = _SessionManager(0.40, 999_999)
+
+    detect_context_compact_guidance(variables, "session-1", manager)
+    assert variables["context_compact_guidance_kind"] == "soft"
+
+    manager.session.context_usage_ratio = 0.70
+    variables["parent_turn_seq"] = 1
+    detect_context_compact_guidance(variables, "session-1", manager)
+    assert variables["context_compact_guidance_kind"] == "strong"
+    assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
+
+    manager.session.context_usage_ratio = 0.50
+    variables["parent_turn_seq"] = 2
+    detect_context_compact_guidance(variables, "session-1", manager)
+    assert variables["context_compact_guidance_message"] == ""
+
+
+def test_unknown_guidance_is_emitted_once() -> None:
+    variables = {
+        "parent_turn_seq": 9,
+        "chat_mode": "normal",
+        "turns_since_compact": 9,
+    }
+    manager = _SessionManager(None, None)
+
+    detect_context_compact_guidance(variables, "session-1", manager)
+    assert variables["context_compact_guidance_kind"] == "unknown"
+    assert variables["context_compact_guidance_shown_kinds"] == ["unknown"]
+
+    variables["parent_turn_seq"] = 10
     detect_context_compact_guidance(variables, "session-1", manager)
     assert variables["context_compact_guidance_message"] == ""
 

@@ -26,3 +26,9 @@ rules:
       - type: set_variable
         variable: context_compact_mid_turn_pressure_band
         value: "none"
+      - type: set_variable
+        variable: context_compact_guidance_shown_kinds
+        value: []
+      - type: set_variable
+        variable: gobby_plan_consider_shown
+        value: false

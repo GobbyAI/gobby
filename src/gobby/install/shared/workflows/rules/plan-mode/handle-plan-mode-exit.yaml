@@ -16,3 +16,18 @@ rules:
       - type: set_variable
         variable: qwen_gcode_plan_hint_shown
         value: false
+      - type: set_variable
+        variable: gobby_plan_consider_shown
+        value: false
+
+  reset-plan-consider-on-resolved-mode-exit:
+    description: "Reset the Consider epoch after authoritative Plan Mode exit"
+    event: turn_start
+    enabled: true
+    priority: 9
+    agent_scope: [default]
+    when: "not variables.get('plan_mode') and variables.get('gobby_plan_consider_shown')"
+    effects:
+      - type: set_variable
+        variable: gobby_plan_consider_shown
+        value: false

@@ -15,7 +15,62 @@ def body() -> str:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.3.0"' in body
+    assert 'version: "3.4.0"' in body
+
+
+def test_plan_investigates_before_recommending_depth(body: str) -> None:
+    section = body[
+        body.index("## Depth Selection and Required Elicitation") : body.index(
+            "## Lightweight Workflow"
+        )
+    ]
+    investigate = section.index("Investigate the request and repository")
+    assess = section.index("Assess these complexity signals")
+    recommend = section.index("Recommend **Full**")
+    ask = section.index("Ask the user to choose")
+
+    assert investigate < assess < recommend < ask
+    for signal in (
+        "multiple dependent deliverables or subsystems",
+        "public API, schema, migration, security, or destructive-risk work",
+        "material unresolved product decisions",
+        "multi-agent coordination or durable handoff requirements",
+        "artifact, lifecycle automation, or adversarial",
+    ):
+        assert signal in section
+    assert "honor that choice without asking again" in section
+
+
+def test_elicit_is_mandatory_for_both_depths(body: str) -> None:
+    section = body[
+        body.index("## Depth Selection and Required Elicitation") : body.index(
+            "## Lightweight Workflow"
+        )
+    ]
+    normalized = " ".join(section.split())
+
+    assert 'get_skill(name="elicit")' in section
+    assert "Run its grill-me protocol in both depths" in normalized
+    assert "ask one material decision at a time with a recommendation" in normalized
+    assert "confirmed Decision Record before drafting either plan" in normalized
+    assert "Do not ask the user for facts the repository can answer" in normalized
+
+
+def test_lightweight_is_conversational_and_has_no_lifecycle_workflow(body: str) -> None:
+    section = body[body.index("## Lightweight Workflow") : body.index("## Full Workflow")]
+    normalized = " ".join(section.split())
+
+    assert "Plan-Coverage Contract as formatting guidance" in normalized
+    assert "conversational, decision-complete plan" in normalized
+    assert (
+        "no plan artifact, artifact validation, enhancement pass, adversarial review, "
+        "or build handoff" in normalized
+    )
+    assert "End after the user receives the conversational plan" in normalized
+
+
+def test_explicit_commands_are_both_documented(body: str) -> None:
+    assert "Both `$gobby plan` and `/gobby plan` invoke this workflow." in body
 
 
 def test_plan_is_artifact_first_and_taskless(body: str) -> None:
@@ -29,10 +84,25 @@ def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     assert "do not create review anchors" in lowered
 
 
-def test_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:
+def test_full_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:
     assert 'get_skill(name="plan-draft")' in body
     assert "uv run gobby plans validate <plan-file>" in body
-    assert "Ask the user to approve the draft for adversarial review" in body
+    assert "approve the validated draft for the enhancement phase" in body
+    assert "Ask for separate approval before starting adversarial" in body
+
+
+def test_selecting_full_does_not_launch_later_phases(body: str) -> None:
+    full_intro = body[body.index("## Full Workflow") : body.index("**Step 4.5")]
+    normalized = " ".join(full_intro.split())
+
+    assert "Choosing Full authorizes investigation, elicitation, and drafting only" in normalized
+    assert (
+        "explicit approvals described below before enhancement, adversarial review, "
+        "or build handoff" in normalized
+    )
+    assert "Selecting Full alone never launches any of those phases" in normalized
+    assert "Offer build handoff as an optional final step" in body
+    assert "explicitly approves the handoff" in body
 
 
 def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None:
