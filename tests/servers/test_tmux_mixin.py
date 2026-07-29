@@ -469,17 +469,80 @@ class TestTmuxResize:
 
 
 class TestTmuxRefreshClient:
+    @pytest.mark.parametrize("socket", ["default", "gobby"])
     @pytest.mark.asyncio
-    async def test_refreshes_through_manager(self, server: WebSocketServer) -> None:
+    async def test_dispatch_refreshes_socket_qualified_session(
+        self,
+        server: WebSocketServer,
+        socket: str,
+    ) -> None:
         ws = MockWebSocket()
+        manager = server._tmux_mgr_gobby if socket == "gobby" else server._tmux_mgr_default
 
-        with patch.object(
-            server._tmux_mgr_default, "refresh_client", new_callable=AsyncMock
-        ) as refresh_client:
-            await server._handle_tmux_refresh_client(ws, {"session_name": "demo"})
+        with (
+            patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True),
+            patch.object(manager, "refresh_client", new_callable=AsyncMock) as refresh_client,
+        ):
+            await server._handle_message(
+                ws,
+                json.dumps(
+                    {
+                        "type": "tmux_refresh_client",
+                        "request_id": "refresh-1",
+                        "session_name": "demo",
+                        "socket": socket,
+                    }
+                ),
+            )
 
         refresh_client.assert_awaited_once_with("demo")
-        assert ws.sent_messages == []
+        assert ws.last_message() == {
+            "type": "tmux_refresh_result",
+            "success": True,
+            "request_id": "refresh-1",
+            "session_name": "demo",
+            "socket": socket,
+        }
+
+    @pytest.mark.asyncio
+    async def test_missing_session_returns_correlated_error(
+        self,
+        server: WebSocketServer,
+    ) -> None:
+        ws = MockWebSocket()
+
+        with (
+            patch.object(
+                server._tmux_mgr_gobby,
+                "has_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                server._tmux_mgr_gobby,
+                "refresh_client",
+                new_callable=AsyncMock,
+            ) as refresh_client,
+        ):
+            await server._handle_message(
+                ws,
+                json.dumps(
+                    {
+                        "type": "tmux_refresh_client",
+                        "request_id": "refresh-missing",
+                        "session_name": "missing",
+                        "socket": "gobby",
+                    }
+                ),
+            )
+
+        refresh_client.assert_not_awaited()
+        assert ws.last_message() == {
+            "type": "error",
+            "code": "ERROR",
+            "message": "Session 'missing' not found",
+            "request_id": "refresh-missing",
+        }
 
 
 class TestTmuxClientCleanup:

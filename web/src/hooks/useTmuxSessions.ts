@@ -405,6 +405,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
     wsRef.current.send(JSON.stringify({
       type: 'tmux_refresh_client',
+      request_id: `refresh-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
       session_name: sessionName,
       socket: socket || 'default',
     }))

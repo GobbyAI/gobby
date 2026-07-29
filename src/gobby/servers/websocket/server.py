@@ -306,6 +306,7 @@ class WebSocketServer(
                 "tmux_create_session": self._handle_tmux_create_session,
                 "tmux_kill_session": self._handle_tmux_kill_session,
                 "tmux_resize": self._handle_tmux_resize,
+                "tmux_refresh_client": self._handle_tmux_refresh_client,
                 "clear_chat": self._handle_clear_chat,
                 "delete_chat": self._handle_delete_chat,
                 "set_mode": self._handle_set_mode,

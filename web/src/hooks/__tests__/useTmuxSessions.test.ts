@@ -171,9 +171,25 @@ describe('useTmuxSessions', () => {
     act(() => {
       result.current.sendInput('\u001b')
       result.current.resizeTerminal(42, 120)
+      result.current.refreshTerminal('default-worker', 'default')
+      result.current.refreshTerminal('gobby-worker', 'gobby')
     })
-    expect(ws.send).not.toHaveBeenCalled()
+    expect(sentMessages(ws)).toEqual([
+      {
+        type: 'tmux_refresh_client',
+        request_id: expect.any(String),
+        session_name: 'default-worker',
+        socket: 'default',
+      },
+      {
+        type: 'tmux_refresh_client',
+        request_id: expect.any(String),
+        session_name: 'gobby-worker',
+        socket: 'gobby',
+      },
+    ])
 
+    ws.send.mockClear()
     act(() => result.current.attachSession('worker', 'gobby'))
     expect(sentMessages(ws)).toEqual([{
       type: 'tmux_attach',

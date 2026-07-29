@@ -549,16 +549,38 @@ class TmuxMixin:
 
     async def _handle_tmux_refresh_client(self, websocket: Any, data: dict[str, Any]) -> None:
         """Force tmux to redraw the clients attached to a session."""
+        request_id = data.get("request_id")
         session_name = data.get("session_name")
         socket = data.get("socket", "default")
 
         if not session_name:
+            await self._send_error(websocket, "Missing session_name", request_id=request_id)
             return
 
+        manager = self._get_tmux_manager(socket)
         try:
-            await self._get_tmux_manager(socket).refresh_client(session_name)
+            if not await manager.has_session(session_name):
+                await self._send_error(
+                    websocket,
+                    f"Session '{session_name}' not found",
+                    request_id=request_id,
+                )
+                return
+            await manager.refresh_client(session_name)
         except Exception as e:
-            logger.debug("Failed to refresh tmux session: %s", e)
+            logger.error("Failed to refresh tmux session '%s': %s", session_name, e)
+            await self._send_error(websocket, f"Refresh failed: {e}", request_id=request_id)
+            return
+
+        response: dict[str, Any] = {
+            "type": "tmux_refresh_result",
+            "success": True,
+            "session_name": session_name,
+            "socket": socket,
+        }
+        if request_id:
+            response["request_id"] = request_id
+        await websocket.send(json_dumps(response))
 
     # ------------------------------------------------------------------
     # Broadcast helpers
