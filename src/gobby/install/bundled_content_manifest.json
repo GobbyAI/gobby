@@ -342,7 +342,7 @@
     "workflows/rules/brevity/detect-brevity-drift.yaml": "e8e64088efa9f72b3777d0d39bacf8adb7ce69d22b971af1fdb664241fb76790",
     "workflows/rules/brevity/reinforce-brevity.yaml": "156ef85a5d26667cf9ff27671f56e112bb16a36556af74983e01f4894b896c65",
     "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "9e8d8a7c3f9571d7b7d502112d3a229a014004aec9f3b11159adf9540474eb23",
-    "workflows/rules/code-index/require-code-index-skill.yaml": "2f06ed00bac9a3e1ca3e5a6cf7a01ed817e9d6da621616a3a91e0ec4d453ac3d",
+    "workflows/rules/code-index/require-code-index-skill.yaml": "af5748d0e10381b5d06c9604a0bfd8f21e6ec17f35a2efdf01d282fc97b2cd12",
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "3b25209179b0888a223edd805bd82f785087c0c1988fcb02b2572d70e608deea",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "64628aec03c9eb7495a8410dee0fd297448a818c97421cd92778df8762070237",
     "workflows/rules/context-handoff/inject-compact-handoff.yaml": "c5a2135d01f8f946eefc2184ab8af68145ea5769b5184877d93488bd44c86eaa",
