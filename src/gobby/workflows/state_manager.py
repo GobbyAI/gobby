@@ -620,6 +620,51 @@ class SessionVariableManager:
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)
 
+    def release_task_edited_files(
+        self,
+        session_id: str,
+        task_id: str,
+        repo_relative_paths: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Atomically release owner-confirmed paths from one task attribution ledger."""
+        from gobby.workflows.task_claim_state import normalize_task_edited_path
+
+        requested = list(
+            dict.fromkeys(
+                path
+                for value in repo_relative_paths
+                if (path := normalize_task_edited_path(value)) is not None
+            )
+        )
+        requested_set = set(requested)
+
+        def mutate(variables: dict[str, Any]) -> tuple[tuple[list[str], list[str]], bool]:
+            raw_task_files = variables.get("task_edited_files") or {}
+            task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
+            stored = task_files.get(task_id, [])
+            files_for_task = stored if isinstance(stored, list) else []
+
+            released: list[str] = []
+            remaining: list[str] = []
+            for value in files_for_task:
+                normalized = normalize_task_edited_path(value)
+                if normalized in requested_set:
+                    if normalized is not None and normalized not in released:
+                        released.append(normalized)
+                    continue
+                if isinstance(value, str) and value not in remaining:
+                    remaining.append(value)
+
+            if not released:
+                return (released, remaining), False
+
+            updated_task_files = dict(task_files)
+            updated_task_files[task_id] = remaining
+            variables["task_edited_files"] = updated_task_files
+            return (released, remaining), True
+
+        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+
     def claim_startup_context(self, session_id: str) -> Literal["full", "live"]:
         """Atomically claim the startup context for this session.
 

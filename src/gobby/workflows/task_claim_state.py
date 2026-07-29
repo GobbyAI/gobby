@@ -7,7 +7,18 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 
 from __future__ import annotations
 
+import posixpath
 from typing import Any
+
+
+def normalize_task_edited_path(value: object) -> str | None:
+    """Normalize one repository-relative task attribution path."""
+    if not isinstance(value, str) or not value:
+        return None
+    path = posixpath.normpath(value.replace("\\", "/"))
+    if path in {"", "."} or path.startswith("../") or path.startswith("/"):
+        return None
+    return path
 
 
 def _claimed_tasks(variables: dict[str, Any]) -> dict[str, str]:

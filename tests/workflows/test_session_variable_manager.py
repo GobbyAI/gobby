@@ -829,6 +829,37 @@ def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any
     assert variables["task_edited_files"] == {"task-1": expected}
 
 
+def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        S1,
+        {
+            "session_edited_files": ["./src/released.py", "src/remaining.py"],
+            "task_edited_files": {
+                "task-1": ["./src/released.py", "src/remaining.py"],
+                "task-2": ["src/other.py"],
+            },
+        },
+    )
+
+    released, remaining = mgr.release_task_edited_files(
+        S1,
+        "task-1",
+        ["src/released.py"],
+    )
+
+    assert released == ["src/released.py"]
+    assert remaining == ["src/remaining.py"]
+    variables = mgr.get_variables(S1)
+    assert variables["session_edited_files"] == ["./src/released.py", "src/remaining.py"]
+    assert variables["task_edited_files"] == {
+        "task-1": ["src/remaining.py"],
+        "task-2": ["src/other.py"],
+    }
+
+
 def test_record_edited_files_empty_paths_creates_task_mutation_sentinel(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-import posixpath
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import normalize_task_edited_path
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -218,7 +219,7 @@ def _active_foreign_path_owners(
         task_id = str(row["task_id"])
         task_ref = _format_ref(row["task_seq_num"], task_id)
         for raw_path in raw_paths:
-            path = _normalize_repo_path(raw_path)
+            path = normalize_task_edited_path(raw_path)
             if path is None:
                 continue
             owners.setdefault(path, []).append(
@@ -230,15 +231,6 @@ def _active_foreign_path_owners(
             )
 
     return {path: tuple(path_owners) for path, path_owners in owners.items()}
-
-
-def _normalize_repo_path(value: object) -> str | None:
-    if not isinstance(value, str) or not value:
-        return None
-    path = posixpath.normpath(value.replace("\\", "/"))
-    if path in {"", "."} or path.startswith("../") or path.startswith("/"):
-        return None
-    return path
 
 
 def _git_paths(project_path: str, *args: str) -> set[str]:
@@ -255,7 +247,7 @@ def _git_paths(project_path: str, *args: str) -> set[str]:
     return {
         path
         for raw_path in result.stdout.split(b"\0")
-        if (path := _normalize_repo_path(os.fsdecode(raw_path))) is not None
+        if (path := normalize_task_edited_path(os.fsdecode(raw_path))) is not None
     }
 
 
@@ -264,16 +256,24 @@ def _format_ref(seq_num: object, fallback_id: str) -> str:
 
 
 def _format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
+    ordered_conflicts = sorted(
+        conflicts,
+        key=lambda item: (item.path, item.session_ref, item.task_ref),
+    )
     lines = [
         "Commit blocked: staged path(s) belong to another active task/session:",
         *[
             f"- {owner.path} — session {owner.session_ref}, task {owner.task_ref}"
-            for owner in sorted(
-                conflicts,
-                key=lambda item: (item.path, item.session_ref, item.task_ref),
-            )
+            for owner in ordered_conflicts
         ],
-        "Coordinate with each owner using `gobby-agents.send_message` before retrying.",
+        "Ask each owner with `gobby-agents.send_message` to verify its work is committed, "
+        "then run its matching release call:",
+        *[
+            f"- session {owner.session_ref}: "
+            f"`gobby-tasks.release_task_paths(task_id={json.dumps(owner.task_ref)}, "
+            f"paths=[{json.dumps(owner.path)}])`"
+            for owner in ordered_conflicts
+        ],
         "Commit only your paths with `git commit --only -- <owned paths>`; "
         "foreign staged entries will remain intact.",
     ]

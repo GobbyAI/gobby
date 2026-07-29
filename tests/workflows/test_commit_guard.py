@@ -54,6 +54,7 @@ def repo(tmp_path: Path) -> Path:
 
 @dataclass(frozen=True)
 class GuardHarness:
+    db: HubDatabase
     handler: WorkflowHookHandler
     session_manager: SessionManager
     project: Project
@@ -77,6 +78,32 @@ class GuardHarness:
             },
             metadata={
                 "_platform_session_id": self.current_session.id,
+                "project_path": str(self.repo),
+            },
+        )
+
+    def foreign_close_event(self) -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=self.foreign_session.external_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd=str(self.repo),
+            project_id=self.project.id,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {
+                        "task_id": f"#{self.foreign_task.seq_num}",
+                        "commit_sha": "abc123",
+                        "preview": True,
+                    },
+                },
+            },
+            metadata={
+                "_platform_session_id": self.foreign_session.id,
                 "project_path": str(self.repo),
             },
         )
@@ -131,9 +158,14 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
     variables.merge_variables(
         foreign_session.id,
         {
+            "require_commit_before_status": True,
+            "loaded_skills": ["tasks"],
+            "task_claimed": True,
             "claimed_tasks": {foreign_task.id: f"#{foreign_task.seq_num}"},
             "active_task_id": foreign_task.id,
             "task_edited_files": {foreign_task.id: ["foreign.txt"]},
+            "task_has_commits": True,
+            "memory_review_completed": True,
         },
     )
 
@@ -154,6 +186,7 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
         session_manager=session_manager,
     )
     return GuardHarness(
+        db=temp_db,
         handler=handler,
         session_manager=session_manager,
         project=project,
@@ -183,6 +216,11 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     assert guard_harness.foreign_session.ref in response.reason
     assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
     assert "gobby-agents.send_message" in response.reason
+    assert (
+        "gobby-tasks.release_task_paths("
+        f'task_id="#{guard_harness.foreign_task.seq_num}", paths=["foreign.txt"])'
+        in response.reason
+    )
     assert "git commit --only --" in response.reason
     assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
         "foreign.txt",
@@ -222,6 +260,54 @@ async def test_foreign_path_only_commit_is_blocked(guard_harness: GuardHarness) 
     assert response.reason is not None
     assert "foreign.txt" in response.reason
     assert _git(guard_harness.repo, "diff", "--cached", "--name-only") == "foreign.txt"
+
+
+@pytest.mark.asyncio
+async def test_owner_path_release_breaks_commit_and_close_cycle(
+    guard_harness: GuardHarness,
+) -> None:
+    guard_harness.db.execute(
+        "UPDATE workflow_definitions SET enabled = (name IN (%s, %s)) WHERE workflow_type = 'rule'",
+        (RULE_NAME, "require-clean-tree-before-status"),
+    )
+    (guard_harness.repo / "foreign.txt").write_text("current session change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    commit_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m 'blocked by stale attribution'")
+    )
+    close_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.foreign_close_event()
+    )
+
+    assert commit_response.decision == "block"
+    assert close_response.decision == "block"
+
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_files": {
+                guard_harness.foreign_task.id: ["foreign.txt"],
+            }
+        },
+    )
+    released, remaining = variables.release_task_edited_files(
+        guard_harness.foreign_session.id,
+        guard_harness.foreign_task.id,
+        ["foreign.txt"],
+    )
+
+    assert released == ["foreign.txt"]
+    assert remaining == []
+    commit_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m 'released by owner'")
+    )
+    close_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.foreign_close_event()
+    )
+    assert commit_response.decision == "allow"
+    assert close_response.decision == "allow"
 
 
 @pytest.mark.asyncio
