@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -534,7 +535,7 @@ class TestNudgeCompactOnContextPressure:
         assert variables["context_compact_mid_turn_pressure_band"] == "strong"
         assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
 
-    async def test_spawned_plan_mode_injects_soft_then_strong_guidance(
+    async def test_spawned_plan_mode_suppresses_soft_and_strong_guidance(
         self,
         db: HubDatabase,
     ) -> None:
@@ -555,6 +556,10 @@ class TestNudgeCompactOnContextPressure:
                 "mode_level": 0,
                 "parent_turn_seq": 4,
                 "plan_mode": True,
+                REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                    "spawned-plan-mode",
+                    "continue planning",
+                ),
             },
         )
         turn_start = HookEvent(
@@ -569,8 +574,10 @@ class TestNudgeCompactOnContextPressure:
 
         response = await handler._evaluate_rules(turn_start)
 
-        assert response.context is not None
-        assert "Context pressure is 40%" in response.context
+        assert "Context pressure" not in (response.context or "")
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert variables["context_compact_guidance_message"] == ""
+        assert "turns_since_compact" not in variables
 
         session_manager.ratio = 0.70
         after_tool = HookEvent(
@@ -590,11 +597,11 @@ class TestNudgeCompactOnContextPressure:
 
         response = await handler._evaluate_rules(after_tool)
 
-        assert response.context is not None
-        assert "Context pressure is 70%" in response.context
+        assert "Context pressure" not in (response.context or "")
         variables = variable_manager.get_variables(SESSION_ID)
-        assert variables["context_compact_mid_turn_pressure_band"] == "strong"
-        assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
+        assert variables["context_compact_guidance_message"] == ""
+        assert "context_compact_mid_turn_pressure_band" not in variables
+        assert "context_compact_guidance_shown_kinds" not in variables
 
     def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}

@@ -40,7 +40,7 @@ def detect_context_compact_guidance(
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
-    if _is_plan_mode(variables) and not variables.get("is_spawned_agent"):
+    if _is_plan_mode(variables):
         return
 
     turn_seq = _next_turn_seq(variables)
@@ -107,7 +107,7 @@ def detect_mid_turn_context_compact_guidance(
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
-    if _is_plan_mode(variables) and not variables.get("is_spawned_agent"):
+    if _is_plan_mode(variables):
         return
 
     session = _load_session(session_manager, session_id)

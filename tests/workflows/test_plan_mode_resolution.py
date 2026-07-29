@@ -196,9 +196,11 @@ def test_turn_start_resolves_mode_before_context_pressure_accounting() -> None:
         pytest.param(SessionSource.CLAUDE, "web_chat", id="managed-web-chat"),
     ],
 )
+@pytest.mark.parametrize("is_spawned_agent", [False, True], ids=["interactive", "spawned"])
 def test_plan_mode_suppresses_turn_start_and_mid_turn_guidance_across_surfaces(
     source: SessionSource,
     mode_key: str | None,
+    is_spawned_agent: bool,
     tmp_path: Path,
 ) -> None:
     data: dict[str, object] = {"prompt": "first prompt"}
@@ -226,7 +228,7 @@ def test_plan_mode_suppresses_turn_start_and_mid_turn_guidance_across_surfaces(
     else:
         data[mode_key] = "plan"
     event = _event(source, data=data, metadata=metadata)
-    variables: dict[str, object] = {}
+    variables: dict[str, object] = {"is_spawned_agent": is_spawned_agent}
     handler = WorkflowHookHandler(session_manager=_SessionManager(session))
 
     failures = handler._run_observers(event, SESSION_ID, variables)
