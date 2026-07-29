@@ -21,17 +21,28 @@ handles non-JSONL (SQLite-backed) sources.
 ## Constraints
 `kind: framing`
 
-- **No Rust edits.** `crates/gwiki` keeps its current per-provider adapters;
-  migration to the normalized contract is deferred to task #19207 (section D1).
-  `crates/ghook` changes are also out of scope unless Cursor hook installation
-  strictly requires a `CliConfig` arm; if so, that single arm plus test is the
-  only permitted Rust change.
+- **One bounded Rust change.** `crates/gwiki` keeps its current per-provider
+  adapters; migration to the normalized contract is deferred to task #19207
+  (section D1). `crates/ghook` gets exactly one required change: a `cursor` arm
+  in `CliConfig::for_cli` (`crates/ghook/src/cli_config.rs:21`) plus its test.
+  This is not conditional — `for_cli` matches a fixed CLI set and falls to
+  `_ => None` for `cursor`, and `crates/ghook/src/dispatch.rs:25` answers `None`
+  with `emit_empty_json()` and exit code 2, so without the arm every Cursor hook
+  event dies before reaching the daemon. The arm's `critical_hooks` set comes
+  from the §5.1 fired-event inventory. No other Rust change is permitted.
 - **Raw transcripts stay byte-exact.** CLI-owned live transcripts are
   read-only, and `~/.gobby/session_transcripts/{external_id}.jsonl.gz` archives
   remain unmodified raw copies used by resume/restore. No persisted normalized
   artifact: normalization is produced on demand. **Cursor refinement:** Gobby
-  never copies or restores Cursor's live WAL database and never writes into
-  Cursor-owned state — resume stays Cursor-side via `--resume <chatId>`
+  never copies or restores Cursor's live WAL database, and never modifies
+  Cursor's database or WAL or writes any transcript state into Cursor-owned
+  paths. One measured exception is inherent to SQLite rather than to Gobby:
+  opening a WAL database read-only when its `-shm` member is absent causes
+  SQLite to create that 32 KiB WAL index alongside the database, where it
+  survives connection close. `-shm` is a regenerable shared-memory index
+  carrying no transcript content, and `.db`/`-wal` bytes and mtimes are
+  unchanged (verified 2026-07-29). Resume stays Cursor-side via
+  `--resume <chatId>`
   against Cursor's own store, which makes native resume same-machine-only by
   design (cross-machine handoff is transcript/summary handoff). Cursor
   archives are produced by the §5.2 import bridge: a message-level JSONL
@@ -49,6 +60,7 @@ handles non-JSONL (SQLite-backed) sources.
 - **No backward compatibility.** 0.5.0 has not shipped; existing wire shapes,
   frontend types, and fixture layouts may change freely.
 - Frontend deliverables must read `.impeccable.md` before producing UI output.
+- requirement-source: .gobby/plans/universal-transcript-format.requirements.md
 
 ## P1: Contract and ProviderSpec Foundation
 `kind: framing`
@@ -121,17 +133,13 @@ dataclass per provider, registered in an ordered mapping keyed by
 
 ```python
 @dataclass(frozen=True)
-class TranscriptSurface:
-    glob: str                        # discovery pattern; {cwd_hash}/{cwd_urlencoded} placeholders
-    kind: Literal["file", "sqlite"]  # per-surface reader selection (§5.2)
-
-@dataclass(frozen=True)
 class ProviderSpec:
     id: str                          # SessionSource value, e.g. "codex"
     display_name: str
     binary: str                      # executable name
     config_dir: str                  # e.g. "~/.codex"
-    transcript_surfaces: tuple[TranscriptSurface, ...]  # a provider can mix kinds (cursor: sqlite store + file JSONL)
+    transcript_surfaces: tuple[str, ...]  # discovery globs; {cwd_hash}/{cwd_urlencoded} placeholders
+    transcript_source_kind: Literal["file", "sqlite"]  # reader selection (§5.2)
     path_markers: tuple[str, ...]    # substrings identifying a transcript path
     record_sniff: Callable[[dict], bool]  # first-record detection predicate
     parser: str                      # import path of TranscriptParser subclass
@@ -142,6 +150,17 @@ class ProviderSpec:
     suppressed_record_types: frozenset[str]     # server-side render suppression
     usage_source: str                # "transcript" | "sidecar" | "none" (drives window-only context set)
 ```
+
+`transcript_surfaces` declares **content** sources only — the surfaces a
+transcript is actually read from. Every provider declares surfaces of exactly
+one kind, so `transcript_source_kind` is a single provider-level value rather
+than a per-surface attribute: the five existing providers are `file`, and
+cursor is `sqlite` with `chats/{cwd_hash_md5}/*/store.db` as its only content
+surface (§5.3). Recognizing a path as a provider's is a separate concern
+already served by `path_markers`, which is why Cursor's invocation-only
+`projects/*/agent-transcripts/*.jsonl` is **not** a declared surface: it
+carries no tool results and no reasoning, so making it discoverable would
+invite a fallback read that silently produces gutted transcripts (§5.2, §5.4).
 
 Registry: `PROVIDER_SPECS: dict[str, ProviderSpec]` in
 `src/gobby/providers/registry.py` alongside the existing `ProviderMetadata`.
@@ -220,8 +239,9 @@ Replace the hardcoded per-CLI branches with spec-driven iteration:
   `PROVIDER_SPECS`, expanding each spec's `transcript_surfaces` (placeholders:
   `{cwd_hash}` sha256(cwd), `{cwd_hash_md5}`, `{cwd_urlencoded}`,
   `{project_slug}`) instead of provider-named helper branches. Discovery
-  yields `TranscriptCandidate(path, kind)` — the surface's kind travels with
-  the discovered path so downstream reader selection (§5.2) never re-sniffs.
+  yields `TranscriptCandidate(path, kind)`, stamping the owning spec's
+  `transcript_source_kind` onto each hit so downstream reader selection (§5.2)
+  never re-sniffs.
 - `_detect_source_from_path` (`transcript_source.py:16`) matches
   `spec.path_markers`; `_detect_source_from_record` (`:50`) and
   `_detect_source_from_jsonl_lines` (`:92`) call `spec.record_sniff`
@@ -739,11 +759,22 @@ its store. Gobby reads *through* SQLite and archives into its own container:
   `file:...?mode=ro` — consistent under WAL, never copies files — walking
   `meta.latestRootBlobId` → root-blob hash list → message blobs into record
   dicts; monotonic record cursor instead of byte offset).
-- Source selection is per discovered surface, not per provider: discovery
-  (§1.4) yields `TranscriptCandidate(path, kind)` from the spec's
-  `transcript_surfaces` (§1.2), and the processor, reader, and archival
-  consume the candidate directly — no provider-level source kind, no second
-  registry, no runtime sniffing.
+- The read path is empirically settled (probed 2026-07-29 against the live
+  store, SQLite 3.50.4). `mode=ro` reads a WAL database correctly in every
+  case the bridge faces: rows committed only to the WAL are visible while
+  another connection holds the database open; an uncommitted write txn in
+  flight is correctly invisible and appears immediately after its commit; and
+  an abandoned session (WAL with content, `-shm` absent, no holder) still
+  reads. Writes on the connection are refused by SQLite itself. **`immutable=1`
+  is prohibited**: it reports `journal_mode: delete` and ignores the WAL
+  entirely, which silently drops the newest messages — precisely the hazard
+  that motivated the superseded E6 archive bundle.
+- Source selection reads the discovered candidate: discovery (§1.4) yields
+  `TranscriptCandidate(path, kind)` by stamping the owning spec's
+  `transcript_source_kind` (§1.2) onto each hit, and the processor, reader, and
+  archival consume the candidate directly — no second registry, no runtime
+  sniffing. Cursor declares `store.db` as its only content surface, so a store
+  read that fails has no fallback surface to degrade into.
 - **Import bridge for archival**: at session expiry (and on demand), an
   importer drains the store through `SQLiteStoreSource` and writes a
   **message-level JSONL export**: one decoded-meta header record (session
@@ -758,14 +789,18 @@ its store. Gobby reads *through* SQLite and archives into its own container:
   No database file copies, no dump of rows Gobby doesn't own, no normalized
   artifact, no new tables — the archive holds provider-native message
   shapes, and normalization stays on-demand.
-- **No restore tool, by design**: Gobby never writes into Cursor-owned state,
-  so native `--resume` of an archived Cursor session works only where
-  Cursor's own store still exists (same machine, same cwd). Cross-machine
-  handoff is transcript/summary handoff, as with any provider — Gobby does
-  not attempt to reconstruct a database schema it doesn't own.
-- Cursor's JSONL agent-transcript surface (kind `file`) stays declared for
-  discovery and hook `transcript_path` correlation, but transcripts render
-  from the store — the JSONL carries no tool results.
+- **No restore tool, by design**: Gobby never writes transcript state into
+  Cursor-owned paths, so native `--resume` of an archived Cursor session works
+  only where Cursor's own store still exists (same machine, same cwd).
+  Cross-machine handoff is transcript/summary handoff, as with any provider —
+  Gobby does not attempt to reconstruct a database schema it doesn't own.
+- Cursor's JSONL agent-transcript surface is **not** a declared transcript
+  surface and is never read for content: it is invocation-only, so a fallback
+  read would yield a transcript stripped of tool results and reasoning while
+  looking superficially complete. Recognizing the path as Cursor's rides
+  `spec.path_markers` (§1.2), and §5.4 resolves an incoming hook
+  `transcript_path` to the owning store before session registration, keeping
+  the JSONL path only as correlation evidence.
 
 **Acceptance:**
 
@@ -773,7 +808,8 @@ its store. Gobby reads *through* SQLite and archives into its own container:
   driven by the discovered candidate's kind. symbol: `TranscriptSource`. file: `src/gobby/sessions/transcript_reader.py`.
 - 5.2.2 - SQLite source yields stable-ordered records and non-duplicated
   message IDs across repeated snapshot reads of a growing store, including a
-  record committed only in the WAL. test: `tests/sessions/test_transcript_sources.py::test_sqlite_source_stable_ordering`.
+  record committed only in the WAL, and never opens the store with
+  `immutable=1`. test: `tests/sessions/test_transcript_sources.py::test_sqlite_source_stable_ordering`.
 - 5.2.3 - Exported JSONL carries every message's full decoded content
   (thinking, tool calls, results, diff metadata) in root order; re-export is
   idempotent, and normalizing the exported artifact yields byte-identical
@@ -785,7 +821,9 @@ its store. Gobby reads *through* SQLite and archives into its own container:
 Target: `src/gobby/sessions/transcripts/cursor.py`
 Targets: `src/gobby/providers/registry.py`
 
-Parses the §5.1 fixtures (both surfaces) into normalized messages:
+Parses the §5.1 store fixtures into normalized messages. The captured JSONL
+agent-transcript is corpus evidence for path correlation only (§5.2) and is
+never a parser input:
 
 - `CursorTranscriptParser(BaseTranscriptParser)`: store records →
   `ParsedMessage`. Ordering comes from the root blob's hash list (P5
@@ -800,17 +838,20 @@ Parses the §5.1 fixtures (both surfaces) into normalized messages:
   `unmodeled_record` + observation telemetry (storage-unification churn is a
   known hazard — tolerance over strictness).
 - ProviderSpec entry `cursor`: binary `agent` (alias `cursor-agent`),
-  config dir `~/.cursor`, transcript surfaces
-  `chats/{cwd_hash_md5}/*/store.db` (kind `sqlite`, canonical) and
-  `projects/*/agent-transcripts/*.jsonl` (kind `file`, secondary), path
-  markers, record-sniff predicate, tool aliases and arg-key maps from
-  fixture evidence, `usage_source` per what fixtures show.
+  config dir `~/.cursor`, `transcript_source_kind: "sqlite"` with
+  `chats/{cwd_hash_md5}/*/store.db` as the sole declared content surface, path
+  markers covering both `chats/` stores and `projects/*/agent-transcripts/`
+  paths so hook payloads naming the JSONL still resolve to cursor,
+  record-sniff predicate, tool aliases and arg-key maps from fixture evidence,
+  `usage_source` per what fixtures show.
 - `SessionSource` gains `cursor`; the §1.2 parity guards force the watchdog
   and parser registries in the same change.
 
 **Acceptance:**
 
-- 5.3.1 - Parser normalizes both captured surfaces of the fixture corpus.
+- 5.3.1 - Parser normalizes the fixture corpus from both containers of store
+  content — live store records and the §5.2 exported archive — producing
+  identical decoded records in identical order.
   symbol: `CursorTranscriptParser`. file: `src/gobby/sessions/transcripts/cursor.py`.
 - 5.3.2 - ProviderSpec entry registered; parity guards pass with the new
   provider. file: `src/gobby/providers/registry.py`.
@@ -830,23 +871,30 @@ Targets: `src/gobby/adapters/capabilities.py`, `src/gobby/install/cursor/`
   `afterShellExecution`. No `sessionEnd` — session expiry rides the existing
   watchdog/expiry path as with other providers lacking end events.
 - Hook adapter translates Cursor payloads (`conversation_id` → external id,
-  `transcript_path`, `model`, `workspace_roots`) to `HookEvent`s;
-  `sessionStart` registration passes `transcript_path` through the standard
-  `register_session` flow, falling back to SQLite-store discovery via
-  ProviderSpec globs when absent.
+  `transcript_path`, `model`, `workspace_roots`) to `HookEvent`s. Cursor's
+  `transcript_path` names the invocation-only JSONL, so `sessionStart`
+  **resolves it to the owning `store.db`** — via `conversation_id` against the
+  ProviderSpec store glob — and registers that store path with
+  `register_session`. Registering the JSONL verbatim would hand every
+  downstream reader a path that can never yield tool results. The JSONL path is
+  retained only as correlation evidence for matching a payload to a session.
+  When `transcript_path` is absent, registration falls back to the same
+  store discovery.
 - Install assets write the project/user `hooks.json` (`"version": 1`, direct
   command entries — not Claude-style matcher groups, which silently never
-  fire) pointing at ghook. If ghook strictly requires a `CliConfig::for_cli`
-  arm for `cursor`, that single arm plus its test is the one permitted Rust
-  change (see Constraints).
+  fire) pointing at ghook, and add the required `cursor` arm to
+  `CliConfig::for_cli` plus its test — without it `ghook --cli=cursor` exits 2
+  and drops every event (see Constraints).
 
 **Acceptance:**
 
 - 5.4.1 - Capabilities declared before adapter behavior; event coverage
   matches the fixture-verified fired set. file: `src/gobby/adapters/capabilities.py`.
-- 5.4.2 - Adapter normalizes captured hook payloads into `HookEvent`s with
-  session registration carrying `transcript_path`. symbol: `CursorAdapter`. file: `src/gobby/adapters/cursor.py`.
+- 5.4.2 - Adapter normalizes captured hook payloads into `HookEvent`s, and a
+  `sessionStart` payload whose `transcript_path` names the JSONL registers the
+  resolved `store.db` path instead. symbol: `CursorAdapter`. file: `src/gobby/adapters/cursor.py`.
 - 5.4.3 - Install writes a valid version-1 hooks.json manifest. test: `tests/install/test_cursor_install.py::test_hooks_manifest_shape`.
+- 5.4.4 - `ghook --cli=cursor` dispatches instead of exiting 2. test: `crates/ghook/src/cli_config.rs` cursor arm test.
 
 ### 5.5 Cursor watchdog reader [category: code] (depends: 5.3)
 `kind: deliverable`
@@ -983,24 +1031,42 @@ deferral:
 - enhancer_session: da8f6971-07da-4b8b-b1ce-c6ead5e25286
 - converged: false (round cap max_enhancement_rounds=1 reached)
 - suggestions_presented: 6
+- votes_collected: 2026-07-29 (see resolution_notes — the round-1 report was
+  applied before the user had voted on it; every item below was presented
+  verbatim and voted individually on 2026-07-29)
 - accepted:
   - E2 closed ToolType enum / clarity — `tool_type` pinned to the closed
     classifier vocabulary in the schema, Python model, and generated TS union;
-    per-member fixture coverage (1.1, 2.1, 4.2)
-  - E4 per-surface source kinds / clarity — `TranscriptSurface(glob, kind)` on
-    the spec, discovery yields `TranscriptCandidate(path, kind)`, downstream
-    selection consumes the candidate (1.2, 1.4, 5.2, 5.3)
+    per-member fixture coverage (1.1, 2.1, 4.2). Vote: keep accepted.
   - E5 portable identity rule / testability — shared `SourcePosition` input
     across readers, path-independence + partial→complete ID acceptance
-    (2.6, 5.2)
-  - E6 WAL-safe SQLite archive / testability — archive is an immutable
-    db+WAL/SHM member bundle captured at a quiescent point; uncheckpointed-WAL
-    fixture (5.2)
+    (2.6, 5.2). Vote: keep accepted.
+- superseded:
+  - E4 per-surface source kinds / clarity — its premise ("Cursor has two
+    concrete transcript surfaces") was removed by the user: the invocation-only
+    JSONL is no longer a declared surface at all, since it carries no tool
+    results and a fallback read would silently produce gutted transcripts. With
+    one content surface per provider, `TranscriptSurface(glob, kind)` was
+    dropped for a provider-level `transcript_source_kind`; discovery still
+    stamps `TranscriptCandidate(path, kind)`. Path recognition moved to
+    `spec.path_markers`, and §5.4 now resolves a hook `transcript_path` to the
+    owning store before `register_session` (1.2, 1.4, 5.2, 5.3, 5.4)
+  - E6 WAL-safe SQLite archive / testability — the db+WAL/SHM byte bundle was
+    superseded by the import bridge, but E6's underlying hazard was verified
+    and kept: a 2026-07-29 probe (SQLite 3.50.4) confirmed `mode=ro` reads
+    WAL-only committed rows with a concurrent holder, correctly hides an
+    uncommitted txn, and reads an abandoned session with no `-shm`; and
+    `immutable=1` reports `journal_mode: delete` and ignores the WAL entirely.
+    Acceptance 5.2.2 keeps the WAL-only-record requirement and now also forbids
+    `immutable=1` (5.2)
 - declined:
   - E1 remove conditional ghook Rust exception / clarity — user decision: full
     Cursor integration is in scope ("the works"); the bounded single-arm
     exception stands. Follow-on: §5.7 added (spawn support, provider
-    metadata, feature-tier candidates)
+    metadata, feature-tier candidates). The conditional wording was corrected
+    to a requirement: `CliConfig::for_cli` (`cli_config.rs:21`) falls to
+    `_ => None` for cursor and `dispatch.rs:25` answers `None` with
+    `emit_empty_json()` + exit 2, so the arm is mandatory, not contingent
   - E3 pin truncation byte semantics / clarity — mooted by user decision "no
     truncation anywhere": §2.3's wire cap and the dead `truncated` field were
     struck instead; the normalized format always carries full payloads
@@ -1028,3 +1094,19 @@ deferral:
   not preserve rows of a database schema it doesn't own, and native
   cross-machine resume is explicitly out of scope (transcript/summary
   handoff instead).
+  Vote correction (2026-07-29): the round-1 report had been folded into the
+  plan without the contract-required per-item vote, so the six suggestions were
+  re-presented verbatim and voted individually. E2 and E5 confirmed as
+  accepted; E1 and E3 confirmed as declined; E4 and E6 recorded as superseded
+  per the dispositions above. Three plan corrections came out of that pass.
+  (a) The ghook exception is not conditional — verified against
+  `cli_config.rs:21` and `dispatch.rs:25` — so Constraints and §5.4 now state
+  the cursor arm as required, with acceptance 5.4.4. (b) The invocation-only
+  JSONL was removed from `transcript_surfaces` entirely and `TranscriptSurface`
+  collapsed into a provider-level `transcript_source_kind`; §5.4 resolves hook
+  `transcript_path` to the owning store before registration. (c) `mode=ro`
+  read-through was empirically validated rather than assumed, `immutable=1` was
+  prohibited in acceptance 5.2.2, and the "never writes into Cursor-owned
+  state" constraint was corrected to match measured behavior: a read-only WAL
+  open creates the ephemeral 32 KiB `-shm` index when absent, while `.db` and
+  `-wal` bytes and mtimes stay unchanged.
