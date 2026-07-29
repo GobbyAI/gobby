@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 from gobby.memory.dream.candidates import memory_to_candidate
 from gobby.memory.dream.related import (
+    RelatedEvidenceError,
     RelatedEvidenceSession,
     RetrievalScope,
     gather_related_evidence,
@@ -242,6 +243,12 @@ class MemoryLifecycleService:
                         )
             except asyncio.CancelledError:
                 raise
+            except RelatedEvidenceError as exc:
+                logger.info(
+                    "Background related-memory mark-due skipped for %s: %s",
+                    memory.id,
+                    exc,
+                )
             except Exception:
                 logger.warning(
                     "Background related-memory mark-due failed for %s",

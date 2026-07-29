@@ -1074,7 +1074,12 @@ class TestLifecycleService:
 
     @pytest.mark.asyncio
     async def test_content_update_refreshes_secondary_indices(self, db) -> None:
-        config = MemoryConfig(enabled=True, backend="local", auto_crossref=True)
+        config = MemoryConfig(
+            enabled=True,
+            backend="local",
+            auto_crossref=True,
+            dream={"write_supersession_mark_due_enabled": False},
+        )
         mock_vs = MagicMock()
         mock_vs.upsert = AsyncMock()
         mock_vs.search = AsyncMock(return_value=[])
@@ -1103,7 +1108,6 @@ class TestLifecycleService:
             (other.id, 0.95),
             (third.id, 0.9),
         ]
-        mock_vs.supports_stored_vector_search = True
         mock_vs.search_by_stored_vectors = AsyncMock(
             return_value={
                 other.id: [(memory.id, 0.95)],
@@ -1129,12 +1133,11 @@ class TestLifecycleService:
         )
         graph_row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
         assert graph_row["graph_processed"] is False
-        assert mock_vs.search_by_stored_vectors.await_count == 2
+        assert mock_vs.search_by_stored_vectors.await_count == 1
         stored_vector_batches = [
             set(call.args[0]) for call in mock_vs.search_by_stored_vectors.await_args_list
         ]
-        assert {other.id, third.id} in stored_vector_batches
-        assert all(batch <= {other.id, third.id} for batch in stored_vector_batches)
+        assert stored_vector_batches == [{other.id, third.id}]
         crossrefs = manager.storage.get_crossrefs(memory.id)
         assert len(crossrefs) == 3
         assert {(crossref.source_id, crossref.target_id) for crossref in crossrefs} == {

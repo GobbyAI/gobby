@@ -219,9 +219,9 @@ class CrossrefService:
         fallbacks: dict[str, float],
         max_links: int,
     ) -> dict[str, float]:
-        """Re-read current stored vector scores in one batch when supported."""
+        """Re-read current stored vector scores in one batch."""
         vector_store = self._vector_store
-        if vector_store is None or not vector_store.supports_stored_vector_search:
+        if vector_store is None:
             return {candidate_id: fallbacks[candidate_id] for candidate_id in candidate_ids}
         try:
             current = await vector_store.search_by_stored_vectors(

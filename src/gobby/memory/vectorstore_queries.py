@@ -10,7 +10,6 @@ from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStru
 from gobby.memory.vectorstore_client import (
     QDRANT_CLIENT_TIMEOUT_SECONDS,
     QdrantClientLike,
-    VectorStoreUnavailableError,
 )
 from gobby.memory.vectorstore_filters import payload_filter
 
@@ -110,9 +109,6 @@ class VectorStoreQueries:
         if not ids:
             return {}
         store = self._store
-        if not store.supports_stored_vector_search:
-            raise VectorStoreUnavailableError("Stored-vector search is disabled in local mode")
-
         loop = asyncio.get_running_loop()
         deadline = loop.time() + (
             timeout if timeout is not None else float(QDRANT_CLIENT_TIMEOUT_SECONDS)

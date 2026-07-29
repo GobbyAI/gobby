@@ -99,10 +99,6 @@ class VectorStoreClient:
     def is_remote(self) -> bool:
         return bool(self._store._url)
 
-    @property
-    def supports_stored_vector_search(self) -> bool:
-        return self.is_remote
-
     async def call(
         self,
         client: QdrantClientLike,

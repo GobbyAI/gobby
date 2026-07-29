@@ -1,11 +1,13 @@
-"""Tests for bounded related-memory evidence retrieval."""
+"""Tests for batched required related-memory evidence retrieval."""
 
 from __future__ import annotations
 
 import asyncio
-import threading
+import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,14 +19,17 @@ from gobby.memory.dream.models import DreamCandidate
 from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.related import (
     VECTOR_EVIDENCE_MIN_SCORE,
+    RelatedEvidenceChannelError,
+    RelatedEvidencePhaseTimeoutError,
     RelatedEvidenceSession,
     RetrievalScope,
     _attach_candidate_evidence,
     _distinctive_terms,
     _hydrate_hits,
-    _keyword_hits,
+    _keyword_hits_bulk,
     _vector_hits,
     gather_related_evidence,
+    render_bulk_keyword_statement,
 )
 from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.vectorstore import VectorStore
@@ -77,6 +82,10 @@ def _memory(
         project_id=project_id,
         is_global=is_global,
     )
+
+
+def _fast_retries() -> Any:
+    return patch.object(related_module, "RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS", (0.0, 0.0))
 
 
 @pytest.mark.unit
@@ -136,14 +145,15 @@ async def test_regression_sandwich_pair_attaches_via_keyword() -> None:
     )
     session = RelatedEvidenceSession()
     vector_store = MagicMock()
-    vector_store.supports_stored_vector_search = True
     vector_store.search_by_stored_vectors = AsyncMock(
         return_value={"candidate": [("decision", 0.169)]}
     )
     with (
         patch(
-            "gobby.memory.dream.related._keyword_hits",
-            AsyncMock(return_value=[("candidate", 1.0), ("older", 0.95), ("decision", 0.9)]),
+            "gobby.memory.dream.related._keyword_hits_bulk",
+            AsyncMock(
+                return_value={"candidate": [("candidate", 1.0), ("older", 0.95), ("decision", 0.9)]}
+            ),
         ),
         patch(
             "gobby.memory.dream.related._hydrate_hits",
@@ -166,49 +176,73 @@ async def test_regression_sandwich_pair_attaches_via_keyword() -> None:
 
 
 @pytest.mark.unit
-async def test_total_retrieval_failure_returns_original() -> None:
+async def test_missing_vector_store_raises_typed_failure() -> None:
+    session = RelatedEvidenceSession()
+
+    with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+        await gather_related_evidence(
+            [_candidate()],
+            db=MagicMock(),
+            vector_store=None,
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+    await session.aclose()
+
+    assert excinfo.value.channel == "vector"
+    assert excinfo.value.attempts == 0
+
+
+@pytest.mark.unit
+async def test_all_channels_failing_raises_typed_failure() -> None:
     candidate = _candidate()
     session = RelatedEvidenceSession()
     keyword = AsyncMock(side_effect=RuntimeError("postgres unavailable"))
     vector = AsyncMock(side_effect=RuntimeError("qdrant unavailable"))
     with (
-        patch("gobby.memory.dream.related._keyword_hits", keyword),
+        _fast_retries(),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", keyword),
         patch("gobby.memory.dream.related._vector_hits", vector),
     ):
-        result = await gather_related_evidence(
-            [candidate],
-            db=MagicMock(),
-            vector_store=MagicMock(),
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
+        with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+            await gather_related_evidence(
+                [candidate],
+                db=MagicMock(),
+                vector_store=MagicMock(),
+                dream_config=SimpleNamespace(),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
     await session.aclose()
 
-    assert result == [candidate]
-    keyword.assert_awaited_once()
-    vector.assert_awaited_once()
+    assert excinfo.value.channel in {"keyword", "vector"}
+    assert excinfo.value.attempts == related_module.RELATED_EVIDENCE_RETRY_ATTEMPTS
+    assert keyword.await_count == related_module.RELATED_EVIDENCE_RETRY_ATTEMPTS
     assert not session._tasks
 
 
 @pytest.mark.unit
-async def test_vector_unavailable_degrades() -> None:
+async def test_failed_channel_retries_while_success_preserved(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.memory.dream.related")
     candidate = _candidate()
-    newer = _memory("keyword-hit", created_at=_NOW + timedelta(days=1))
+    newer = _memory("vector-hit", created_at=_NOW + timedelta(days=1))
+    keyword = AsyncMock(return_value={})
+    vector = AsyncMock(
+        side_effect=[
+            RuntimeError("qdrant hiccup"),
+            RuntimeError("qdrant hiccup"),
+            {"candidate": [("vector-hit", 0.8)]},
+        ]
+    )
     session = RelatedEvidenceSession()
     with (
-        patch(
-            "gobby.memory.dream.related._keyword_hits",
-            AsyncMock(return_value=[("keyword-hit", 0.8)]),
-        ),
-        patch(
-            "gobby.memory.dream.related._vector_hits",
-            AsyncMock(side_effect=RuntimeError("qdrant unavailable")),
-        ),
-        patch(
-            "gobby.memory.dream.related._hydrate_hits",
-            AsyncMock(return_value=[newer]),
-        ),
+        _fast_retries(),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", keyword),
+        patch("gobby.memory.dream.related._vector_hits", vector),
+        patch("gobby.memory.dream.related._hydrate_hits", AsyncMock(return_value=[newer])),
     ):
         result = await gather_related_evidence(
             [candidate],
@@ -220,8 +254,211 @@ async def test_vector_unavailable_degrades() -> None:
         )
     await session.aclose()
 
-    assert result[0].related[0].id == "keyword-hit"
-    assert result[0].related[0].matched_via == "keyword"
+    assert result[0].related[0].id == "vector-hit"
+    assert result[0].related[0].matched_via == "vector"
+    assert keyword.await_count == 1
+    assert vector.await_count == 3
+    assert "channel=vector attempt=1/3" in caplog.text
+    assert "outcome=error" in caplog.text
+
+
+@pytest.mark.unit
+async def test_exhausted_channel_drains_tasks(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.memory.dream.related")
+    blocker = asyncio.Event()
+
+    async def block_keyword(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        await blocker.wait()
+        return {}
+
+    vector = AsyncMock(return_value={})
+    session = RelatedEvidenceSession()
+    with (
+        _fast_retries(),
+        patch.object(related_module, "RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS", 0.02),
+        patch.object(related_module, "RELATED_EVIDENCE_RETRY_ATTEMPTS", 2),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", side_effect=block_keyword),
+        patch("gobby.memory.dream.related._vector_hits", vector),
+    ):
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+            await gather_related_evidence(
+                [_candidate()],
+                db=MagicMock(),
+                vector_store=MagicMock(),
+                dream_config=SimpleNamespace(),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
+        elapsed = asyncio.get_running_loop().time() - started
+
+    assert excinfo.value.channel == "keyword"
+    assert excinfo.value.attempts == 2
+    assert elapsed < 1.0
+    assert "outcome=timeout" in caplog.text
+    assert not session._tasks
+    await session.aclose()
+
+
+@pytest.mark.unit
+async def test_phase_timeout_raises_and_drains() -> None:
+    blocker = asyncio.Event()
+
+    async def block_keyword(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        await blocker.wait()
+        return {}
+
+    session = RelatedEvidenceSession()
+    with (
+        patch.object(related_module, "RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS", 0.03),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", side_effect=block_keyword),
+        patch("gobby.memory.dream.related._vector_hits", AsyncMock(return_value={})),
+    ):
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(RelatedEvidencePhaseTimeoutError) as excinfo:
+            await gather_related_evidence(
+                [_candidate()],
+                db=MagicMock(),
+                vector_store=MagicMock(),
+                dream_config=SimpleNamespace(),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
+        elapsed = asyncio.get_running_loop().time() - started
+
+    assert excinfo.value.unit_index == 1
+    assert elapsed < 1.0
+    assert not session._tasks
+    await session.aclose()
+
+
+@pytest.mark.parametrize(
+    ("candidate_count", "expected_units"),
+    [(1, 1), (25, 1), (26, 2), (60, 3)],
+)
+@pytest.mark.unit
+async def test_work_unit_operation_counts(candidate_count: int, expected_units: int) -> None:
+    candidates = [_candidate(f"candidate-{index}") for index in range(candidate_count)]
+    newer = _memory("hit", created_at=_NOW + timedelta(days=1))
+
+    async def keyword(
+        unit: list[DreamCandidate], *_args: object, **_kwargs: object
+    ) -> dict[str, list[tuple[str, float]]]:
+        return {unit[0].id: [("hit", 1.0)]}
+
+    keyword_mock = AsyncMock(side_effect=keyword)
+    vector_mock = AsyncMock(return_value={})
+    hydrate_mock = AsyncMock(return_value=[newer])
+    session = RelatedEvidenceSession()
+    with (
+        patch("gobby.memory.dream.related._keyword_hits_bulk", keyword_mock),
+        patch("gobby.memory.dream.related._vector_hits", vector_mock),
+        patch("gobby.memory.dream.related._hydrate_hits", hydrate_mock),
+    ):
+        result = await gather_related_evidence(
+            candidates,
+            db=MagicMock(),
+            vector_store=MagicMock(),
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+    await session.aclose()
+
+    assert len(result) == candidate_count
+    assert keyword_mock.await_count == expected_units
+    assert vector_mock.await_count == expected_units
+    assert hydrate_mock.await_count == expected_units
+    assert result[0].related[0].id == "hit"
+
+
+@pytest.mark.unit
+async def test_empty_channels_attach_empty_evidence() -> None:
+    candidates = [_candidate(f"candidate-{index}") for index in range(3)]
+    hydrate_mock = AsyncMock(return_value=[])
+    session = RelatedEvidenceSession()
+    with (
+        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
+        patch("gobby.memory.dream.related._vector_hits", AsyncMock(return_value={})),
+        patch("gobby.memory.dream.related._hydrate_hits", hydrate_mock),
+    ):
+        result = await gather_related_evidence(
+            candidates,
+            db=MagicMock(),
+            vector_store=MagicMock(),
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+    await session.aclose()
+
+    assert [candidate.related for candidate in result] == [(), (), ()]
+    assert hydrate_mock.await_count == 0
+    assert not session._tasks
+
+
+@pytest.mark.unit
+async def test_saturation_bounded_db_usage(caplog: pytest.LogCaptureFixture) -> None:
+    """Sixty candidates stay far below the former four-connection ceiling."""
+    caplog.set_level(logging.INFO, logger="gobby.memory.dream.related")
+    candidates = [_candidate(f"candidate-{index}") for index in range(60)]
+    newer = _memory("hit", created_at=_NOW + timedelta(days=1))
+    active_db = 0
+    peak_db = 0
+    active_total = 0
+    peak_total = 0
+
+    async def tracked[T](kind: str, value: T) -> T:
+        nonlocal active_db, peak_db, active_total, peak_total
+        if kind == "db":
+            active_db += 1
+            peak_db = max(peak_db, active_db)
+        active_total += 1
+        peak_total = max(peak_total, active_total)
+        try:
+            await asyncio.sleep(0.001)
+            return value
+        finally:
+            if kind == "db":
+                active_db -= 1
+            active_total -= 1
+
+    async def keyword(
+        unit: list[DreamCandidate], *_args: object, **_kwargs: object
+    ) -> dict[str, list[tuple[str, float]]]:
+        return await tracked("db", {unit[0].id: [("hit", 1.0)]})
+
+    async def vector(*_args: object, **_kwargs: object) -> dict[str, list[tuple[str, float]]]:
+        return await tracked("vector", {})
+
+    async def hydrate(*_args: object, **_kwargs: object) -> list[Memory]:
+        return await tracked("db", [newer])
+
+    session = RelatedEvidenceSession()
+    with (
+        patch("gobby.memory.dream.related._keyword_hits_bulk", side_effect=keyword),
+        patch("gobby.memory.dream.related._vector_hits", side_effect=vector),
+        patch("gobby.memory.dream.related._hydrate_hits", side_effect=hydrate),
+    ):
+        started = asyncio.get_running_loop().time()
+        result = await gather_related_evidence(
+            candidates,
+            db=MagicMock(),
+            vector_store=MagicMock(),
+            dream_config=SimpleNamespace(),
+            session=session,
+            scope=RetrievalScope.project_only("project-a"),
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+    await session.aclose()
+
+    assert len(result) == 60
+    assert peak_db == 1
+    assert peak_total <= 2
+    assert elapsed < related_module.RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS
+    assert "channels=page" not in caplog.text
+    assert "timed out" not in caplog.text
+    assert not session._tasks
 
 
 @pytest.mark.parametrize(
@@ -255,13 +492,15 @@ async def test_scope_isolation_matrix(scope: RetrievalScope, expected: list[str]
     session = RelatedEvidenceSession()
     with (
         patch(
-            "gobby.memory.dream.related._keyword_hits",
+            "gobby.memory.dream.related._keyword_hits_bulk",
             AsyncMock(
-                return_value=[
-                    ("project-hit", 1.0),
-                    ("global-hit", 0.9),
-                    ("wrong-project", 0.8),
-                ]
+                return_value={
+                    "candidate": [
+                        ("project-hit", 1.0),
+                        ("global-hit", 0.9),
+                        ("wrong-project", 0.8),
+                    ]
+                }
             ),
         ),
         patch(
@@ -304,7 +543,6 @@ async def test_scope_isolation_matrix(scope: RetrievalScope, expected: list[str]
 @pytest.mark.unit
 async def test_vector_floor_boundaries() -> None:
     store = MagicMock()
-    store.supports_stored_vector_search = True
     store.search_by_stored_vectors = AsyncMock(
         return_value={
             "candidate": [
@@ -474,15 +712,60 @@ def test_rendered_statement_parity(scope: RetrievalScope) -> None:
     assert rendered_hydration == db.fetchall.call_args.args
 
 
+@pytest.mark.unit
+def test_bulk_keyword_statement_shape() -> None:
+    db = MagicMock()
+    service = MemoryKeywordSearchService(db)
+    scope = RetrievalScope.project_only("project-a")
+    single = service.render_search(
+        "alpha terms",
+        7,
+        project_id=scope.project_id,
+        scope=scope.kind,
+    )
+    assert single is not None
+    single_sql, single_params = single
+
+    statement = render_bulk_keyword_statement(
+        [("cand-1", "alpha terms"), ("cand-2", ""), ("cand-3", "beta terms")],
+        db=db,
+        scope=scope,
+        fetch_limit=7,
+    )
+
+    assert statement is not None
+    sql, params = statement
+    assert sql.count("UNION ALL") == 1
+    assert sql.count("ROW_NUMBER() OVER ()") == 2
+    assert sql.count(single_sql) >= 1
+    assert params[0] == "cand-1"
+    assert params[1 : 1 + len(single_params)] == single_params
+    assert "cand-3" in params
+    assert "cand-2" not in params
+
+    assert render_bulk_keyword_statement([("cand", "")], db=db, scope=scope, fetch_limit=7) is None
+    with pytest.raises(ValueError, match="at most"):
+        render_bulk_keyword_statement(
+            [(f"cand-{index}", "terms") for index in range(26)],
+            db=db,
+            scope=scope,
+            fetch_limit=7,
+        )
+
+
 @pytest.mark.integration
-async def test_async_keyword_and_hydration_use_dedicated_statements(postgres_db: Any) -> None:
+async def test_bulk_keyword_and_hydration_against_postgres(postgres_db: Any) -> None:
     postgres_db.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s), (%s, %s)",
         (_PROJECT_A, "Async Project A", _PROJECT_B, "Async Project B"),
     )
     storage = LocalMemoryManager(postgres_db)
-    project_memory = storage.create_memory(
+    first_memory = storage.create_memory(
         "asyncevidencelexeme project",
+        project_id=_PROJECT_A,
+    )
+    second_memory = storage.create_memory(
+        "otherevidencelexeme project",
         project_id=_PROJECT_A,
     )
     foreign_memory = storage.create_memory(
@@ -491,205 +774,27 @@ async def test_async_keyword_and_hydration_use_dedicated_statements(postgres_db:
     )
     scope = RetrievalScope.project_only(_PROJECT_A)
 
-    keyword_hits = await _keyword_hits(
-        _candidate(content="asyncevidencelexeme"),
+    keyword_hits = await _keyword_hits_bulk(
+        [
+            _candidate("cand-first", content="asyncevidencelexeme"),
+            _candidate("cand-second", content="otherevidencelexeme"),
+            _candidate("cand-empty", content=""),
+        ],
         db=postgres_db,
         scope=scope,
         fetch_limit=5,
     )
     hydrated = await _hydrate_hits(
-        [project_memory.id, foreign_memory.id],
+        [first_memory.id, foreign_memory.id],
         db=postgres_db,
         scope=scope,
     )
 
-    assert [memory_id for memory_id, _score in keyword_hits] == [project_memory.id]
-    assert [memory.id for memory in hydrated] == [project_memory.id]
+    assert [memory_id for memory_id, _score in keyword_hits["cand-first"]] == [first_memory.id]
+    assert [memory_id for memory_id, _score in keyword_hits["cand-second"]] == [second_memory.id]
+    assert "cand-empty" not in keyword_hits
+    assert [memory.id for memory in hydrated] == [first_memory.id]
     assert hydrated[0].project_id == _PROJECT_A
-
-
-@pytest.mark.unit
-async def test_blocking_channel_deadline(caplog: pytest.LogCaptureFixture) -> None:
-    blocker = asyncio.Event()
-
-    async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
-        await blocker.wait()
-        return []
-
-    candidate = _candidate()
-    session = RelatedEvidenceSession()
-    with (
-        patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.02),
-        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
-        patch("gobby.memory.dream.related._keyword_hits", side_effect=block_keyword),
-        patch("gobby.memory.dream.related._vector_hits", AsyncMock(return_value={})),
-    ):
-        started = asyncio.get_running_loop().time()
-        result = await gather_related_evidence(
-            [candidate],
-            db=MagicMock(),
-            vector_store=None,
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-        elapsed = asyncio.get_running_loop().time() - started
-        sentinel = await asyncio.wait_for(asyncio.to_thread(lambda: "usable"), timeout=0.2)
-    await session.aclose()
-
-    assert result == [candidate]
-    assert elapsed < 0.2
-    assert sentinel == "usable"
-    assert "channels=keyword" in caplog.text
-
-
-@pytest.mark.unit
-async def test_saturated_keyword_calls_do_not_starve_vector(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    blocker = asyncio.Event()
-    candidates = [_candidate(f"candidate-{index}") for index in range(40)]
-    newer = _memory("vector-hit", created_at=_NOW + timedelta(days=1))
-    started_count = 0
-    active_count = 0
-    peak_active_count = 0
-
-    async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
-        nonlocal active_count, peak_active_count, started_count
-        started_count += 1
-        active_count += 1
-        peak_active_count = max(peak_active_count, active_count)
-        try:
-            await blocker.wait()
-        finally:
-            active_count -= 1
-        return []
-
-    async def healthy_vector(
-        page_candidates: list[DreamCandidate],
-        **_kwargs: object,
-    ) -> dict[str, list[tuple[str, float]]]:
-        return {page_candidate.id: [("vector-hit", 0.8)] for page_candidate in page_candidates}
-
-    vector = AsyncMock(side_effect=healthy_vector)
-    session = RelatedEvidenceSession()
-    with (
-        patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.03),
-        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.15),
-        patch("gobby.memory.dream.related._keyword_hits", side_effect=block_keyword),
-        patch("gobby.memory.dream.related._vector_hits", vector),
-        patch(
-            "gobby.memory.dream.related._hydrate_hits",
-            AsyncMock(return_value=[newer]),
-        ),
-    ):
-        elapsed_pages: list[float] = []
-        results: list[list[DreamCandidate]] = []
-        for _page in range(3):
-            started = asyncio.get_running_loop().time()
-            results.append(
-                await gather_related_evidence(
-                    candidates,
-                    db=MagicMock(),
-                    vector_store=MagicMock(),
-                    dream_config=SimpleNamespace(),
-                    session=session,
-                    scope=RetrievalScope.project_only("project-a"),
-                )
-            )
-            elapsed_pages.append(asyncio.get_running_loop().time() - started)
-        await session.aclose()
-        calls_after_close = started_count
-        await asyncio.wait_for(asyncio.to_thread(lambda: None), timeout=0.2)
-
-    assert results[0] == candidates
-    assert results[1] == candidates
-    assert results[2][0].related[0].id == "vector-hit"
-    assert max(elapsed_pages) < 0.15
-    assert "channels=keyword" in caplog.text
-    assert "channels=page" not in caplog.text
-    assert started_count > 0
-    assert peak_active_count <= 4
-    assert calls_after_close == started_count
-    assert active_count == 0
-    assert session.channel_tripped("keyword")
-    assert session._timeout_counts["keyword"] == 2
-    assert session._timeout_counts["vector"] == 0
-    assert vector.await_count == 3
-    assert not session._tasks
-
-
-@pytest.mark.unit
-async def test_persistent_blocker_bounded_connections() -> None:
-    blocker = asyncio.Event()
-    candidates = [_candidate(f"candidate-{index}") for index in range(8)]
-    newer = _memory("vector-hit", created_at=_NOW + timedelta(days=1))
-
-    async def block_keyword(*_args: object, **_kwargs: object) -> list[tuple[str, float]]:
-        await blocker.wait()
-        return []
-
-    async def healthy_vector(
-        page_candidates: list[DreamCandidate],
-        **_kwargs: object,
-    ) -> dict[str, list[tuple[str, float]]]:
-        return {page_candidate.id: [("vector-hit", 0.8)] for page_candidate in page_candidates}
-
-    keyword = AsyncMock(side_effect=block_keyword)
-    vector = AsyncMock(side_effect=healthy_vector)
-    session = RelatedEvidenceSession()
-    with (
-        patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.01),
-        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
-        patch("gobby.memory.dream.related._keyword_hits", keyword),
-        patch("gobby.memory.dream.related._vector_hits", vector),
-        patch(
-            "gobby.memory.dream.related._hydrate_hits",
-            AsyncMock(return_value=[newer]),
-        ),
-    ):
-        first = await gather_related_evidence(
-            candidates,
-            db=MagicMock(),
-            vector_store=MagicMock(),
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-        second = await gather_related_evidence(
-            candidates,
-            db=MagicMock(),
-            vector_store=MagicMock(),
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-        keyword_calls_before_breaker = keyword.await_count
-        recovered = await gather_related_evidence(
-            candidates,
-            db=MagicMock(),
-            vector_store=MagicMock(),
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-    await session.aclose()
-
-    assert first == candidates
-    assert second == candidates
-    assert recovered[0].related[0].id == "vector-hit"
-    assert keyword_calls_before_breaker > 0
-    assert keyword.await_count == keyword_calls_before_breaker
-    assert vector.await_count == 3
-    assert session.channel_tripped("keyword")
-    assert not session.channel_tripped("vector")
-    assert not session.channel_tripped("hydration")
-    assert session._timeout_counts == {"keyword": 2, "vector": 0, "hydration": 0}
-    assert not session._tasks
-    fresh_session = RelatedEvidenceSession()
-    assert not fresh_session.channel_tripped("keyword")
-    assert fresh_session._timeout_counts == {"keyword": 0, "vector": 0, "hydration": 0}
-    await fresh_session.aclose()
 
 
 @pytest.mark.unit
@@ -697,13 +802,13 @@ async def test_session_caller_owned() -> None:
     candidate = _candidate()
     session = RelatedEvidenceSession()
     with (
-        patch("gobby.memory.dream.related._keyword_hits", AsyncMock(return_value=[])),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
         patch("gobby.memory.dream.related._vector_hits", AsyncMock(return_value={})),
     ):
         await gather_related_evidence(
             [candidate],
             db=MagicMock(),
-            vector_store=None,
+            vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
             session=session,
             scope=RetrievalScope.project_only("project-a"),
@@ -711,14 +816,14 @@ async def test_session_caller_owned() -> None:
         await gather_related_evidence(
             [candidate],
             db=MagicMock(),
-            vector_store=None,
+            vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
             session=session,
             scope=RetrievalScope.project_only("project-a"),
         )
 
     assert not session._closed
-    assert session._page_index == 2
+    assert session._unit_index == 2
     invalid_gather = cast(
         Callable[..., Awaitable[list[DreamCandidate]]],
         gather_related_evidence,
@@ -727,7 +832,7 @@ async def test_session_caller_owned() -> None:
         await invalid_gather(
             [candidate],
             db=MagicMock(),
-            vector_store=None,
+            vector_store=MagicMock(),
             dream_config=SimpleNamespace(),
             scope=RetrievalScope.project_only("project-a"),
         )
@@ -778,7 +883,7 @@ async def test_trickling_response_aborted_at_absolute_deadline() -> None:
 
 
 @pytest.mark.unit
-async def test_uninitialized_client_blocking_init() -> None:
+async def test_uninitialized_client_blocking_init_fails_vector_channel() -> None:
     store = VectorStore(url="http://qdrant:6333", collection_name="blocking-init")
     blocker = asyncio.Event()
 
@@ -789,27 +894,27 @@ async def test_uninitialized_client_blocking_init() -> None:
     client = MagicMock()
     client.collection_exists = AsyncMock(side_effect=blocked_exists)
     client.close = AsyncMock()
-    candidate = _candidate()
     session = RelatedEvidenceSession()
     with (
         patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as client_factory,
-        patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.02),
-        patch.object(related_module, "RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS", 0.2),
-        patch("gobby.memory.dream.related._keyword_hits", AsyncMock(return_value=[])),
+        patch.object(related_module, "RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS", 0.02),
+        patch.object(related_module, "RELATED_EVIDENCE_RETRY_ATTEMPTS", 1),
+        patch("gobby.memory.dream.related._keyword_hits_bulk", AsyncMock(return_value={})),
     ):
-        result = await gather_related_evidence(
-            [candidate],
-            db=MagicMock(),
-            vector_store=store,
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
+        with pytest.raises(RelatedEvidenceChannelError) as excinfo:
+            await gather_related_evidence(
+                [_candidate()],
+                db=MagicMock(),
+                vector_store=store,
+                dream_config=SimpleNamespace(),
+                session=session,
+                scope=RetrievalScope.project_only("project-a"),
+            )
         sentinel = await asyncio.wait_for(asyncio.to_thread(lambda: "usable"), timeout=0.2)
     await session.aclose()
     await store.close()
 
-    assert result == [candidate]
+    assert excinfo.value.channel == "vector"
     assert sentinel == "usable"
     assert client.collection_exists.await_count == 1
     assert "timeout" not in client.collection_exists.await_args.kwargs
@@ -818,94 +923,36 @@ async def test_uninitialized_client_blocking_init() -> None:
     client.close.assert_awaited_once()
 
 
-@pytest.mark.unit
-async def test_local_mode_keyword_only_degradation(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    baseline_threads = threading.active_count()
-    candidate = _candidate()
-    newer = _memory("keyword-hit", created_at=_NOW + timedelta(days=1))
-    local_store = MagicMock()
-    local_store.supports_stored_vector_search = False
-    session = RelatedEvidenceSession()
-    with (
-        patch.object(related_module, "_LOCAL_VECTOR_WARNING_EMITTED", False),
-        patch(
-            "gobby.memory.dream.related._keyword_hits",
-            AsyncMock(return_value=[("keyword-hit", 0.8)]),
-        ),
-        patch(
-            "gobby.memory.dream.related._hydrate_hits",
-            AsyncMock(return_value=[newer]),
-        ),
-    ):
-        first = await gather_related_evidence(
-            [candidate],
-            db=MagicMock(),
-            vector_store=local_store,
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-        second = await gather_related_evidence(
-            [candidate],
-            db=MagicMock(),
-            vector_store=local_store,
-            dream_config=SimpleNamespace(),
-            session=session,
-            scope=RetrievalScope.project_only("project-a"),
-        )
-    await session.aclose()
-
-    assert first[0].related[0].id == "keyword-hit"
-    assert second[0].related[0].id == "keyword-hit"
-    assert caplog.text.count("disabled for local Qdrant mode") == 1
-    assert threading.active_count() == baseline_threads
-
-
-@pytest.mark.parametrize(
-    "scope",
-    [RetrievalScope.global_only(), RetrievalScope.project_and_global(_PROJECT_A)],
-)
 @pytest.mark.integration
-def test_keyword_global_not_starved(scope: RetrievalScope, postgres_db: Any) -> None:
-    postgres_db.execute(
-        "INSERT INTO projects (id, name) VALUES (%s, %s), (%s, %s)",
-        (_PROJECT_A, "Starvation Project A", _PROJECT_B, "Starvation Project B"),
+async def test_local_mode_serves_stored_vector_search(tmp_path: Path) -> None:
+    """Local embedded Qdrant serves stored-vector batch search without a gate."""
+    store = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="local-evidence",
+        embedding_dim=4,
     )
-    storage = LocalMemoryManager(postgres_db)
-    global_memory = storage.create_memory(
-        "starvationlexeme global",
-        project_id=_PROJECT_B,
-        is_global=True,
+    await store.initialize()
+    await store.upsert(
+        _stable_uuid("candidate"),
+        [1.0, 0.0, 0.0, 0.0],
+        {"project_id": "project-a", "is_global": False},
     )
-    for index in range(6):
-        storage.create_memory(
-            f"starvationlexeme starvationlexeme foreign {index}",
-            project_id=_PROJECT_B,
-        )
-
-    service = MemoryKeywordSearchService(postgres_db)
-    statement = service.render_search(
-        "starvationlexeme",
-        3,
-        project_id=scope.project_id,
-        scope=scope.kind,
+    await store.upsert(
+        _stable_uuid("neighbor"),
+        [0.9, 0.1, 0.0, 0.0],
+        {"project_id": "project-a", "is_global": False},
     )
 
-    assert statement is not None
-    sql, _params = statement
-    assert sql.index("memories.is_global IS TRUE") < sql.index("ORDER BY") < sql.index("LIMIT")
-    result_ids = {
-        memory_id
-        for memory_id, _score in service.search(
-            "starvationlexeme",
-            3,
-            project_id=scope.project_id,
-            scope=scope.kind,
-        )
-    }
-    assert result_ids == {global_memory.id}
+    result = await store.search_by_stored_vectors([_stable_uuid("candidate")], limit=2)
+    await store.close()
+
+    assert not hasattr(store, "supports_stored_vector_search")
+    hits = result[_stable_uuid("candidate")]
+    assert any(hit_id == _stable_uuid("neighbor") for hit_id, _score in hits)
+
+
+def _stable_uuid(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, name))
 
 
 @pytest.mark.unit
@@ -913,54 +960,19 @@ async def test_statement_timeout_server_hygiene() -> None:
     db = SimpleNamespace(conninfo="postgresql://evidence")
     bounded = AsyncMock(return_value=[])
     with patch("gobby.memory.dream.related.run_bounded_db", bounded):
-        result = await _keyword_hits(
-            _candidate(),
+        result = await _keyword_hits_bulk(
+            [_candidate()],
             db=db,
             scope=RetrievalScope.global_only(),
             fetch_limit=4,
         )
 
-    assert result == []
+    assert result == {}
     assert bounded.await_args is not None
     assert bounded.await_args.kwargs == {
         "conninfo": "postgresql://evidence",
-        "deadline_seconds": related_module.RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS,
+        "deadline_seconds": related_module.RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
     }
-
-
-@pytest.mark.unit
-async def test_blocked_first_set_local_bounded_release() -> None:
-    blocker = asyncio.Event()
-
-    async def block() -> None:
-        await blocker.wait()
-
-    session = RelatedEvidenceSession()
-    with patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.01):
-        outcome = await session.run_call("keyword", block, page_index=1)
-    await asyncio.wait_for(session.aclose(), timeout=0.2)
-
-    assert outcome.timed_out
-    assert not session._tasks
-
-
-@pytest.mark.unit
-async def test_cancel_failure_no_accumulation() -> None:
-    baseline_threads = threading.active_count()
-    for page in range(3):
-        blocker = asyncio.Event()
-
-        async def block(event: asyncio.Event = blocker) -> None:
-            await event.wait()
-
-        session = RelatedEvidenceSession()
-        with patch.object(related_module, "RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS", 0.005):
-            outcome = await session.run_call("hydration", block, page_index=page)
-        await asyncio.wait_for(session.aclose(), timeout=0.2)
-        assert outcome.timed_out
-        assert not session._tasks
-
-    assert threading.active_count() == baseline_threads
 
 
 @pytest.mark.unit
@@ -974,8 +986,8 @@ async def test_hub_pool_independence() -> None:
 
     bounded = AsyncMock(return_value=[])
     with patch("gobby.memory.dream.related.run_bounded_db", bounded):
-        await _keyword_hits(
-            _candidate(),
+        await _keyword_hits_bulk(
+            [_candidate()],
             db=PoolGuard(),
             scope=RetrievalScope.project_only("project-a"),
             fetch_limit=4,

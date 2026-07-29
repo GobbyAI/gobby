@@ -70,6 +70,7 @@ def mock_vector_store() -> AsyncMock:
     vs = AsyncMock(spec=VectorStore)
     vs.upsert = AsyncMock()
     vs.search = AsyncMock(return_value=[])
+    vs.search_by_stored_vectors = AsyncMock(return_value={})
     vs.delete = AsyncMock()
     vs.count = AsyncMock(return_value=0)
     vs.batch_upsert = AsyncMock()

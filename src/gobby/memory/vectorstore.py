@@ -102,10 +102,6 @@ class VectorStore:
     def is_remote(self) -> bool:
         return self._client_ops.is_remote
 
-    @property
-    def supports_stored_vector_search(self) -> bool:
-        return self._client_ops.supports_stored_vector_search
-
     async def _ensure_initialized(self, timeout: float | None = None) -> QdrantClientLike:
         return await self._client_ops.ensure_initialized(timeout)
 

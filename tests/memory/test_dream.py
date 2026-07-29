@@ -2087,7 +2087,7 @@ def _sweep_config(
     page_size: int = 2,
     dry_run_max_candidates: int = 1000,
     redream_after_hours: int = 20,
-    related_evidence_enabled: bool = True,
+    related_evidence_enabled: bool = False,
 ) -> MemoryDreamConfig:
     return MemoryDreamConfig(
         enabled=True,
@@ -2226,12 +2226,12 @@ async def test_sweeps_attach_related_evidence() -> None:
     ):
         live_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(live_db)),
-            dream_config=_sweep_config(page_size=2),
+            dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
             llm_service=None,
         )
         dry_service = MemoryDreamService(
             memory_manager=_as_dream_manager(_FakeSweepManager(dry_db)),
-            dream_config=_sweep_config(page_size=2),
+            dream_config=_sweep_config(page_size=2, related_evidence_enabled=True),
             llm_service=None,
         )
         await live_service.run(DreamRunOptions(project_id="proj-1"))

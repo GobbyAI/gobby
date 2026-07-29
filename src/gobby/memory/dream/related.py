@@ -1,4 +1,11 @@
-"""Related-memory retrieval for dream review candidates."""
+"""Related-memory retrieval for dream review candidates.
+
+Evidence is gathered per bounded work unit (at most 25 candidates): one bulk
+keyword query, one stored-vector batch query, and at most one hydration query.
+All three channels are required in every deployment mode; a channel that fails
+every bounded attempt raises a typed dependency failure instead of silently
+degrading candidate evidence.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +24,6 @@ from qdrant_client.models import Filter
 
 from gobby.memory.dream.models import DreamCandidate, RelatedMemoryEvidence
 from gobby.memory.services.keyword import MemoryKeywordSearchService
-from gobby.memory.vectorstore_client import VectorStoreUnavailableError
 from gobby.memory.vectorstore_filters import memory_scope_filter
 from gobby.search.keyword import sanitize_pg_search_query
 from gobby.storage.hub.async_ops import run_bounded_db
@@ -26,15 +32,15 @@ from gobby.storage.memories_scope import MemoryScope
 
 logger = logging.getLogger(__name__)
 
-RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS = 15.0
-RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS = 5.0
-RELATED_EVIDENCE_CHANNEL_TRIP_LIMIT = 2
-RELATED_EVIDENCE_DRAIN_TIMEOUT_SECONDS = 7.0
+RELATED_EVIDENCE_UNIT_SIZE = 25
+RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS = 30.0
+RELATED_EVIDENCE_RETRY_ATTEMPTS = 3
+RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS = (1.0, 4.0)
+RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS = 210.0
 VECTOR_EVIDENCE_MIN_SCORE = 0.35
 _RRF_K = 60
 _DEFAULT_FETCH_LIMIT = 20
 _DEFAULT_TOP_K = 5
-_LOCAL_VECTOR_WARNING_EMITTED = False
 _T = TypeVar("_T")
 
 _TASK_REF_PATTERN = re.compile(r"#(\d{3,6})")
@@ -101,14 +107,34 @@ _STOPWORDS = frozenset(
 
 RetrievalScopeKind = Literal["global_only", "project_only", "project_and_global"]
 _Channel = Literal["keyword", "vector", "hydration"]
-_DB_BACKED_CHANNELS: frozenset[_Channel] = frozenset({"keyword", "hydration"})
 
 
-@dataclass(frozen=True)
-class _CallOutcome:
-    value: Any = None
-    timed_out: bool = False
-    failed: bool = False
+class RelatedEvidenceError(RuntimeError):
+    """Required related-evidence retrieval could not be completed."""
+
+
+class RelatedEvidenceChannelError(RelatedEvidenceError):
+    """One required evidence channel failed every bounded attempt."""
+
+    def __init__(self, channel: str, *, attempts: int, detail: str) -> None:
+        super().__init__(
+            f"related-evidence {channel} channel failed after {attempts} attempt(s): {detail}"
+        )
+        self.channel = channel
+        self.attempts = attempts
+        self.detail = detail
+
+
+class RelatedEvidencePhaseTimeoutError(RelatedEvidenceError):
+    """A work unit exceeded the overall evidence-phase budget."""
+
+    def __init__(self, unit_index: int, *, timeout_seconds: float) -> None:
+        super().__init__(
+            f"related-evidence unit {unit_index} exceeded the "
+            f"{timeout_seconds:.0f}s evidence-phase budget"
+        )
+        self.unit_index = unit_index
+        self.timeout_seconds = timeout_seconds
 
 
 @dataclass(frozen=True)
@@ -162,17 +188,11 @@ class RetrievalScope:
 
 
 class RelatedEvidenceSession:
-    """Sweep-owned concurrency, circuit-breaker, and task-lifecycle state."""
+    """Caller-owned child-task lifecycle for related-evidence retrieval."""
 
     def __init__(self) -> None:
-        self._db_semaphore = asyncio.Semaphore(4)
-        self._timeout_counts: dict[_Channel, int] = {
-            "keyword": 0,
-            "vector": 0,
-            "hydration": 0,
-        }
         self._tasks: set[asyncio.Task[Any]] = set()
-        self._page_index = 0
+        self._unit_index = 0
         self._closed = False
 
     async def __aenter__(self) -> RelatedEvidenceSession:
@@ -186,17 +206,9 @@ class RelatedEvidenceSession:
     ) -> None:
         await self.aclose()
 
-    def next_page_index(self) -> int:
-        self._page_index += 1
-        return self._page_index
-
-    def channel_tripped(self, channel: _Channel) -> bool:
-        return self._timeout_counts[channel] >= RELATED_EVIDENCE_CHANNEL_TRIP_LIMIT
-
-    def record_channel_page(self, channel: _Channel, *, timed_out: bool) -> None:
-        if self.channel_tripped(channel) and not timed_out:
-            return
-        self._timeout_counts[channel] = self._timeout_counts[channel] + 1 if timed_out else 0
+    def next_unit_index(self) -> int:
+        self._unit_index += 1
+        return self._unit_index
 
     def create_task(self, awaitable: Awaitable[_T], *, name: str) -> asyncio.Task[_T]:
         if self._closed:
@@ -210,49 +222,6 @@ class RelatedEvidenceSession:
         task.add_done_callback(self._tasks.discard)
         return task
 
-    async def run_call(
-        self,
-        channel: _Channel,
-        operation: Callable[[], Awaitable[_T]],
-        *,
-        page_index: int,
-    ) -> _CallOutcome:
-        if self.channel_tripped(channel):
-            return _CallOutcome()
-
-        task: asyncio.Task[_T] | None = None
-
-        async def execute() -> _CallOutcome:
-            nonlocal task
-            task = self.create_task(
-                operation(),
-                name=f"dream-related-{channel}-page-{page_index}",
-            )
-            return _CallOutcome(value=await task)
-
-        try:
-            async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
-                if channel in _DB_BACKED_CHANNELS:
-                    async with self._db_semaphore:
-                        return await execute()
-                return await execute()
-        except TimeoutError:
-            if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            return _CallOutcome(timed_out=True)
-        except VectorStoreUnavailableError:
-            return _CallOutcome(failed=True)
-        except Exception:
-            logger.debug(
-                "Related-memory %s channel failed on page %s",
-                channel,
-                page_index,
-                exc_info=True,
-            )
-            return _CallOutcome(failed=True)
-
     async def aclose(self) -> None:
         if self._closed:
             return
@@ -261,15 +230,32 @@ class RelatedEvidenceSession:
         for task in tasks:
             task.cancel()
         if tasks:
-            try:
-                async with asyncio.timeout(RELATED_EVIDENCE_DRAIN_TIMEOUT_SECONDS):
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            except TimeoutError:
-                logger.warning(
-                    "Related-memory session drain exceeded %.1fs",
-                    RELATED_EVIDENCE_DRAIN_TIMEOUT_SECONDS,
-                )
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+
+
+@dataclass
+class _AttemptMetrics:
+    """Timing captured inside one channel attempt."""
+
+    admitted_at: float | None = None
+
+    def mark_admitted(self) -> None:
+        if self.admitted_at is None:
+            self.admitted_at = asyncio.get_running_loop().time()
+
+    def pool_wait(self, started: float) -> float | None:
+        if self.admitted_at is None:
+            return None
+        return max(0.0, self.admitted_at - started)
+
+
+@dataclass(frozen=True)
+class _ChannelContext:
+    session: RelatedEvidenceSession
+    scope: RetrievalScope
+    unit_index: int
+    run_id: str | None
 
 
 async def gather_related_evidence(
@@ -282,139 +268,125 @@ async def gather_related_evidence(
     scope: RetrievalScope,
     temporal_direction: Literal["newer", "older"] = "newer",
     anchor_at: datetime | None = None,
+    run_id: str | None = None,
 ) -> list[DreamCandidate]:
-    """Populate related evidence within bounded best-effort channel deadlines."""
+    """Populate related evidence in bounded work units; all channels required."""
     if not candidates:
         return []
     if temporal_direction not in {"newer", "older"}:
         logger.warning("Invalid related-memory temporal direction: %s", temporal_direction)
         return candidates
+    if vector_store is None:
+        raise RelatedEvidenceChannelError("vector", attempts=0, detail="no vector store configured")
 
-    page_index = session.next_page_index()
-    started = asyncio.get_running_loop().time()
-    try:
-        async with asyncio.timeout(RELATED_EVIDENCE_PAGE_DEADLINE_SECONDS):
-            return await _gather_page(
-                candidates,
-                db=db,
-                vector_store=vector_store,
-                dream_config=dream_config,
-                session=session,
-                scope=scope,
-                temporal_direction=temporal_direction,
-                anchor_at=anchor_at,
-                page_index=page_index,
-                started=started,
-            )
-    except TimeoutError:
-        elapsed = asyncio.get_running_loop().time() - started
-        logger.warning(
-            "Related-memory page %s exceeded %.2fs (channels=page)",
-            page_index,
-            elapsed,
-        )
-        return candidates
-    except Exception:
-        logger.warning("Related-memory retrieval failed on page %s", page_index, exc_info=True)
-        return candidates
-
-
-async def _gather_page(
-    candidates: list[DreamCandidate],
-    *,
-    db: Any,
-    vector_store: Any | None,
-    dream_config: Any,
-    session: RelatedEvidenceSession,
-    scope: RetrievalScope,
-    temporal_direction: Literal["newer", "older"],
-    anchor_at: datetime | None,
-    page_index: int,
-    started: float,
-) -> list[DreamCandidate]:
     fetch_limit = _positive_config(
         dream_config, "related_evidence_fetch_limit", _DEFAULT_FETCH_LIMIT
     )
     top_k = _positive_config(dream_config, "related_evidence_top_k", _DEFAULT_TOP_K)
 
-    keyword_tasks = [
-        session.create_task(
-            session.run_call(
-                "keyword",
-                partial(
-                    _keyword_hits,
-                    candidate,
-                    db=db,
-                    scope=scope,
-                    fetch_limit=fetch_limit,
-                ),
-                page_index=page_index,
-            ),
-            name=f"dream-related-keyword-dispatch-{page_index}-{candidate.id}",
-        )
-        for candidate in candidates
-    ]
-    vector_task = session.create_task(
-        session.run_call(
-            "vector",
-            lambda: _vector_hits(
-                candidates,
+    enriched: list[DreamCandidate] = []
+    for start in range(0, len(candidates), RELATED_EVIDENCE_UNIT_SIZE):
+        unit = candidates[start : start + RELATED_EVIDENCE_UNIT_SIZE]
+        enriched.extend(
+            await _gather_unit(
+                unit,
+                db=db,
                 vector_store=vector_store,
+                session=session,
                 scope=scope,
+                temporal_direction=temporal_direction,
+                anchor_at=anchor_at,
                 fetch_limit=fetch_limit,
-            ),
-            page_index=page_index,
-        ),
-        name=f"dream-related-vector-dispatch-{page_index}",
-    )
-    keyword_outcomes = await asyncio.gather(*keyword_tasks)
-    vector_outcome = await vector_task
-
-    keyword_timed_out = any(outcome.timed_out for outcome in keyword_outcomes)
-    session.record_channel_page("keyword", timed_out=keyword_timed_out)
-    session.record_channel_page("vector", timed_out=vector_outcome.timed_out)
-    timed_out_channels = [
-        channel
-        for channel, timed_out in (
-            ("keyword", keyword_timed_out),
-            ("vector", vector_outcome.timed_out),
+                top_k=top_k,
+                unit_index=session.next_unit_index(),
+                run_id=run_id,
+            )
         )
-        if timed_out
-    ]
-    if timed_out_channels:
-        _log_page_timeout(page_index, started, timed_out_channels)
-        return candidates
+    return enriched
 
-    keyword_hits = {
-        candidate.id: outcome.value or []
-        for candidate, outcome in zip(candidates, keyword_outcomes, strict=True)
-    }
-    vector_hits = vector_outcome.value or {}
-    ranked = {
-        candidate.id: _rrf_rank(
-            candidate.id,
-            keyword_hits.get(candidate.id, []),
-            vector_hits.get(candidate.id, []),
-        )
-        for candidate in candidates
-    }
-    hydration_ids = list(dict.fromkeys(item for values in ranked.values() for item in values))
-    if not hydration_ids:
-        return candidates
 
-    hydration_outcome = await session.run_call(
-        "hydration",
-        lambda: _hydrate_hits(hydration_ids, db=db, scope=scope),
-        page_index=page_index,
-    )
-    session.record_channel_page("hydration", timed_out=hydration_outcome.timed_out)
-    if hydration_outcome.timed_out:
-        _log_page_timeout(page_index, started, ["hydration"])
-        return candidates
-    if hydration_outcome.failed:
-        return candidates
+async def _gather_unit(
+    unit: list[DreamCandidate],
+    *,
+    db: Any,
+    vector_store: Any,
+    session: RelatedEvidenceSession,
+    scope: RetrievalScope,
+    temporal_direction: Literal["newer", "older"],
+    anchor_at: datetime | None,
+    fetch_limit: int,
+    top_k: int,
+    unit_index: int,
+    run_id: str | None,
+) -> list[DreamCandidate]:
+    context = _ChannelContext(session=session, scope=scope, unit_index=unit_index, run_id=run_id)
+    unit_tasks: list[asyncio.Task[Any]] = []
+    try:
+        async with asyncio.timeout(RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS):
+            keyword_task = session.create_task(
+                _run_channel(
+                    "keyword",
+                    partial(
+                        _keyword_hits_bulk,
+                        unit,
+                        db=db,
+                        scope=scope,
+                        fetch_limit=fetch_limit,
+                    ),
+                    context=context,
+                ),
+                name=f"dream-related-keyword-unit-{unit_index}",
+            )
+            vector_task = session.create_task(
+                _run_channel(
+                    "vector",
+                    partial(
+                        _vector_hits,
+                        unit,
+                        vector_store=vector_store,
+                        scope=scope,
+                        fetch_limit=fetch_limit,
+                    ),
+                    context=context,
+                ),
+                name=f"dream-related-vector-unit-{unit_index}",
+            )
+            unit_tasks = [keyword_task, vector_task]
+            keyword_hits, vector_hits = await asyncio.gather(keyword_task, vector_task)
 
-    hydrated = {memory.id: memory for memory in hydration_outcome.value or []}
+            ranked = {
+                candidate.id: _rrf_rank(
+                    candidate.id,
+                    keyword_hits.get(candidate.id, []),
+                    vector_hits.get(candidate.id, []),
+                )
+                for candidate in unit
+            }
+            hydration_ids = list(
+                dict.fromkeys(item for values in ranked.values() for item in values)
+            )
+            hydrated_rows: list[Any] = []
+            if hydration_ids:
+                hydration_task = session.create_task(
+                    _run_channel(
+                        "hydration",
+                        partial(_hydrate_hits, hydration_ids, db=db, scope=scope),
+                        context=context,
+                    ),
+                    name=f"dream-related-hydration-unit-{unit_index}",
+                )
+                unit_tasks.append(hydration_task)
+                hydrated_rows = await hydration_task
+    except TimeoutError as exc:
+        await _drain_tasks(unit_tasks)
+        raise RelatedEvidencePhaseTimeoutError(
+            unit_index, timeout_seconds=RELATED_EVIDENCE_PHASE_TIMEOUT_SECONDS
+        ) from exc
+    except BaseException:
+        await _drain_tasks(unit_tasks)
+        raise
+
+    hydrated = {memory.id: memory for memory in hydrated_rows}
     return [
         _attach_candidate_evidence(
             candidate,
@@ -427,32 +399,160 @@ async def _gather_page(
             anchor_at=anchor_at,
             scope=scope,
         )
-        for candidate in candidates
+        for candidate in unit
     ]
 
 
-async def _keyword_hits(
-    candidate: DreamCandidate,
+async def _run_channel[T](
+    channel: _Channel,
+    operation: Callable[[_AttemptMetrics], Awaitable[T]],
+    *,
+    context: _ChannelContext,
+) -> T:
+    loop = asyncio.get_running_loop()
+    detail = "unknown failure"
+    for attempt in range(1, RELATED_EVIDENCE_RETRY_ATTEMPTS + 1):
+        metrics = _AttemptMetrics()
+        started = loop.time()
+        task = context.session.create_task(
+            operation(metrics),
+            name=f"dream-related-{channel}-unit-{context.unit_index}-attempt-{attempt}",
+        )
+        outcome = "error"
+        try:
+            async with asyncio.timeout(RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS):
+                return await task
+        except TimeoutError as exc:
+            task.cancel()
+            with suppress(asyncio.CancelledError, TimeoutError):
+                await task
+            # Budget expiry cancels the attempt task; a task that instead
+            # completed with its own TimeoutError is a failed attempt.
+            if task.cancelled():
+                outcome = "timeout"
+                detail = f"attempt exceeded {RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS:.0f}s"
+            else:
+                detail = f"{type(exc).__name__}: {exc}"
+        except asyncio.CancelledError:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            raise
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+        _log_attempt_failure(
+            channel,
+            context=context,
+            attempt=attempt,
+            pool_wait=metrics.pool_wait(started),
+            duration=loop.time() - started,
+            outcome=outcome,
+        )
+        if attempt < RELATED_EVIDENCE_RETRY_ATTEMPTS:
+            backoffs = RELATED_EVIDENCE_RETRY_BACKOFF_SECONDS
+            await asyncio.sleep(backoffs[min(attempt - 1, len(backoffs) - 1)])
+    raise RelatedEvidenceChannelError(
+        channel, attempts=RELATED_EVIDENCE_RETRY_ATTEMPTS, detail=detail
+    )
+
+
+async def _drain_tasks(tasks: list[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _log_attempt_failure(
+    channel: _Channel,
+    *,
+    context: _ChannelContext,
+    attempt: int,
+    pool_wait: float | None,
+    duration: float,
+    outcome: str,
+) -> None:
+    logger.info(
+        "Related-evidence attempt failed: run=%s scope=%s unit=%s channel=%s "
+        "attempt=%s/%s pool_wait=%s duration=%.3fs outcome=%s",
+        context.run_id or "-",
+        context.scope.kind,
+        context.unit_index,
+        channel,
+        attempt,
+        RELATED_EVIDENCE_RETRY_ATTEMPTS,
+        f"{pool_wait:.3f}s" if pool_wait is not None else "n/a",
+        duration,
+        outcome,
+    )
+
+
+def render_bulk_keyword_statement(
+    queries: list[tuple[str, str]],
     *,
     db: Any,
     scope: RetrievalScope,
     fetch_limit: int,
-) -> list[tuple[str, float]]:
-    query = _distinctive_terms(candidate.content)
-    if not query:
-        return []
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Combine per-candidate rendered keyword statements into one round trip.
+
+    Each branch keeps its own BM25 ranking via a per-branch ``ROW_NUMBER``
+    ordinal, so consumers can restore the exact per-candidate hit order
+    regardless of how the executor interleaves ``UNION ALL`` output.
+    """
+    if len(queries) > RELATED_EVIDENCE_UNIT_SIZE:
+        raise ValueError(
+            f"bulk keyword search accepts at most {RELATED_EVIDENCE_UNIT_SIZE} queries"
+        )
     service = MemoryKeywordSearchService(db)
-    statement = service.render_search(
-        query,
-        fetch_limit,
-        project_id=scope.project_id,
-        scope=scope.kind,
+    parts: list[str] = []
+    params: list[Any] = []
+    for candidate_id, query in queries:
+        if not query:
+            continue
+        statement = service.render_search(
+            query,
+            fetch_limit,
+            project_id=scope.project_id,
+            scope=scope.kind,
+        )
+        if statement is None:
+            continue
+        sql, sql_params = statement
+        parts.append(
+            "SELECT %s AS candidate_key, ranked.id AS id, ranked.score AS score, "
+            f"ROW_NUMBER() OVER () AS hit_rank FROM ({sql}) AS ranked"
+        )
+        params.append(candidate_id)
+        params.extend(sql_params)
+    if not parts:
+        return None
+    return "\nUNION ALL\n".join(parts), tuple(params)
+
+
+async def _keyword_hits_bulk(
+    unit: list[DreamCandidate],
+    metrics: _AttemptMetrics | None = None,
+    *,
+    db: Any,
+    scope: RetrievalScope,
+    fetch_limit: int,
+) -> dict[str, list[tuple[str, float]]]:
+    stats = metrics or _AttemptMetrics()
+    statement = render_bulk_keyword_statement(
+        [(candidate.id, _distinctive_terms(candidate.content)) for candidate in unit],
+        db=db,
+        scope=scope,
+        fetch_limit=fetch_limit,
     )
     if statement is None:
-        return []
+        stats.mark_admitted()
+        return {}
     sql, params = statement
 
     async def execute(connection: Any, _remaining: float) -> list[Any]:
+        stats.mark_admitted()
         async with connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(sql, params)
             return list(await cursor.fetchall())
@@ -460,32 +560,33 @@ async def _keyword_hits(
     rows = await run_bounded_db(
         execute,
         conninfo=db.conninfo,
-        deadline_seconds=RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS,
+        deadline_seconds=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
     )
-    return [(hit.id, hit.score) for hit in service.map_rows(rows)]
+    grouped: dict[str, list[tuple[int, str, float]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["candidate_key"]), []).append(
+            (int(row["hit_rank"]), str(row["id"]), float(row["score"]))
+        )
+    return {
+        candidate_id: [(memory_id, score) for _rank, memory_id, score in sorted(values)]
+        for candidate_id, values in grouped.items()
+    }
 
 
 async def _vector_hits(
-    candidates: list[DreamCandidate],
+    unit: list[DreamCandidate],
+    metrics: _AttemptMetrics | None = None,
     *,
-    vector_store: Any | None,
+    vector_store: Any,
     scope: RetrievalScope,
     fetch_limit: int,
 ) -> dict[str, list[tuple[str, float]]]:
-    global _LOCAL_VECTOR_WARNING_EMITTED
-
-    if vector_store is None:
-        return {}
-    if not bool(getattr(vector_store, "supports_stored_vector_search", True)):
-        if not _LOCAL_VECTOR_WARNING_EMITTED:
-            logger.warning("Stored-vector related evidence is disabled for local Qdrant mode")
-            _LOCAL_VECTOR_WARNING_EMITTED = True
-        return {}
+    (metrics or _AttemptMetrics()).mark_admitted()
     results = await vector_store.search_by_stored_vectors(
-        [candidate.id for candidate in candidates],
+        [candidate.id for candidate in unit],
         limit=fetch_limit,
         query_filter=scope.vector_filter(),
-        timeout=RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS,
+        timeout=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
     )
     return {
         memory_id: [
@@ -497,20 +598,24 @@ async def _vector_hits(
 
 async def _hydrate_hits(
     memory_ids: list[str],
+    metrics: _AttemptMetrics | None = None,
     *,
     db: Any,
     scope: RetrievalScope,
 ) -> list[Any]:
+    stats = metrics or _AttemptMetrics()
     statement = render_get_memories_statement(
         memory_ids,
         scope.memory_scope(),
         visibility="active",
     )
     if statement is None:
+        stats.mark_admitted()
         return []
     sql, params = statement
 
     async def execute(connection: Any, _remaining: float) -> list[Any]:
+        stats.mark_admitted()
         async with connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(sql, params)
             return list(await cursor.fetchall())
@@ -518,7 +623,7 @@ async def _hydrate_hits(
     rows = await run_bounded_db(
         execute,
         conninfo=db.conninfo,
-        deadline_seconds=RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS,
+        deadline_seconds=RELATED_EVIDENCE_CHANNEL_TIMEOUT_SECONDS,
     )
     return map_get_memories_rows(rows, memory_ids)
 
@@ -589,16 +694,6 @@ def _attach_candidate_evidence(
 def _positive_config(config: Any, name: str, default: int) -> int:
     value = getattr(config, name, default)
     return value if isinstance(value, int) and value > 0 else default
-
-
-def _log_page_timeout(page_index: int, started: float, channels: list[str]) -> None:
-    elapsed = asyncio.get_running_loop().time() - started
-    logger.warning(
-        "Related-memory page %s timed out after %.2fs (channels=%s)",
-        page_index,
-        elapsed,
-        ",".join(channels),
-    )
 
 
 def _distinctive_terms(content: str, max_terms: int = 24) -> str:
