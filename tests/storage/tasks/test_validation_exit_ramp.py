@@ -9,7 +9,12 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager, TaskStaleStateError, _transitions
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    TaskAlreadyEscalatedError,
+    TaskStaleStateError,
+    _transitions,
+)
 
 UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
 
@@ -111,11 +116,61 @@ def test_concurrent_threshold_crossing_escalates_exactly_once(
     )
 
     assert results == [(5, True)]
-    assert len(errors) == 1 and isinstance(errors[0], TaskStaleStateError)
+    assert len(errors) == 1 and isinstance(errors[0], TaskAlreadyEscalatedError)
     escalated = manager.get_task(task.id)
     assert escalated.validation_fail_count == 5
     assert escalated.is_escalated is True
     assert escalated.claimed_by_session_id is None
+
+
+def test_increment_failure_on_escalated_task_reports_terminal_state(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Already escalated",
+        validation_criteria="Test task completion is observable.",
+    )
+    manager.update_task(task.id, validation_fail_count=4)
+    manager.escalate_task(task.id, reason="manual escalation")
+    snapshot = manager.get_task(task.id)
+
+    with pytest.raises(TaskAlreadyEscalatedError):
+        _invalid_transition(
+            temp_db,
+            task.id,
+            expected_updated_at=snapshot.updated_at,
+            threshold=5,
+        )
+
+    assert manager.get_task(task.id).validation_fail_count == 4
+
+
+def test_increment_failure_on_closed_task_reports_closed_state(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Already closed",
+        validation_criteria="Test task completion is observable.",
+    )
+    closed = _transitions.close_task(
+        temp_db,
+        task.id,
+        expected_updated_at=task.updated_at,
+    )
+
+    with pytest.raises(ValueError, match="task is closed"):
+        _invalid_transition(
+            temp_db,
+            task.id,
+            expected_updated_at=closed.updated_at,
+            threshold=5,
+        )
 
 
 def test_count_already_past_threshold_still_escalates(
@@ -191,7 +246,12 @@ def test_concurrent_valid_and_invalid_verdict_first_transition_wins(
     results, errors = _run_concurrently(valid, invalid)
 
     assert len(results) == 1
-    assert len(errors) == 1 and isinstance(errors[0], TaskStaleStateError)
+    assert len(errors) == 1
+    if winner == "valid":
+        assert isinstance(errors[0], ValueError)
+        assert "task is closed" in str(errors[0])
+    else:
+        assert isinstance(errors[0], TaskStaleStateError)
     final = manager.get_task(task.id)
     if winner == "valid":
         assert final.closed_at is not None

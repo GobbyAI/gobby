@@ -7,10 +7,15 @@ import logging
 from dataclasses import replace
 from typing import Any, Literal
 
+from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
     RepoPathValidationError,
     resolve_task_repo_path,
+)
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    CloseAttributionSnapshot,
+    CloseEvaluationFingerprint,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     claimed_session_window_start as _claimed_session_window_start,
@@ -41,16 +46,68 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
-from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
+from gobby.storage.tasks import Task, TaskNotFoundError, TaskStaleStateError
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.commits import collect_commit_diff_text
-from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _children_state(
+    ctx: RegistryContext,
+    task_id: str,
+) -> tuple[list[Task], tuple[tuple[str, str | None, bool], ...]]:
+    """Return children and the gate-relevant structural state."""
+    children = collect_task_query_pages(
+        ctx.task_manager.list_tasks,
+        parent_task_id=task_id,
+    )
+    state = tuple(
+        sorted((child.id, child.parent_task_id, is_task_closed(child)) for child in children)
+    )
+    return children, state
+
+
+async def _capture_attribution(
+    ctx: RegistryContext,
+    *,
+    task: Task,
+    task_id: str,
+    resolved_session_id: str,
+    repo_path: str,
+) -> CloseAttributionSnapshot:
+    """Capture the session-owned inputs used by close gates 7 through 9."""
+    owner_session_id = get_claimed_session_id(task) or resolved_session_id
+    session_vars = ctx.session_var_manager.get_variables(owner_session_id)
+
+    from gobby.workflows.task_claim_state import target_task_has_edits, task_edited_file_set
+
+    attributed = target_task_has_edits(session_vars, task_id)
+    raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
+    edited_paths = frozenset(
+        await asyncio.to_thread(
+            _committable_task_paths,
+            set(raw_paths),
+            repo_path,
+        )
+    )
+    return CloseAttributionSnapshot(
+        owner_session_id=owner_session_id,
+        attributed=attributed,
+        raw_paths=raw_paths,
+        edited_paths=edited_paths,
+        had_attributed_edits=attributed and bool(edited_paths),
+        claim_started_at=_claimed_session_window_start(
+            ctx,
+            task=task,
+            resolved_id=task_id,
+        ),
+    )
 
 
 async def _evaluate_close(
@@ -62,6 +119,7 @@ async def _evaluate_close(
     commit_sha: str | None,
     project_path: str | None,
     response_detail: Literal["concise", "diagnostic"],
+    override_justification: str | None = None,
 ) -> CloseEvaluation:
     """Evaluate the checklist once without close or commit-link mutation."""
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
@@ -117,10 +175,12 @@ async def _evaluate_close(
         )
     evaluation.repo_path = repo_path
     evaluation.pass_gate(3, "repository_path", "Task repository resolved.")
+    evaluation.edit_session_id = get_claimed_session_id(task) or resolved_session_id
 
-    has_children = bool(ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1))
+    children, children_state = _children_state(ctx, resolved_id)
+    has_children = bool(children)
     if has_children:
-        parent_result = validate_parent_task(ctx, resolved_id)
+        parent_result = validate_parent_task(ctx, resolved_id, children=children)
         if not parent_result.can_close:
             return evaluation.fail(
                 4,
@@ -133,6 +193,11 @@ async def _evaluate_close(
     evaluation.skip_leaf_checks = has_children or evaluation.is_epic
     evaluation.pass_gate(4, "children_closed", "Every child task is closed.")
     if evaluation.skip_leaf_checks:
+        evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+            task,
+            children_state=children_state,
+            attribution=None,
+        )
         for item, name in (
             (5, "criteria_present"),
             (6, "changes_summary_present"),
@@ -166,10 +231,14 @@ async def _evaluate_close(
         )
     evaluation.pass_gate(6, "changes_summary_present", "Changes summary is present.")
 
-    owner_session_id = get_claimed_session_id(task) or resolved_session_id
-    evaluation.edit_session_id = owner_session_id
     try:
-        session_vars = ctx.session_var_manager.get_variables(owner_session_id)
+        attribution = await _capture_attribution(
+            ctx,
+            task=task,
+            task_id=resolved_id,
+            resolved_session_id=resolved_session_id,
+            repo_path=repo_path,
+        )
     except (KeyError, TypeError, ValueError) as exc:
         return evaluation.fail(
             2,
@@ -177,27 +246,21 @@ async def _evaluate_close(
             "session_variable_lookup_failed",
             f"Cannot read task edit attribution from the owning session: {exc}",
         )
-    from gobby.workflows.task_claim_state import target_task_has_edits, task_edited_file_set
-
-    attributed = target_task_has_edits(session_vars, resolved_id)
-    raw_paths = task_edited_file_set(session_vars, resolved_id)
-    if attributed and not raw_paths:
+    evaluation.edit_session_id = attribution.owner_session_id
+    if attribution.attributed and not attribution.raw_paths:
         return evaluation.fail(
             8,
             "uncommitted_task_edits",
             "task_edit_paths_unavailable",
             "The task records edits but no attributed file paths. Restore task edit state and retry.",
         )
-    evaluation.edited_paths = await asyncio.to_thread(
-        _committable_task_paths,
-        raw_paths,
-        repo_path,
-    )
-    evaluation.had_attributed_edits = attributed and bool(evaluation.edited_paths)
-    evaluation.claim_started_at = _claimed_session_window_start(
-        ctx,
-        task=task,
-        resolved_id=resolved_id,
+    evaluation.edited_paths = set(attribution.edited_paths)
+    evaluation.had_attributed_edits = attribution.had_attributed_edits
+    evaluation.claim_started_at = attribution.claim_started_at
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task,
+        children_state=children_state,
+        attribution=attribution,
     )
     commit_shas, commit_error = resolve_close_commit_shas(
         ctx.task_manager,
@@ -267,7 +330,7 @@ async def _evaluate_close(
             transcript = await _derive_close_transcript_evidence(
                 ctx,
                 task_id=resolved_id,
-                owner_session_id=owner_session_id,
+                owner_session_id=attribution.owner_session_id,
                 closing_session_id=resolved_session_id,
                 owner_window_start=evaluation.claim_started_at,
                 task_edited_files=evaluation.edited_paths,
@@ -302,6 +365,28 @@ async def _evaluate_close(
         evaluation.error = "validation_command_required"
         evaluation.message = command_gate.message
         evaluation.action = command_gate.message
+        return evaluation
+
+    if task.is_escalated:
+        if not (override_justification or "").strip():
+            return evaluation.fail(
+                10,
+                "criteria_review",
+                "task_escalated",
+                "Escalated tasks require override_justification for deliberate closure.",
+                action=(
+                    "Provide override_justification to close deliberately, "
+                    "or use de_escalate_task/reopen_task."
+                ),
+                extra={"escalated": True},
+            )
+        evaluation.validation_reset_reason = "escalated_deliberate_close"
+        evaluation.pass_gate(
+            10,
+            "criteria_review",
+            "Skipped for a justified deliberate close of an escalated task.",
+            skipped=True,
+        )
         return evaluation
 
     if ctx.task_validator is None:
@@ -390,15 +475,48 @@ async def _commit_close(
     if task is None or evaluation.task_id is None:
         return evaluation.response(preview=False)
     fresh = ctx.task_manager.get_task(task.id)
-    if fresh is None or fresh.updated_at != task.updated_at:
+    if fresh is None:
         return _stale_close_response(
             evaluation, "Task state changed after evaluation; retry close_task."
+        )
+    fresh_children, fresh_children_state = _children_state(ctx, task.id)
+    fresh_skip_leaf_checks = bool(fresh_children) or fresh.task_type == "epic"
+    fresh_attribution: CloseAttributionSnapshot | None = None
+    if not fresh_skip_leaf_checks:
+        if evaluation.resolved_session_id is None or evaluation.repo_path is None:
+            return _stale_close_response(
+                evaluation,
+                "Close evaluation context is incomplete; retry close_task.",
+            )
+        try:
+            fresh_attribution = await _capture_attribution(
+                ctx,
+                task=fresh,
+                task_id=task.id,
+                resolved_session_id=evaluation.resolved_session_id,
+                repo_path=evaluation.repo_path,
+            )
+        except (KeyError, TypeError, ValueError):
+            return _stale_close_response(
+                evaluation,
+                "Task edit attribution changed after evaluation; retry close_task.",
+            )
+    fresh_fingerprint = CloseEvaluationFingerprint.capture(
+        fresh,
+        children_state=fresh_children_state,
+        attribution=fresh_attribution,
+    )
+    if evaluation.fingerprint is None or fresh_fingerprint != evaluation.fingerprint:
+        return _stale_close_response(
+            evaluation, "Task gate inputs changed after evaluation; retry close_task."
         )
     commit_shas, error = resolve_close_commit_shas(
         ctx.task_manager,
         task=fresh,
         task_id=task.id,
-        claim_started_at=evaluation.claim_started_at,
+        claim_started_at=(
+            fresh_attribution.claim_started_at if fresh_attribution is not None else None
+        ),
         commit_sha=commit_sha,
         cwd=evaluation.repo_path,
         project_name=ctx.get_current_project_name(),
@@ -408,10 +526,13 @@ async def _commit_close(
             evaluation,
             "The prospective commit set changed after evaluation; retry close_task.",
         )
-    has_dirty_edits = bool(evaluation.edited_paths and evaluation.repo_path) and (
+    fresh_edited_paths = (
+        set(fresh_attribution.edited_paths) if fresh_attribution is not None else set()
+    )
+    has_dirty_edits = bool(fresh_edited_paths and evaluation.repo_path) and (
         await asyncio.to_thread(
             _has_committable_edits,
-            evaluation.edited_paths,
+            fresh_edited_paths,
             evaluation.repo_path or "",
         )
     )
@@ -498,6 +619,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             commit_sha=commit_sha,
             project_path=project_path,
             response_detail=response_detail,
+            override_justification=override_justification,
         )
         if not evaluation.ready:
             return evaluation.response(preview=preview)
@@ -517,7 +639,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         description=(
             "Evaluate the ordered close checklist and close ready tasks in the same call. "
             "Leaf tasks require criteria, a changes summary, commits for attributed edits, "
-            "a clean transcript-derived validation run, and one bounded criteria review. "
+            "a clean transcript-derived validation run, and one bounded criteria review "
+            "unless a justified deliberate close exits escalation. "
             "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={
@@ -531,7 +654,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "default": False,
                     "description": "Organizational close audit flag; ignored for leaves.",
                 },
-                "override_justification": {"type": "string"},
+                "override_justification": {
+                    "type": "string",
+                    "description": (
+                        "Required to deliberately close an escalated task; persisted as "
+                        "validation_override_reason and ignored for ordinary leaf closure."
+                    ),
+                },
                 "commit_sha": {"type": "string"},
                 "project_path": {"type": "string"},
                 "preview": {

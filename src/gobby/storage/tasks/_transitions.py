@@ -406,7 +406,13 @@ def increment_validation_failure(
         ).fetchone()
 
     if row is None:
-        get_task(db, task_id)
+        task = get_task(db, task_id)
+        if is_task_closed(task):
+            raise ValueError(
+                f"Cannot record validation failure for task {task_id}: task is closed."
+            )
+        if task.is_escalated:
+            raise TaskAlreadyEscalatedError(task_id, task.escalation_reason)
         raise TaskStaleStateError(task_id)
     return int(row["validation_fail_count"]), bool(row["is_escalated"])
 

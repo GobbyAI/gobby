@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.config.validation_detection import resolve_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
@@ -17,11 +20,61 @@ from gobby.tasks.transcript_evidence import (
 from gobby.workflows.task_dirty_state import committable_task_paths, has_committable_edits
 
 __all__ = [
+    "CloseAttributionSnapshot",
+    "CloseEvaluationFingerprint",
     "committable_task_paths",
     "has_committable_edits",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CloseAttributionSnapshot:
+    """Mutable session-attribution inputs consumed by the close checklist."""
+
+    owner_session_id: str
+    attributed: bool
+    raw_paths: frozenset[str]
+    edited_paths: frozenset[str]
+    had_attributed_edits: bool
+    claim_started_at: str | None
+
+
+@dataclass(frozen=True)
+class CloseEvaluationFingerprint:
+    """Gate-relevant mutable state captured before the bounded review."""
+
+    closed_at: datetime | None
+    is_escalated: bool
+    validation_criteria: str | None
+    category: str | None
+    task_type: str
+    claimed_by_session_id: str | None
+    parent_task_id: str | None
+    children_state: tuple[tuple[str, str | None, bool], ...]
+    attribution: CloseAttributionSnapshot | None
+
+    @classmethod
+    def capture(
+        cls,
+        task: Task,
+        *,
+        children_state: tuple[tuple[str, str | None, bool], ...],
+        attribution: CloseAttributionSnapshot | None,
+    ) -> CloseEvaluationFingerprint:
+        """Build a stable fingerprint from values actually used by the gates."""
+        return cls(
+            closed_at=task.closed_at,
+            is_escalated=task.is_escalated,
+            validation_criteria=task.validation_criteria,
+            category=task.category,
+            task_type=task.task_type,
+            claimed_by_session_id=get_claimed_session_id(task),
+            parent_task_id=task.parent_task_id,
+            children_state=children_state,
+            attribution=attribution,
+        )
 
 
 async def derive_close_transcript_evidence(

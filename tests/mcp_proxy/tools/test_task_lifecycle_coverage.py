@@ -14,7 +14,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.utils.session_context import session_context_for_test
@@ -252,8 +252,7 @@ class TestCloseTask:
             assert result["can_close"] is True
             assert result["closed"] is True
             assert any(
-                gate["name"] == "children_closed" and gate["passed"]
-                for gate in result["mechanical_gates"]
+                gate["name"] == "children_closed" and gate["passed"] for gate in result["checklist"]
             )
             # commit check should NOT have been called
             mock_vcr.assert_not_called()
@@ -286,11 +285,11 @@ class TestCloseTask:
             },
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["preview"] is True
         assert result["can_close"] is False
         assert result["closed"] is False
-        assert result["error"] == "validation_failed"
+        assert result["error"] == "children_open"
         assert "open" in result["blocking_reasons"][0].lower()
         mock_task_manager.close_task.assert_not_called()
 
@@ -391,7 +390,9 @@ class TestCloseTask:
             registry = _create_registry(mock_task_manager)
             result = await registry.call("close_task", {"task_id": epic.id})
 
-        assert result == {"success": True, "closed": True}
+        assert result["success"] is True
+        assert result["closed"] is True
+        assert result["can_close"] is True
         assert order == ["close", "archive", "notify", "cleanup"]
         mock_notify_parent.assert_called_once()
         mock_svm.merge_variables.assert_called_once()
@@ -914,6 +915,47 @@ class TestCloseTask:
         assert result["validation_status"] == "invalid"
         mock_task_manager.update_task.assert_not_called()
         mock_task_manager.increment_validation_failure.assert_called_once()
+        mock_task_manager.close_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_task_already_escalated_review_race_is_not_stale(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = _make_task(validation_criteria="Focused tests pass")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.increment_validation_failure.side_effect = TaskAlreadyEscalatedError(
+            task.id,
+            "Repeated invalid review",
+        )
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = CloseVerdict(
+            status="invalid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Focused tests pass",
+                    False,
+                    "Run focused tests clean.",
+                ),
+            ),
+            feedback="invalid feedback",
+        )
+        registry = _create_registry(mock_task_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "Implemented and verified"},
+            )
+
+        assert result["error"] == "validation_failed"
+        assert result["escalated"] is True
+        assert result["already_escalated"] is True
+        assert "stale_state" not in result
         mock_task_manager.close_task.assert_not_called()
 
 

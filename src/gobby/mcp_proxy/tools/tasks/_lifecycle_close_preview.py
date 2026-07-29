@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseEvaluationFingerprint
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_checklist import CloseGateResult
 
@@ -24,6 +25,7 @@ class CloseEvaluation:
     commit_shas: list[str] = field(default_factory=list)
     edited_paths: set[str] = field(default_factory=set)
     had_attributed_edits: bool = False
+    fingerprint: CloseEvaluationFingerprint | None = None
     skip_leaf_checks: bool = False
     is_epic: bool = False
     gates: list[CloseGateResult] = field(default_factory=list)

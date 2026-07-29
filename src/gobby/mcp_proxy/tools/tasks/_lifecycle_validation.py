@@ -11,7 +11,7 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.failure_categories import FailureCategory, classify_exception
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
-from gobby.storage.tasks import Task, TaskStaleStateError
+from gobby.storage.tasks import Task, TaskAlreadyEscalatedError, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.close_verdict import CloseVerdictParseError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
@@ -20,7 +20,7 @@ from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.tasks.validation import TaskValidator
@@ -71,12 +71,18 @@ def validate_commit_requirements(
     return ValidationResult(can_close=True)
 
 
-def validate_parent_task(ctx: RegistryContext, task_id: str) -> ValidationResult:
+def validate_parent_task(
+    ctx: RegistryContext,
+    task_id: str,
+    *,
+    children: Sequence[Task] | None = None,
+) -> ValidationResult:
     """Require every child of a structural parent to be closed."""
-    children = collect_task_query_pages(
-        ctx.task_manager.list_tasks,
-        parent_task_id=task_id,
-    )
+    if children is None:
+        children = collect_task_query_pages(
+            ctx.task_manager.list_tasks,
+            parent_task_id=task_id,
+        )
     open_children = [child for child in children if not is_task_closed(child)]
     if not open_children:
         return ValidationResult(can_close=True)
@@ -265,6 +271,13 @@ async def evaluate_criteria_review(
             message=str(exc),
             extra={"stale_state": True, "verdict": verdict_dict},
         )
+    except TaskAlreadyEscalatedError as exc:
+        return ValidationResult(
+            can_close=False,
+            error_type="validation_failed",
+            message=str(exc),
+            extra={"escalated": True, "already_escalated": True},
+        )
     extra = {"validation_fail_count": fail_count, "verdict": verdict_dict}
     if escalated_now:
         escalated = ctx.task_manager.get_task(resolved_id)
@@ -295,8 +308,8 @@ def determine_close_outcome(
     override_justification: str | None,
 ) -> tuple[bool, bool]:
     """Return organizational override audit flags."""
-    del task, override_justification
-    return False, skip_validation
+    justified_escalated_close = task.is_escalated and bool((override_justification or "").strip())
+    return False, skip_validation or justified_escalated_close
 
 
 def _record_validation_iteration(

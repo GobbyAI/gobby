@@ -206,13 +206,21 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `create_task` | Create a new task. `claim=true` to auto-assign. `validation_criteria` required when `category="code"`. |
 | `get_task` | Get task details, including dependencies. Accepts `#N`, path, or UUID. |
 | `update_task` | Update task fields, including `isolation`, `assigned_agent`, and `additional_skills`. |
-| `close_task` | Evaluate and close when ready. Use `preview=true` with `commit_sha` and `changes_summary`; blocked calls stay read-only and return repair actions. |
+| `close_task` | Evaluate and close when ready. Use `preview=true` with `commit_sha` and `changes_summary`; blocked calls stay read-only and return repair actions. Escalated tasks require `override_justification` for deliberate closure. |
 | `reopen_task` | Reopen a closed or escalated task. |
 | `delete_task` | Delete a task. `cascade=true` removes subtasks and dependent tasks; `unlink=true` preserves dependents by removing links. |
 | `list_tasks` | List tasks with filters. |
 | `claim_task` | Claim a task for the current session. `force=true` overrides another session's claim. |
 | `escalate_task` | Escalate a task for human intervention. Preserves the current stage state. |
 | `de_escalate_task` | Return an escalated task to its preserved stage. |
+
+For escalation recovery, `de_escalate_task` returns the task to its preserved
+stage and `reopen_task` restores closed or escalated work. Alternatively,
+`close_task` accepts a non-empty `override_justification` for a deliberate
+terminal close. That path still runs deterministic gates 1-9, skips the bounded
+criteria review, persists the justification, clears escalation, and resets the
+validation failure count. Missing or whitespace-only justification returns
+`task_escalated`.
 
 `update_task` accepts `isolation` as `none`, `worktree`, or `clone` for future
 dispatch. Retargeting to `worktree` fails when the task already has clone

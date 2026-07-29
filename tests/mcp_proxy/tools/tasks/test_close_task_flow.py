@@ -12,6 +12,10 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    CloseAttributionSnapshot,
+    CloseEvaluationFingerprint,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
     _commit_close,
@@ -61,6 +65,35 @@ def _ctx(task: Task, validator: object = None) -> RegistryContext:
             get_current_project_name=lambda: "gobby",
         ),
     )
+
+
+def _ready_evaluation(
+    task: Task,
+    *,
+    attribution: CloseAttributionSnapshot | None = None,
+    children_state: tuple[tuple[str, str | None, bool], ...] = (),
+) -> CloseEvaluation:
+    if attribution is None:
+        attribution = CloseAttributionSnapshot(
+            owner_session_id=task.claimed_by_session_id or "",
+            attributed=False,
+            raw_paths=frozenset(),
+            edited_paths=frozenset(),
+            had_attributed_edits=False,
+            claim_started_at=None,
+        )
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = task.claimed_by_session_id
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task,
+        children_state=children_state,
+        attribution=attribution,
+    )
+    evaluation.pass_gate(10, "criteria_review", "Passed.")
+    return evaluation
 
 
 @pytest.mark.asyncio
@@ -297,19 +330,44 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_lock_change_returns_stale_without_close() -> None:
+@pytest.mark.parametrize(
+    "change",
+    [
+        "category",
+        "task-type",
+        "claim-owner",
+        "validation-criteria",
+        "escalation",
+        "closure",
+        "parent-linkage",
+    ],
+)
+async def test_gate_input_change_returns_stale_without_close(change: str) -> None:
     task = _task()
     ctx = _ctx(task)
-    cast(MagicMock, ctx.task_manager.get_task).return_value = replace(
-        task,
-        updated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
-    )
-    evaluation = CloseEvaluation(task.id)
-    evaluation.task = task
-    evaluation.task_id = task.id
-    evaluation.repo_path = "/repo"
-    evaluation.commit_shas = ["abc123"]
-    evaluation.pass_gate(10, "criteria_review", "Passed.")
+    changed_task = {
+        "category": lambda: replace(task, category="docs"),
+        "task-type": lambda: replace(task, task_type="epic"),
+        "claim-owner": lambda: replace(
+            task,
+            claimed_by_session_id="00000000-0000-4000-8000-000000000999",
+        ),
+        "validation-criteria": lambda: replace(
+            task,
+            validation_criteria="Changed criteria.",
+        ),
+        "escalation": lambda: replace(task, is_escalated=True),
+        "closure": lambda: replace(
+            task,
+            closed_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        ),
+        "parent-linkage": lambda: replace(
+            task,
+            parent_task_id="00000000-0000-4000-8000-000000000888",
+        ),
+    }[change]()
+    cast(MagicMock, ctx.task_manager.get_task).return_value = changed_task
+    evaluation = _ready_evaluation(task)
 
     result = await _commit_close(
         ctx,
@@ -322,6 +380,248 @@ async def test_task_lock_change_returns_stale_without_close() -> None:
 
     assert result["error"] == "stale_task_state"
     assert result["closed"] is False
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_children_change_returns_stale_without_close() -> None:
+    task = _task()
+    child = replace(
+        _task(),
+        id="00000000-0000-4000-8000-000000000102",
+        parent_task_id=task.id,
+        closed_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+    )
+    ctx = _ctx(task)
+    cast(MagicMock, ctx.task_manager.list_tasks).return_value = [child]
+    evaluation = _ready_evaluation(task)
+
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha=None,
+    )
+
+    assert result["error"] == "stale_task_state"
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_attributed_paths_during_review_return_stale() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+
+    with (
+        patch(
+            "gobby.workflows.task_claim_state.target_task_has_edits",
+            return_value=True,
+        ),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/new.py"},
+        ),
+        patch.object(lifecycle, "_committable_task_paths", return_value={"src/new.py"}),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["error"] == "stale_task_state"
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_same_owner_reclaim_window_change_returns_stale() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    attribution = CloseAttributionSnapshot(
+        owner_session_id=task.claimed_by_session_id or "",
+        attributed=False,
+        raw_paths=frozenset(),
+        edited_paths=frozenset(),
+        had_attributed_edits=False,
+        claim_started_at="2026-07-27T12:00:00Z",
+    )
+    evaluation = _ready_evaluation(task, attribution=attribution)
+
+    with patch.object(
+        lifecycle,
+        "_claimed_session_window_start",
+        return_value="2026-07-27T12:05:00Z",
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["error"] == "stale_task_state"
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_benign_bookkeeping_change_does_not_stale_close() -> None:
+    task = _task()
+    fresh = replace(
+        task,
+        updated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        path_cache="19236.19238",
+    )
+    ctx = _ctx(task)
+    cast(MagicMock, ctx.task_manager.get_task).return_value = fresh
+    evaluation = _ready_evaluation(task)
+
+    with (
+        patch.object(
+            lifecycle,
+            "resolve_close_commit_shas",
+            return_value=([], None),
+        ) as resolve_commits,
+        patch.object(
+            lifecycle,
+            "link_close_commit_shas",
+            return_value=(fresh, None),
+        ) as link_commits,
+        patch.object(
+            lifecycle,
+            "notify_parent_on_task_state_change",
+        ) as notify_parent,
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    cast(MagicMock, ctx.task_manager.close_task).assert_called_once()
+    resolve_commits.assert_called_once()
+    link_commits.assert_called_once()
+    notify_parent.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_justified_escalated_close_skips_review_and_persists_override() -> None:
+    task = replace(
+        _task(),
+        is_escalated=True,
+        escalated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        escalation_reason="Repeated invalid review",
+        validation_fail_count=5,
+    )
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Deliberately resolved the escalated task.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+            override_justification="Reviewed and accepted the current implementation.",
+        )
+
+    assert evaluation.ready is True
+    assert evaluation.validation_reset_reason == "escalated_deliberate_close"
+    assert evaluation.gates[-1].status == "skipped"
+    review.assert_not_awaited()
+
+    with (
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "notify_parent_on_task_state_change"),
+        patch.object(lifecycle, "_cleanup_closed_claim"),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification="Reviewed and accepted the current implementation.",
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    cast(MagicMock, ctx.task_manager.close_task).assert_called_once_with(
+        task.id,
+        reason="completed",
+        closed_in_session_id=task.claimed_by_session_id,
+        closed_commit_sha=None,
+        validation_override_reason="Reviewed and accepted the current implementation.",
+        expected_updated_at=task.updated_at,
+        reset_validation_fail_count=True,
+        validation_status="valid",
+        validation_feedback=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override_justification", [None, "   "])
+async def test_escalated_close_without_justification_converges_on_actionable_blocker(
+    override_justification: str | None,
+) -> None:
+    task = replace(
+        _task(),
+        is_escalated=True,
+        escalated_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+        escalation_reason="Repeated invalid review",
+        validation_fail_count=5,
+    )
+    ctx = _ctx(task, validator=object())
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        results = [
+            await _evaluate_close(
+                ctx,
+                task_id=task.id,
+                reason="completed",
+                changes_summary="Attempted deliberate close.",
+                commit_sha=None,
+                project_path=None,
+                response_detail="diagnostic",
+                override_justification=override_justification,
+            )
+            for _ in range(2)
+        ]
+
+    assert [evaluation.error for evaluation in results] == [
+        "task_escalated",
+        "task_escalated",
+    ]
+    assert all("override_justification" in (evaluation.action or "") for evaluation in results)
+    review.assert_not_awaited()
     cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
 
 
@@ -415,6 +715,11 @@ async def test_commit_epic_persists_allowed_valid_status() -> None:
     evaluation.commit_shas = []
     evaluation.is_epic = True
     evaluation.skip_leaf_checks = True
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task,
+        children_state=(),
+        attribution=None,
+    )
 
     with (
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),

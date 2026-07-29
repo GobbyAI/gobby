@@ -12,7 +12,8 @@ Allowed reasons:
 
 These reasons require no commit when the task has no attributed edits. The
 checklist still requires criteria, a useful `changes_summary`, and the bounded
-criteria review. Complete the memory review before calling `close_task`.
+criteria review. A justified deliberate close of an escalated task is the only
+review exception. Complete the memory review before calling `close_task`.
 
 ```python
 call_tool("gobby-tasks", "close_task", {

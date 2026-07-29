@@ -125,6 +125,13 @@ Validation runs when the task has validation criteria. Skip-style reasons such a
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
 
+An escalated task returns an actionable `task_escalated` blocker instead of
+running another bounded review. Either use `de_escalate_task`/`reopen_task`, or
+provide a non-empty `override_justification` to close it deliberately. A
+deliberate close skips only the criteria review: gates 1-9 still apply, the
+justification is stored as `validation_override_reason`, and closure clears
+escalation metadata and resets the validation failure count.
+
 Autonomous stage work may require review instead of direct close. Inspect the
 stage manifest first:
 
