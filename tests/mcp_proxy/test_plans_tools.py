@@ -485,3 +485,66 @@ async def test_validate_plan_returns_semantic_lint_errors(
     assert result["valid"] is False
     assert any("target-coverage" in error for error in result["errors"])
     assert result["semantic_lint"]["valid"] is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_review_round_uses_call_tool_envelope_session(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from gobby.mcp_proxy.server import GobbyDaemonTools
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+
+    project_id = (
+        LocalProjectManager(temp_db)
+        .create(name="envelope-review-evidence", repo_path=str(tmp_path))
+        .id
+    )
+    session_manager = SessionManager(temp_db)
+    session = session_manager.register(
+        external_id="envelope-review-evidence",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                "envelope-review-evidence-request",
+                "Review the envelope evidence plan",
+            )
+        },
+    )
+    plan_path = _write_plan(tmp_path)
+    internal_manager = InternalRegistryManager()
+    internal_manager.add_registry(
+        create_plan_registry(temp_db, default_project_id=project_id),
+    )
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = project_id
+    tools = GobbyDaemonTools(
+        mcp_manager=mcp_manager,
+        daemon_port=60887,
+        websocket_port=60888,
+        start_time=0.0,
+        internal_manager=internal_manager,
+        db=None,
+        session_manager=session_manager,
+    )
+
+    result = await tools.call_tool(
+        server_name="gobby-plans",
+        tool_name="prepare_plan_review_round",
+        arguments={
+            "plan_path": str(plan_path),
+            "round_number": 1,
+        },
+        session_id=session.id,
+    )
+
+    assert result["ok"] is True
+    evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
+    assert evidence.session_id == session.id

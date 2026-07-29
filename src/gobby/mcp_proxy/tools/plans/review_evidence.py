@@ -34,6 +34,7 @@ from gobby.plans.review_evidence_preparation import derive_settled_sweep_inputs
 from gobby.plans.review_sweep_scope import SweepScope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.session_context import get_current_session_id
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "session_id": {"type": "string"},
@@ -157,7 +158,7 @@ def register_review_evidence_tools(
                 project_id=resolve_project_id(project),
                 plan_path=plan_path,
                 round_number=round_number,
-                session_id=session_id,
+                session_id=session_id or get_current_session_id(),
                 task_id=task_id,
                 stage=stage,
                 prior_finding_resolutions=prior_finding_resolutions,
