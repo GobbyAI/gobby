@@ -102,6 +102,22 @@ class TestPlanEnhanceContent:
         for category in ("scope", "testability", "reuse", "sequencing", "clarity"):
             assert category in body, f"Category enum missing: {category}"
 
+    def test_contract_conformance_is_better_and_never_scope(self, body: str) -> None:
+        lowered = body.lower()
+        assert "a settled contract is existing scope" in lowered
+        assert "correctness/conformance gap" in lowered
+        assert "`lens: better`, `category: clarity`" in lowered
+        assert "never classify that drift as" in lowered
+        assert "`lens: bigger` or `category: scope`" in lowered
+
+    def test_mandated_mechanism_survives_suggestion(self, body: str) -> None:
+        lowered = body.lower()
+        normalized = " ".join(lowered.split())
+        assert "preserve mandated mechanisms" in lowered
+        assert "name that mechanism in `suggested_enhancement`" in lowered
+        assert "carry its exact implementation constraint" in lowered
+        assert "including any exact mechanism mandated" in normalized
+
     def test_severity_is_always_opportunity_never_blocking(self, body: str) -> None:
         """The enhancer has no blocking severity — blocking belongs to the adversary."""
         assert "opportunity" in body

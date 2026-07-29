@@ -70,6 +70,15 @@ These are contract-level. Violating any of them breaks the enhancer's role.
   value on top of a correct plan. If you spot a correctness defect, that is an
   adversary finding, not an enhancement — note it as `category: clarity` with a
   pointer, but do not "fix" it by proposing weaker behavior.
+- **A settled contract is existing scope.** Drift from a requirement the plan or
+  a cited contract already fixes is a correctness/conformance gap:
+  `lens: better`, `category: clarity`. Never classify that drift as
+  `lens: bigger` or `category: scope`, and never recommend deferring it as
+  scope growth.
+- **Preserve mandated mechanisms.** When the plan or a cited contract requires a
+  specific mechanism, name that mechanism in `suggested_enhancement`; restating
+  only the desired outcome is incomplete. Cite the requirement in `description`
+  and carry its exact implementation constraint into the proposed change.
 - **Never edit the plan file.** `Edit` and `Write` are blocked in the enhancer
   agent definition. You emit advisory suggestions; the planner (autonomous) or
   coordinator (interactive) applies any accepted fold-ins.
@@ -102,6 +111,9 @@ Polish and harden the existing deliverables without expanding the goal:
   suggestion.
 - **Sharper acceptance criteria:** a deliverable whose acceptance items are
   vague, untestable, or missing an artifact reference the contract wants.
+- **Contract conformance:** close drift from an already-settled requirement,
+  including its mandated mechanism. This is `better` / `clarity` even when the
+  correction adds implementation work.
 - **Parallelizable sequencing:** two deliverables serialized by a `(depends:)`
   link that is not a real precondition — splitting them shortens the critical
   path. (Conversely, a *missing* dependency where one phase truly needs another's
@@ -193,7 +205,8 @@ suggestions:
     description: >-
       One short paragraph: the opportunity, anchored to the specific deliverable.
     suggested_enhancement: >-
-      One short paragraph: the concrete change the planner would fold in.
+      One short paragraph: the concrete change the planner would fold in, including
+      any exact mechanism mandated by the plan or a cited contract.
     impact: high                 # low | med | high
     effort: S                    # S | M | L
     risk: low                    # low | med | high
@@ -207,7 +220,8 @@ Field semantics:
 - **`category`** — `scope` (Bigger net-new work), `testability` (sharper
   acceptance / observability), `reuse` (use an existing utility/pattern),
   `sequencing` (parallelize or correct a non-real dependency), `clarity`
-  (tighten a vague spec or acceptance item).
+  (tighten a vague spec or acceptance item, or restore conformance with a
+  settled contract).
 - **`location`** — the phase/deliverable the suggestion targets, in the same
   `P<N> / § <id>` form the adversary uses, so the planner can map it to a
   section.
