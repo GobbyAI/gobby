@@ -70,7 +70,15 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
                 full_sweep=request.full_sweep,
             )
             if not started.get("success"):
-                return JSONResponse(status_code=400, content=started)
+                status = 409 if started.get("conflict") else 400
+                return JSONResponse(status_code=status, content=started)
+            if started.get("coalesced"):
+                # An equivalent run is already active; do not launch a second
+                # executor for the coalesced row.
+                return JSONResponse(
+                    status_code=200,
+                    content={**started, "status": "coalesced"},
+                )
             run_id = str(started["run_id"])
 
             async def _aggregate_background() -> None:
@@ -109,7 +117,12 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
 
         started = await service.start_async(options)
         if not started.get("success"):
-            return JSONResponse(status_code=400, content=started)
+            status = 409 if started.get("conflict") else 400
+            return JSONResponse(status_code=status, content=started)
+        if started.get("coalesced"):
+            # An equivalent run is already active; do not launch a second
+            # executor for the coalesced row.
+            return JSONResponse(status_code=200, content={**started, "status": "coalesced"})
         run_id = str(started["run_id"])
 
         async def _background() -> None:

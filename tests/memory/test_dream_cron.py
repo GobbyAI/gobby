@@ -178,20 +178,33 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
 
 
 def _patch_dream_service(
-    monkeypatch: pytest.MonkeyPatch, aggregate: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch,
+    aggregate: dict[str, Any],
+    *,
+    started: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Replace cron's MemoryDreamService with a fake that records construction and
-    returns a canned aggregate. The per-target loop itself is unit-tested against
-    the real service in test_dream.py; here we only verify cron orchestration."""
+    """Replace cron's MemoryDreamService with a fake that records construction,
+    resolves admission per ``started``, and returns a canned aggregate from the
+    run executor. The per-target loop itself is unit-tested against the real
+    service in test_dream.py; here we only verify cron orchestration."""
     captured: dict[str, Any] = {}
 
     class _Service:
         def __init__(self, **kwargs: Any) -> None:
             captured["init"] = kwargs
 
-        async def run_all_due_projects(self, **kwargs: Any) -> dict[str, Any]:
+        async def start_all_due_projects_async(self, **kwargs: Any) -> dict[str, Any]:
+            captured["start"] = kwargs
+            return dict(started or {"success": True, "run_id": "run-agg"})
+
+        async def execute_all_due_projects_run(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
             captured["call"] = kwargs
-            return aggregate
+            captured["run_id"] = run_id
+            return {
+                "success": bool(aggregate.get("success")),
+                "run_id": run_id,
+                "aggregate": aggregate,
+            }
 
     monkeypatch.setattr("gobby.memory.dream.cron.MemoryDreamService", _Service)
     return captured
@@ -236,6 +249,67 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     # Nightly runs stay cooldown-throttled (full_sweep is not forced).
     assert captured["call"].get("full_sweep", False) is False
     assert captured["call"]["dry_run"] is expected_dry_run
+    # The executor runs the row that admission created.
+    assert captured["start"]["dry_run"] is expected_dry_run
+    assert captured["run_id"] == "run-agg"
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_cron_handler_coalesces_onto_active_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-a"])
+    captured = _patch_dream_service(
+        monkeypatch,
+        {"success": True},
+        started={"success": True, "run_id": "run-active", "coalesced": True},
+    )
+    register_memory_dream_cron(
+        cron_storage=cast(CronJobStorage, cron_storage),
+        cron_executor=cron_executor,
+        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        dream_config=MemoryDreamConfig(),
+        project_id="proj-1",
+    )
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
+
+    message = await handler(SimpleNamespace())
+
+    assert message == "memory dream coalesced onto active run run-active"
+    assert "call" not in captured  # no second executor for a coalesced run
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_cron_handler_skips_on_conflicting_active_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-a"])
+    captured = _patch_dream_service(
+        monkeypatch,
+        {"success": True},
+        started={
+            "success": False,
+            "error": "a memory dream run is already active with incompatible options",
+            "conflict": {"run_id": "run-busy", "scope": "project:proj-9", "phase": "sweep"},
+        },
+    )
+    register_memory_dream_cron(
+        cron_storage=cast(CronJobStorage, cron_storage),
+        cron_executor=cron_executor,
+        memory_manager=cast(MemoryDreamManagerProtocol, memory_manager),
+        dream_config=MemoryDreamConfig(),
+        project_id="proj-1",
+    )
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
+
+    message = await handler(SimpleNamespace())
+
+    assert message == "memory dream skipped: active run run-busy"
+    assert "call" not in captured
 
 
 def test_dream_run_options_default_to_plan_only() -> None:

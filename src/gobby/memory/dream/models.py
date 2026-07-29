@@ -11,6 +11,52 @@ from gobby.utils.datetime import normalize_datetime_model
 DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review", "promote"]
 
 
+@dataclass(frozen=True, slots=True)
+class DreamCheckpoint:
+    """Durable progress snapshot persisted after every completed work unit.
+
+    Stored in ``memory_dream_runs.checkpoint`` (JSONB). Fields the current
+    sweep loop cannot yet measure — per-channel telemetry, backlog by scope,
+    remaining counts — keep their empty defaults until the work-unit runner
+    and scheduler populate them.
+    """
+
+    phase: str
+    scope: str
+    pass_number: int = 1
+    batch_number: int = 0
+    selected: int = 0
+    completed: int = 0
+    skipped_fence: int = 0
+    remaining: int | None = None
+    channels: dict[str, Any] = field(default_factory=dict)
+    planned: int = 0
+    actions: int = 0
+    mutations: int = 0
+    backlog: dict[str, int] = field(default_factory=dict)
+    stop_reason: str | None = None
+    last_dependency_failure: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "scope": self.scope,
+            "pass_number": self.pass_number,
+            "batch_number": self.batch_number,
+            "selected": self.selected,
+            "completed": self.completed,
+            "skipped_fence": self.skipped_fence,
+            "remaining": self.remaining,
+            "channels": self.channels,
+            "planned": self.planned,
+            "actions": self.actions,
+            "mutations": self.mutations,
+            "backlog": self.backlog,
+            "stop_reason": self.stop_reason,
+            "last_dependency_failure": self.last_dependency_failure,
+        }
+
+
 @normalize_datetime_model(required=("created_at",))
 @dataclass(frozen=True)
 class RelatedMemoryEvidence:

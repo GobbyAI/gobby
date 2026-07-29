@@ -941,11 +941,12 @@ CREATE TABLE memory_dream_runs (
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
-        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'interrupted')),
+        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'interrupted', 'partial')),
     dry_run BOOLEAN NOT NULL DEFAULT FALSE,
     options JSONB NOT NULL DEFAULT '{}'::jsonb,
     plan JSONB,
     summary JSONB,
+    checkpoint JSONB,
     error TEXT,
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
@@ -953,6 +954,11 @@ CREATE TABLE memory_dream_runs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Single-flight admission: at most one 'running' dream row at a time.
+CREATE UNIQUE INDEX idx_memory_dream_runs_single_running
+    ON memory_dream_runs (status)
+    WHERE status = 'running';
 
 CREATE TABLE memory_dream_snapshots (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -71,6 +71,8 @@ def register_memory_dream_cron(
     async def _handler(_job: CronJob) -> str:
         # Cooldown-throttled nightly sweep: fan out across every project with due
         # memories via the shared service loop (also used by manual triggers).
+        # Admission owns the aggregate row, so a fire that overlaps an active
+        # run coalesces or skips instead of stacking a second sweep.
         service = MemoryDreamService(
             memory_manager=memory_manager,
             dream_config=dream_config,
@@ -78,14 +80,30 @@ def register_memory_dream_cron(
             daemon_config=daemon_config,
             current_project_id=project_id,
         )
-        summary = await service.run_all_due_projects(
-            dry_run=not dream_config.allow_unattended_mutations
-        )
-        if not summary.get("success"):
+        dry_run = not dream_config.allow_unattended_mutations
+        started = await service.start_all_due_projects_async(dry_run=dry_run)
+        if started.get("coalesced"):
+            run_id = started.get("run_id")
+            logger.info("Memory dream cron coalesced onto active run %s", run_id)
+            return f"memory dream coalesced onto active run {run_id}"
+        if not started.get("success"):
+            conflict = started.get("conflict")
+            if conflict is not None:
+                logger.info(
+                    "Memory dream cron skipped; incompatible active run %s (scope=%s phase=%s)",
+                    conflict.get("run_id"),
+                    conflict.get("scope"),
+                    conflict.get("phase"),
+                )
+                return f"memory dream skipped: active run {conflict.get('run_id')}"
+            raise RuntimeError(str(started.get("error", "memory dream admission failed")))
+        result = await service.execute_all_due_projects_run(str(started["run_id"]), dry_run=dry_run)
+        if not result.get("success"):
             raise RuntimeError("memory dream failed for all targets")
-        completed = int(summary.get("completed", 0))
-        mutations = int(summary.get("mutations", 0))
-        failed = int(summary.get("failed", 0))
+        aggregate = result.get("aggregate") or {}
+        completed = int(aggregate.get("completed", 0))
+        mutations = int(aggregate.get("mutations", 0))
+        failed = int(aggregate.get("failed", 0))
         tail = f", {failed} failed" if failed else ""
         return f"memory dream: {completed} target(s), {mutations} mutation(s) total{tail}"
 

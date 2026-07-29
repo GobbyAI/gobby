@@ -158,6 +158,11 @@ def register_memory_dream_tools(
             if not started.get("success"):
                 _release_background_slot()
                 return started
+            if started.get("coalesced"):
+                # An equivalent run is already active; do not launch a second
+                # executor for the coalesced row.
+                _release_background_slot()
+                return {**started, "status": "coalesced"}
             run_id = str(started["run_id"])
             run_coro = service.execute_all_due_projects_run(
                 run_id,
@@ -199,6 +204,11 @@ def register_memory_dream_tools(
             if not started.get("success"):
                 _release_background_slot()
                 return started
+            if started.get("coalesced"):
+                # An equivalent run is already active; do not launch a second
+                # executor for the coalesced row.
+                _release_background_slot()
+                return {**started, "status": "coalesced"}
             run_id = str(started["run_id"])
         except (Exception, asyncio.CancelledError):
             _release_background_slot()

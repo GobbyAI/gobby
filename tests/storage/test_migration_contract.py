@@ -24,6 +24,7 @@ MEMORY_DREAM_STATUS_INVARIANTS = (
     "'failed'",
     "'reverted'",
     "'revert_failed'",
+    "'partial'",
 )
 MEMORY_DREAM_LEGACY_ACTION_INVARIANT = (
     "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"

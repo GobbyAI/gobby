@@ -24,7 +24,7 @@ from weakref import WeakKeyDictionary
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates
-from gobby.memory.dream.models import DreamCandidate
+from gobby.memory.dream.models import DreamCandidate, DreamCheckpoint
 from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
@@ -33,7 +33,13 @@ from gobby.memory.dream.related import (
     RelatedEvidenceSession,
     gather_related_evidence,
 )
-from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
+from gobby.memory.dream.storage import (
+    INTERRUPTED_CANCELLED_ERROR,
+    RUN_TERMINAL_STATUSES,
+    DreamAdmission,
+    MemoryDreamStore,
+    dream_scope_key,
+)
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
     build_project_truth_digest_async,
@@ -163,9 +169,31 @@ class MemoryDreamService:
             return {"success": False, "error": "memory dream is disabled"}
 
         started = await self.start_async(options)
-        if not started.get("success"):
+        if not started.get("success") or started.get("coalesced"):
+            # Coalesced: an equivalent or covering run is already active, so
+            # the request is satisfied by observing it rather than executing.
             return started
         run_id = str(started["run_id"])
+        return await self._execute_run_locked(run_id, options)
+
+    async def _run_nested_target(self, options: DreamRunOptions) -> dict[str, Any]:
+        """Execute one aggregate fan-out target under the caller's admission.
+
+        The aggregate caller holds (or is queued behind) the sole admitted
+        'running' row, so per-target rows record execution without competing
+        for admission: they are created at 'started' and move straight to a
+        terminal status.
+        """
+        if not self.dream_config.enabled:
+            return {"success": False, "error": "memory dream is disabled"}
+        run_project_id = None if options.global_only else options.project_id
+        run_id = await asyncio.to_thread(
+            self.store.create_run,
+            project_id=run_project_id,
+            dry_run=options.dry_run,
+            options=options.to_dict(),
+            status="started",
+        )
         return await self._execute_run_locked(run_id, options)
 
     async def run_all_due_projects(
@@ -267,7 +295,7 @@ class MemoryDreamService:
                         include_global=False,
                         full_sweep=full_sweep,
                     )
-                result = await self._run_without_execution_lock(options)
+                result = await self._run_nested_target(options)
                 target_mutations = _completed_mutation_count(result)
                 mutations += target_mutations
                 completed += 1
@@ -418,13 +446,13 @@ class MemoryDreamService:
             return {"success": False, "error": "memory dream is disabled"}
         await self._ensure_schema_async()
         run_project_id = None if options.global_only else options.project_id
-        run_id = await asyncio.to_thread(
-            self.store.create_run,
+        admission = await asyncio.to_thread(
+            self.store.admit_run,
             project_id=run_project_id,
             dry_run=options.dry_run,
             options=options.to_dict(),
         )
-        return {"success": True, "run_id": run_id}
+        return _admission_payload(admission)
 
     async def start_all_due_projects_async(
         self,
@@ -444,13 +472,13 @@ class MemoryDreamService:
             "memory_type": memory_type,
             "full_sweep": full_sweep,
         }
-        run_id = await asyncio.to_thread(
-            self.store.create_run,
+        admission = await asyncio.to_thread(
+            self.store.admit_run,
             project_id=None,
             dry_run=dry_run,
             options=options,
         )
-        return {"success": True, "run_id": run_id}
+        return _admission_payload(admission)
 
     async def execute_all_due_projects_run(
         self,
@@ -527,23 +555,17 @@ class MemoryDreamService:
         self.store.ensure_schema()
         self._schema_ready = True
         run_project_id = None if options.global_only else options.project_id
-        run_id = self.store.create_run(
+        admission = self.store.admit_run(
             project_id=run_project_id,
             dry_run=options.dry_run,
             options=options.to_dict(),
         )
-        return {"success": True, "run_id": run_id}
+        return _admission_payload(admission)
 
     def record_run_failure(self, run_id: str, error: str) -> dict[str, Any] | None:
         """Persist a failed status unless the run already reached a terminal state."""
         run = self.store.get_run(run_id)
-        if run is None or run.get("status") in {
-            "completed",
-            "failed",
-            "reverted",
-            "revert_failed",
-            "interrupted",
-        }:
+        if run is None or run.get("status") in RUN_TERMINAL_STATUSES:
             return run
         return self.store.update_run(
             run_id,
@@ -712,6 +734,11 @@ class MemoryDreamService:
     ) -> _SweepTotals:
         totals = _SweepTotals()
         previous_ids: set[str] | None = None
+        scope_key = dream_scope_key(options.to_dict())
+        planned = 0
+        applied_actions = 0
+        last_dependency_failure: str | None = None
+        stop_reason = "drained"
         while True:
             candidates = await list_sweep_candidates(
                 self.memory_manager,
@@ -731,6 +758,7 @@ class MemoryDreamService:
                 # Cursor failed to advance (e.g. persistent stamp failure); stop
                 # rather than loop forever.
                 logger.warning("Memory dream sweep made no progress on run %s; stopping", run_id)
+                stop_reason = "no_progress"
                 break
             previous_ids = page_ids
             stamp = datetime.now(UTC).isoformat()
@@ -763,9 +791,45 @@ class MemoryDreamService:
                 when=stamp,
             )
             totals.add_page(len(candidates), actions, page_summary, raw_plan_metadata)
+            planned += len(actions)
+            applied_actions += sum(int(count) for count in page_summary.get("actions", {}).values())
+            planner_errors = raw_plan_metadata.get("planner_errors") or []
+            if planner_errors:
+                last_dependency_failure = str(planner_errors[-1])
+            await self._persist_checkpoint(
+                run_id,
+                DreamCheckpoint(
+                    phase="sweep",
+                    scope=scope_key,
+                    batch_number=totals.pages,
+                    selected=len(candidates),
+                    completed=totals.candidates_reviewed,
+                    planned=planned,
+                    actions=applied_actions,
+                    mutations=totals.mutations,
+                    last_dependency_failure=last_dependency_failure,
+                ),
+            )
             if len(candidates) < page_size:
                 break
+        await self._persist_checkpoint(
+            run_id,
+            DreamCheckpoint(
+                phase="sweep",
+                scope=scope_key,
+                batch_number=totals.pages,
+                completed=totals.candidates_reviewed,
+                planned=planned,
+                actions=applied_actions,
+                mutations=totals.mutations,
+                stop_reason=stop_reason,
+                last_dependency_failure=last_dependency_failure,
+            ),
+        )
         return totals
+
+    async def _persist_checkpoint(self, run_id: str, checkpoint: DreamCheckpoint) -> None:
+        await asyncio.to_thread(self.store.update_run, run_id, checkpoint=checkpoint.to_dict())
 
     async def _execute_dry_run(
         self,
@@ -919,6 +983,24 @@ async def run_memory_dream(
             full_sweep=full_sweep,
         )
     )
+
+
+def _admission_payload(admission: DreamAdmission) -> dict[str, Any]:
+    """Translate a store admission outcome into the start-result contract."""
+    if admission.outcome == "admitted":
+        return {"success": True, "run_id": admission.run_id}
+    if admission.outcome == "coalesced":
+        return {
+            "success": True,
+            "run_id": admission.run_id,
+            "coalesced": True,
+            "active": admission.active,
+        }
+    return {
+        "success": False,
+        "error": "a memory dream run is already active with incompatible options",
+        "conflict": admission.active,
+    }
 
 
 def _positive_int(value: Any, default: int) -> int:

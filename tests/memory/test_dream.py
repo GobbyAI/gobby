@@ -20,6 +20,7 @@ from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import (
     DreamAction,
     DreamCandidate,
+    DreamCheckpoint,
     DuplicateGroup,
 )
 from gobby.memory.dream.options import DreamRunOptions
@@ -37,7 +38,9 @@ from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
     INTERRUPTED_RESTART_ERROR,
     PLATFORM_TRUTH_SCOPE,
+    RUN_TERMINAL_STATUSES,
     MemoryDreamStore,
+    normalize_dream_options,
 )
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
@@ -1383,11 +1386,15 @@ async def test_dream_execution_lock_queues_across_service_instances() -> None:
 
     async def run_second() -> dict[str, Any]:
         second_attempted.set()
-        return await second_service.run(options)
+        return await second_service.execute_run(second_run_id, options)
 
     _set_method(first_service, "_stream_sweep", AsyncMock(side_effect=first_sweep))
     _set_method(second_service, "_stream_sweep", AsyncMock(side_effect=second_sweep))
     first_run_id = first_service.store.create_run(project_id="proj-1", dry_run=False, options={})
+    # Only one row may hold 'running'; the queued execution records as 'started'.
+    second_run_id = second_service.store.create_run(
+        project_id="proj-1", dry_run=False, options={}, status="started"
+    )
     options = DreamRunOptions(dry_run=False, project_id="proj-1")
 
     first_task = asyncio.create_task(first_service.execute_run(first_run_id, options))
@@ -1494,6 +1501,268 @@ async def test_dream_execution_lock_releases_after_cancellation() -> None:
     succeeded = await asyncio.wait_for(next_service.execute_run(next_run_id, options), timeout=1)
 
     assert succeeded["success"] is True
+
+
+async def test_run_coalesces_onto_active_covering_run_without_executing() -> None:
+    service = _execution_test_service()
+    sweep = AsyncMock(return_value=_empty_sweep_totals())
+    _set_method(service, "_stream_sweep", sweep)
+    active_id = service.store.create_run(
+        project_id=None,
+        dry_run=False,
+        options={"aggregate": True, "dry_run": False},
+    )
+
+    result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+
+    assert result["success"] is True
+    assert result["coalesced"] is True
+    assert result["run_id"] == active_id
+    assert result["active"]["scope"] == "all"
+    sweep.assert_not_awaited()
+
+
+async def test_run_conflicts_with_incompatible_active_run_without_executing() -> None:
+    service = _execution_test_service()
+    sweep = AsyncMock(return_value=_empty_sweep_totals())
+    _set_method(service, "_stream_sweep", sweep)
+    active_id = service.store.create_run(
+        project_id="proj-1",
+        dry_run=False,
+        options=DreamRunOptions(dry_run=False, project_id="proj-1").to_dict(),
+    )
+
+    result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-2"))
+
+    assert result["success"] is False
+    assert result["conflict"]["run_id"] == active_id
+    assert result["conflict"]["scope"] == "project:proj-1"
+    sweep.assert_not_awaited()
+
+
+def test_postgres_admission_admits_then_coalesces_equivalent(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    options = DreamRunOptions(dry_run=False, project_id=PERSONAL_PROJECT_ID).to_dict()
+
+    admitted = store.admit_run(project_id=PERSONAL_PROJECT_ID, dry_run=False, options=options)
+    coalesced = store.admit_run(
+        project_id=PERSONAL_PROJECT_ID, dry_run=False, options=dict(options)
+    )
+
+    assert admitted.outcome == "admitted"
+    assert admitted.run_id is not None
+    assert coalesced.outcome == "coalesced"
+    assert coalesced.run_id == admitted.run_id
+    assert coalesced.active is not None
+    assert coalesced.active["scope"] == f"project:{PERSONAL_PROJECT_ID}"
+
+
+def test_postgres_admission_all_due_covers_project_request(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    aggregate_options = {"aggregate": True, "dry_run": False}
+    admitted = store.admit_run(project_id=None, dry_run=False, options=aggregate_options)
+    assert admitted.outcome == "admitted"
+
+    covered = store.admit_run(
+        project_id=PERSONAL_PROJECT_ID,
+        dry_run=False,
+        options=DreamRunOptions(dry_run=False, project_id=PERSONAL_PROJECT_ID).to_dict(),
+    )
+    narrowed = store.admit_run(
+        project_id=PERSONAL_PROJECT_ID,
+        dry_run=False,
+        options=DreamRunOptions(
+            dry_run=False, project_id=PERSONAL_PROJECT_ID, include_global=False
+        ).to_dict(),
+    )
+
+    assert covered.outcome == "coalesced"
+    assert covered.run_id == admitted.run_id
+    # include_global=False narrows the sweep incompatibly: the all-due run
+    # does not honor a global-bucket exclusion.
+    assert narrowed.outcome == "conflict"
+    assert narrowed.active is not None
+    assert narrowed.active["run_id"] == admitted.run_id
+    assert narrowed.active["scope"] == "all"
+
+
+def test_postgres_admission_conflict_creates_no_row_and_returns_details(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    active_options = DreamRunOptions(dry_run=False, project_id=PERSONAL_PROJECT_ID).to_dict()
+    admitted = store.admit_run(
+        project_id=PERSONAL_PROJECT_ID, dry_run=False, options=active_options
+    )
+    assert admitted.run_id is not None
+    store.update_run(admitted.run_id, checkpoint={"phase": "sweep", "batch_number": 2})
+
+    conflict = store.admit_run(
+        project_id=None,
+        dry_run=True,
+        options=DreamRunOptions(dry_run=True, global_only=True).to_dict(),
+    )
+
+    assert conflict.outcome == "conflict"
+    assert conflict.run_id is None
+    assert conflict.active is not None
+    assert conflict.active["run_id"] == admitted.run_id
+    assert conflict.active["scope"] == f"project:{PERSONAL_PROJECT_ID}"
+    assert conflict.active["phase"] == "sweep"
+    assert conflict.active["checkpoint"] == {"phase": "sweep", "batch_number": 2}
+    assert conflict.active["options"] == normalize_dream_options(active_options)
+    rows = temp_db.fetchall("SELECT id, status FROM memory_dream_runs", ())
+    assert [str(row["id"]) for row in rows] == [admitted.run_id]
+
+
+def test_postgres_admission_race_admits_exactly_one(temp_db: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = MemoryDreamStore(temp_db)
+    options = {"aggregate": True, "dry_run": True}
+
+    def admit() -> str:
+        return store.admit_run(project_id=None, dry_run=True, options=options).outcome
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = sorted(pool.map(lambda _: admit(), range(2)))
+
+    assert outcomes == ["admitted", "coalesced"]
+    rows = temp_db.fetchall("SELECT id FROM memory_dream_runs WHERE status = 'running'", ())
+    assert len(rows) == 1
+
+
+def test_postgres_admission_reopens_after_terminal_status(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    options = {"aggregate": True, "dry_run": False}
+    first = store.admit_run(project_id=None, dry_run=False, options=options)
+    assert first.run_id is not None
+    store.update_run(first.run_id, status="partial")
+
+    second = store.admit_run(project_id=None, dry_run=False, options=options)
+
+    assert first.outcome == "admitted"
+    assert second.outcome == "admitted"
+    assert second.run_id != first.run_id
+
+
+def test_postgres_partial_run_checkpoint_round_trip(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    admitted = store.admit_run(
+        project_id=None, dry_run=False, options={"aggregate": True, "dry_run": False}
+    )
+    assert admitted.run_id is not None
+    checkpoint = DreamCheckpoint(
+        phase="sweep",
+        scope="all",
+        pass_number=2,
+        batch_number=7,
+        selected=25,
+        completed=175,
+        skipped_fence=3,
+        remaining=50,
+        channels={"keyword": {"attempts": 2, "latency_ms": 812.5}},
+        planned=170,
+        actions=160,
+        mutations=41,
+        backlog={"project:abc": 25, "global": 25},
+        stop_reason="run_ceiling",
+        last_dependency_failure="planner timeout on unit 6",
+    )
+
+    store.update_run(admitted.run_id, status="partial", checkpoint=checkpoint.to_dict())
+
+    assert "partial" in RUN_TERMINAL_STATUSES
+    run = store.get_run(admitted.run_id)
+    assert run is not None
+    assert run["status"] == "partial"
+    assert run["checkpoint"] == checkpoint.to_dict()
+
+
+def test_postgres_restart_recovery_interrupts_and_frees_admission(temp_db: Any) -> None:
+    store = MemoryDreamStore(temp_db)
+    admitted = store.admit_run(
+        project_id=None, dry_run=False, options={"aggregate": True, "dry_run": False}
+    )
+    child_id = store.create_run(
+        project_id=PERSONAL_PROJECT_ID,
+        dry_run=False,
+        options=DreamRunOptions(dry_run=False, project_id=PERSONAL_PROJECT_ID).to_dict(),
+        status="started",
+    )
+    memory = LocalMemoryManager(temp_db).create_memory(
+        content="committed action", project_id=PERSONAL_PROJECT_ID
+    )
+    snapshot_id = store.insert_snapshot(
+        run_id=child_id, memory_id=memory.id, action="refresh", before_data={"id": memory.id}
+    )
+    store.complete_snapshot(snapshot_id, after_data={"id": memory.id})
+
+    reconciled = store.mark_interrupted_runs()
+
+    assert admitted.run_id is not None
+    assert set(reconciled) == {admitted.run_id, child_id}
+    for run_id in (admitted.run_id, child_id):
+        run = store.get_run(run_id)
+        assert run is not None
+        assert run["status"] == "interrupted"
+        assert run["error"] == INTERRUPTED_RESTART_ERROR
+    # Committed snapshots survive recovery untouched: a later run continues
+    # from naturally due candidates instead of replaying applied actions.
+    snapshots = store.list_snapshots(child_id)
+    assert [snapshot["id"] for snapshot in snapshots] == [snapshot_id]
+    readmitted = store.admit_run(
+        project_id=None, dry_run=False, options={"aggregate": True, "dry_run": False}
+    )
+    assert readmitted.outcome == "admitted"
+
+
+def test_postgres_ensure_schema_sweeps_non_terminal_rows_before_building_index(
+    temp_db: Any,
+) -> None:
+    store = MemoryDreamStore(temp_db)
+    temp_db.execute("DROP INDEX idx_memory_dream_runs_single_running", ())
+    stale_running = store.create_run(project_id=None, dry_run=False, options={})
+    stale_started = store.create_run(project_id=None, dry_run=False, options={}, status="started")
+
+    store.ensure_schema()
+
+    for run_id in (stale_running, stale_started):
+        run = store.get_run(run_id)
+        assert run is not None
+        assert run["status"] == "interrupted"
+        assert run["error"] == INTERRUPTED_RESTART_ERROR
+    row = temp_db.fetchone(
+        "SELECT to_regclass('idx_memory_dream_runs_single_running') AS index_name", ()
+    )
+    assert row is not None
+    assert row["index_name"] is not None
+
+
+def test_migration_baseline_and_ensure_schema_share_admission_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = (
+        repo_root / "src/gobby/storage/migrations/348_memory_dream_admission.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (repo_root / "src/gobby/storage/postgres_baseline_schema.sql").read_text(
+        encoding="utf-8"
+    )
+    runtime = (repo_root / "src/gobby/memory/dream/storage.py").read_text(encoding="utf-8")
+
+    for label, content in (("migration", migration), ("baseline", baseline), ("runtime", runtime)):
+        for fragment in (
+            "'partial'",
+            "checkpoint JSONB",
+            "idx_memory_dream_runs_single_running",
+            "WHERE status = 'running'",
+        ):
+            assert fragment in content, f"{label} is missing {fragment!r}"
+    # The status vocabulary must be identical everywhere.
+    for status in sorted(RUN_TERMINAL_STATUSES | {"started", "running"}):
+        for label, content in (
+            ("migration", migration),
+            ("baseline", baseline),
+            ("runtime", runtime),
+        ):
+            assert f"'{status}'" in content, f"{label} is missing status {status!r}"
 
 
 def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
@@ -1728,6 +1997,11 @@ class _FakeDreamDB:
             }
             self.snapshots.append(snapshot)
             return {"id": snapshot["id"]}
+        if normalized.startswith("SELECT * FROM memory_dream_runs WHERE status = 'running'"):
+            for run in self.runs.values():
+                if run.get("status") == "running":
+                    return dict(run)
+            return None
         if normalized.startswith("SELECT * FROM memory_dream_runs"):
             return self.runs.get(str(params[0]))
         if "FROM projects" in normalized:
@@ -2793,7 +3067,7 @@ async def test_run_all_due_projects_loops_targets_with_per_target_scope(
             "run": {"id": f"run-{idx}", "summary": {"mutations": mutations}},
         }
 
-    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
+    monkeypatch.setattr(service, "_run_nested_target", fake_run)
 
     result = await service.run_all_due_projects(dry_run=True, memory_type="fact", full_sweep=True)
 
@@ -2835,7 +3109,7 @@ async def test_run_all_due_projects_isolates_target_failure(
             raise RuntimeError("boom")
         return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
 
-    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
+    monkeypatch.setattr(service, "_run_nested_target", fake_run)
     caplog.set_level("ERROR", logger="gobby.memory.dream.service")
 
     result = await service.run_all_due_projects()
@@ -2862,7 +3136,7 @@ async def test_run_all_due_projects_all_failed_marks_aggregate_failed(
     async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
+    monkeypatch.setattr(service, "_run_nested_target", fake_run)
 
     result = await service.run_all_due_projects()
 

@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
+
+from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.datetime import to_json_safe, utc_now
 
 PLATFORM_TRUTH_SCOPE = "__gobby_platform__"
+
+# Run status vocabulary: 'running' marks the admitted run and is held by at
+# most one row at a time, enforced by the partial unique index
+# idx_memory_dream_runs_single_running. 'started' is the non-terminal status
+# of subordinate per-target rows created under an admitted aggregate run;
+# they never compete for admission.
+RUN_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "reverted", "revert_failed", "interrupted", "partial"}
+)
+SINGLE_RUNNING_INDEX = "idx_memory_dream_runs_single_running"
+
+_ADMISSION_ATTEMPTS = 3
 
 # Columns added by migration 289 (dream soft-delete). Snapshots taken before
 # 289 lack them, so restore_memory_row defaults them to NULL instead of failing.
@@ -44,7 +58,7 @@ INSERT INTO memories ({_MEMORY_COLUMN_LIST})
 VALUES ({_MEMORY_PLACEHOLDERS})
 ON CONFLICT (id) DO UPDATE SET {_RESTORE_MEMORY_ASSIGNMENTS}
 """
-_RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary"})
+_RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary", "checkpoint"})
 _RUN_UPDATE_SET_CLAUSES = {
     "project_id": "project_id = %s",
     "status": "status = %s",
@@ -52,6 +66,7 @@ _RUN_UPDATE_SET_CLAUSES = {
     "options": "options = %s",
     "plan": "plan = %s",
     "summary": "summary = %s",
+    "checkpoint": "checkpoint = %s",
     "error": "error = %s",
     "started_at": "started_at = %s",
     "completed_at": "completed_at = %s",
@@ -64,6 +79,75 @@ _RUN_UPDATE_SET_CLAUSES = {
 INTERRUPTED_RESTART_ERROR = "Interrupted: daemon restarted while the dream run was in progress"
 # Error recorded when an in-flight run is cancelled (shutdown/timeout) before completing.
 INTERRUPTED_CANCELLED_ERROR = "Interrupted: dream run cancelled before completion"
+
+
+def normalize_dream_options(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonicalize stored or requested run options for admission comparison.
+
+    Accepts both option shapes persisted today: ``DreamRunOptions.to_dict()``
+    (all seven fields) and the aggregate all-due dict (``aggregate: true``
+    with only the four shared flags). Missing fields take their
+    ``DreamRunOptions`` defaults except ``dry_run``, which admission callers
+    always persist explicitly.
+    """
+    return {
+        "dry_run": bool(options.get("dry_run", False)),
+        "skip_consolidation": bool(options.get("skip_consolidation", False)),
+        "memory_type": options.get("memory_type"),
+        "project_id": options.get("project_id"),
+        "global_only": bool(options.get("global_only", False)),
+        "include_global": options.get("include_global"),
+        "full_sweep": bool(options.get("full_sweep", False)),
+    }
+
+
+def dream_scope_key(options: Mapping[str, Any]) -> str:
+    """Admission scope key derived from run options.
+
+    ``memory_dream_runs.project_id`` is NULL for both global-only and all-due
+    runs (unlike ``memories``, where global scope is ``is_global = true`` with
+    a non-null owning project), so the scope key comes from the options:
+    ``global`` for global-only runs, ``all`` for all-due aggregate runs, and
+    ``project:<id>`` for project-scoped runs.
+    """
+    normalized = normalize_dream_options(options)
+    if normalized["global_only"]:
+        return "global"
+    if normalized["project_id"] is None:
+        return "all"
+    return f"project:{normalized['project_id']}"
+
+
+def _covers(active: dict[str, Any], request: dict[str, Any]) -> bool:
+    """Whether the active run's normalized options cover the request.
+
+    Equivalent options coalesce. An all-due run covers a project request when
+    the four shared flags match and the request does not narrow
+    ``include_global`` incompatibly (``include_global=False`` demands a sweep
+    that excludes the global bucket, which the all-due run does not honor).
+    Project runs cover only the same project and options; everything else
+    conflicts.
+    """
+    if active == request:
+        return True
+    shared_flags = ("dry_run", "skip_consolidation", "memory_type", "full_sweep")
+    return (
+        active["project_id"] is None
+        and not active["global_only"]
+        and request["project_id"] is not None
+        and not request["global_only"]
+        and all(active[flag] == request[flag] for flag in shared_flags)
+        and request["include_global"] is not False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DreamAdmission:
+    """Outcome of one atomic run-admission attempt."""
+
+    outcome: Literal["admitted", "coalesced", "conflict"]
+    run_id: str | None
+    active: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,13 +186,14 @@ class MemoryDreamStore:
                     CHECK (
                         status IN (
                             'started', 'running', 'completed', 'failed', 'reverted',
-                            'revert_failed', 'interrupted'
+                            'revert_failed', 'interrupted', 'partial'
                         )
                     ),
                 dry_run BOOLEAN NOT NULL DEFAULT FALSE,
                 options JSONB NOT NULL DEFAULT '{}'::jsonb,
                 plan JSONB,
                 summary JSONB,
+                checkpoint JSONB,
                 error TEXT,
                 started_at TIMESTAMPTZ,
                 completed_at TIMESTAMPTZ,
@@ -116,6 +201,31 @@ class MemoryDreamStore:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+            """
+        )
+        self.db.execute("ALTER TABLE memory_dream_runs ADD COLUMN IF NOT EXISTS checkpoint JSONB")
+        # Constraint repair for pre-'partial' tables lives in migration 348;
+        # runtime schema setup only creates missing objects.
+        self.db.execute(
+            """
+            DO $$
+            BEGIN
+                IF to_regclass('idx_memory_dream_runs_single_running') IS NULL THEN
+                    -- Recovery ahead of index reconciliation: rows still
+                    -- non-terminal before the single-running index exists are
+                    -- orphans of a pre-admission daemon; sweep them so the
+                    -- unique index can build.
+                    UPDATE memory_dream_runs
+                       SET status = 'interrupted',
+                           error = 'Interrupted: daemon restarted while the dream run was in progress',
+                           completed_at = COALESCE(completed_at, NOW()),
+                           updated_at = NOW()
+                     WHERE status IN ('started', 'running');
+                    CREATE UNIQUE INDEX idx_memory_dream_runs_single_running
+                        ON memory_dream_runs (status)
+                        WHERE status = 'running';
+                END IF;
+            END $$;
             """
         )
         self.db.execute(
@@ -222,6 +332,7 @@ class MemoryDreamStore:
         project_id: str | None,
         dry_run: bool,
         options: dict[str, Any],
+        status: Literal["running", "started"] = "running",
     ) -> str:
         run_id = str(uuid4())
         now = _now()
@@ -232,9 +343,54 @@ class MemoryDreamStore:
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (run_id, project_id, "running", dry_run, _json(options), now, now, now),
+            (run_id, project_id, status, dry_run, _json(options), now, now, now),
         )
         return run_id
+
+    def admit_run(
+        self,
+        *,
+        project_id: str | None,
+        dry_run: bool,
+        options: dict[str, Any],
+    ) -> DreamAdmission:
+        """Atomically admit, coalesce, or refuse a run against the sole running row.
+
+        The partial unique index on ``status = 'running'`` is the arbiter: a
+        raced insert surfaces as a unique violation, after which the holder is
+        re-read and the request resolves to coalesced or conflict exactly as if
+        the holder had been observed first.
+        """
+        request = normalize_dream_options(options)
+        for _ in range(_ADMISSION_ATTEMPTS):
+            active = self.get_active_run()
+            if active is not None:
+                return self._resolve_against_holder(active, request)
+            try:
+                run_id = self.create_run(project_id=project_id, dry_run=dry_run, options=options)
+            except UniqueViolation:
+                # Raced another admission; re-read the holder on the next pass.
+                continue
+            return DreamAdmission(outcome="admitted", run_id=run_id)
+        raise RuntimeError(
+            f"memory dream admission did not converge after {_ADMISSION_ATTEMPTS} attempts"
+        )
+
+    def _resolve_against_holder(
+        self, active: dict[str, Any], request: dict[str, Any]
+    ) -> DreamAdmission:
+        view = _admission_view(active)
+        if _covers(normalize_dream_options(active.get("options") or {}), request):
+            return DreamAdmission(outcome="coalesced", run_id=view["run_id"], active=view)
+        return DreamAdmission(outcome="conflict", run_id=None, active=view)
+
+    def get_active_run(self) -> dict[str, Any] | None:
+        """Return the sole 'running' row, decoded, or None."""
+        row = self.db.fetchone(
+            "SELECT * FROM memory_dream_runs WHERE status = 'running' LIMIT 1",
+            (),
+        )
+        return None if row is None else _decode_run_row(row)
 
     def update_run(self, run_id: str, **fields: Any) -> dict[str, Any] | None:
         if not fields:
@@ -260,12 +416,7 @@ class MemoryDreamStore:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self.db.fetchone("SELECT * FROM memory_dream_runs WHERE id = %s", (run_id,))
-        if row is None:
-            return None
-        result = dict(row)
-        for key in ("options", "plan", "summary"):
-            result[key] = _decode(result.get(key))
-        return result
+        return None if row is None else _decode_run_row(row)
 
     def get_truth_digest_hash(self, project_id: str) -> str | None:
         """Return the last-seen codewiki truth-digest hash for a project."""
@@ -811,6 +962,27 @@ class MemoryDreamStore:
                 (older_than_days,),
             ).fetchall()
         return len(rows)
+
+
+def _decode_run_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(row)
+    for key in ("options", "plan", "summary", "checkpoint"):
+        result[key] = _decode(result.get(key))
+    return result
+
+
+def _admission_view(run: Mapping[str, Any]) -> dict[str, Any]:
+    """Active-run details returned on coalesced and conflicting admissions."""
+    options = run.get("options") or {}
+    checkpoint = run.get("checkpoint")
+    phase = checkpoint.get("phase") if isinstance(checkpoint, dict) else None
+    return {
+        "run_id": str(run["id"]),
+        "scope": dream_scope_key(options),
+        "options": normalize_dream_options(options),
+        "phase": phase or str(run.get("status")),
+        "checkpoint": checkpoint,
+    }
 
 
 def _json(value: Any) -> str | None:
