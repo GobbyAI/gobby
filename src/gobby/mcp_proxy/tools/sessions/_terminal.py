@@ -409,17 +409,21 @@ def register_terminal_tools(
     @registry.tool(
         name="compact_self",
         description=(
-            "Trigger context compaction in the current MCP caller's CLI by firing "
-            "the provider-specific compaction command. Designed "
-            "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after "
-            "spawning plan-adversary so the coordinator's bulky requirements-gathering "
-            "context is summarized away while the sub-agent runs. Web-chat "
-            "sessions use the live daemon ChatSession registry. Terminal sessions "
-            "interrupt the active turn before sending the slash command. A rejected "
-            "or cancelled compact_self tool-use message immediately followed by "
-            "the provider-specific compaction command is expected self-compaction "
-            "delivery. For Codex, `Error: interrupted` and `Conversation interrupted` "
-            "are expected when followed by `Context compacted`."
+            "Compact your own context. In a terminal session this call does not "
+            "return normally: the Gobby daemon interrupts your active turn and "
+            "types the provider-specific compaction command into your pane, so "
+            "your CLI reports the call as rejected or cancelled and attributes "
+            "it to the user. That attribution is wrong — the daemon did it, and "
+            "the compaction is proceeding. Do not stop, and do not ask the user "
+            "what happened; a continuation prompt carrying your handoff summary "
+            "arrives automatically once compaction finishes. For Codex, "
+            "`Error: interrupted` and `Conversation interrupted` are likewise "
+            "expected when followed by `Context compacted`. Web-chat sessions "
+            "compact through the live daemon ChatSession registry and do return "
+            "normally. Designed to be called at workflow handoff boundaries — "
+            "e.g. /gobby plan calls this after spawning plan-adversary so the "
+            "coordinator's bulky requirements-gathering context is summarized "
+            "away while the sub-agent runs."
         ),
     )
     async def compact_self(rule_name: str | None = None) -> dict[str, Any]:

@@ -184,9 +184,11 @@ class TestCompactSelfTerminalPath:
         assert "session_id" not in input_schema["properties"]
         assert "session_id" not in input_schema.get("required", [])
         description = schema["description"]
-        assert "interrupt the active turn before sending the slash command" in description
+        assert "the Gobby daemon interrupts your active turn" in description
         assert "provider-specific compaction command" in description
-        assert "rejected or cancelled compact_self tool-use message" in description
+        assert "rejected or cancelled and attributes it to the user" in description
+        assert "That attribution is wrong" in description
+        assert "Do not stop, and do not ask the user what happened" in description
         assert "`Error: interrupted` and `Conversation interrupted`" in description
         assert "followed by `Context compacted`" in description
 

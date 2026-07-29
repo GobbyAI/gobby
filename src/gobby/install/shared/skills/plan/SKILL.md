@@ -69,6 +69,16 @@ Plan artifact: `.gobby/plans/<slug>.md`
 A link outside the plan body does not satisfy this requirement because copied
 or independently rendered plans must retain their provenance.
 
+`.gobby/plans/<slug>.md` is the artifact. Apply every revision — enhancement
+votes, finding repairs, changelog entries, manifest writes — to that file and
+only that file. Provider plan-mode files (`~/.claude/plans/*.md` and
+equivalents) are display mirrors owned by the CLI, never the artifact: a mirror
+goes stale the moment you edit the canonical file, and a stale mirror that still
+reads like a finished plan is what gets reviewed or shipped by mistake. Either
+resync a mirror immediately after each artifact edit, or stop maintaining it and
+point the user at the artifact path. Never resolve a discrepancy by copying a
+mirror over the artifact.
+
 Choosing Full authorizes investigation, elicitation, and drafting only. Obtain
 the explicit approvals described below before enhancement, adversarial review,
 or build handoff. Selecting Full alone never launches any of those phases.
@@ -201,7 +211,10 @@ with `bind_evidence_run`. If spawn or bind fails, call
 `expire_plan_review_evidence`; the next attempt prepares fresh evidence.
 Immediately after a successful bind, call `gobby-sessions:compact_self` for the
 parent session before waiting or doing any other work. This is mandatory on
-every adversarial review round.
+every adversarial review round. In a terminal session that call comes back as a
+rejected or cancelled tool use attributed to the user. That is the daemon
+interrupting the turn to deliver the compaction command, never a refusal: do not
+stop, do not ask the user about it, and resume from the continuation prompt.
 6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
 the run result as the canonical round result. It must contain the
 `coverage_attestation` returned by `validate_plan_review_coverage`; approval
