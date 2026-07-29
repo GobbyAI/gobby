@@ -1,4 +1,4 @@
-"""Tests for _set_context_for_request in execution.py.
+"""Tests for _set_context_for_request in request_context.py.
 
 After Change 2b, _set_context_for_request delegates to the shared
 resolve_and_seed_contexts helper. These tests verify the HTTP-specific
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
+from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.utils.session_context import SeededContextTokens
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -58,7 +58,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID)
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
         ) as mock_helper:
             await _set_context_for_request(server, {"session_id": "#5"}, request)
@@ -76,7 +76,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID)
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(resolved_session_id=SESSION_UUID),
         ) as mock_helper:
             external_uuid = str(uuid.uuid4())
@@ -98,11 +98,11 @@ class TestSetContextForRequest:
 
         with (
             patch(
-                "gobby.servers.routes.mcp.endpoints.execution.resolve_session_reference",
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_session_reference",
                 return_value="resolved-header-uuid",
             ) as mock_resolve,
             patch(
-                "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
                 return_value=SeededContextTokens(),
             ) as mock_helper,
         ):
@@ -122,7 +122,7 @@ class TestSetContextForRequest:
         request = _make_request(session_id="#7")  # no project_id header
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {"session_id": "#5"}, request)
@@ -144,7 +144,7 @@ class TestSetContextForRequest:
         request = _make_request(session_id="#7")  # no project_id header
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {"session_id": "#5"}, request)
@@ -158,7 +158,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID)
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {}, request)
@@ -174,7 +174,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID, session_id="#7")
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {}, request)
@@ -195,7 +195,7 @@ class TestSetContextForRequest:
         )
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {}, request)
@@ -213,7 +213,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID, session_id="caller-session")
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),
         ) as mock_helper:
             await _set_context_for_request(server, {"session_id": "target-session"}, request)
@@ -227,7 +227,7 @@ class TestSetContextForRequest:
         request = _make_request(project_id=PROJECT_ID)
 
         with patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             return_value=SeededContextTokens(),  # resolved_session_id is None
         ) as mock_helper:
             tokens = await _set_context_for_request(server, {"session_id": "bogus"}, request)

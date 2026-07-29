@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
-from gobby.servers.routes.mcp.endpoints.execution import (
+from gobby.servers.routes.mcp.endpoints.request_context import (
     _reset_context,
     _set_context_for_request,
 )
@@ -73,12 +73,12 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
 
     with (
         patch(
-            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
             new_callable=AsyncMock,
             return_value=seeded,
         ),
         patch(
-            "gobby.servers.routes.mcp.endpoints.execution.LocalAgentRunManager",
+            "gobby.servers.routes.mcp.endpoints.request_context.LocalAgentRunManager",
             return_value=run_manager,
         ),
     ):

@@ -18,7 +18,7 @@ from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.inbox import drain_hook_inbox_once
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
+from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.servers.routes.mcp.hooks import create_hooks_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
