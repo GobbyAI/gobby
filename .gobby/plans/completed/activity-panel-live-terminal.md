@@ -1,5 +1,9 @@
 # Web Activity Panel Live Terminal
 
+> Archived 2026-07-29 after live review #19243. Current dock behavior and
+> original runtime repairs are tracked by #19155; remaining repaint fallback
+> divergence is tracked by #19262.
+
 **Plan ID:** activity-panel-live-terminal
 
 ## O1: Overview
