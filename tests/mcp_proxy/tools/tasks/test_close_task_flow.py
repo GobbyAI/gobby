@@ -677,7 +677,7 @@ async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
 
 @pytest.mark.asyncio
 async def test_epic_skips_leaf_gates_without_llm() -> None:
-    task = replace(_task(), task_type="epic")
+    task = replace(_task(), task_type="epic", commits=["abc123"])
     ctx = _ctx(task, validator=object())
     review = AsyncMock()
 
@@ -697,6 +697,7 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
         )
 
     assert evaluation.ready is True
+    assert evaluation.commit_shas == ["abc123"]
     assert [gate.item for gate in evaluation.gates] == list(range(1, 11))
     assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
     review.assert_not_awaited()

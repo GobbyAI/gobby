@@ -198,6 +198,15 @@ async def _evaluate_close(
             children_state=children_state,
             attribution=None,
         )
+        evaluation.commit_shas, _commit_error = resolve_close_commit_shas(
+            ctx.task_manager,
+            task=task,
+            task_id=resolved_id,
+            claim_started_at=None,
+            commit_sha=commit_sha,
+            cwd=repo_path,
+            project_name=ctx.get_current_project_name(),
+        )
         for item, name in (
             (5, "criteria_present"),
             (6, "changes_summary_present"),

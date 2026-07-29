@@ -43,6 +43,7 @@ async def test_close_task_does_not_mutate_worktree_status(
             "gobby.utils.git.normalize_commit_sha",
             side_effect=lambda sha, cwd=None: sha,
         ),
+        patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
         mock_wt_instance = MagicMock()
         MockWorktreeManager.return_value = mock_wt_instance
@@ -78,7 +79,14 @@ async def test_close_task_does_not_mutate_worktree_status(
             },
         )
 
-    assert result == {"success": True, "closed": True}
+    assert result == {
+        "success": True,
+        "preview": False,
+        "can_close": True,
+        "closed": True,
+        "task_id": mock_task.id,
+        "commit_shas": ["abc123"],
+    }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)
     assert mock_task_manager.close_task.call_args.kwargs["reason"] == reason
