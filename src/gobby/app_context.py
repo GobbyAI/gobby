@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 
 
 @dataclass
@@ -52,6 +53,7 @@ class ServiceContainer:
 
     # Advanced Features
     memory_manager: MemoryManager | None = None
+    memory_dream_coordinator: MemoryDreamCoordinator | None = None
     text_generation_service: TextGenerationService | None = None
     tool_chat_service: ToolChatService | None = None
     llm_service: LLMService | None = None

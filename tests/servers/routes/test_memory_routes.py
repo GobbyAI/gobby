@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.app_context import ServiceContainer
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.memory_dream import create_memory_dream_router
@@ -272,6 +273,37 @@ class TestMemoryDreamRoutes:
 
         assert response.status_code == 503
         assert response.json()["detail"] == "memory dream coordinator is unavailable"
+
+    def test_route_resolves_coordinator_from_real_service_container(self) -> None:
+        """A real ServiceContainer must carry the coordinator field (#19265)."""
+        coordinator = MagicMock()
+        coordinator.trigger = AsyncMock(
+            return_value={
+                "success": True,
+                "run_id": "dream-1",
+                "status": "running",
+                "coalesced": False,
+            }
+        )
+        services = ServiceContainer(
+            config=None,
+            database=MagicMock(),
+            session_manager=None,
+            task_manager=MagicMock(),
+            memory_dream_coordinator=coordinator,
+        )
+        server = MagicMock()
+        server.services = services
+        app = FastAPI()
+        app.include_router(create_memory_dream_router(server))
+
+        response = TestClient(app).post(
+            "/memory/dream", json={"project_id": "proj-1", "dry_run": True}
+        )
+
+        assert response.status_code == 202
+        assert response.json()["run_id"] == "dream-1"
+        coordinator.trigger.assert_awaited_once()
 
 
 # =============================================================================
