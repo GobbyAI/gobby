@@ -524,7 +524,10 @@ class TestNudgeCompactOnContextPressure:
                 injections.append(response.context)
 
         assert len(injections) == 2
-        assert "Context pressure is 40%" in injections[0]
+        assert (
+            "Context pressure is 40%. Consider calling `gobby-sessions:compact_self` "
+            "at the next natural pause in your work."
+        ) in injections[0]
         assert "Context pressure is 70%" in injections[1]
         variables = variable_manager.get_variables(SESSION_ID)
         assert variables["parent_turn_seq"] == 15
@@ -538,7 +541,10 @@ class TestNudgeCompactOnContextPressure:
         detect_context_compact_guidance(variables, "session-1", session_manager)
 
         assert variables["context_compact_guidance_kind"] == "soft"
-        assert "40%" in variables["context_compact_guidance_message"]
+        assert variables["context_compact_guidance_message"] == (
+            "Context pressure is 40%. Consider calling `gobby-sessions:compact_self` "
+            "at the next natural pause in your work."
+        )
         assert variables["context_compact_guidance_shown_kinds"] == ["soft"]
 
     def test_strong_nudge_is_emitted_once_per_compaction_epoch(self) -> None:

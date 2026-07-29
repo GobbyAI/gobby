@@ -92,7 +92,8 @@ def detect_context_compact_guidance(
             "soft",
             (
                 f"Context pressure is {_percent(ratio)}. "
-                "Plan a `gobby-sessions:compact_self` call for the next clean boundary."
+                "Consider calling `gobby-sessions:compact_self` at the next natural pause "
+                "in your work."
             ),
         )
 
@@ -137,7 +138,8 @@ def detect_mid_turn_context_compact_guidance(
         "soft",
         (
             f"Context pressure is {_percent(ratio)}. "
-            "Plan a `gobby-sessions:compact_self` call for the next clean boundary."
+            "Consider calling `gobby-sessions:compact_self` at the next natural pause "
+            "in your work."
         ),
     )
 
