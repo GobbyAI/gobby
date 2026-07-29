@@ -15,7 +15,6 @@ from gobby.storage.agents import AgentRun, AgentRunTerminalReason, TerminalActio
 
 _LOCK_POLL_SECONDS = 0.05
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
-_CAPTURE_END = "--- END GOBBY TMUX CAPTURE ---"
 _locks_guard = threading.Lock()
 _capture_locks: dict[str, threading.Lock] = {}
 
@@ -130,8 +129,12 @@ def _capture_marker(capture_id: str) -> str:
     return f"--- GOBBY TMUX CAPTURE {capture_id} ---"
 
 
+def _capture_end_marker(capture_id: str) -> str:
+    return f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
+
+
 def _capture_slot(capture_id: str, capture: str) -> str:
-    return f"{_capture_marker(capture_id)}\n{capture}\n{_CAPTURE_END}"
+    return f"{_capture_marker(capture_id)}\n{capture}\n{_capture_end_marker(capture_id)}"
 
 
 def _capture_failure(reason: str) -> str:

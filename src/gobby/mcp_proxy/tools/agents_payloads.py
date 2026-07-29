@@ -13,7 +13,6 @@ _AGENT_RESULT_CAPTURE_CHARS = 10_000
 _AGENT_CAPTURE_PAGE_DEFAULT_CHARS = 10_000
 _AGENT_CAPTURE_PAGE_MAX_CHARS = 10_000
 _CAPTURE_EXCERPT_LINES = 20
-_CAPTURE_END_MARKER = "--- END GOBBY TMUX CAPTURE ---"
 
 
 class AgentRunProtocol(Protocol):
@@ -60,7 +59,8 @@ def _agent_capture_parts(run: AgentRunProtocol) -> _AgentCaptureParts | None:
     content_offset = marker_offset + len(marker)
     if result.startswith("\n", content_offset):
         content_offset += 1
-    end_offset = result.find(f"\n{_CAPTURE_END_MARKER}", content_offset)
+    end_marker = f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
+    end_offset = result.find(f"\n{end_marker}", content_offset)
     content = result[content_offset:] if end_offset < 0 else result[content_offset:end_offset]
     return _AgentCaptureParts(
         capture_id=capture_id,
@@ -79,12 +79,12 @@ def _result_separator(prefix: str) -> str:
 
 
 def _bounded_capture_result(prefix: str, capture: str) -> tuple[str, int, bool]:
-    lines = capture.splitlines()
-    excerpt_lines = min(len(lines), _CAPTURE_EXCERPT_LINES)
-    excerpt = "\n".join(lines[-_CAPTURE_EXCERPT_LINES:])
+    excerpt = "\n".join(capture.splitlines()[-_CAPTURE_EXCERPT_LINES:])
     header = f"--- Last {_CAPTURE_EXCERPT_LINES} lines of terminal output ---\n"
     excerpt_budget = _AGENT_RESULT_CAPTURE_CHARS - len(header)
-    suffix = f"{header}{excerpt[-excerpt_budget:]}"
+    bounded_excerpt = excerpt[-excerpt_budget:]
+    excerpt_lines = len(bounded_excerpt.splitlines())
+    suffix = f"{header}{bounded_excerpt}"
 
     separator = _result_separator(prefix)
     if len(prefix) + len(separator) + len(suffix) <= _AGENT_RESULT_CAPTURE_CHARS:

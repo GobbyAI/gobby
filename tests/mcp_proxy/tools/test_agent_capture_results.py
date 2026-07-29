@@ -20,7 +20,8 @@ pytestmark = pytest.mark.unit
 
 _CAPTURE_ID = "capture-123"
 _START_MARKER = f"--- GOBBY TMUX CAPTURE {_CAPTURE_ID} ---"
-_END_MARKER = "--- END GOBBY TMUX CAPTURE ---"
+_END_MARKER = f"--- END GOBBY TMUX CAPTURE {_CAPTURE_ID} ---"
+_LEGACY_BARE_END_MARKER = "--- END GOBBY TMUX CAPTURE ---"
 
 
 def _slot(capture: str, *, prefix: str = "", include_end: bool = True) -> str:
@@ -191,3 +192,40 @@ async def test_missing_end_marker_paginates_from_start_to_eof() -> None:
     assert result["content"] == capture[5:]
     assert result["total_chars"] == len(capture)
     assert result["next_offset"] is None
+
+
+@pytest.mark.asyncio
+async def test_embedded_bare_end_marker_literal_round_trips_full_capture() -> None:
+    capture = f"before\n{_LEGACY_BARE_END_MARKER}\nafter"
+    run = _run(result=_slot(capture))
+    registry = _registry(run)
+
+    payload = _agent_result_payload(run)
+    page = await registry.call("get_agent_capture", {"run_id": run.id})
+
+    assert payload["capture"]["total_chars"] == len(capture)
+    assert page["content"] == capture
+    assert page["total_chars"] == len(capture)
+
+
+def test_legacy_bare_end_marker_paginates_start_to_eof() -> None:
+    capture = "legacy output"
+    result = f"{_START_MARKER}\n{capture}\n{_LEGACY_BARE_END_MARKER}"
+
+    payload = _agent_result_payload(_run(result=result))
+
+    assert payload["capture"]["total_chars"] == len(f"{capture}\n{_LEGACY_BARE_END_MARKER}")
+    assert str(payload["result"]).endswith(_LEGACY_BARE_END_MARKER)
+
+
+def test_truncated_tail_reports_actual_excerpt_lines() -> None:
+    capture = "\n".join("x" * _AGENT_RESULT_CAPTURE_CHARS for _ in range(3))
+
+    payload = _agent_result_payload(_run(result=_slot(capture)))
+
+    result = str(payload["result"])
+    header, _, excerpt = result.partition(" lines of terminal output ---\n")
+    assert header.startswith("--- Last")
+    assert payload["capture"]["excerpt_lines"] == len(excerpt.splitlines()) == 1
+    assert payload["capture"]["total_chars"] == len(capture)
+    assert len(result) <= _AGENT_RESULT_CAPTURE_CHARS

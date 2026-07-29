@@ -76,13 +76,13 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
         capture_id="capture-a",
         expected_revision=0,
         marker=marker,
-        slot_content=f"{marker}\nfirst output\n--- END GOBBY TMUX CAPTURE ---",
+        slot_content=f"{marker}\nfirst output\n--- END GOBBY TMUX CAPTURE capture-a ---",
     )
     assert first is not None
     assert first.capture_revision == 1
     assert first.result == (
         "existing prefix\n\n--- GOBBY TMUX CAPTURE capture-a ---\n"
-        "first output\n--- END GOBBY TMUX CAPTURE ---"
+        "first output\n--- END GOBBY TMUX CAPTURE capture-a ---"
     )
 
     replaced = manager.replace_capture_slot(
@@ -90,7 +90,7 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
         capture_id="capture-a",
         expected_revision=1,
         marker=marker,
-        slot_content=f"{marker}\nsecond output\n--- END GOBBY TMUX CAPTURE ---",
+        slot_content=f"{marker}\nsecond output\n--- END GOBBY TMUX CAPTURE capture-a ---",
     )
     assert replaced is not None
     assert replaced.capture_revision == 2
@@ -185,7 +185,7 @@ def test_terminal_transition_clears_intent_and_preserves_capture_result(
         capture_id="stable",
         expected_revision=0,
         marker=marker,
-        slot_content=f"{marker}\nfull output\n--- END GOBBY TMUX CAPTURE ---",
+        slot_content=f"{marker}\nfull output\n--- END GOBBY TMUX CAPTURE stable ---",
     )
     assert captured is not None
 
