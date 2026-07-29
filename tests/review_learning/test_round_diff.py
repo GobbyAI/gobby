@@ -515,6 +515,8 @@ def _settled_repair_inputs(
         changed_targets=(),
         changed_symbols=("gobby.review_learning.repaired",),
         changed_contracts=(),
+        targets_by_section={},
+        contracts_by_section={},
         resolved_languages=("python",),
         unsupported_targets=(),
         sites=sites,

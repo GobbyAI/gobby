@@ -201,7 +201,6 @@ def terminalize_plan_review_run(
             run=run,
             result=result,
         )
-    if evidence.task_id is not None:
         effect_evidence = PlanReviewEvidenceService(database).get_evidence(evidence.evidence_id)
         apply_staged_verdict_effects(
             database,
@@ -337,20 +336,21 @@ def _commit_staged_verdict(
     from gobby.storage.tasks._review_transitions import approve_review, reject_review
 
     telemetry = result["convergence_telemetry"]
+    if not isinstance(telemetry, dict):
+        raise ReviewEvidenceError(
+            "invalid_staged_round_result",
+            "staged round result requires telemetry",
+        )
+    task_id = evidence.task_id
+    if task_id is None or result.get("verdict") in {"inconclusive", "needs_requirements"}:
+        return
     findings = result.get("findings")
     coverage_attestation = result.get("coverage_attestation")
-    if (
-        not isinstance(telemetry, dict)
-        or not isinstance(findings, list)
-        or not isinstance(coverage_attestation, dict)
-    ):
+    if not isinstance(findings, list) or not isinstance(coverage_attestation, dict):
         raise ReviewEvidenceError(
             "invalid_staged_round_result",
             "staged round result requires telemetry, findings, and coverage_attestation",
         )
-    task_id = evidence.task_id
-    if task_id is None:
-        return
     if result.get("verdict") == "approved":
         manifest_entries = result.get("manifest_entries")
         routing_decisions = result.get("routing_decisions")

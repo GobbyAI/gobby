@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess  # nosec B404 - fixed local gcode argv.
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -34,11 +33,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
 
-@dataclass(frozen=True)
-class _RepairUniverseCodeIndex:
-    storage: CodeIndexStorage
-
-
 def derive_settled_repair_inputs(
     *,
     db: HubDatabase,
@@ -66,7 +60,6 @@ def derive_settled_repair_inputs(
         evidence=prior_evidence,
     )
     storage = CodeIndexStorage(db)
-    code_index = _RepairUniverseCodeIndex(storage)
 
     def read_last_indexed_at() -> str:
         stats = storage.get_project_stats(project_id)
@@ -76,7 +69,7 @@ def derive_settled_repair_inputs(
         inventory = derive_candidate_site_inventory(
             diff=build_inter_round_diff(prior_evidence.snapshot, current_snapshot),
             project_id=project_id,
-            code_index=code_index,
+            storage=storage,
         )
         universe = derive_repair_universe(
             prior_findings=findings,
@@ -118,7 +111,10 @@ def prepare_review_round_context(
         return None
     resolutions = base.prior_round_context["prior_finding_resolutions"]
     if not isinstance(resolutions, list):
-        raise RuntimeError("validated repair context omitted prior finding resolutions")
+        raise ReviewEvidenceError(
+            "invalid_repair_context",
+            "validated repair context omitted prior finding resolutions",
+        )
     repair_ids = tuple(
         cast(str, resolution["prior_finding_id"])
         for resolution in cast(list[dict[str, object]], resolutions)
@@ -127,7 +123,15 @@ def prepare_review_round_context(
     if not repair_ids:
         return base
     prior_evidence_id = base.prior_round_context["prior_evidence_id"]
-    prior_evidence = next(row for row in evidence_rows if row.evidence_id == prior_evidence_id)
+    prior_evidence = next(
+        (row for row in evidence_rows if row.evidence_id == prior_evidence_id),
+        None,
+    )
+    if prior_evidence is None:
+        raise ReviewEvidenceError(
+            "invalid_repair_context",
+            f"prior evidence row is missing: {prior_evidence_id}",
+        )
     inventory, universe = derive_settled_repair_inputs(
         db=db,
         project_id=project_id,
@@ -146,7 +150,10 @@ def prepare_review_round_context(
         repair_universe=universe,
     )
     if validated is None:
-        raise RuntimeError("repair universe requires a prior evidence row")
+        raise ReviewEvidenceError(
+            "invalid_repair_context",
+            "repair universe requires a prior evidence row",
+        )
     return RepairPreparation(
         repair_attestations=validated.repair_attestations,
         prior_round_context=with_consumer_inventory_context(

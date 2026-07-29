@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from pathlib import PurePosixPath
 from typing import Any
 
 from gobby.agents.code_index import IndexInventoryError
@@ -83,6 +84,8 @@ class CandidateSiteInventory:
     changed_targets: tuple[str, ...]
     changed_symbols: tuple[str, ...]
     changed_contracts: tuple[str, ...]
+    targets_by_section: Mapping[str, tuple[str, ...]]
+    contracts_by_section: Mapping[str, tuple[str, ...]]
     resolved_languages: tuple[str, ...]
     unsupported_targets: tuple[str, ...]
     sites: tuple[CandidateSite, ...]
@@ -93,6 +96,14 @@ class CandidateSiteInventory:
             "changed_targets": list(self.changed_targets),
             "changed_symbols": list(self.changed_symbols),
             "changed_contracts": list(self.changed_contracts),
+            "targets_by_section": {
+                section_id: list(targets)
+                for section_id, targets in sorted(self.targets_by_section.items())
+            },
+            "contracts_by_section": {
+                section_id: list(contracts)
+                for section_id, contracts in sorted(self.contracts_by_section.items())
+            },
             "resolved_languages": list(self.resolved_languages),
             "unsupported_targets": list(self.unsupported_targets),
             "sites": [site.to_dict() for site in self.sites],
@@ -201,7 +212,7 @@ def run_consumer_sweep(
         derive_candidate_site_inventory(
             diff=diff,
             project_id=project_id,
-            code_index=code_index,
+            storage=storage,
         )
         if diff is not None
         else None
@@ -213,11 +224,10 @@ def derive_candidate_site_inventory(
     *,
     diff: InterRoundDiff,
     project_id: str,
-    code_index: Any,
+    storage: Any,
 ) -> CandidateSiteInventory:
     """Derive deterministic consumer sites from server-owned inter-round surfaces."""
-    storage = _code_index_storage(code_index)
-    if storage is None or not _project_is_indexed(storage, project_id):
+    if not _project_is_indexed(storage, project_id):
         raise ConsumerInventoryError(
             "inventory_unavailable",
             f"code index cannot derive consumer sites for {project_id}",
@@ -261,7 +271,7 @@ def derive_candidate_site_inventory(
         for symbol_ref in symbol_refs:
             symbols = _resolve_symbols(storage, project_id, symbol_ref)
             symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
-            names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
+            names = tuple(sorted({symbol_ref, symbol_ref.rsplit(".", 1)[-1]}))
             for consumer in _direct_symbol_consumers(storage, project_id, symbol_ids, names):
                 _merge_candidate_site(
                     sites,
@@ -280,6 +290,8 @@ def derive_candidate_site_inventory(
         changed_targets=diff.section_targets,
         changed_symbols=diff.symbols,
         changed_contracts=diff.contracts,
+        targets_by_section=diff.targets_by_section,
+        contracts_by_section=diff.contracts_by_section,
         resolved_languages=tuple(sorted(resolved_languages)),
         unsupported_targets=tuple(sorted(unsupported_targets)),
         sites=tuple(
@@ -314,7 +326,7 @@ def _sweep_section(
         if not symbols:
             continue
         symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
-        names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
+        names = tuple(sorted({symbol_ref, symbol_ref.rsplit(".", 1)[-1]}))
         consumers = _direct_symbol_consumers(storage, project_id, symbol_ids, names)
         consumers = _filter_consumer_paths(consumers, include_tests=include_tests)
         missing = tuple(sorted(path for path in consumers if path not in targets))
@@ -468,15 +480,17 @@ def _direct_symbol_consumers(
 def _direct_file_consumers(storage: Any, project_id: str, file_path: str) -> set[str]:
     symbols = _symbols_for_file(storage, project_id, file_path)
     symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
-    module_candidates = tuple(_module_candidates(file_path))
+    module_candidates = tuple(sorted(_module_candidates(file_path)))
     consumers: set[str] = set()
 
     import_finder = getattr(storage, "find_files_importing_modules", None)
     if callable(import_finder) and module_candidates:
         consumers.update(_row_paths(import_finder(project_id, module_candidates)))
-    fake = getattr(storage, "find_direct_file_consumers", None)
-    if callable(fake):
-        consumers.update(_row_paths(fake(project_id, file_path, module_candidates, symbol_ids)))
+    direct_file_finder = getattr(storage, "find_direct_file_consumers", None)
+    if callable(direct_file_finder):
+        consumers.update(
+            _row_paths(direct_file_finder(project_id, file_path, module_candidates, symbol_ids))
+        )
     else:
         consumers.update(_direct_symbol_consumers(storage, project_id, symbol_ids, ()))
     consumers.discard(file_path)
@@ -574,10 +588,7 @@ def _target_language(file_path: str) -> str:
     normalized = normalize_file_path(file_path)
     if normalized is None:
         return "unknown"
-    for suffix, language in _LANGUAGE_BY_SUFFIX.items():
-        if normalized.endswith(suffix):
-            return language
-    return "unknown"
+    return _LANGUAGE_BY_SUFFIX.get(PurePosixPath(normalized).suffix.lower(), "unknown")
 
 
 def _candidate_site(

@@ -324,3 +324,56 @@ def test_ledger_validation_shares_finding_vocabularies() -> None:
             current_section_hashes={"1.1": "a" * 64},
             round_result=_round_result(findings=[_finding("bad-scope", repair_scope="whole_plan")]),
         )
+
+
+def test_carry_across_changed_hash_preserves_history() -> None:
+    round_one = merge_quality_ledger(
+        prior_ledger=[],
+        round_number=1,
+        current_section_hashes={"1.1": "a" * 64},
+        round_result=_round_result(findings=[_finding("finding-r1")]),
+    )
+
+    round_two = merge_quality_ledger(
+        prior_ledger=round_one,
+        round_number=2,
+        current_section_hashes={"1.1": "b" * 64},
+        round_result=_round_result(),
+        prior_round_context=_carry("finding-r1"),
+    )
+
+    active = _active(round_two)
+    assert len(active) == 1
+    assert active[0]["first_seen_round"] == 1
+    assert active[0]["rounds_carried"] == 2
+
+
+def test_missing_carry_section_stales_source_without_replacement() -> None:
+    round_one = merge_quality_ledger(
+        prior_ledger=[],
+        round_number=1,
+        current_section_hashes={"1.1": "a" * 64},
+        round_result=_round_result(findings=[_finding("finding-r1")]),
+    )
+
+    round_two = merge_quality_ledger(
+        prior_ledger=round_one,
+        round_number=2,
+        current_section_hashes={},
+        round_result=_round_result(),
+        prior_round_context=_carry("finding-r1"),
+    )
+
+    assert len(round_two) == 1
+    assert round_two[0]["stale"] is True
+
+
+def test_finding_for_removed_section_is_skipped() -> None:
+    ledger = merge_quality_ledger(
+        prior_ledger=[],
+        round_number=2,
+        current_section_hashes={"2.1": "b" * 64},
+        round_result=_round_result(findings=[_finding("removed-section")]),
+    )
+
+    assert ledger == []

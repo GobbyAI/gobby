@@ -65,6 +65,35 @@ class ReviewedBytesVerifier(Protocol):
     ) -> None: ...
 
 
+def _assert_manifest_intent(
+    evidence: PlanReviewEvidence,
+    *,
+    digest: str,
+    payload: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Validate a durable manifest intent and return its idempotent result."""
+    if evidence.manifest_digest is not None and evidence.manifest_digest != digest:
+        raise ReviewEvidenceError(
+            "manifest_payload_conflict",
+            "different manifest payload was already recorded for this evidence",
+        )
+    if evidence.manifest_payload is not None and evidence.manifest_payload != payload:
+        raise ReviewEvidenceError(
+            "manifest_payload_conflict",
+            "different manifest payload was already recorded for this evidence",
+        )
+    if evidence.manifest_state == "revoked":
+        raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
+    if evidence.manifest_state == "applied":
+        if evidence.manifest_result is None:
+            raise ReviewEvidenceError(
+                "invalid_evidence_row",
+                "applied manifest evidence has no result",
+            )
+        return evidence.manifest_result
+    return None
+
+
 class ReviewManifestService:
     """Own canonical manifest derivation and durable apply orchestration."""
 
@@ -236,22 +265,21 @@ class ReviewManifestService:
         return_result: dict[str, object] | None = None
         with self.db.transaction_immediate(mutation) as transaction:
             evidence = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            if evidence.manifest_digest is not None and evidence.manifest_digest != digest:
-                raise ReviewEvidenceError(
-                    "manifest_payload_conflict",
-                    "different manifest payload was already recorded for this evidence",
-                )
-            if evidence.manifest_state == "revoked":
-                raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
-            if evidence.manifest_state == "applied":
-                if evidence.manifest_result is None:
-                    raise ReviewEvidenceError(
-                        "invalid_evidence_row",
-                        "applied manifest evidence has no result",
-                    )
-                return evidence.manifest_result
+            existing_result = _assert_manifest_intent(
+                evidence,
+                digest=digest,
+                payload=payload,
+            )
+            if existing_result is not None:
+                return existing_result
 
-            current_bytes = resolved.read_bytes()
+            try:
+                current_bytes = resolved.read_bytes()
+            except OSError as exc:
+                raise ReviewEvidenceError(
+                    "plan_io_error",
+                    f"failed to read reviewed plan: {exc}",
+                ) from exc
             try:
                 verify_reviewed_bytes(evidence, current_bytes)
             except ReviewEvidenceError as error:
@@ -271,20 +299,13 @@ class ReviewManifestService:
                         digest=digest,
                         payload=payload,
                     )
-                if evidence.manifest_digest != digest or evidence.manifest_payload != payload:
-                    raise ReviewEvidenceError(
-                        "manifest_payload_conflict",
-                        "different manifest payload was already recorded for this evidence",
-                    )
-                if evidence.manifest_state == "revoked":
-                    raise ReviewEvidenceError("manifest_revoked", "manifest intent was revoked")
-                if evidence.manifest_state == "applied":
-                    if evidence.manifest_result is None:
-                        raise ReviewEvidenceError(
-                            "invalid_evidence_row",
-                            "applied manifest evidence has no result",
-                        )
-                    return evidence.manifest_result
+                existing_result = _assert_manifest_intent(
+                    evidence,
+                    digest=digest,
+                    payload=payload,
+                )
+                if existing_result is not None:
+                    return existing_result
                 if evidence.manifest_state != "pending":
                     raise ReviewEvidenceError(
                         "invalid_evidence_row",

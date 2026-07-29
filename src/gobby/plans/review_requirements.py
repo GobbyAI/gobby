@@ -13,6 +13,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_bytes,
     canonical_json_object,
 )
+from gobby.utils.hashing import is_sha256
 
 REQUEST_ANCHOR_VARIABLE = "plan_review_request_anchor"
 _ANCHOR_FIELDS = {
@@ -23,7 +24,6 @@ _ANCHOR_FIELDS = {
     "captured_by",
 }
 _TASK_FIELDS = ("title", "description", "validation_criteria")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _REQUIREMENT_ID_RE = re.compile(r"^req-[0-9a-f]{12}$")
 _SPAN_FIELDS = {"line_start", "line_end"}
 
@@ -136,17 +136,22 @@ def parse_requirement_source_paths(plan_snapshot: bytes) -> tuple[str, ...]:
         if stripped.startswith("~~~"):
             fence = "~~~"
             continue
-        if line.startswith("## "):
-            inside_constraints = line == "## Constraints"
+        if stripped.startswith("## "):
+            inside_constraints = stripped == "## Constraints"
             continue
-        if not line.startswith("requirement-source:"):
+        marker_line = stripped
+        for prefix in ("- ", "* ", "+ "):
+            if marker_line.startswith(prefix):
+                marker_line = marker_line.removeprefix(prefix).lstrip()
+                break
+        if not marker_line.startswith("requirement-source:"):
             continue
         if not inside_constraints:
             raise ReviewEvidenceError(
                 "invalid_requirement_source",
                 "requirement-source marker must appear in ## Constraints",
             )
-        raw_path = line.removeprefix("requirement-source:").strip()
+        raw_path = marker_line.removeprefix("requirement-source:").strip()
         if not raw_path or any(character.isspace() for character in raw_path):
             raise ReviewEvidenceError(
                 "invalid_requirement_source",
@@ -307,7 +312,7 @@ def validate_source_citation(
         digest = citation["sha256"]
         if not isinstance(path, str) or not path:
             raise _invalid_citation(f"{owner}.path must be a non-empty string")
-        if not isinstance(digest, str) or _SHA256_RE.fullmatch(digest) is None:
+        if not is_sha256(digest):
             raise _invalid_citation(f"{owner}.sha256 must be lowercase hexadecimal SHA-256")
     else:
         expected = {"requirement_id", "content_sha256"} | _SPAN_FIELDS
@@ -324,7 +329,7 @@ def validate_source_citation(
             or _REQUIREMENT_ID_RE.fullmatch(requirement_id) is None
         ):
             raise _invalid_citation(f"{owner}.requirement_id is invalid")
-        if not isinstance(digest, str) or _SHA256_RE.fullmatch(digest) is None:
+        if not is_sha256(digest):
             raise _invalid_citation(f"{owner}.content_sha256 must be lowercase hexadecimal SHA-256")
         if requirements_bundle is None:
             raise _invalid_citation(f"{owner} requires a bound requirements bundle")

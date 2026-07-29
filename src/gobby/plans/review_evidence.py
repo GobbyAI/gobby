@@ -37,6 +37,7 @@ from gobby.plans.review_requirements import (
     assemble_requirements_bundle,
     requirements_bundle_from_context,
 )
+from gobby.plans.review_telemetry import validate_convergence_telemetry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -53,6 +54,8 @@ class PlanReviewEvidenceService:
     """Coordinate immutable snapshots with durable evidence lifecycle state."""
 
     def __init__(self, db: HubDatabase) -> None:
+        # LocalTaskManager imports review transitions, which import this service.
+        # Keep this delayed to break that cycle during module initialization.
         from gobby.storage.tasks import LocalTaskManager
 
         self.db = db
@@ -589,8 +592,6 @@ class PlanReviewEvidenceService:
         *,
         _derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
     ) -> PlanReviewEvidence:
-        from gobby.plans.review_telemetry import validate_convergence_telemetry
-
         evidence = self.get_evidence(evidence_id)
         payload = self._round_result_for_evidence(evidence_id, round_result)
         telemetry = payload.get("convergence_telemetry")

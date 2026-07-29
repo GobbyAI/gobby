@@ -257,6 +257,8 @@ def _settled_repair_inputs(
         changed_targets=("src/example.py",),
         changed_symbols=("gobby.example.rollback",),
         changed_contracts=(),
+        targets_by_section={"1.1": ("src/example.py",)},
+        contracts_by_section={},
         resolved_languages=("python",),
         unsupported_targets=(),
         sites=sites,

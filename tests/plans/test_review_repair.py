@@ -244,6 +244,8 @@ def _candidate_inventory(
     changed_targets: tuple[str, ...] = ("src/example.py",),
     changed_contracts: tuple[str, ...] = (),
     section_ids_by_site: Mapping[str, tuple[str, ...]] | None = None,
+    targets_by_section: Mapping[str, tuple[str, ...]] | None = None,
+    contracts_by_section: Mapping[str, tuple[str, ...]] | None = None,
 ) -> CandidateSiteInventory:
     attribution = section_ids_by_site or {}
     return CandidateSiteInventory(
@@ -251,6 +253,8 @@ def _candidate_inventory(
         changed_targets=changed_targets,
         changed_symbols=("gobby.example.repaired_behavior",),
         changed_contracts=changed_contracts,
+        targets_by_section=targets_by_section or {"1.1": changed_targets},
+        contracts_by_section=contracts_by_section or {"1.1": changed_contracts},
         resolved_languages=("python",),
         unsupported_targets=(),
         sites=tuple(
@@ -1126,6 +1130,14 @@ def test_repair_bundle_interaction_edges() -> None:
             "consumer-a",
             changed_targets=("src/shared.py",),
             changed_contracts=("contracts/shared.json",),
+            targets_by_section={
+                "1.1": ("src/shared.py",),
+                "2.1": ("src/shared.py",),
+            },
+            contracts_by_section={
+                "1.1": ("contracts/shared.json",),
+                "2.1": ("contracts/shared.json",),
+            },
         ),
     )
     assert universe.interaction_edges
@@ -1145,3 +1157,35 @@ def test_repair_bundle_interaction_edges() -> None:
                 _universe_attestation(second, universe),
             ],
         )
+
+
+def test_adjacent_variant_ids_include_finding_identity() -> None:
+    first = _finding("finding-1", check_key="repair.shared")
+    second = _finding("finding-2", check_key="repair.shared")
+    universe = derive_repair_universe(
+        prior_findings=[first, second],
+        inventory=_candidate_inventory("consumer-a"),
+    )
+
+    first_ids = set(universe.requirements[0].adjacent_variant_ids)
+    second_ids = set(universe.requirements[1].adjacent_variant_ids)
+    assert first_ids
+    assert second_ids
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_unscoped_inventory_globals_do_not_create_interaction_edges() -> None:
+    first = _finding("finding-1", check_key="repair.first")
+    second = _finding("finding-2", check_key="repair.second")
+    second["section_id"] = "2.1"
+    universe = derive_repair_universe(
+        prior_findings=[first, second],
+        inventory=_candidate_inventory(
+            changed_targets=("src/global.py",),
+            changed_contracts=("contracts/global.json",),
+        ),
+    )
+
+    assert universe.interaction_edges == ()
+    assert universe.requirements[1].changed_targets == ()
+    assert universe.requirements[1].changed_contracts == ()

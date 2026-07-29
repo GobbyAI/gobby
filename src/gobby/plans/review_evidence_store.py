@@ -325,6 +325,11 @@ class PlanReviewEvidenceStore:
         if row is not None:
             return PlanReviewEvidence.from_row(row)
         current = self.require(evidence_id, transaction=transaction, for_update=True)
+        if current.finalized_at is not None or current.expired_at is not None:
+            raise ReviewEvidenceError(
+                "preparation_context_closed",
+                f"preparation context cannot be written to closed evidence: {evidence_id}",
+            )
         if current.repair_attestations == attestations and current.prior_round_context == context:
             return current
         raise ReviewEvidenceError(

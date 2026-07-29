@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -138,7 +139,7 @@ def register_review_evidence_tools(
         func=derive_plan_review_repair_universe,
     )
 
-    def prepare_plan_review_round(
+    async def prepare_plan_review_round(
         plan_path: str,
         round_number: int,
         project: str | None = None,
@@ -149,7 +150,8 @@ def register_review_evidence_tools(
         repair_attestations: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         try:
-            prepared = service.prepare_plan_review_round(
+            prepared = await asyncio.to_thread(
+                service.prepare_plan_review_round,
                 project_id=resolve_project_id(project),
                 plan_path=plan_path,
                 round_number=round_number,

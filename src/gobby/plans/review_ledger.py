@@ -15,11 +15,14 @@ from gobby.plans.review_evidence_models import (
 from gobby.plans.review_findings import (
     CHECK_KEY_RE,
     FINDING_CATEGORIES,
-    FINDING_REPAIR_SCOPES,
     FINDING_SEVERITIES,
+    finding_ledger_details,
 )
+from gobby.plans.review_sweeps import (
+    validate_candidate_dispositions as validate_sweep_candidate_dispositions,
+)
+from gobby.utils.hashing import is_sha256
 
-_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _KINDS = frozenset({"finding", "dismissed"})
 _COMMON_FIELDS = frozenset(
     {
@@ -240,49 +243,23 @@ def validate_candidate_dispositions(
     bundle = coverage.get("record_bundle")
     if not isinstance(bundle, Mapping):
         raise _invalid("coverage_attestation.record_bundle must be an object")
-    records_raw = bundle.get("candidate_dispositions")
-    if not isinstance(records_raw, list):
-        raise _invalid("coverage_attestation.record_bundle.candidate_dispositions must be an array")
-
-    records: list[dict[str, object]] = []
-    candidate_ids: set[str] = set()
+    records = validate_sweep_candidate_dispositions(
+        bundle.get("candidate_dispositions"),
+        candidates=None,
+    )
     finding_ids = {
         finding_id
         for finding in cast(Sequence[object], round_result.get("findings", []))
         if isinstance(finding, Mapping) and isinstance(finding_id := finding.get("finding_id"), str)
     }
-    for index, raw in enumerate(records_raw):
-        if not isinstance(raw, Mapping):
-            raise _invalid(f"candidate_dispositions[{index}] must be an object")
-        record = canonical_json_object(raw)
-        unknown = sorted(set(record) - _DISPOSITION_FIELDS)
-        if unknown:
+    for index, record in enumerate(records):
+        if record["disposition"] != "emitted_finding":
+            continue
+        finding_id = cast(str, record["finding_id"])
+        if finding_id not in finding_ids:
             raise _invalid(
-                f"candidate_dispositions[{index}] has unknown fields: {', '.join(unknown)}"
+                f"candidate_dispositions[{index}].finding_id is absent from round_result.findings"
             )
-        owner = f"candidate_dispositions[{index}]"
-        candidate_id = _required_string(record, "candidate_id", owner)
-        if candidate_id in candidate_ids:
-            raise _invalid(f"duplicate candidate disposition: {candidate_id}")
-        candidate_ids.add(candidate_id)
-        _validate_check_key(record.get("check_key"), owner=owner)
-        record["source_section_ids"] = _string_set(
-            record.get("source_section_ids"),
-            owner=f"{owner}.source_section_ids",
-        )
-        _validate_hash(record.get("source_hash"), owner=f"{owner}.source_hash")
-        _required_string(record, "rationale", owner)
-        disposition = record.get("disposition")
-        if disposition == "emitted_finding":
-            finding_id = _required_string(record, "finding_id", owner)
-            if finding_id not in finding_ids:
-                raise _invalid(f"{owner}.finding_id is absent from round_result.findings")
-        elif disposition == "dismissed":
-            if "finding_id" in record:
-                raise _invalid(f"{owner}.finding_id is invalid for a dismissed candidate")
-        else:
-            raise _invalid(f"{owner}.disposition must be emitted_finding or dismissed")
-        records.append(record)
 
     computed = {
         "total": len(records),
@@ -332,6 +309,7 @@ def _merge_carry_resolutions(
             raise _invalid(f"carry resolution has no quality ledger entry: {finding_id}")
         source_ids = cast(list[str], source["source_section_ids"])
         if any(section_id not in section_hashes for section_id in source_ids):
+            source["stale"] = True
             continue
         key = _canonical_key(
             kind="finding",
@@ -372,6 +350,8 @@ def _merge_finding(
         raise _invalid(f"{owner}.severity is not a non-blocking finding severity")
     finding_id = _required_string(finding, "finding_id", owner)
     source_ids = _finding_section_ids(finding, owner=owner)
+    if any(section_id not in section_hashes for section_id in source_ids):
+        return
     key = _canonical_key(
         kind="finding",
         check_key=check_key,
@@ -450,9 +430,12 @@ def _new_entry(
     source_section_ids: Sequence[str],
     section_hashes: Mapping[str, str],
     details: Mapping[str, object],
+    first_seen_round: int | None = None,
+    rounds_carried: int = 1,
 ) -> dict[str, object]:
     source_ids = sorted(set(source_section_ids))
     hashes_at_entry = {section_id: section_hashes[section_id] for section_id in source_ids}
+    first_seen = round_number if first_seen_round is None else first_seen_round
     key = _canonical_key(
         kind=kind,
         check_key=check_key,
@@ -460,12 +443,12 @@ def _new_entry(
         section_hashes=hashes_at_entry,
     )
     entry: dict[str, object] = {
-        "ledger_entry_id": _ledger_entry_id(key, first_seen_round=round_number),
+        "ledger_entry_id": _ledger_entry_id(key, first_seen_round=first_seen),
         "kind": kind,
         "check_key": check_key,
         "aliases": [alias],
-        "first_seen_round": round_number,
-        "rounds_carried": 1,
+        "first_seen_round": first_seen,
+        "rounds_carried": rounds_carried,
         "source_section_ids": source_ids,
         "section_hashes_at_entry": hashes_at_entry,
         "stale": False,
@@ -492,6 +475,8 @@ def _freshened_entry(
         source_section_ids=source_ids,
         section_hashes=section_hashes,
         details=details,
+        first_seen_round=cast(int, source["first_seen_round"]),
+        rounds_carried=cast(int, source["rounds_carried"]) + 1,
     )
     entry["aliases"] = list(cast(list[str], source["aliases"]))
     return entry
@@ -502,25 +487,7 @@ def _finding_details(
     *,
     owner: str,
 ) -> dict[str, object]:
-    details: dict[str, object] = {
-        field: _required_string(finding, field, owner) for field in _FINDING_REQUIRED
-    }
-    scope = cast(str, details["repair_scope"])
-    if scope not in FINDING_REPAIR_SCOPES:
-        raise _invalid(f"{owner}.repair_scope is not supported")
-    has_justification = "new_deliverable_justification" in finding
-    if scope == "new_deliverable" and not has_justification:
-        raise _invalid(
-            f"{owner}.new_deliverable_justification is required for new_deliverable repairs"
-        )
-    if scope == "existing_sections" and has_justification:
-        raise _invalid(
-            f"{owner}.new_deliverable_justification is forbidden for existing_sections repairs"
-        )
-    for field in ("principle", "root_cause", "new_deliverable_justification"):
-        if field in finding:
-            details[field] = _required_string(finding, field, owner)
-    return details
+    return finding_ledger_details(finding, owner=owner)
 
 
 def _finding_section_ids(
@@ -679,7 +646,7 @@ def _required_string(payload: Mapping[str, object], field: str, owner: str) -> s
 
 
 def _validate_hash(raw: object, *, owner: str) -> str:
-    if not isinstance(raw, str) or _SHA256_RE.fullmatch(raw) is None:
+    if not is_sha256(raw):
         raise _invalid(f"{owner} must be a lowercase SHA-256")
     return raw
 

@@ -261,7 +261,6 @@ def _validate_non_attested_result(
             "invalid_round_result",
             f"{verdict} round_result.reason must be an object",
         )
-    reason_code = reason.get("reason_code")
     if verdict == "needs_requirements":
         _validate_string_list_reason(
             reason,
@@ -269,6 +268,7 @@ def _validate_non_attested_result(
             field="questions",
         )
         return payload
+    reason_code = reason.get("reason_code")
     if reason_code == "source_drift":
         _validate_string_list_reason(reason, reason_code="source_drift", field="paths")
     elif reason_code == "timeout":

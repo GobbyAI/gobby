@@ -48,6 +48,20 @@ _OPTIONAL_STRING_FIELDS = (
     "causal_finding_id",
     "new_deliverable_justification",
 )
+_LEDGER_REQUIRED_STRING_FIELDS = (
+    "category",
+    "severity",
+    "location",
+    "description",
+    "minimal_repair",
+    "repair_scope",
+    "prevention",
+)
+_LEDGER_OPTIONAL_STRING_FIELDS = (
+    "principle",
+    "root_cause",
+    "new_deliverable_justification",
+)
 _SECTION_SET_FIELDS = ("participating_section_ids", "causal_section_ids")
 _FAILURE_TRACE_STRING_FIELDS = (
     "preconditions",
@@ -148,6 +162,36 @@ def render_rejection_section(
     return "\n".join(lines)
 
 
+def finding_ledger_details(
+    raw: Mapping[str, object],
+    *,
+    owner: str,
+) -> dict[str, object]:
+    """Validate and select the finding fields persisted in the quality ledger."""
+    details: dict[str, object] = {}
+    for field in _LEDGER_REQUIRED_STRING_FIELDS:
+        _require_nonempty_string(raw, field, prefix=owner)
+        details[field] = raw[field]
+    for field in _LEDGER_OPTIONAL_STRING_FIELDS:
+        if field in raw:
+            _require_nonempty_string(raw, field, prefix=owner)
+            details[field] = raw[field]
+    scope = details["repair_scope"]
+    if scope not in FINDING_REPAIR_SCOPES:
+        vocabulary = ", ".join(sorted(FINDING_REPAIR_SCOPES))
+        raise _invalid(f"{owner}.repair_scope must be one of: {vocabulary}")
+    has_justification = "new_deliverable_justification" in details
+    if scope == "new_deliverable" and not has_justification:
+        raise _invalid(
+            f"{owner}.new_deliverable_justification is required for new_deliverable repairs"
+        )
+    if scope == "existing_sections" and has_justification:
+        raise _invalid(
+            f"{owner}.new_deliverable_justification is forbidden for existing_sections repairs"
+        )
+    return details
+
+
 def _validate_finding(
     raw: dict[str, object],
     *,
@@ -159,11 +203,12 @@ def _validate_finding(
     unknown = sorted(set(raw) - _ALLOWED_FIELDS)
     if unknown:
         raise _invalid(f"{prefix} has unknown fields: {', '.join(unknown)}")
-    for field in _REQUIRED_STRING_FIELDS:
+    for field in _REQUIRED_STRING_FIELDS[:5]:
         _require_nonempty_string(raw, field, prefix=prefix)
     for field in _OPTIONAL_STRING_FIELDS:
         if field in raw:
             _require_nonempty_string(raw, field, prefix=prefix)
+    finding_ledger_details(raw, owner=prefix)
     for field in ("description", "minimal_repair", "prevention"):
         value = str(raw[field])
         if (
@@ -180,15 +225,6 @@ def _validate_finding(
     if raw["repair_scope"] not in FINDING_REPAIR_SCOPES:
         vocabulary = ", ".join(sorted(FINDING_REPAIR_SCOPES))
         raise _invalid(f"{prefix}.repair_scope must be one of: {vocabulary}")
-    has_new_deliverable_justification = "new_deliverable_justification" in raw
-    if raw["repair_scope"] == "new_deliverable" and not has_new_deliverable_justification:
-        raise _invalid(
-            f"{prefix}.new_deliverable_justification is required for new_deliverable repairs"
-        )
-    if raw["repair_scope"] == "existing_sections" and has_new_deliverable_justification:
-        raise _invalid(
-            f"{prefix}.new_deliverable_justification is forbidden for existing_sections repairs"
-        )
     if CHECK_KEY_RE.fullmatch(str(raw["check_key"])) is None:
         raise _invalid(f"{prefix}.check_key is invalid")
     if raw["section_id"] not in section_ids:

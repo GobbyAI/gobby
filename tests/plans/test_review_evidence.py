@@ -1190,6 +1190,8 @@ def _integration_inventory_and_universe() -> tuple[
         changed_targets=("src/example.py",),
         changed_symbols=(),
         changed_contracts=("example-contract",),
+        targets_by_section={"1.1": ("src/example.py",)},
+        contracts_by_section={"1.1": ("example-contract",)},
         resolved_languages=("python",),
         unsupported_targets=(),
         sites=(site,),

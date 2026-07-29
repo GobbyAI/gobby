@@ -12,6 +12,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_object,
 )
 from gobby.plans.review_findings import CHECK_KEY_RE
+from gobby.utils.hashing import is_sha256
 
 _BUNDLE_KEYS = frozenset(
     {
@@ -70,17 +71,21 @@ def validate_sweep_records(
     """Validate caller records against the server-owned sweep universe."""
     payload = _bundle_payload(raw)
     candidates = _candidate_map(lanes)
-    dispositions = _validate_dispositions(
+    dispositions = validate_candidate_dispositions(
         payload["candidate_dispositions"],
         candidates=candidates,
     )
     disposition_map = {cast(str, record["candidate_id"]): record for record in dispositions}
     required_cross: set[tuple[str, str]] = set()
-    for first, second in combinations(candidates.values(), 2):
-        if first.lane_id == second.lane_id:
-            continue
-        first_id, second_id = sorted((first.candidate_id, second.candidate_id))
-        required_cross.add((first_id, second_id))
+    candidates_by_section: dict[str, list[_Candidate]] = {}
+    for candidate in candidates.values():
+        for section_id in candidate.section_ids:
+            candidates_by_section.setdefault(section_id, []).append(candidate)
+    for section_candidates in candidates_by_section.values():
+        for first, second in combinations(section_candidates, 2):
+            if first.lane_id != second.lane_id:
+                first_id, second_id = sorted((first.candidate_id, second.candidate_id))
+                required_cross.add((first_id, second_id))
     cross_records, recorded_cross, referenced = _validate_cross_lane_records(
         payload["cross_lane_interactions"],
         candidates=candidates,
@@ -128,7 +133,7 @@ def validate_record_bundle(raw: object) -> tuple[dict[str, object], dict[str, in
     if not isinstance(raw, Mapping):
         raise _invalid("coverage attestation record_bundle must be an object")
     payload = _bundle_payload(raw)
-    dispositions = _validate_dispositions(
+    dispositions = validate_candidate_dispositions(
         payload["candidate_dispositions"],
         candidates=None,
     )
@@ -200,7 +205,7 @@ def _candidate_map(
     return result
 
 
-def _validate_dispositions(
+def validate_candidate_dispositions(
     raw: object,
     *,
     candidates: Mapping[str, _Candidate] | None,
@@ -216,9 +221,9 @@ def _validate_dispositions(
             raise _invalid(f"{owner} has unknown fields: {', '.join(unknown)}")
         candidate_id = _required_string(record, "candidate_id", owner)
         if candidate_id in seen:
-            raise _invalid(f"unknown or duplicate candidate disposition: {candidate_id}")
+            raise _invalid(f"duplicate candidate disposition: {candidate_id}")
         if candidates is not None and candidate_id not in candidates:
-            raise _invalid(f"unknown or duplicate candidate disposition: {candidate_id}")
+            raise _invalid(f"unknown candidate disposition: {candidate_id}")
         seen.add(candidate_id)
         check_key = _required_string(record, "check_key", owner)
         if CHECK_KEY_RE.fullmatch(check_key) is None:
@@ -604,7 +609,7 @@ def _required_string(record: Mapping[str, object], field: str, owner: str) -> st
 
 def _required_sha256(record: Mapping[str, object], field: str, owner: str) -> str:
     value = _required_string(record, field, owner)
-    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+    if not is_sha256(value):
         raise _invalid(f"{owner}.{field} must be lowercase SHA-256")
     return value
 

@@ -140,6 +140,36 @@ def test_evidence_jsonb_column_writes_reject_conflicts(
             )
 
 
+def test_preparation_context_replay_rejects_finalized_evidence(
+    temp_db: HubDatabase,
+    evidence_store_row: tuple[PlanReviewEvidenceStore, str],
+) -> None:
+    store, evidence_id = evidence_store_row
+    context = {"prior_evidence_id": "prior-1"}
+    with temp_db.transaction() as transaction:
+        store.write_preparation_context(
+            transaction=transaction,
+            evidence_id=evidence_id,
+            repair_attestations=[],
+            prior_round_context=context,
+        )
+    temp_db.execute(
+        "UPDATE plan_review_evidence SET finalized_at = NOW() WHERE evidence_id = %s",
+        (evidence_id,),
+    )
+
+    with temp_db.transaction() as transaction:
+        with pytest.raises(ReviewEvidenceError) as error:
+            store.write_preparation_context(
+                transaction=transaction,
+                evidence_id=evidence_id,
+                repair_attestations=[],
+                prior_round_context=context,
+            )
+
+    assert error.value.code == "preparation_context_closed"
+
+
 def test_quality_ledger_schema_migration_and_baseline_match() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     migration = (

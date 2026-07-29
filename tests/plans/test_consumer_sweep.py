@@ -779,7 +779,7 @@ def test_inter_round_inventory_preserves_section_attribution(tmp_path: Path) -> 
     inventory = derive_candidate_site_inventory(
         diff=diff,
         project_id="project-1",
-        code_index=_CodeIndex(storage),
+        storage=storage,
     )
 
     assert diff.targets_by_section == {
@@ -887,7 +887,7 @@ def test_unsupported_language_marked_not_omitted(tmp_path: Path) -> None:
     inventory = derive_candidate_site_inventory(
         diff=build_inter_round_diff(prior_snapshot, current_snapshot),
         project_id="project-1",
-        code_index=_CodeIndex(_Storage()),
+        storage=_Storage(),
     )
 
     assert inventory.unsupported_targets == ("web/review.ts",)

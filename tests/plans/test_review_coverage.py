@@ -680,6 +680,20 @@ def test_unchanged_dismissal_reopen_rejected(tmp_path: Path) -> None:
         context(source_hash=str(item["source_hash"]), section_hash="b" * 64),
     )
 
+    item["disposition"] = "dismissed"
+    item.pop("finding_id", None)
+    assert _validate(
+        tmp_path,
+        document,
+        lanes,
+        dispositions,
+        shadow,
+        context(
+            source_hash=str(item["source_hash"]),
+            section_hash=current_hashes["1.1"],
+        ),
+    )
+
 
 def test_coverage_rejects_duplicate_finding_ids(tmp_path: Path) -> None:
     document, lanes, dispositions, shadow = _coverage_case(tmp_path, candidate_count=2)

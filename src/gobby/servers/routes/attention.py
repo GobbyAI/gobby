@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,13 +20,12 @@ from gobby.agents.tmux.text_injection import (
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
+from gobby.utils.hashing import is_sha256
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 AttentionKey = Literal["enter", "escape", "tab", "up", "down"]
-
-_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class AttentionAnswer(BaseModel):
@@ -83,7 +81,7 @@ class AttentionRespondRequest(BaseModel):
     @field_validator("fingerprint")
     @classmethod
     def validate_fingerprint(cls, value: str) -> str:
-        if _SHA256_RE.fullmatch(value) is None:
+        if not is_sha256(value):
             raise ValueError("fingerprint must be a lowercase sha256 digest")
         return value
 

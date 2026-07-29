@@ -106,6 +106,9 @@ def test_requirement_marker_grammar(
     )
 
     assert parse_requirement_source_paths(snapshot) == ("docs/canonical.md",)
+    assert parse_requirement_source_paths(
+        _plan("  - requirement-source: docs/canonical.md")
+    ) == ("docs/canonical.md",)
     bundle = assemble_requirements_bundle(
         project_root=tmp_path,
         plan_snapshot=snapshot,

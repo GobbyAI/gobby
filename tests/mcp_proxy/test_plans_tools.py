@@ -14,6 +14,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans import review_evidence_io as snapshot_io
+from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
@@ -104,8 +105,20 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
         worker_threads.append(threading.get_ident())
         return manifest_path
 
+    def prepare_review_round(
+        self: PlanReviewEvidenceService,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        worker_threads.append(threading.get_ident())
+        return SimpleNamespace(to_dict=lambda: {"evidence_id": "evidence"})
+
     monkeypatch.setattr(LocalPlanManager, "create_plan", create_plan)
     monkeypatch.setattr(LocalPlanManager, "regenerate_coverage_manifest", regenerate_manifest)
+    monkeypatch.setattr(
+        PlanReviewEvidenceService,
+        "prepare_plan_review_round",
+        prepare_review_round,
+    )
     registry = create_plan_registry(temp_db, default_project_id="project-1")
 
     created = await registry.call(
@@ -118,11 +131,19 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
         },
     )
     regenerated = await registry.call("regenerate_coverage_manifest", {"plan_id": "plan"})
+    prepared = await registry.call(
+        "prepare_plan_review_round",
+        {
+            "plan_path": str(tmp_path / "plan.md"),
+            "round_number": 1,
+        },
+    )
 
     assert created == {"ok": True, "plan": {"plan_id": "plan"}}
     assert create_kwargs[0]["reactivate"] is True
     assert regenerated == {"ok": True, "manifest_path": str(manifest_path)}
-    assert len(worker_threads) == 2
+    assert prepared == {"ok": True, "evidence_id": "evidence"}
+    assert len(worker_threads) == 3
     assert all(thread_id != caller_thread for thread_id in worker_threads)
 
 

@@ -50,6 +50,7 @@ class InterRoundDiff:
     contracts: tuple[str, ...]
     targets_by_section: Mapping[str, tuple[str, ...]]
     symbols_by_section: Mapping[str, tuple[str, ...]]
+    contracts_by_section: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -102,20 +103,34 @@ def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> In
     symbols = {
         symbol_ref for symbol_refs in symbols_by_section.values() for symbol_ref in symbol_refs
     }
-    contracts = {
-        artifact_ref
-        for item_id in changed_item_ids
-        for item in (prior_items.get(item_id), current_items.get(item_id))
-        if item is not None
-        for _section_id, _prose, artifact_kind, artifact_ref in (item,)
-        if artifact_kind == "behavior"
-        or Path(artifact_ref).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
+    contract_sets_by_section: dict[str, set[str]] = {}
+    for item_id in changed_item_ids:
+        for item in (prior_items.get(item_id), current_items.get(item_id)):
+            if item is None:
+                continue
+            section_id, _prose, artifact_kind, artifact_ref = item
+            if artifact_kind == "behavior" or Path(artifact_ref).suffix.lower() in {
+                ".json",
+                ".md",
+                ".sql",
+                ".yaml",
+                ".yml",
+            }:
+                contract_sets_by_section.setdefault(section_id, set()).add(artifact_ref)
+    for section_id, section_targets in targets_by_section.items():
+        contract_sets_by_section.setdefault(section_id, set()).update(
+            target
+            for target in section_targets
+            if Path(target).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
+        )
+    contracts_by_section = {
+        section_id: tuple(sorted(contract_refs))
+        for section_id, contract_refs in sorted(contract_sets_by_section.items())
+        if contract_refs
     }
-    contracts.update(
-        target
-        for target in changed_targets
-        if Path(target).suffix.lower() in {".json", ".md", ".sql", ".yaml", ".yml"}
-    )
+    contracts = {
+        contract for contract_refs in contracts_by_section.values() for contract in contract_refs
+    }
     return InterRoundDiff(
         acceptance_item_ids=changed_item_ids,
         section_targets=tuple(sorted(changed_targets)),
@@ -123,6 +138,7 @@ def build_inter_round_diff(prior_snapshot: bytes, current_snapshot: bytes) -> In
         contracts=tuple(sorted(contracts)),
         targets_by_section=targets_by_section,
         symbols_by_section=symbols_by_section,
+        contracts_by_section=contracts_by_section,
     )
 
 
@@ -519,6 +535,11 @@ def parse_snapshot_envelope(
                 quality_ledger.append(canonical_content)
             elif record_type == "consumer_inventory":
                 context["consumer_site_inventory"] = canonical_content
+            else:
+                raise ReviewEvidenceError(
+                    "invalid_snapshot_record",
+                    f"unsupported snapshot record type: {record_type}",
+                )
         if _sha256(content_bytes) != digest:
             raise ReviewEvidenceError(
                 "snapshot_record_hash_mismatch",

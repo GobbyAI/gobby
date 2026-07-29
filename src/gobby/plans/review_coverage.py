@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -22,13 +21,13 @@ from gobby.plans.review_requirements import (
 )
 from gobby.plans.review_sweeps import validate_record_bundle, validate_sweep_records
 from gobby.plans.semantic_lint import collect_target_inventory
+from gobby.utils.hashing import is_sha256
 
 REVIEW_LANES = (
     "requirements_traceability",
     "repository_blast_radius",
     "runtime_invariants",
 )
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMPLEX_DELIVERABLES = 8
 _COMPLEX_ACCEPTANCE_ITEMS = 24
 _COMPLEX_TARGET_FILES = 12
@@ -248,7 +247,7 @@ def validate_coverage_attestation(
             "invalid_coverage_attestation",
             "coverage attestation lanes are missing, duplicated, or out of order",
         )
-    if not _SHA256_RE.fullmatch(str(attestation.get("source_digest", ""))):
+    if not is_sha256(attestation.get("source_digest")):
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
             "coverage attestation source_digest must be SHA-256",
@@ -280,7 +279,7 @@ def validate_coverage_attestation(
                 "invalid_coverage_attestation",
                 "valid shadow manifest status has non-canonical fields",
             )
-        if not _SHA256_RE.fullmatch(str(shadow.get("manifest_digest", ""))):
+        if not is_sha256(shadow.get("manifest_digest")):
             raise ReviewEvidenceError(
                 "invalid_coverage_attestation",
                 "valid shadow manifest status requires a SHA-256 manifest_digest",
@@ -501,6 +500,8 @@ def _reject_unchanged_dismissal_reopens(
 ) -> None:
     prior_dismissals = dismissed_ledger_entries_from_context(prior_round_context)
     for disposition in dispositions:
+        if disposition.get("disposition") != "emitted_finding":
+            continue
         source_sections = cast(list[str], disposition["source_section_ids"])
         for dismissal in prior_dismissals:
             if (
@@ -514,7 +515,7 @@ def _reject_unchanged_dismissal_reopens(
                 current_section_hashes.get(section_id) != section_hash
                 for section_id, section_hash in stored_hashes.items()
             )
-            if dismissal["reopenable"] is not section_hash_changed:
+            if dismissal["reopenable"] != section_hash_changed:
                 raise ReviewEvidenceError(
                     "invalid_dismissal_context",
                     "dismissal reopenable marker differs from the bound section hashes",

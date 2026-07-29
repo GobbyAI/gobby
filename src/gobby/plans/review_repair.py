@@ -19,6 +19,7 @@ from gobby.plans.review_evidence_models import (
 )
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_ledger import inject_dismissed_ledger_context
+from gobby.utils.hashing import is_sha256
 
 REPAIR_SUBMISSION_ARTIFACT_KEY = "plan_review_repair_submission"
 
@@ -191,8 +192,6 @@ def derive_repair_universe(
             key=lambda site: (site.site_id, site.path, site.source_kind, site.source_ref),
         )
     )
-    contracts = tuple(sorted(set(inventory.changed_contracts)))
-    targets = tuple(sorted(set(inventory.changed_targets)))
     identities: dict[str, tuple[str, str]] = {}
     for finding_id in repair_ids:
         finding = findings[finding_id]
@@ -207,14 +206,26 @@ def derive_repair_universe(
         second_section, second_check_key = identities[second_id]
         shared_sections = (first_section,) if first_section == second_section else ()
         shared_check_keys = (first_check_key,) if first_check_key == second_check_key else ()
-        if not (shared_sections or shared_check_keys or contracts or targets):
+        shared_contracts = tuple(
+            sorted(
+                set(inventory.contracts_by_section.get(first_section, ()))
+                & set(inventory.contracts_by_section.get(second_section, ()))
+            )
+        )
+        shared_targets = tuple(
+            sorted(
+                set(inventory.targets_by_section.get(first_section, ()))
+                & set(inventory.targets_by_section.get(second_section, ()))
+            )
+        )
+        if not (shared_sections or shared_check_keys or shared_contracts or shared_targets):
             continue
         edge_payload: dict[str, object] = {
             "repair_ids": [first_id, second_id],
             "shared_sections": list(shared_sections),
             "shared_check_keys": list(shared_check_keys),
-            "shared_contracts": list(contracts),
-            "shared_targets": list(targets),
+            "shared_contracts": list(shared_contracts),
+            "shared_targets": list(shared_targets),
         }
         interaction_edges.append(
             RepairInteractionEdge(
@@ -222,24 +233,32 @@ def derive_repair_universe(
                 repair_ids=(first_id, second_id),
                 shared_sections=shared_sections,
                 shared_check_keys=shared_check_keys,
-                shared_contracts=contracts,
-                shared_targets=targets,
+                shared_contracts=shared_contracts,
+                shared_targets=shared_targets,
             )
         )
 
     requirements_list: list[RepairSweepRequirement] = []
     for finding_id, (section_id, check_key) in sorted(identities.items()):
         section_site_ids = tuple(site.site_id for site in sites if section_id in site.section_ids)
+        section_contracts = inventory.contracts_by_section.get(section_id, ())
+        section_targets = inventory.targets_by_section.get(section_id, ())
         requirements_list.append(
             RepairSweepRequirement(
                 prior_finding_id=finding_id,
                 check_key=check_key,
                 changed_section_ids=(section_id,),
-                changed_contracts=contracts,
-                changed_targets=targets,
+                changed_contracts=section_contracts,
+                changed_targets=section_targets,
                 required_consumer_site_ids=section_site_ids,
                 adjacent_variant_ids=tuple(
-                    _canonical_digest({"check_key": check_key, "site_id": site_id})
+                    _canonical_digest(
+                        {
+                            "prior_finding_id": finding_id,
+                            "check_key": check_key,
+                            "site_id": site_id,
+                        }
+                    )
                     for site_id in section_site_ids
                 ),
                 interaction_edge_ids=tuple(
@@ -751,7 +770,7 @@ def _canonical_attestation(
         owner=f"{owner}.deferred_sites",
     )
     digest = attestation.get("repair_universe_digest")
-    if digest is not None and (not isinstance(digest, str) or not _is_sha256(digest)):
+    if digest is not None and not is_sha256(digest):
         raise _invalid(f"{owner}.repair_universe_digest must be lowercase SHA-256")
     if "sweep_query_evidence" in attestation:
         attestation["sweep_query_evidence"] = _string_array(
@@ -899,10 +918,6 @@ def _canonical_digest(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-
-
-def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 def _required_string(payload: Mapping[str, object], field: str, owner: str) -> str:
