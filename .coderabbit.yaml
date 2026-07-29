@@ -43,12 +43,16 @@ reviews:
         - Ensure async functions are properly awaited
         - Watch for potential security issues (SQL injection, command injection)
         - Verify proper error handling
+        - Hub database access uses psycopg v3 with `%s` placeholders and parameter tuples
+        - Never suggest PostgreSQL `$1`/`$N` positional placeholders for Python hub database access
 
     - path: "tests/**/*.py"
       instructions: |
         - Ensure tests are meaningful, not just coverage padding
         - Check for proper mocking and fixtures
         - Verify async tests use pytest-asyncio markers
+        - Hub database access uses psycopg v3 with `%s` placeholders and parameter tuples
+        - Never suggest PostgreSQL `$1`/`$N` positional placeholders for Python hub database access
 
     - path: "src/gobby/mcp_proxy/**"
       instructions: |
