@@ -18,6 +18,7 @@ from gobby.workflows.condition_helpers import (
     first_tdd_test_path,
     is_gobby_build_command,
     is_task_complete,
+    shell_command_invokes_gcode,
     task_commit_project_path_allowlist_violation,
     task_needs_human_review,
     task_tree_complete,
@@ -85,6 +86,33 @@ class TestIsGobbyBuildCommand:
     )
     def test_skips_non_build_invocations(self, command: object) -> None:
         assert is_gobby_build_command(command) is False
+
+
+class TestShellCommandInvokesGcode:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'gcode grep "pattern" src -m 50',
+            'gcode search "query" | python3 -c "print(1)"',
+            "cd repo && /usr/local/bin/gcode outline src/app.py",
+            'GCODE_LOG=debug gcode search-content "query"',
+        ],
+    )
+    def test_detects_gcode_command_segments(self, command: str) -> None:
+        assert shell_command_invokes_gcode(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "",
+            None,
+            "rg gcode src",
+            "python3 -c \"print('gcode')\"",
+            "gcodex search query",
+        ],
+    )
+    def test_skips_non_gcode_invocations(self, command: object) -> None:
+        assert shell_command_invokes_gcode(command) is False
 
 
 class TestNormalizeTaskId:

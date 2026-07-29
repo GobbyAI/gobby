@@ -3614,6 +3614,27 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_gcode_search_with_python_formatter_is_allowed(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            'gcode search "supports_stored_vector_search" --limit 10 2>/dev/null '
+            '| python3 -c "import json,sys; d=json.load(sys.stdin); '
+            "[print(r['file_path'], r['line_start']) for r in d['results']]\"",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        assert event.data.get("canonical_code_index_navigation") is not True
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_shell_search_with_stderr_suppression_still_blocks(self, db, tmp_path) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
@@ -3814,7 +3835,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_wide_line_read_requires_prior_gcode_navigation(self, db) -> None:
+    async def test_wide_line_read_requires_prior_gcode_navigation(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = self._event(
             HookEventType.BEFORE_TOOL,

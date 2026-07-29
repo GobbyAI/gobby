@@ -503,6 +503,18 @@ def is_gobby_build_command(command: Any) -> bool:
     return any(_segment_invokes_gobby_build(segment) for segment in shell_command_segments(command))
 
 
+def shell_command_invokes_gcode(command: Any) -> bool:
+    """Return whether any shell command segment invokes ``gcode``."""
+    if not isinstance(command, str) or not command.strip():
+        return False
+
+    for segment in shell_command_segments(command):
+        tokens = _strip_env_assignments(segment)
+        if tokens and _executable_name(tokens[0]) == "gcode":
+            return True
+    return False
+
+
 def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
     tokens = _strip_env_assignments(tokens)
     if not tokens:

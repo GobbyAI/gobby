@@ -495,6 +495,7 @@ def build_condition_helpers(
         is_pending_memory_recall_call,
         is_validation_command,
         pending_memory_recall_request_id,
+        shell_command_invokes_gcode,
         task_commit_project_path_allowlist_violation,
         task_needs_human_review,
         task_state_in,
@@ -518,6 +519,7 @@ def build_condition_helpers(
         "first_tdd_test_path": first_tdd_test_path,
         "is_gobby_build_command": is_gobby_build_command,
         "is_validation_command": is_validation_command,
+        "shell_command_invokes_gcode": shell_command_invokes_gcode,
         "task_commit_project_path_allowlist_violation": (
             task_commit_project_path_allowlist_violation
         ),

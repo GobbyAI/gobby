@@ -54,6 +54,7 @@ rules:
       variables.get('code_index_available')
       and skill_loaded('code-index')
       and not event.data.get('canonical_code_index_navigation')
+      and not shell_command_invokes_gcode(tool_input.get('command'))
       and event.data.get('canonical_code_navigation_action') == 'search'
       and event.data.get('canonical_code_navigation_broad')
       and event.data.get('canonical_code_navigation_repo_scope') is not False
