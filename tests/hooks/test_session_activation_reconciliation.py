@@ -35,7 +35,7 @@ from gobby.hooks.session_activation import (
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
@@ -227,7 +227,7 @@ def test_before_agent_fast_noop_when_current(
     assert result.reason == "current"
 
 
-@pytest.mark.parametrize("status", ["expired", "deleted"])
+@pytest.mark.parametrize("status", sorted(TERMINAL_SESSION_STATUSES))
 def test_terminal_session_status_skips_reconciliation(
     status: str,
     tmp_path: Path,

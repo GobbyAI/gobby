@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
-from gobby.workflows.block_audit import log_enforcement_block
+from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.blocked_tool_recovery import (
     CONSECUTIVE_TOOL_BLOCK_RULE,
@@ -323,7 +323,7 @@ class EvaluationMixin:
                         BlockGate(
                             rule_name=row.name,
                             reason=reason,
-                            condition=effect.when or body.when,
+                            condition=combined_rule_condition(body.when, effect.when),
                             acknowledge_variable=effect.acknowledge_variable,
                         )
                     )
@@ -372,7 +372,7 @@ class EvaluationMixin:
                         BlockGate(
                             rule_name=row.name,
                             reason=inline_block_reason,
-                            condition=effect.when or body.when,
+                            condition=combined_rule_condition(body.when, effect.when),
                         )
                     )
 
@@ -392,7 +392,7 @@ class EvaluationMixin:
                         BlockGate(
                             rule_name=row.name,
                             reason=rendered_block_reason,
-                            condition=deferred_block.when or body.when,
+                            condition=combined_rule_condition(body.when, deferred_block.when),
                             acknowledge_variable=deferred_block.acknowledge_variable,
                         )
                     )

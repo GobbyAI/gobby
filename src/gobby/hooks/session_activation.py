@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
 from gobby.storage.hub.protocol import WorkflowInstanceMutation
+from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ def _reconcile_session_activation(
             reason="session_not_found",
         )
     session_status = getattr(session, "status", None)
-    if session_status in {"expired", "deleted"}:
+    if session_status in TERMINAL_SESSION_STATUSES:
         return ActivationReconciliationResult(
             changed=False,
             reason=f"session_status_terminal:{session_status}",

@@ -22,6 +22,15 @@ def serialize_audit_condition(condition: Any | None) -> str:
     return json.dumps(condition, sort_keys=True, separators=(",", ":"))
 
 
+def combined_rule_condition(rule_when: Any | None, effect_when: Any | None) -> Any | None:
+    """Combine rule-level and effect-level conditions for the audit row."""
+    if rule_when is None or rule_when == effect_when:
+        return effect_when
+    if effect_when is None:
+        return rule_when
+    return {"rule": rule_when, "effect": effect_when}
+
+
 async def log_enforcement_block(
     audit_manager: WorkflowAuditManager,
     *,
@@ -86,6 +95,10 @@ async def audit_source_block(
         logger.warning("Workflow block audit failed: %s", exc, exc_info=True)
 
 
+# Strong references so fire-and-forget audit tasks are not garbage-collected.
+_background_audit_tasks: set[asyncio.Task[None]] = set()
+
+
 def audit_source_block_sync(
     workflow_handler: Any,
     event: HookEvent,
@@ -97,15 +110,21 @@ def audit_source_block_sync(
 ) -> None:
     """Run source-owned block auditing from synchronous hook paths."""
     try:
-        asyncio.run(
-            audit_source_block(
-                workflow_handler,
-                event,
-                rule_id=rule_id,
-                reason=reason,
-                variables=variables,
-                tool_name=tool_name,
-            )
+        coro = audit_source_block(
+            workflow_handler,
+            event,
+            rule_id=rule_id,
+            reason=reason,
+            variables=variables,
+            tool_name=tool_name,
         )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        task = loop.create_task(coro)
+        _background_audit_tasks.add(task)
+        task.add_done_callback(_background_audit_tasks.discard)
     except Exception as exc:
         logger.warning("Workflow block audit failed: %s", exc, exc_info=True)

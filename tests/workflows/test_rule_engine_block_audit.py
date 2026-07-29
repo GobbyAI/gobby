@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,8 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows import block_audit
+from gobby.workflows.block_audit import audit_source_block_sync, combined_rule_condition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.evaluation import BlockGate, EvaluationContext
 
@@ -179,3 +182,71 @@ async def test_allow_response_does_not_write_audit_row(temp_db: HubDatabase) -> 
 
     assert result.decision == "allow"
     audit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("rule_when", "effect_when", "expected"),
+    [
+        (None, None, None),
+        ("vars.rule", None, "vars.rule"),
+        (None, "vars.effect", "vars.effect"),
+        ("vars.same", "vars.same", "vars.same"),
+        ("vars.rule", "vars.effect", {"rule": "vars.rule", "effect": "vars.effect"}),
+    ],
+)
+async def test_combined_rule_condition_records_both_levels(
+    rule_when: str | None,
+    effect_when: str | None,
+    expected: object,
+) -> None:
+    assert combined_rule_condition(rule_when, effect_when) == expected
+
+
+def _sync_audit_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="external-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+
+async def test_audit_source_block_sync_lands_on_running_loop(temp_db: HubDatabase) -> None:
+    engine = _engine(temp_db)
+    handler = SimpleNamespace(rule_engine=engine)
+
+    audit_source_block_sync(
+        handler,
+        _sync_audit_event(),
+        rule_id="workflow-evaluation-cancelled",
+        reason="cancelled",
+    )
+
+    pending = list(block_audit._background_audit_tasks)
+    assert pending
+    await asyncio.gather(*pending)
+    audit = _audit_mock(engine)
+    audit.assert_called_once()
+    assert audit.call_args.kwargs["rule_id"] == "workflow-evaluation-cancelled"
+
+
+async def test_audit_source_block_sync_lands_without_running_loop(
+    temp_db: HubDatabase,
+) -> None:
+    engine = _engine(temp_db)
+    handler = SimpleNamespace(rule_engine=engine)
+
+    await asyncio.to_thread(
+        lambda: audit_source_block_sync(
+            handler,
+            _sync_audit_event(),
+            rule_id="hook-stop-safety",
+            reason="blocked for safety",
+        )
+    )
+
+    audit = _audit_mock(engine)
+    audit.assert_called_once()
+    assert audit.call_args.kwargs["rule_id"] == "hook-stop-safety"

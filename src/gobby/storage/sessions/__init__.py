@@ -9,6 +9,7 @@ from ._constants import (
     SYSTEM_SESSION_PROJECT_ID,
     SYSTEM_SESSION_SOURCE,
     SYSTEM_SESSION_TITLE,
+    TERMINAL_SESSION_STATUSES,
     ensure_system_session,
     logger,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "SYSTEM_SESSION_PROJECT_ID",
     "SYSTEM_SESSION_SOURCE",
     "SYSTEM_SESSION_TITLE",
+    "TERMINAL_SESSION_STATUSES",
     "ensure_system_session",
     "logger",
 ]
