@@ -87,7 +87,18 @@ The constructive enhancement methodology lives in `plan-enhance`. The taskless
 which runs after enhancement approval and before the adversary gate.
 
 1. Use the confirmed Decision Record as the requirements, constraints, risks,
-   and success-criteria source.
+   and success-criteria source. Persist it as a repository document — a sibling
+   `.gobby/plans/<slug>.requirements.md` unless the user names another path —
+   and designate it inside the plan's `## Constraints`:
+
+   ```text
+   requirement-source: .gobby/plans/<slug>.requirements.md
+   ```
+
+   A conversational Decision Record cannot reach the reviewer. Designation is
+   the only requirements context a taskless Full plan controls, and it must
+   exist before the first adversary round. See **Requirements Sources** below;
+   `plan-draft`'s "Canonical Requirement Documents" holds the marker grammar.
 2. Draft `.gobby/plans/<slug>.md` using the Plan-Coverage Contract from
    `plan-draft`.
 3. Run plan verification locally:
@@ -145,7 +156,8 @@ replace, or synthesize that anchor in this skill. Preparation fails closed when
 taskless entry has neither exact request content nor a valid persisted anchor.
 The immutable `requirements_bundle` in the prepared evidence is the reviewer's
 only requirements context; do not send a live or reconstructed requirements
-payload alongside it.
+payload alongside it. Shape that bundle through its designated inputs, never by
+editing it — see **Requirements Sources**.
 Do not run a separate pre-spawn `gcode index`; preparation already brackets the
 one index run it needs. Repository churn during a round is expected and is not
 tracked — see the repository-state section in `plan-review`.
@@ -241,6 +253,36 @@ explicitly approves the handoff:
 ```bash
 uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
 ```
+
+## Requirements Sources
+
+`prepare_plan_review_round` assembles the bundle server-side and seals it: every
+source carries its own hash, the set carries a `bundle_digest`, and the snapshot
+carries a `snapshot_hash` the reviewer verifies. There is no requirements
+parameter on preparation, so the bundle is never edited — only its inputs are
+chosen, and there are three source kinds:
+
+- `task_field` — used when the round is bound to a task. Full depth does not
+  create planning or review-anchor tasks, so this path does not apply here.
+- `request_anchor` — the plan-mode entry observer's record of the initiating
+  request, used for taskless entry. It is exactly one message, captured
+  verbatim. Never create, replace, or synthesize it: the anchor attests what the
+  user actually said, and rewriting it makes sealed evidence assert something
+  false.
+- `repository_document` — every path the plan designates with a
+  `requirement-source:` marker in `## Constraints`. Always loaded, alongside
+  whichever of the two above applies.
+
+Only the third is yours to control, which is why step 1 designates the Decision
+Record. A taskless round whose bundle holds nothing but the entry anchor asks
+the reviewer to trace every acceptance item back to one conversational
+sentence; expect `needs_requirements`, and note that a retry cannot fix it,
+because the anchor is immutable and re-entry only mints another arbitrary one.
+
+Inspect the bundle before spawning. `get_plan_review_snapshot` returns the
+prepared envelope, and preparation binds no run until `bind_evidence_run`, so
+checking the `requirement_source` records costs nothing and a bad bundle costs a
+full reviewer run.
 
 ## Interactive Review Evidence Protocol
 
