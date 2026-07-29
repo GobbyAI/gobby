@@ -236,6 +236,29 @@ async def test_get_session(mock_session_manager, full_sessions_registry):
 
 
 @pytest.mark.asyncio
+async def test_get_session_hydrates_task_refs(mock_session_manager, full_sessions_registry):
+    """Task refs come from authoritative task attribution for the resolved session."""
+    resolved_id = "019fac20-e6fa-7001-87e1-935703260d95"
+    mock_session = _make_mock_session(resolved_id)
+    mock_session_manager.resolve_session_reference.return_value = resolved_id
+    mock_session_manager.get.return_value = mock_session
+    mock_session_manager.fetch_task_refs_by_session.return_value = {
+        resolved_id: {
+            "claimed": [12, 34],
+            "created": [56],
+            "closed": [78, 90],
+        }
+    }
+
+    result = await full_sessions_registry.call("get_session", {"session_id": "#9846"})
+
+    mock_session_manager.fetch_task_refs_by_session.assert_called_once_with([resolved_id])
+    assert result["claimed_task_refs"] == [12, 34]
+    assert result["created_task_refs"] == [56]
+    assert result["closed_task_refs"] == [78, 90]
+
+
+@pytest.mark.asyncio
 async def test_get_session_not_found(mock_session_manager, full_sessions_registry):
     """Test get_session returns error when not found."""
     mock_session_manager.resolve_session_reference.side_effect = ValueError("Not found")

@@ -68,9 +68,15 @@ def register_crud_tools(
         if not session:
             return {"error": f"Session {session_id} not found", "found": False}
 
+        task_refs = session_manager.fetch_task_refs_by_session([session.id])[session.id]
+        session_data = session.to_dict()
+        session_data["claimed_task_refs"] = task_refs["claimed"]
+        session_data["created_task_refs"] = task_refs["created"]
+        session_data["closed_task_refs"] = task_refs["closed"]
+
         return {
             "found": True,
-            **session.to_dict(),
+            **session_data,
         }
 
     @registry.tool(
