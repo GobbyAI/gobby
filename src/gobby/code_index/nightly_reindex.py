@@ -14,6 +14,7 @@ from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.utils.datetime import resolve_local_timezone
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -139,7 +140,7 @@ def register_code_index_nightly_reindex_cron(
         CODE_INDEX_NIGHTLY_REINDEX_HANDLER,
         create_code_index_nightly_reindex_handler(reindexer),
     )
-    timezone = (config.nightly_full_reindex_timezone or "UTC").strip() or "UTC"
+    timezone = resolve_local_timezone(config.nightly_full_reindex_timezone)
     enabled = bool(config.nightly_full_reindex_enabled)
     action_config = {
         "handler": CODE_INDEX_NIGHTLY_REINDEX_HANDLER,

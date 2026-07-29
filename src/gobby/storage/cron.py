@@ -621,6 +621,37 @@ class CronJobStorage(CronRunStorageMixin):
         fields["updated_at"] = utc_now()
         return self._update_job_fields(job_id, **fields)
 
+    def normalize_system_job_timezones(self) -> int:
+        """Repoint bundled wall-clock schedules at the host zone.
+
+        Rows installed before local scheduling still carry ``UTC``, and their
+        registrar only rewrites them when some other definition field drifts.
+        Returns the number of rows repaired.
+        """
+        local_timezone = resolve_local_timezone()
+        repaired = 0
+        rows = self.db.fetchall(
+            "SELECT * FROM cron_jobs "
+            "WHERE is_system IS TRUE AND schedule_type = 'cron' AND timezone <> %s",
+            (local_timezone,),
+        )
+        for row in rows:
+            job = CronJob.from_row(row)
+            self.reconcile_system_job_definition(
+                job.id,
+                action_type=job.action_type,
+                action_config=job.action_config,
+                timezone=local_timezone,
+            )
+            repaired += 1
+        if repaired:
+            logger.info(
+                "Repaired %s system cron row(s) to local schedule zone %s",
+                repaired,
+                local_timezone,
+            )
+        return repaired
+
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""
         job = self.get_job(job_id)

@@ -18,6 +18,7 @@ from gobby.code_index.nightly_reindex import (
     register_code_index_nightly_reindex_cron,
 )
 from gobby.config.code_index import CodeIndexConfig
+from gobby.utils.datetime import resolve_local_timezone
 
 pytestmark = pytest.mark.unit
 
@@ -281,7 +282,8 @@ def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
     assert storage.created["name"] == CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME
     assert storage.created["schedule_type"] == "cron"
     assert storage.created["cron_expr"] == "0 2 * * *"
-    assert storage.created["timezone"] == "UTC"
+    # Unconfigured schedules read as host-local wall clock, not UTC.
+    assert storage.created["timezone"] == resolve_local_timezone()
     assert storage.created["enabled"] is True
     assert storage.created["is_system"] is True
     assert storage.created["action_config"]["handler"] == CODE_INDEX_NIGHTLY_REINDEX_HANDLER

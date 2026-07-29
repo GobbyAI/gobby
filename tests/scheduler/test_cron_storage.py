@@ -178,6 +178,46 @@ def test_reconcile_system_job_definition_repairs_a_stale_utc_timezone(
     assert repaired.next_run_at.astimezone(ZoneInfo("America/Chicago")).hour == 2
 
 
+def test_normalize_system_job_timezones_repairs_stale_bundled_rows(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Installed rows converge without waiting for other definition drift."""
+    monkeypatch.setenv("TZ", "America/Chicago")
+    stale = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:stale-nightly",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+        timezone="UTC",
+        is_system=True,
+    )
+    operator_owned = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="operator-nightly",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+        timezone="UTC",
+    )
+
+    assert cron_storage.normalize_system_job_timezones() == 1
+
+    repaired = cron_storage.get_job(stale.id)
+    assert repaired is not None
+    assert repaired.timezone == "America/Chicago"
+    assert repaired.next_run_at is not None
+    assert repaired.next_run_at.astimezone(ZoneInfo("America/Chicago")).hour == 2
+    untouched = cron_storage.get_job(operator_owned.id)
+    assert untouched is not None
+    assert untouched.timezone == "UTC"
+    # Converged rows are not rewritten on the next pass.
+    assert cron_storage.normalize_system_job_timezones() == 0
+
+
 def test_create_job_rejects_invalid_enabled_schedule(cron_storage: CronJobStorage) -> None:
     with pytest.raises(ValueError, match="valid future schedule"):
         cron_storage.create_job(

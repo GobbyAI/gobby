@@ -334,6 +334,13 @@ def init_orchestration(runner: GobbyRunner) -> None:
             raise _CronDependencyUnavailable from None
 
         try:
+            # Bundled schedules are wall-clock local; rows installed before that
+            # converge here rather than waiting for unrelated definition drift.
+            runner.cron_storage.normalize_system_job_timezones()
+        except Exception:
+            logger.exception("Failed to normalize system cron schedule timezones")
+
+        try:
             from gobby.scheduler.executor import CronExecutor
 
             cron_executor = CronExecutor(
