@@ -10,7 +10,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 from gobby.terminal_ownership import TerminalIdentity, terminal_session_identity
 
-MAX_ACTIVE_SESSION_SCAN = 250
+MAX_TERMINAL_SESSION_CANDIDATES = 250
 MAX_HANDOFF_PARENT_CANDIDATES = 8
 
 if TYPE_CHECKING:
@@ -41,9 +41,9 @@ def _parse_terminal_context_value(value: Any) -> dict[str, Any]:
 def _normalize_context_parent_pid(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, int):
+    if isinstance(value, int) and value > 0:
         return value
-    if isinstance(value, str) and value.isdigit():
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
         return int(value)
     return None
 
@@ -68,6 +68,26 @@ def _terminal_context_match_score(
             return None
         score += 1
     return score
+
+
+def _terminal_session_match_score(
+    session: Session,
+    requested_context: dict[str, Any],
+    parent_pid: int | None,
+) -> int | None:
+    stored_context = session.terminal_context or {}
+    stored_parent_pid = _normalize_context_parent_pid(stored_context.get("parent_pid"))
+    pid_match = parent_pid is not None and stored_parent_pid == parent_pid
+    match_score = _terminal_context_match_score(requested_context, stored_context)
+    if match_score is None or (not pid_match and match_score == 0):
+        return None
+    return match_score + 100 if pid_match else match_score
+
+
+def _unique_best_match(matches: list[tuple[int, Session]]) -> Session | None:
+    best_score = max(score for score, _session in matches)
+    best_matches = [session for score, session in matches if score == best_score]
+    return best_matches[0] if len(best_matches) == 1 else None
 
 
 def _handoff_candidate_matches(session: Session, requested_context: dict[str, Any]) -> bool:
@@ -316,32 +336,77 @@ class _DiscoveryMixin:
             ORDER BY updated_at DESC
             LIMIT %s
             """,
-            (normalized_project_id, "active", MAX_ACTIVE_SESSION_SCAN),
+            (normalized_project_id, "active", MAX_TERMINAL_SESSION_CANDIDATES),
         )
 
         requested_context = _parse_terminal_context_value(terminal_context)
         matches: list[tuple[int, Session]] = []
         for row in rows:
             session = Session.from_row(row)
-            stored_context = session.terminal_context or {}
-            stored_parent_pid = _normalize_context_parent_pid(stored_context.get("parent_pid"))
-            pid_match = stored_parent_pid == normalized_parent_pid
-            match_score = _terminal_context_match_score(requested_context, stored_context)
+            match_score = _terminal_session_match_score(
+                session,
+                requested_context,
+                normalized_parent_pid,
+            )
             if match_score is None:
                 continue
-            if not pid_match and match_score == 0:
-                # No terminal-context overlap and no pid match — skip.
-                continue
-            if pid_match:
-                match_score += 100  # weight pid match heavily
             matches.append((match_score, session))
 
         if not matches:
             return None
 
-        best_score = max(score for score, _session in matches)
-        best_matches = [session for score, session in matches if score == best_score]
-        return best_matches[0] if len(best_matches) == 1 else None
+        return _unique_best_match(matches)
+
+    def resolve_current_terminal_session(
+        self: _ManagerState,
+        project_id: str | None,
+        parent_pid: Any,
+        terminal_context: dict[str, Any] | str | None,
+    ) -> Session | None:
+        """Resolve the current terminal session from project-scoped ambient identity."""
+        normalized_project_id = project_id.strip() if isinstance(project_id, str) else None
+        normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
+        requested_context = _parse_terminal_context_value(terminal_context)
+        if not normalized_project_id or (normalized_parent_pid is None and not requested_context):
+            return None
+
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM sessions
+            WHERE project_id = %s
+              AND session_type = %s
+              AND status IN (%s, %s, %s)
+              AND terminal_context IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT %s
+            """,
+            (
+                normalized_project_id,
+                "terminal",
+                "active",
+                "paused",
+                "handoff_ready",
+                MAX_TERMINAL_SESSION_CANDIDATES,
+            ),
+        )
+
+        active_matches: list[tuple[int, Session]] = []
+        fallback_matches: list[tuple[int, Session]] = []
+        for row in rows:
+            session = Session.from_row(row)
+            match_score = _terminal_session_match_score(
+                session,
+                requested_context,
+                normalized_parent_pid,
+            )
+            if match_score is None:
+                continue
+            matches = active_matches if session.status == "active" else fallback_matches
+            matches.append((match_score, session))
+
+        if active_matches:
+            return _unique_best_match(active_matches)
+        return _unique_best_match(fallback_matches) if fallback_matches else None
 
     def find_children(self: _ManagerState, parent_session_id: str) -> list[Session]:
         """
