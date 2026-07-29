@@ -2009,6 +2009,10 @@ class _FakeDreamDB:
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT COUNT(*) AS total FROM memory_dream_snapshots"):
+            run_id = str(params[0])
+            total = sum(1 for row in self.snapshots if row["run_id"] == run_id and row["applied"])
+            return {"total": total}
         if normalized.startswith("INSERT INTO memory_dream_snapshots"):
             snapshot = {
                 "id": len(self.snapshots) + 1,
@@ -2417,6 +2421,29 @@ def _keep_all_planner() -> Any:
     )
 
 
+def _delete_all_planner() -> Any:
+    """Patch the unit planner to delete every candidate, forcing snapshots."""
+
+    async def _plan(*, candidates: list[Any], **_: Any) -> dict[str, Any]:
+        return {
+            "actions": [
+                {
+                    "action": "delete",
+                    "memory_id": candidate.id,
+                    "confidence": 1.0,
+                    "reason": "test delete",
+                }
+                for candidate in candidates
+            ],
+            "planner_errors": [],
+        }
+
+    return patch(
+        "gobby.memory.dream.orchestrator.build_raw_plan",
+        AsyncMock(side_effect=_plan),
+    )
+
+
 @pytest.mark.asyncio
 async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     db = _FakeDreamDB()
@@ -2446,6 +2473,30 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     assert rerun["success"] is True
     assert rerun["run"]["summary"]["candidates_reviewed"] == 0
     assert rerun["run"]["summary"]["pages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sweep_snapshot_totals_are_per_unit_not_cumulative() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(5)}
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(manager),
+        dream_config=_sweep_config(unit_size=2),
+        llm_service=MagicMock(),
+    )
+
+    with _delete_all_planner():
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
+
+    assert result["success"] is True
+    summary = result["run"]["summary"]
+    applied = sum(1 for row in db.snapshots if row["applied"])
+    assert summary["mutations"] == 5
+    assert applied == 5
+    # Regression: unit summaries carry per-unit snapshot deltas; summing the
+    # run-cumulative count across the 3 units would report 11 here, not 5.
+    assert summary["snapshots"] == applied
 
 
 @pytest.mark.asyncio

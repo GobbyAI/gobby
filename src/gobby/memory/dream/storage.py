@@ -908,6 +908,13 @@ class MemoryDreamStore:
             (run_id, memory_id, action, _json(before_data), _json(after_data)),
         )
 
+    def count_snapshots(self, run_id: str) -> int:
+        row = self.db.fetchone(
+            "SELECT COUNT(*) AS total FROM memory_dream_snapshots WHERE run_id = %s AND applied = TRUE",
+            (run_id,),
+        )
+        return 0 if row is None else int(row["total"])
+
     def list_snapshots(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.db.fetchall(
             """
