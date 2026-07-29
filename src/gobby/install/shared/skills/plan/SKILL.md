@@ -97,18 +97,13 @@ The constructive enhancement methodology lives in `plan-enhance`. The taskless
 which runs after enhancement approval and before the adversary gate.
 
 1. Use the confirmed Decision Record as the requirements, constraints, risks,
-   and success-criteria source. Persist it as a repository document — a sibling
-   `.gobby/plans/<slug>.requirements.md` unless the user names another path —
-   and designate it inside the plan's `## Constraints`:
-
-   ```text
-   requirement-source: .gobby/plans/<slug>.requirements.md
-   ```
-
-   A conversational Decision Record cannot reach the reviewer. Designation is
-   the only requirements context a taskless Full plan controls, and it must
-   exist before the first adversary round. See **Requirements Sources** below;
-   `plan-draft`'s "Canonical Requirement Documents" holds the marker grammar.
+   and success-criteria source. It is drafting input held in this conversation;
+   never persist it as a separate requirements document and never designate one
+   with a `requirement-source:` marker. Everything it settles belongs in the
+   plan artifact itself, which is the canonical record — its `## Overview` and
+   `## Constraints` carry intent and limits, and its acceptance items carry what
+   done means. A sibling requirements file authored alongside the plan supplies
+   the reviewer no signal the plan does not already carry, and it drifts.
 2. Draft `.gobby/plans/<slug>.md` using the Plan-Coverage Contract from
    `plan-draft`.
 3. Run plan verification locally:
@@ -286,11 +281,17 @@ chosen, and there are three source kinds:
   `requirement-source:` marker in `## Constraints`. Always loaded, alongside
   whichever of the two above applies.
 
-Only the third is yours to control, which is why step 1 designates the Decision
-Record. A taskless round whose bundle holds nothing but the entry anchor asks
-the reviewer to trace every acceptance item back to one conversational
-sentence; expect `needs_requirements`, and note that a retry cannot fix it,
-because the anchor is immutable and re-entry only mints another arbitrary one.
+None of the three is yours to author. `repository_document` is the only one you
+influence at all, and only by preserving a marker the user designated; see
+`plan-draft`'s "Canonical Requirement Documents" for when that is warranted.
+Authoring a document so it can be designated defeats the purpose — a bundle
+source carries evidentiary weight only when the plan's author did not write it.
+The plan artifact stands as the canonical record of the plan's own intent.
+
+A taskless round's anchor is one message and may be a thin one, since the
+observer captures whichever message flipped the session into plan mode. Report
+that to the user when the bundle looks thin; do not paper over it by
+manufacturing a source.
 
 Inspect the bundle before spawning. `get_plan_review_snapshot` returns the
 prepared envelope, and preparation binds no run until `bind_evidence_run`, so

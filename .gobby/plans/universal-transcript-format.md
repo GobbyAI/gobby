@@ -22,8 +22,8 @@ handles non-JSONL (SQLite-backed) sources.
 `kind: framing`
 
 - **One bounded Rust change.** `crates/gwiki` keeps its current per-provider
-  adapters; migration to the normalized contract is deferred to task #19207
-  (section D1). `crates/ghook` gets exactly one required change: a `cursor` arm
+  adapters; migration to the normalized contract is out of scope (§D1).
+  `crates/ghook` gets exactly one required change: a `cursor` arm
   in `CliConfig::for_cli` (`crates/ghook/src/cli_config.rs:21`) plus its test.
   This is not conditional — `for_cli` matches a fixed CLI set and falls to
   `_ => None` for `cursor`, and `crates/ghook/src/dispatch.rs:25` answers `None`
@@ -55,12 +55,11 @@ handles non-JSONL (SQLite-backed) sources.
   and file-based window rendering remain the storage story.
 - **Internal-first.** The contract is authored language-neutrally
   (JSON Schema + fixtures under `docs/contracts/`) so the post-0.5.0 public
-  Rust crate port (#19209, section D3) is a port, not a redesign. No public
-  API, bindings, or crates.io work in this epic.
+  Rust crate port (§D3) is a port, not a redesign. No public API, bindings, or
+  crates.io work in this epic.
 - **No backward compatibility.** 0.5.0 has not shipped; existing wire shapes,
   frontend types, and fixture layouts may change freely.
 - Frontend deliverables must read `.impeccable.md` before producing UI output.
-- requirement-source: .gobby/plans/universal-transcript-format.requirements.md
 
 ## P1: Contract and ProviderSpec Foundation
 `kind: framing`
@@ -479,7 +478,7 @@ The normalized format is never persisted — consumers request it:
   message JSONL (contract §1.1 shape), reading the live transcript or gzip
   archive via the existing `TranscriptReader` path.
 - `uv run gobby transcripts normalize <session-ref|path> [--out FILE]` — CLI
-  wrapper over the same code path, for gwiki's future consumption (#19207)
+  wrapper over the same code path, for gwiki's future consumption (§D1)
   and offline debugging.
 - Both surfaces validate output against the JSON Schema in tests; this is the
   executable proof of the contract and the seam the deferred gwiki migration
@@ -969,58 +968,49 @@ Full integration means Gobby can spawn cursor agents, not just observe them
 - 5.7.3 - Cursor models present in feature-tier candidate defaults.
   file: `src/gobby/config/feature_candidate_defaults.py`.
 
-## D1 Deferred: gwiki migration to the normalized contract
-`kind: deferred`
+## D1 Out of scope: gwiki migration to the normalized contract
+`kind: framing`
 
-The Rust wiki-ingest layer (`crates/gwiki/src/ingest/session*.rs`, five
-per-provider adapters with an order-dependent selection chain) keeps parsing
-raw archives unchanged during this epic. Once the contract stabilizes and the
-gwiki refactor is underway, gwiki consumes §2.7's normalize-on-demand surface
-through a single reader and the per-provider adapters are deleted. Cursor CLI
-wiki ingest intentionally waits for that migration.
+Owner: josh. The Rust wiki-ingest layer (`crates/gwiki/src/ingest/session*.rs`,
+five per-provider adapters with an order-dependent selection chain) keeps
+parsing raw archives unchanged during this epic. Once the contract stabilizes
+and the gwiki refactor is underway, gwiki consumes §2.7's normalize-on-demand
+surface through a single reader and the per-provider adapters are deleted.
+Cursor CLI wiki ingest intentionally waits for that migration.
 
-```yaml
-deferral:
-  task_ref: "#19207"
-  reason: "gwiki is entering its own monorepo refactor; migrating it against an unproven contract would churn Rust twice. The contract must stabilize through this epic's fixture gauntlet first."
-  owner: "josh"
-  original_acceptance_items:
-    - D1.1
-    - D1.2
-```
+Rationale: gwiki is entering its own monorepo refactor; migrating it against an
+unproven contract would churn Rust twice. The contract must stabilize through
+this epic's fixture gauntlet first.
 
-## D2 Deferred: OpenTelemetry GenAI export projection
-`kind: deferred`
+## D2 Out of scope: OpenTelemetry GenAI export projection
+`kind: framing`
 
-Observability-standard export (OTel GenAI spans/events) is a projection over
-the normalized format, not a storage schema. It waits for the OTel GenAI agent
-conventions to stabilize and for this epic's contract to ship.
+Owner: josh. Observability-standard export (OTel GenAI spans/events) is a
+projection over the normalized format, not a storage schema. It waits for the
+OTel GenAI agent conventions to stabilize and for this epic's contract to ship.
 
-```yaml
-deferral:
-  task_ref: "#19208"
-  reason: "OTel GenAI agent conventions are still in Development status; exporting an unstable projection of a brand-new contract compounds two moving targets."
-  owner: "josh"
-  original_acceptance_items:
-    - D2.1
-```
+Rationale: the OTel GenAI agent conventions are still in Development status;
+exporting an unstable projection of a brand-new contract compounds two moving
+targets.
 
-## D3 Deferred: public Rust crate port
-`kind: deferred`
+## D3 Out of scope: public Rust crate port
+`kind: framing`
 
-The post-0.5.0 port of the canonical parsing layer to a standalone public
-Rust crate ("serde for agent CLI transcripts"), implementing the
+Owner: josh. The post-0.5.0 port of the canonical parsing layer to a standalone
+public Rust crate ("serde for agent CLI transcripts"), implementing the
 language-neutral contract with provable fixture parity. Internal-first was an
 explicit scope decision for this epic.
 
-```yaml
-deferral:
-  task_ref: "#19209"
-  reason: "Pre-0.5.0 the pain is internal dispersion and the renderer contract; a public API freeze now buys nothing and slows the refactor. The language-neutral contract and fixtures built here make the port mechanical later."
-  owner: "josh"
-  original_acceptance_items:
-    - D3.1
-```
+Rationale: pre-0.5.0 the pain is internal dispersion and the renderer contract;
+a public API freeze now buys nothing and slows the refactor. The
+language-neutral contract and fixtures built here make the port mechanical
+later.
+
+These three sections are `kind: framing` rather than `kind: deferred` because
+the typed deferral object requires a `task_ref` naming an open task that carries
+`deferred-from:<plan-id>:<section-id>` provenance
+(`docs/contracts/plan-coverage.md`), and this plan creates no deferral tasks
+before it is finalized. Follow-on tasks, if any, are cut at expansion time.
 
 ## V1 Plan Changelog
 `kind: verification`
