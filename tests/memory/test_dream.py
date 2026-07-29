@@ -28,6 +28,7 @@ from gobby.memory.dream.orchestrator import (
     MAX_ACTION_SAMPLE,
     WORK_UNIT_MAX_CANDIDATES,
     DreamDependencyError,
+    DreamSweepOrchestrator,
     SweepTotals,
     WorkUnitOutcome,
     _decode_raw_plan_metadata,
@@ -2646,6 +2647,91 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
     assert summary["candidates_reviewed"] == 2
     assert summary["pages"] == 1
     assert summary.get("planned_actions")
+
+
+@pytest.mark.asyncio
+async def test_dry_run_persists_unit_and_terminal_checkpoints() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i:02d}": _row(f"m-{i:02d}", f"content {i}") for i in range(5)}
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(_FakeSweepManager(db)),
+        dream_config=_sweep_config(unit_size=2),
+        llm_service=MagicMock(),
+    )
+    recorded: list[dict[str, Any]] = []
+    original = DreamSweepOrchestrator._persist_checkpoint
+
+    async def recording(self: DreamSweepOrchestrator, checkpoint: DreamCheckpoint) -> None:
+        recorded.append(checkpoint.to_dict())
+        await original(self, checkpoint)
+
+    with (
+        _keep_all_planner(),
+        patch.object(DreamSweepOrchestrator, "_persist_checkpoint", recording),
+    ):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    assert result["success"] is True
+    # One durable checkpoint per 2-candidate unit, then the terminal write.
+    assert [entry["completed"] for entry in recorded] == [2, 4, 5, 5]
+    assert [entry["batch_number"] for entry in recorded] == [1, 2, 3, 3]
+    assert recorded[-1]["stop_reason"] == "drained"
+    checkpoint = result["run"]["checkpoint"]
+    assert checkpoint["phase"] == "sweep"
+    assert checkpoint["stop_reason"] == "drained"
+    assert checkpoint["completed"] == 5
+
+
+@pytest.mark.asyncio
+async def test_dry_run_dependency_failure_persists_checkpoint() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(3)}
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(_FakeSweepManager(db)),
+        dream_config=_sweep_config(unit_size=10),
+        llm_service=MagicMock(),
+    )
+    failed_plan = {"actions": [], "planner_errors": ["provider fallback exhausted"]}
+
+    with patch(
+        "gobby.memory.dream.orchestrator.build_raw_plan",
+        AsyncMock(return_value=failed_plan),
+    ):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    assert result["success"] is False
+    run = result["run"]
+    assert run["status"] == "failed"
+    checkpoint = run["checkpoint"]
+    assert checkpoint["stop_reason"] == "dependency_failure"
+    assert "provider fallback exhausted" in checkpoint["last_dependency_failure"]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_window_exhaustion_records_partial() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i:02d}": _row(f"m-{i:02d}", f"content {i}") for i in range(4)}
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(_FakeSweepManager(db)),
+        dream_config=_sweep_config(unit_size=2),
+        llm_service=MagicMock(),
+    )
+    # Admission stays open for the first unit, then the window closes.
+    window = iter([True, False])
+
+    with (
+        _keep_all_planner(),
+        patch.object(DreamSweepOrchestrator, "window_open", lambda self: next(window)),
+    ):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    assert result["success"] is True
+    run = result["run"]
+    assert run["status"] == "partial"
+    assert run["summary"]["candidates_reviewed"] == 2
+    checkpoint = run["checkpoint"]
+    assert checkpoint["stop_reason"] == "window_exhausted"
+    assert checkpoint["completed"] == 2
 
 
 async def test_sweeps_attach_related_evidence() -> None:

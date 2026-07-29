@@ -296,10 +296,19 @@ class DreamSweepOrchestrator:
         )
         candidates_truncated = len(candidate_ids) > candidate_limit
         candidate_ids = candidate_ids[:candidate_limit]
-        totals = SweepTotals()
+        totals = self.totals
         for offset in range(0, len(candidate_ids), self.unit_size):
+            if not self.window_open():
+                self.stop_reason = "window_exhausted"
+                break
             unit_ids = candidate_ids[offset : offset + self.unit_size]
-            outcome = await self._run_unit(candidate_ids=unit_ids, dry_run=True)
+            try:
+                outcome = await self._run_unit(candidate_ids=unit_ids, dry_run=True)
+            except DreamDependencyError as exc:
+                self._last_dependency_failure = str(exc)
+                self.stop_reason = "dependency_failure"
+                await self._persist_checkpoint(self._checkpoint(stop_reason=self.stop_reason))
+                raise
             if not outcome.candidates:
                 continue
             totals.add_page(
@@ -308,6 +317,10 @@ class DreamSweepOrchestrator:
                 outcome.page_summary,
                 outcome.raw_plan_metadata,
             )
+            self._planned += len(outcome.actions)
+            await self._persist_checkpoint(self._checkpoint(selected=len(outcome.candidates)))
+        # Terminal rows carry a complete checkpoint even for preview runs.
+        await self._persist_checkpoint(self._checkpoint(stop_reason=self.stop_reason))
         action_count = sum(totals.action_counts.values())
         summary = totals.to_summary()
         summary["dry_run"] = True
