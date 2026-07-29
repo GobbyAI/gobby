@@ -144,7 +144,9 @@ the adversary-writes-on-approval contract.
 
 ### Canonical Requirement Documents
 
-Preserve or emit this line inside `## Constraints`, outside fenced code:
+When the user explicitly designates a repository document as a canonical
+requirement source, preserve or emit this line inside `## Constraints`, outside
+fenced code:
 
 ```text
 requirement-source: docs/repository-relative-path.md
@@ -153,17 +155,15 @@ requirement-source: docs/repository-relative-path.md
 Each marker names exactly one repository-relative path, which must exist. `..`
 and absolute paths are rejected. Preserve existing valid markers.
 
-Two cases warrant a marker:
+A marker earns its place only when the designated document predates the plan
+and someone other than the plan's author wrote it — a contract, spec, or
+standard the plan must satisfy. Never designate a document authored for this
+plan: the reviewer would check the plan against its author's own restatement of
+it, which adds no independent signal and launders the plan's assumptions into
+sealed evidence. The plan artifact is the canonical record of the plan itself.
 
-- The user explicitly designates a repository document as a canonical
-  requirement source.
-- A Full-depth plan persists its confirmed Decision Record as a repository
-  document, per step 1 of the `plan` skill. This is the normal case for any
-  plan headed to adversarial review, because designated documents are the only
-  requirements context a taskless plan controls.
-
-Otherwise emit no marker; ordinary links and document mentions are supporting
-context only.
+If the user designates no canonical repository document, emit no marker;
+ordinary links and document mentions are supporting context only.
 
 ### Table-Row Decomposition
 
