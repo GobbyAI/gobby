@@ -173,6 +173,40 @@ example `A7.4.1`, `A7.4.2`, and `A7.4.3`. Plan-adversary qualitatively rejects
 deliverables with fewer acceptance items than table data rows. This rule closes
 the missing-section failure mode from #12725.
 
+### Target Inventory Block Format
+
+Every deliverable declares the files it changes in a `Target:`/`Targets:`
+inventory before `**Acceptance:**`. The `target-coverage` lint fails the section
+when a concrete path appears in the body after a change-intent verb (`add`,
+`create`, `delete`, `edit`, `expose`, `extract`, `implement`, `modify`, `move`,
+`refactor`, `register`, `remove`, `rename`, `replace`, `split`, `touch`,
+`update`, `wire`) or in a `file:`/`behavior:` acceptance ref without a matching
+inventory entry.
+
+The block is contiguous. **A blank line ends it**, so entries must directly
+follow the `Targets:` line:
+
+```markdown
+Targets:
+- `src/module/file.py`
+- `tests/test_module.py`
+```
+
+Not this — the blank line ends the block, and the bullets are invisible to the
+lint even though they read as an inventory:
+
+```markdown
+Targets:
+
+- `src/module/file.py`
+```
+
+Matching is basename-aware in one direction: a mentioned path containing `/`
+must match a target entry exactly, while a bare filename matches any target
+sharing that basename. A bare extension such as `.tsx` is not a path and needs
+no entry. The full rule lives in `docs/contracts/plan-coverage.md`, "Target
+Inventory".
+
 ### Whole-Plan Sweep After Findings
 
 After any adversary finding, fix the cited instance and then sweep the whole

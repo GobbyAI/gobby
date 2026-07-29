@@ -275,7 +275,12 @@ def _lint_target_coverage(plan_doc: PlanDocument, section: PlanSection) -> list[
             line=section.source_span[0],
             message=(
                 "concrete file paths are mentioned in the deliverable body or acceptance "
-                f"refs but missing from Target/Targets: {', '.join(missing)}"
+                f"refs but missing from Target/Targets: {', '.join(missing)}. "
+                "Inventory entries must directly follow the Target/Targets line with no "
+                "blank line between them — a blank line ends the block, so bullets after "
+                "it are not read as targets. A mentioned path containing '/' must match a "
+                "target entry exactly; a bare filename matches any target sharing that "
+                "basename. See docs/contracts/plan-coverage.md, 'Target Inventory'."
             ),
             details={
                 "missing_paths": missing,

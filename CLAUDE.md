@@ -60,7 +60,7 @@ Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning i
 
 ## Design Context
 
-All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root before producing output. It defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules. Update via the `impeccable` skill's `teach` mode rather than freehand edits.
+All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root **and** load the `impeccable` skill before producing output. The file defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules; the skill carries the dispatch table and steering references, and loading it is what puts the pairing in `loaded_skills` so it survives a context compaction. Update the file via the skill's `teach` mode rather than freehand edits.
 
 ## Project Overview
 

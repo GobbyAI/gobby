@@ -86,6 +86,47 @@ symbol name needs disambiguation.
 - 1.1.2 - <prose>. symbol: `Symbol.make_id`.
 ```
 
+## Target Inventory
+
+Every `deliverable` section declares the files it changes in a `Target:` or
+`Targets:` inventory in its body, before `**Acceptance:**`. The `target-coverage`
+semantic lint (`src/gobby/plans/semantic_lint.py`) fails a section when a
+concrete file path appears in the body after a change-intent verb — `add`,
+`create`, `delete`, `edit`, `expose`, `extract`, `implement`, `modify`, `move`,
+`refactor`, `register`, `remove`, `rename`, `replace`, `split`, `touch`,
+`update`, `wire` — or in a `file:`/`behavior:` acceptance ref, and that path is
+not in the inventory.
+
+**Block format is load-bearing.** `iter_target_block_lines` reads the inventory
+as a contiguous block: the `Targets:` line itself, then every immediately
+following line. **A blank line ends the block**, as does the next heading, a
+`kind:` marker, `**Acceptance:**`, another `Target:` line, or any line that is
+neither a bullet nor contains a backtick or `/`. Inventory bullets separated
+from their `Targets:` line by a blank line are silently not part of the
+inventory, and the section then fails for paths that visually appear to be
+listed.
+
+```markdown
+Targets:
+- `web/src/components/chat/styles.css`
+- `web/src/components/activity/ActivityPanel.tsx`
+
+Update `web/src/components/chat/styles.css` to drop the activity imports.
+```
+
+The single-path form `Target: \`src/module.py\`` puts the path on the header
+line itself; both forms may appear in one section, and their entries merge.
+
+**Matching is basename-aware in one direction only** (`_path_covered_by_targets`):
+
+- A mentioned path containing `/` must match a target entry **exactly**.
+  `web/src/app.tsx` is not covered by a target of `app.tsx`.
+- A mentioned bare filename matches **any** target entry sharing that basename.
+  `stages.yaml` is covered by a target of
+  `src/gobby/install/shared/registry/stages.yaml`.
+
+A bare extension such as `.tsx` is not a path and never requires an entry.
+
 ## Deferrals
 
 Typed deferral object:

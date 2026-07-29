@@ -159,6 +159,31 @@ def test_dotted_symbols_do_not_emit_fake_path_tokens(tmp_path: Path) -> None:
     assert not any("hashlib.sh" in error for error in errors)
 
 
+def test_target_coverage_error_states_the_block_format_rule(tmp_path: Path) -> None:
+    """The block format is only recoverable from source unless the remedy says it."""
+    errors = _lint(
+        tmp_path,
+        """
+        Targets:
+
+        - `src/app.py`
+
+        Update `src/app.py`.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert len(errors) == 1
+    message = errors[0]
+    assert "src/app.py" in message
+    assert "no blank line between them" in message
+    assert "a blank line ends the block" in message
+    assert "must match a target entry exactly" in message
+    assert "docs/contracts/plan-coverage.md" in message
+
+
 def test_bare_extensions_are_not_concrete_paths(tmp_path: Path) -> None:
     """`.tsx` names a file type; only a named file can appear in a target inventory."""
     errors = _lint(

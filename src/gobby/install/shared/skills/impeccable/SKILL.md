@@ -40,7 +40,7 @@ Individual skills may require additional context. Check the skill's preparation 
 
 **Gathering order:**
 1. **Check current instructions (instant)**: If your loaded instructions already contain a **Design Context** section, proceed immediately.
-2. **Check .impeccable.md (fast)**: If not in instructions, read `.impeccable.md` from the project root. If it exists and contains the required context, proceed.
+2. **Check .impeccable.md (fast)**: If not in instructions, read `.impeccable.md` from the project root. It is the project's design contract — audience, tokens, color and contrast constraints, canonical components, per-surface rules — and this skill is written to be used with it, not instead of it. If it exists and contains the required context, proceed.
 3. **Run impeccable teach (REQUIRED)**: If neither source has context, you MUST run the impeccable skill in `teach` mode NOW before doing anything else. Do NOT skip this step. Do NOT attempt to infer context from the codebase instead.
 
 ---
