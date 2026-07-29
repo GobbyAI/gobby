@@ -13,6 +13,11 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    build_request_anchor,
+)
+from gobby.plans.vote_artifacts import PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE
 from gobby.workflows import observers as observers_module
 from gobby.workflows.observers import (
     _extract_shell_output_text,
@@ -180,6 +185,10 @@ class TestDetectPlanModeFromContext:
     def test_does_not_change_when_already_in_plan_mode(self, variables) -> None:
         variables["mode_level"] = 0
         variables["plan_mode"] = True
+        variables[REQUEST_ANCHOR_VARIABLE] = build_request_anchor(
+            "existing-anchor",
+            "Original request",
+        )
         prompt = "<system-reminder>Plan mode is active</system-reminder>"
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
@@ -1021,6 +1030,29 @@ class TestDetectTaskClaimClaimOperations:
 
 
 class TestDetectMcpCall:
+    def test_tracks_completed_plan_vote_interaction(self, variables, make_after_tool_event) -> None:
+        payload = {
+            "questions": [
+                {
+                    "id": "F1",
+                    "question": "F1 detail. Proposed edit: exact replacement.",
+                }
+            ]
+        }
+        event = make_after_tool_event(
+            "AskUserQuestion",
+            tool_input=payload,
+            tool_output={"answers": {"F1": "accept"}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables[PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE] == {
+            "tool": "AskUserQuestion",
+            "payload": payload,
+            "response_observed": True,
+        }
+
     def test_tracks_successful_mcp_call(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",

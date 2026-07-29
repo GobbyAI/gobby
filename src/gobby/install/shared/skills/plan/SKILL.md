@@ -135,7 +135,16 @@ Better/Bigger pass.
       before recording its vote. Put the complete presentation and vote prompt
       in the interaction payload itself, with the full item text inside that
       payload; free text emitted outside tool calls is not guaranteed to render.
-      If the user declines an item with deferral, record a typed
+      After the interaction returns, call
+      `gobby-plans:record_plan_vote_artifact` with `round_kind: enhancement`.
+      Its `interaction_payload.items` must carry every suggestion id, full
+      presented text, and exact proposed edit text; its `votes` must carry a
+      unique vote id and explicit decision for every suggestion. The tool rejects
+      free-text-only presentation, blanket decisions, missing votes, and proposed
+      text omitted from the presented item. Do not edit the plan until the
+      artifact is accepted. Apply accepted `proposed_edit_text` exactly; any
+      amended wording requires a new interaction payload and replacement artifact
+      for that round. If the user declines an item with deferral, record a typed
       `kind: deferred` plan section that points to its follow-up task (section
       2.3 is the worked example). The human is the scope gate
       (present-and-stop): you present, the user decides what ships.
@@ -239,7 +248,16 @@ including its description, finding detail, and metadata. When a finding
    exploration before recording its vote. Put the complete presentation and
    vote prompt in the interaction payload itself, with the full item text inside
    that payload; free text emitted outside tool calls is not guaranteed to
-   render. If the user declines an item with deferral, record a typed
+   render. After the interaction returns, call
+   `gobby-plans:record_plan_vote_artifact` with `round_kind: adversary`.
+   Its `interaction_payload.items` must carry every finding id, full presented
+   text, and exact proposed edit text; its `votes` must carry a unique vote id
+   and explicit decision for every finding. The tool rejects free-text-only
+   presentation, blanket decisions, missing votes, and proposed text omitted
+   from the presented item. Do not revise the plan until the artifact is
+   accepted. Apply accepted `proposed_edit_text` exactly; any amended wording
+   requires a new interaction payload and replacement artifact for that round.
+   If the user declines an item with deferral, record a typed
    `kind: deferred` plan section that points to its follow-up task (section 2.3
    is the worked example).
 7. If the verdict is `needs_review`, recall `fixer-induced-defect` plan lessons

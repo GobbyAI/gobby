@@ -6,6 +6,11 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.plans.vote_artifacts import (
+    INTERACTION_TOOLS,
+    PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE,
+)
+
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
 
@@ -22,6 +27,8 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     """Track MCP tool calls by server/tool for rule engine conditions."""
     if not event.data:
         return
+
+    _track_plan_vote_interaction(event, variables)
 
     server_name = event.data.get("mcp_server", "")
     inner_tool = event.data.get("mcp_tool", "")
@@ -46,6 +53,24 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
                 tool_output,
                 session_id,
             )
+
+
+def _track_plan_vote_interaction(event: HookEvent, variables: dict[str, Any]) -> None:
+    """Retain the latest completed native interaction for plan-vote attestation."""
+    tool_name = event.data.get("tool_name")
+    tool_input = event.data.get("tool_input")
+    tool_output = event.data.get("tool_output")
+    if (
+        tool_name not in INTERACTION_TOOLS
+        or not isinstance(tool_input, dict)
+        or tool_output in (None, "", {})
+    ):
+        return
+    variables[PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE] = {
+        "tool": tool_name,
+        "payload": tool_input,
+        "response_observed": True,
+    }
 
 
 def _track_loaded_skill(

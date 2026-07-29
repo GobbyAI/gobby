@@ -240,6 +240,11 @@ def test_enhancement_presentation_contract(body: str) -> None:
     assert "interaction payload" in presentation
     assert "full item text inside that payload" in presentation
     assert "outside tool calls is not guaranteed to render" in presentation
+    assert "gobby-plans:record_plan_vote_artifact" in presentation
+    assert "`round_kind: enhancement`" in presentation
+    assert "unique vote id and explicit decision for every suggestion" in presentation
+    assert "Do not edit the plan until the artifact is accepted" in presentation
+    assert "Apply accepted `proposed_edit_text` exactly" in presentation
     assert "`kind: deferred`" in presentation
     assert "follow-up task" in presentation
 
@@ -262,6 +267,11 @@ def test_adversary_presentation_contract(body: str) -> None:
     assert "interaction payload" in presentation
     assert "full item text inside that payload" in presentation
     assert "outside tool calls is not guaranteed to render" in presentation
+    assert "gobby-plans:record_plan_vote_artifact" in presentation
+    assert "`round_kind: adversary`" in presentation
+    assert "unique vote id and explicit decision for every finding" in presentation
+    assert "Do not revise the plan until the artifact is accepted" in presentation
+    assert "Apply accepted `proposed_edit_text` exactly" in presentation
     assert "`kind: deferred`" in presentation
     assert "follow-up task" in presentation
 

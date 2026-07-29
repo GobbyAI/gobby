@@ -9,6 +9,7 @@ import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.mcp_proxy.tools.plans.vote_artifacts import register_plan_vote_artifact_tools
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
@@ -274,6 +275,15 @@ def create_plan_registry(
     )
 
     register_review_evidence_tools(
+        registry,
+        db,
+        resolve_project_id=lambda project: _resolve_project_id(
+            db,
+            project,
+            default_project_id,
+        ),
+    )
+    register_plan_vote_artifact_tools(
         registry,
         db,
         resolve_project_id=lambda project: _resolve_project_id(
