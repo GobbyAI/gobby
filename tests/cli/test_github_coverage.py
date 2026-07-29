@@ -34,6 +34,7 @@ async def test_gather_github_access_isolates_per_repository_failures() -> None:
             ]
         )
 
+    assert len(results) == 2
     assert results == [(None, "boom"), (("owner/repo",), None)]
 
 

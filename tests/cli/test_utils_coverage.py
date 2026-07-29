@@ -661,6 +661,7 @@ def test_resolve_project_ref_by_uuid() -> None:
     ):
         result = resolve_project_ref("uuid-abc")
     assert result == "uuid-abc"
+    assert mock_manager.get.call_args.args == ("uuid-abc",)
     mock_db.close.assert_not_called()
 
 
@@ -682,6 +683,7 @@ def test_resolve_project_ref_by_name() -> None:
     ):
         result = resolve_project_ref("my-project")
     assert result == "uuid-from-name"
+    assert mock_manager.get_by_name.call_args.args == ("my-project",)
     mock_db.close.assert_not_called()
 
 
@@ -700,6 +702,7 @@ def test_resolve_project_ref_not_found_returns_none() -> None:
     ):
         result = resolve_project_ref("nonexistent", exit_on_not_found=False)
     assert result is None
+    assert mock_manager.get_by_name.call_args.args == ("nonexistent",)
     mock_db.close.assert_not_called()
 
 
@@ -718,6 +721,7 @@ def test_resolve_project_ref_not_found_exits() -> None:
         pytest.raises(SystemExit),
     ):
         resolve_project_ref("nonexistent", exit_on_not_found=True)
+    assert mock_manager.get_by_name.call_args.args == ("nonexistent",)
     mock_db.close.assert_not_called()
 
 
@@ -810,6 +814,7 @@ def test_resolve_session_id_with_ref() -> None:
     ):
         result = resolve_session_id("#5")
     assert result == "uuid-resolved"
+    assert mock_manager.resolve_session_reference.call_args.args == ("#5", "proj-1")
     mock_db.close.assert_not_called()
 
 
@@ -828,6 +833,7 @@ def test_resolve_session_id_value_error() -> None:
         pytest.raises(click.ClickException, match="ambiguous"),
     ):
         resolve_session_id("abc")
+    assert mock_manager.resolve_session_reference.call_args.args == ("abc", None)
     mock_db.close.assert_not_called()
 
 
@@ -852,6 +858,7 @@ def test_list_project_names() -> None:
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = list_project_names()
+    assert len(result) == 2
     assert result == ["alpha", "beta"]
     mock_db.close.assert_not_called()
 
@@ -978,6 +985,7 @@ def test_init_local_storage(tmp_path: Path) -> None:
         result = init_local_storage()
 
     assert result is mock_db
+    assert mock_db.apply_migrations.call_count == 1
     mock_open.assert_called_once_with(config.database_url, pool_config=config.postgres_pool)
     mock_db.apply_migrations.assert_called_once_with()
     ensure_personal.assert_called_once_with(mock_db)

@@ -23,6 +23,8 @@ from gobby.utils.datetime import (
     utc_now,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_utc_now_returns_aware_utc_datetime() -> None:
     now = utc_now()
@@ -125,6 +127,7 @@ def test_resolve_local_timezone_prefers_explicit_then_env(
     monkeypatch.setenv("TZ", "America/Chicago")
 
     assert resolve_local_timezone("Europe/Berlin") == "Europe/Berlin"
+    assert resolve_local_timezone("Not/AZone") == "America/Chicago"
     assert resolve_local_timezone("  ") == "America/Chicago"
     assert resolve_local_timezone() == "America/Chicago"
 

@@ -156,7 +156,7 @@ class PlanReviewEvidenceStore:
             WHERE {" AND ".join(conditions)}
             ORDER BY created_at DESC, evidence_id
             LIMIT %s
-            """,  # nosec B608 - conditions contain only fixed SQL fragments.
+            """,  # Conditions contain only fixed SQL fragments. # nosec B608
             tuple(parameters),
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]

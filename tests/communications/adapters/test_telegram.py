@@ -591,6 +591,7 @@ async def test_edit_message_treats_not_modified_as_success(
     with patch.object(adapter, "_post_json", post_json):
         await adapter.edit_message("12345", "unchanged", "chat999")
 
+    assert post_json.await_count == 1
     post_json.assert_awaited_once()
 
 

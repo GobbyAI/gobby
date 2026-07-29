@@ -57,6 +57,8 @@ async def test_lifecycle_callbacks_fail_independently(
 
     await monitor._check_loop()
 
+    assert monitor._running is False
+    assert all(check.await_count == 1 for check in checks.values())
     monitor._non_task_resume_callback.assert_awaited_once_with()
     checks["check_trust_prompts"].assert_awaited_once_with()
 
@@ -163,6 +165,7 @@ def test_resume_finalization_tolerates_stopped_registry_loop(
     )
 
     assert actual.successor_run_id == "successor"
+    assert registry_loop.call_soon_threadsafe.call_count == 1
 
 
 def test_resume_finalization_propagates_registry_callback_failure(
@@ -192,3 +195,4 @@ def test_resume_finalization_propagates_registry_callback_failure(
             completion_registry=MagicMock(),
             registry_loop=registry_loop,
         )
+    assert registry_loop.call_soon_threadsafe.call_count == 1

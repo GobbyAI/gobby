@@ -7,7 +7,7 @@ import os
 import platform
 import re
 import shutil
-import subprocess  # nosec B404 - fixed dependency version commands
+import subprocess  # Fixed dependency version commands. # nosec B404
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -326,7 +326,7 @@ def _command_status(
         )
     try:
         path = str(Path(raw_path).resolve(strict=True))
-        result = subprocess.run(  # nosec B603 - executable resolved from PATH
+        result = subprocess.run(  # Executable resolved from PATH. # nosec B603
             [path, *arguments],
             capture_output=True,
             text=True,
@@ -394,7 +394,7 @@ def _docker_running(path: str | None) -> bool:
     if path is None:
         return False
     try:
-        result = subprocess.run(  # nosec B603 - absolute Docker executable
+        result = subprocess.run(  # Absolute Docker executable. # nosec B603
             [path, "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

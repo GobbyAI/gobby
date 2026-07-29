@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -35,18 +34,24 @@ class _FakeVisionAdapter:
 
 @pytest.mark.asyncio
 async def test_codex_endpoint_vision_stop_only_stops_connected_client() -> None:
-    client = MagicMock()
-    client.is_connected = False
-    client.stop = AsyncMock()
+    class FakeClient:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self.stop_count = 0
+
+        async def stop(self) -> None:
+            self.stop_count += 1
+
+    client = FakeClient()
     adapter = object.__new__(CodexEndpointVisionExtractAdapter)
-    adapter._client = client
+    adapter._client = cast(Any, client)
 
     await adapter.stop()
-    client.stop.assert_not_awaited()
+    assert client.stop_count == 0
 
     client.is_connected = True
     await adapter.stop()
-    client.stop.assert_awaited_once_with()
+    assert client.stop_count == 1
 
 
 class _FakeNativeVisionProvider:

@@ -287,7 +287,9 @@ async def test_restore_reconciliation_is_bounded_and_concurrent(
         nonlocal active, peak_active
         active += 1
         peak_active = max(peak_active, active)
-        await asyncio.sleep(0.001)
+        checkpoint = asyncio.Event()
+        asyncio.get_running_loop().call_soon(checkpoint.set)
+        await checkpoint.wait()
         active -= 1
 
     manager.reconcile_memory_indices = AsyncMock(side_effect=reconcile_memory_indices)
@@ -346,7 +348,9 @@ async def test_restore_cancellation_waits_for_owned_reconciliation(
     await started.wait()
 
     caller.cancel()
-    await asyncio.sleep(0)
+    checkpoint = asyncio.Event()
+    asyncio.get_running_loop().call_soon(checkpoint.set)
+    await checkpoint.wait()
     assert not finished.is_set()
     release.set()
 

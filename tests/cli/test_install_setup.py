@@ -245,6 +245,7 @@ class TestRunDaemonSetup:
             run_daemon_setup(tmp_path, configure_ide_settings=True)
 
         output = capsys.readouterr().out
+        assert "Node.js 20.11 or newer is required" in output
         assert "agent_sandbox.backend = provider-native" in output
         mock_gcode.assert_called_once()
         mock_ghook.assert_called_once()

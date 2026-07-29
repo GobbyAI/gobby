@@ -192,7 +192,7 @@ def settle_indexed_value[T](
 
 def _git_visible_source_files(repository_root: Path) -> tuple[str, ...]:
     try:
-        completed = subprocess.run(  # nosec B603 B607 - fixed local Git argv.
+        completed = subprocess.run(  # Fixed local Git argv. # nosec B603 B607
             [
                 "git",
                 "ls-files",

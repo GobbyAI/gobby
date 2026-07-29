@@ -319,6 +319,7 @@ async def test_sync_worker_loop_uses_context_daemon_config_breaker(
         timeout=1.0,
     )
 
+    assert shutdown.is_set()
     assert seen_breakers == [breaker]
 
 

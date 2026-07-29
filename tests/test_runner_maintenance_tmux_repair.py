@@ -165,6 +165,7 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert session_manager.calls == [(["active", "paused", "expired", "handoff_ready"], 200)]
+    assert owner.await_args_list == [call(paned)]
     enforce.assert_awaited_once_with(paned)
 
 
@@ -252,6 +253,8 @@ async def test_repair_loop_enforces_resolved_owner() -> None:
     ):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
+    assert owner.await_args_list == [call(child)]
+    assert enforce.await_args_list == [call(parent)]
     owner.assert_awaited_once_with(child)
     enforce.assert_awaited_once_with(parent)
 
@@ -299,6 +302,7 @@ async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
     ):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
+    assert owner.await_count == 2
     assert enforce.await_args_list == [call(root), call(nested_agent)]
 
 

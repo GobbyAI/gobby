@@ -87,17 +87,23 @@ async def test_activation_timeout_covers_complete_serial_probe_chain(
 ) -> None:
     calls: list[str] = []
 
+    async def delayed_probe(name: str) -> None:
+        calls.append(name)
+        released = asyncio.Event()
+        handle = asyncio.get_running_loop().call_later(0.03, released.set)
+        try:
+            await released.wait()
+        finally:
+            handle.cancel()
+
     async def slow_text(*_args: object) -> None:
-        calls.append("text")
-        await asyncio.sleep(0.03)
+        await delayed_probe("text")
 
     async def slow_tool(*_args: object) -> None:
-        calls.append("tool")
-        await asyncio.sleep(0.03)
+        await delayed_probe("tool")
 
     async def slow_vision(*_args: object) -> None:
-        calls.append("vision")
-        await asyncio.sleep(0.03)
+        await delayed_probe("vision")
 
     monkeypatch.setattr(endpoint_activation, "_probe_text", slow_text)
     monkeypatch.setattr(endpoint_activation, "_probe_tool_context_and_resume", slow_tool)

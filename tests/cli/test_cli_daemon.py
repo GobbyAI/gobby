@@ -42,8 +42,10 @@ def test_start_dependency_errors_detects_managed_services_from_home(
         patch("gobby.cli.daemon.collect_dependency_report", return_value=report) as collect,
         patch("gobby.cli.daemon.required_dependency_errors", return_value=[]) as required,
     ):
-        assert _start_dependency_errors() == []
+        result = _start_dependency_errors()
 
+    assert result == []
+    assert required.call_args.args == (report,)
     collect.assert_called_once_with(managed_services=managed_services, include_srt=True)
     required.assert_called_once_with(report)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess  # nosec B404 - fixed local gcode argv.
+import subprocess  # Fixed local gcode argv. # nosec B404
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -201,7 +201,7 @@ def _submitted_scope(
 def _index_repository(project_root: Path) -> None:
     binary = resolve_native_bin_or_default("gcode")
     try:
-        completed = subprocess.run(  # nosec B603 - fixed argv plus trusted local path.
+        completed = subprocess.run(  # Fixed argv plus trusted local path. # nosec B603
             [binary, "index", "--quiet", "--project", str(project_root)],
             cwd=project_root,
             check=False,

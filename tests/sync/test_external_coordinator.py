@@ -279,7 +279,9 @@ async def test_wait_for_idle_drains_dispatched_work() -> None:
         await coordinator.refresh()
         await asyncio.wait_for(entered.wait(), timeout=1.0)
         draining = asyncio.create_task(coordinator.wait_for_idle())
-        await asyncio.sleep(0)
+        checkpoint = asyncio.Event()
+        asyncio.get_running_loop().call_soon(checkpoint.set)
+        await checkpoint.wait()
         assert not draining.done()
 
         release.set()

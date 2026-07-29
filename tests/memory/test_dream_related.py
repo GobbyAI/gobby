@@ -442,7 +442,9 @@ async def test_saturation_bounded_db_usage(caplog: pytest.LogCaptureFixture) -> 
         active_total += 1
         peak_total = max(peak_total, active_total)
         try:
-            await asyncio.sleep(0.001)
+            checkpoint = asyncio.Event()
+            asyncio.get_running_loop().call_soon(checkpoint.set)
+            await checkpoint.wait()
             return value
         finally:
             if kind == "db":

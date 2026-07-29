@@ -4,7 +4,6 @@ import os
 import shlex
 import stat
 import subprocess
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -820,7 +819,6 @@ class TestInstallGitHooks:
             pytest.fail("post-commit gcode process did not exit after lock skip")
 
         assert stdout == "done\n"
-        time.sleep(0.1)
         assert "--skip-if-locked" in args_file.read_text().splitlines()
         assert not waiter_file.exists()
         assert not curl_file.exists()

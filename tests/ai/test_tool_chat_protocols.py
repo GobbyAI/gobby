@@ -308,7 +308,9 @@ async def test_codex_tool_free_turn_cap_interrupts_active_turn(tmp_path: Path) -
         _request(tmp_path, [], limits=ToolLoopLimits(max_turns=1)),
         _binding("codex", AIAdapterStyle.DAEMON),
     )
-    await asyncio.sleep(0)
+    checkpoint = asyncio.Event()
+    asyncio.get_running_loop().call_soon(checkpoint.set)
+    await checkpoint.wait()
 
     assert result.stop_reason == "max_turns"
     assert result.turns == 1

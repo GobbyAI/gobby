@@ -88,7 +88,7 @@ def resolve_local_timezone(configured_timezone: str | None = None) -> str:
     only names the zone a wall-clock schedule is interpreted in.
     """
     configured = (configured_timezone or "").strip()
-    if configured:
+    if configured and is_valid_timezone(configured):
         return configured
 
     env_timezone = (os.environ.get("TZ") or "").strip()

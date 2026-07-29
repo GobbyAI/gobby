@@ -910,7 +910,11 @@ class MemoryDreamStore:
 
     def count_snapshots(self, run_id: str) -> int:
         row = self.db.fetchone(
-            "SELECT COUNT(*) AS total FROM memory_dream_snapshots WHERE run_id = %s AND applied = TRUE",
+            """
+            SELECT COUNT(*) AS total
+              FROM memory_dream_snapshots
+             WHERE run_id = %s AND applied = TRUE
+            """,
             (run_id,),
         )
         return 0 if row is None else int(row["total"])

@@ -242,7 +242,7 @@ def _normalize_repo_path(value: object) -> str | None:
 
 
 def _git_paths(project_path: str, *args: str) -> set[str]:
-    result = subprocess.run(  # nosec B603 B607 - hardcoded git command
+    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
         ["git", *args],
         cwd=Path(project_path),
         check=False,

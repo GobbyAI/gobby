@@ -731,6 +731,7 @@ class TestSessionMoreCoverage:
 
             reconcile_activity.assert_called_once_with(handler._session_manager, "sess-1")
             handler._session_manager.register_session.assert_not_called()
+            assert event.data["source"] == "compact"
             assert event.metadata["_platform_session_id"] == "sess-1"
             # In-place handoff: nothing expires and claims never change owner
             handler._session_manager.mark_session_expired.assert_not_called()
@@ -761,6 +762,7 @@ class TestSessionMoreCoverage:
 
             mock_sleep.assert_not_called()
             assert event.data["source"] == "startup"
+            assert event.metadata["_platform_session_id"] == "new-sess-1"
             handler._session_manager.register_session.assert_called_once()
 
 

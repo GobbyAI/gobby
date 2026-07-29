@@ -154,7 +154,7 @@ async def test_sticker_vision_timeout_uses_fallback(
     service = MagicMock()
 
     async def slow_extract(*_args: object, **_kwargs: object) -> VisionExtractResult:
-        await asyncio.sleep(10)
+        await asyncio.Event().wait()
         return VisionExtractResult(
             text="late",
             capability=AICapability.VISION_EXTRACT,

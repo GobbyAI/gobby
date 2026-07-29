@@ -86,7 +86,7 @@ def session_has_retained_references(db: HubDatabase, session_id: str) -> bool:
         FROM sessions
         WHERE id = %s
           AND NOT ({" AND ".join(guards)})
-        """,  # nosec B608 -- guard SQL is generated from fixed identifiers above.
+        """,  # Guard SQL is generated from fixed identifiers above. # nosec B608
         (session_id,),
     )
     return row is not None

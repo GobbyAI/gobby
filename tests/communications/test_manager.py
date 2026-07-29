@@ -974,7 +974,7 @@ async def test_voice_transcription_timeout_preserves_message_and_marks_failed(
     transcriber = MagicMock()
 
     async def slow_transcribe(*_args: object) -> str:
-        await asyncio.sleep(10)
+        await asyncio.Event().wait()
         return "late transcript"
 
     transcriber.transcribe = AsyncMock(side_effect=slow_transcribe)

@@ -234,6 +234,7 @@ def test_all_with_only_repository_hooks_is_not_a_full_install(
     )
 
     assert result.exit_code == 1
+    assert "stop after classification" in result.output
     preflight.assert_called_once_with(
         is_full_install=False,
         detected_clis=[],

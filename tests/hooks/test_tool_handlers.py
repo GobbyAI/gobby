@@ -444,12 +444,13 @@ class TestToolHandlerEdgeCases:
                 return_value=True,
             ) as record_files,
         ):
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
         record_files.assert_called_once_with(
             "sess-123",
             ["src/first.py", "docs/plan.md"],
         )
+        assert response.decision == "allow"
         assert notify_code_index.call_count == 2
 
     def test_structured_edit_without_paths_records_empty_sentinel_and_warns(
@@ -503,8 +504,9 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
