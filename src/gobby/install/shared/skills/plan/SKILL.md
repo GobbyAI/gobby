@@ -118,8 +118,8 @@ Better/Bigger pass.
       Changelog` entry with `kind: enhancement`.
    5. Stop on `converged: true`, all suggestions declined, or the
       `max_enhancement_rounds` cap. The enhancer never gates; control then
-      returns to the user. Ask for separate approval before starting
-      adversarial review in step 5.
+      returns to the user. Ask for separate approval before starting adversarial
+      review in step 5.
 5. After the enhancement phase, call `prepare_plan_review_round` immediately
 before you spawn `plan-adversary-taskless` without `task_id` and with
 `isolation="none"`. Do not pass provider or model: the reviewer model is the
