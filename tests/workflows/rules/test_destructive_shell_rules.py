@@ -377,6 +377,12 @@ class TestNoDestructiveGitInteractive:
             "git checkout -- .",
             "git restore .",
             "git branch -D feature",
+            "git stash",
+            "git stash push",
+            "git stash save before-rebase",
+            "git stash pop",
+            "git stash apply stash@{1}",
+            "git stash branch recovery",
             "git stash drop",
             "git stash clear",
         ],
@@ -390,8 +396,9 @@ class TestNoDestructiveGitInteractive:
             "git status",
             "git commit -m 'hello'",
             "git branch -d merged-branch",
-            "git stash",
-            "git stash pop",
+            "git stash list",
+            "git stash show",
+            "git stash show -p stash@{0}",
             "git checkout feature-branch",
             "git reset --soft HEAD~1",
         ],
@@ -405,6 +412,23 @@ class TestNoDestructiveGitInteractive:
     def test_reason_has_escape_hatch(self) -> None:
         for effect in self.body.effects:
             assert "Ask the user for permission to disable this rule" in effect.reason
+
+    @pytest.mark.parametrize(
+        "rule_name",
+        ["no-destructive-git", "no-destructive-git-interactive"],
+    )
+    def test_reason_redirects_to_p2p_coordination(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        rule_name: str,
+    ) -> None:
+        body = _get_rule(manager, rule_name)
+        assert body.effects
+        reason = body.effects[0].reason
+        assert reason is not None
+        assert "gobby-agents" in reason
+        assert "send_message" in reason
 
     def test_same_pattern_as_autonomous(self, db, manager) -> None:
         autonomous = _get_rule(manager, "no-destructive-git")
