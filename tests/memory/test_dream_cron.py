@@ -122,25 +122,83 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
     assert kwargs["schedule_type"] == "cron"
     # The default nightly schedule is 2:00 AM.
     assert kwargs["cron_expr"] == "0 2 * * *"
-    assert kwargs["action_config"] == {"handler": MEMORY_DREAM_CRON_HANDLER}
+    # Default admission window (14400s) + one work unit (1500s) + finalize grace.
+    assert kwargs["action_config"] == {
+        "handler": MEMORY_DREAM_CRON_HANDLER,
+        "timeout_seconds": 16200.0,
+    }
     assert kwargs["is_system"] is True
 
 
 def test_register_memory_dream_cron_does_not_register_pipeline_action() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
+    config = MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *")
 
     register_memory_dream_cron(
         cron_storage=cast(CronJobStorage, cron_storage),
         cron_executor=cron_executor,
         coordinator=_stub_coordinator(),
-        dream_config=MemoryDreamConfig(enabled=True, schedule_cron="0 3 * * *"),
+        dream_config=config,
         project_id="proj-1",
     )
 
     kwargs = cron_storage.created_jobs[0]
     assert kwargs["action_type"] == "handler"
-    assert kwargs["action_config"] == {"handler": MEMORY_DREAM_CRON_HANDLER}
+    assert kwargs["action_config"]["handler"] == MEMORY_DREAM_CRON_HANDLER
+
+
+def test_register_memory_dream_cron_bounds_action_beyond_admission_window() -> None:
+    """The inline sweep must outlive the executor's default 1440s action bound."""
+    cron_storage = _FakeCronStorage()
+    config = MemoryDreamConfig(
+        enabled=True,
+        max_runtime_seconds=7200,
+        work_unit_timeout_seconds=900.0,
+    )
+
+    register_memory_dream_cron(
+        cron_storage=cast(CronJobStorage, cron_storage),
+        cron_executor=_FakeCronExecutor(),
+        coordinator=_stub_coordinator(),
+        dream_config=config,
+        project_id="proj-1",
+    )
+
+    timeout = cron_storage.created_jobs[0]["action_config"]["timeout_seconds"]
+    assert timeout == pytest.approx(8400.0)
+    assert timeout > config.max_runtime_seconds + config.work_unit_timeout_seconds
+
+
+def test_register_memory_dream_cron_repairs_existing_job_action_timeout() -> None:
+    """An already-registered job predating the timeout gets it back on reconcile."""
+    existing = SimpleNamespace(
+        id="job-1",
+        enabled=True,
+        is_system=True,
+        action_config={"handler": MEMORY_DREAM_CRON_HANDLER},
+    )
+    cron_storage = _FakeCronStorage(
+        existing=existing,
+        repaired=SimpleNamespace(id="job-1", enabled=True),
+    )
+    config = MemoryDreamConfig(enabled=True)
+
+    register_memory_dream_cron(
+        cron_storage=cast(CronJobStorage, cron_storage),
+        cron_executor=_FakeCronExecutor(),
+        coordinator=_stub_coordinator(),
+        dream_config=config,
+        project_id="proj-1",
+    )
+
+    assert not cron_storage.created_jobs
+    job_id, kwargs = cron_storage.reconciled_jobs[0]
+    assert job_id == "job-1"
+    assert kwargs["action_config"] == {
+        "handler": MEMORY_DREAM_CRON_HANDLER,
+        "timeout_seconds": 16200.0,
+    }
 
 
 def test_register_memory_dream_cron_tolerates_missing_job_during_disable(

@@ -21,8 +21,29 @@ if TYPE_CHECKING:
 MEMORY_DREAM_CRON_JOB_NAME = "gobby:memory-dream"
 MEMORY_DREAM_CRON_HANDLER = "memory.dream"
 MEMORY_DREAM_CRON_DESCRIPTION = "Scheduled memory dream review and consolidation"
+# Slack for the terminal run write once the last admitted work unit returns.
+MEMORY_DREAM_CRON_FINALIZE_GRACE_SECONDS = 300.0
 
 CronHandler = Callable[[CronJob], Awaitable[str]]
+
+
+def _action_config(dream_config: MemoryDreamConfig) -> dict[str, str | float]:
+    """Build the handler action config, including its own bounded timeout.
+
+    The handler runs the sweep inline, so the cron executor's bounded-action
+    timeout has to clear the coordinator's own ceiling: the admission window
+    plus the final admitted work unit. Without an explicit value the executor
+    falls back to ``cron.running_timeout_seconds`` (1440s by default), which is
+    shorter than a single work unit and cancels every real nightly sweep.
+    """
+    return {
+        "handler": MEMORY_DREAM_CRON_HANDLER,
+        "timeout_seconds": (
+            float(dream_config.max_runtime_seconds)
+            + float(dream_config.work_unit_timeout_seconds)
+            + MEMORY_DREAM_CRON_FINALIZE_GRACE_SECONDS
+        ),
+    }
 
 
 class CronRegistrationProtocol(Protocol):
@@ -128,7 +149,7 @@ def _ensure_system_job(
             schedule_type="cron",
             cron_expr=cron_expr,
             action_type="handler",
-            action_config={"handler": MEMORY_DREAM_CRON_HANDLER},
+            action_config=_action_config(dream_config),
             enabled=True,
             is_system=True,
         )
@@ -141,7 +162,7 @@ def _ensure_system_job(
     repaired = cron_storage.reconcile_system_job_definition(
         existing.id,
         action_type="handler",
-        action_config={"handler": MEMORY_DREAM_CRON_HANDLER},
+        action_config=_action_config(dream_config),
         description=MEMORY_DREAM_CRON_DESCRIPTION,
         schedule_type="cron",
         cron_expr=cron_expr,
