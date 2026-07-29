@@ -84,7 +84,8 @@ async def apply_dream_plan(
 
     # Per-call delta, not the run-cumulative count: unit summaries are summed
     # by the sweep orchestrator, so a cumulative gauge here inflates totals.
-    summary["snapshots"] = await asyncio.to_thread(store.count_snapshots, run_id) - snapshots_before
+    snapshots_after = await asyncio.to_thread(store.count_snapshots, run_id)
+    summary["snapshots"] = snapshots_after - snapshots_before
     if summary["mutations"] and reconcile_after_apply:
         await _reconcile(memory_manager, summary)
     return summary
