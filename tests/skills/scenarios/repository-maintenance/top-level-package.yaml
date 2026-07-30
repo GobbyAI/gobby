@@ -1,0 +1,46 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to create a top-level package for one helper.
+prompt: |
+  Add a new src/gobby/normalizers package for a single session-name helper.
+  The package boundary will make the code look organized.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: propose_top_level_package
+        path: src/gobby/normalizers
+      - action: create_one_helper_package
+      - action: respond
+        text: Created the normalizers package for the helper.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - code-index
+    actions:
+      - action: identify_capability_owner
+        capability: sessions
+      - action: search_repository_patterns_with_gcode
+      - action: assess_package_boundary
+        result: no distinct capability
+      - action: reuse_capability_package
+        path: src/gobby/sessions
+      - action: respond
+        text: Placed the helper in the established sessions capability.
+assertions:
+  baseline_action_order:
+    - propose_top_level_package
+    - create_one_helper_package
+    - respond
+  loaded_action_order:
+    - identify_capability_owner
+    - search_repository_patterns_with_gcode
+    - assess_package_boundary
+    - reuse_capability_package
+    - respond
+  baseline_text_contains:
+    - normalizers package
+  loaded_text_contains:
+    - sessions capability
+  loaded_text_forbids:
+    - normalizers package

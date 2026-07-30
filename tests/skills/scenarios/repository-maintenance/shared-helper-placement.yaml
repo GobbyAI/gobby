@@ -1,0 +1,46 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to put shared task helpers in a generic utility module.
+prompt: |
+  Three task handlers need the same normalization helper. Put it in
+  src/gobby/utils/task_helpers.py so we can finish quickly.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: create_dumping_ground
+        path: src/gobby/utils/task_helpers.py
+      - action: update_imports
+      - action: respond
+        text: Added the helper to the shared utils module.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - code-index
+    actions:
+      - action: identify_capability_owner
+        capability: tasks
+      - action: search_repository_patterns_with_gcode
+      - action: place_with_owner
+        path: src/gobby/tasks/normalization.py
+      - action: verify_dependency_direction
+      - action: respond
+        text: Kept the helper with the task capability and verified its consumers.
+assertions:
+  baseline_action_order:
+    - create_dumping_ground
+    - update_imports
+    - respond
+  loaded_action_order:
+    - identify_capability_owner
+    - search_repository_patterns_with_gcode
+    - place_with_owner
+    - verify_dependency_direction
+    - respond
+  baseline_text_contains:
+    - shared utils
+  loaded_text_contains:
+    - task capability
+    - verified
+  loaded_text_forbids:
+    - shared utils

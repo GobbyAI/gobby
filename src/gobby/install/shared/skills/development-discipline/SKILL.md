@@ -20,6 +20,19 @@ Before editing, make an explicit test judgment: decide how behavior can be
 verified. Name the relevant test level: unit, integration, CLI/API, browser/UI,
 migration/storage, or documented manual check.
 
+## Structural Preflight
+
+Before editing:
+
+1. Identify the capability that owns the change.
+2. Search with `gcode` for established placement and dependency patterns.
+3. Check dependency direction, state ownership, public-surface impact, and test
+   placement.
+
+For package creation, module movement, cross-package dependencies, shared
+abstractions, or ownership changes, REQUIRED SKILL: repository-maintenance.
+For production file decomposition, REQUIRED SKILL: decompose-monolith.
+
 Every completion or review handoff must include:
 
 - Exact validation commands run.

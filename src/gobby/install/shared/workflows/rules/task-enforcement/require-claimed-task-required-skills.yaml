@@ -6,7 +6,7 @@ rules:
     event: before_tool
     enabled: true
     priority: 29
-    when: >
+    when: >-
       event.data.get('canonical_tool_kind') == 'write'
       and claimed_task_source_code_write(tool_input, event.data)
       and first_unloaded_claimed_task_required_skill(tool_input, event.data) != ''

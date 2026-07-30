@@ -1,0 +1,45 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to duplicate mutable state in a second package.
+prompt: |
+  Cache the active task in both the task service and MCP tool package. Keeping
+  local copies avoids another API call and should be faster to implement.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: duplicate_state_cache
+        owners:
+          - tasks
+          - mcp_proxy
+      - action: respond
+        text: Added a local active-task cache to both packages.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - code-index
+    actions:
+      - action: identify_state_owner
+        owner: tasks
+      - action: trace_state_consumers_with_gcode
+      - action: preserve_single_state_owner
+      - action: expose_narrow_api
+      - action: respond
+        text: Kept tasks as the sole owner and exposed a narrow query.
+assertions:
+  baseline_action_order:
+    - duplicate_state_cache
+    - respond
+  loaded_action_order:
+    - identify_state_owner
+    - trace_state_consumers_with_gcode
+    - preserve_single_state_owner
+    - expose_narrow_api
+    - respond
+  baseline_text_contains:
+    - cache to both
+  loaded_text_contains:
+    - sole owner
+    - narrow query
+  loaded_text_forbids:
+    - cache to both

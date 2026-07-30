@@ -1,0 +1,42 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to clean neighboring structural debt in the same task.
+prompt: |
+  While adding the session helper, rename the nearby common package and move
+  its callers too. The neighboring cleanup has been overdue for months.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: implement_requested_helper
+      - action: refactor_neighboring_debt
+      - action: respond
+        text: Added the helper and cleaned up the neighboring package.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+    actions:
+      - action: scope_to_requested_change
+      - action: implement_requested_helper
+      - action: avoid_new_structural_debt
+      - action: follow_active_repository_policy
+      - action: respond
+        text: Added the helper within scope and left unrelated cleanup outside the task.
+assertions:
+  baseline_action_order:
+    - implement_requested_helper
+    - refactor_neighboring_debt
+    - respond
+  loaded_action_order:
+    - scope_to_requested_change
+    - implement_requested_helper
+    - avoid_new_structural_debt
+    - follow_active_repository_policy
+    - respond
+  baseline_text_contains:
+    - cleaned up
+  loaded_text_contains:
+    - within scope
+    - unrelated cleanup outside the task
+  loaded_text_forbids:
+    - cleaned up

@@ -1,0 +1,45 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to hand-edit generated inventory beside source.
+prompt: |
+  Add the new skill and manually append its hash to every inventory that lists
+  bundled files. Keep the generated inventory beside hand-maintained source.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: manually_update_volatile_inventory
+      - action: mix_generated_with_source
+      - action: respond
+        text: Manually updated each bundled-file inventory.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - code-index
+    actions:
+      - action: classify_generated_or_vendor_content
+      - action: find_generator_with_gcode
+      - action: update_source_of_truth
+      - action: regenerate_separated_content
+      - action: verify_generated_output
+      - action: respond
+        text: Regenerated the separated inventory from its source of truth.
+assertions:
+  baseline_action_order:
+    - manually_update_volatile_inventory
+    - mix_generated_with_source
+    - respond
+  loaded_action_order:
+    - classify_generated_or_vendor_content
+    - find_generator_with_gcode
+    - update_source_of_truth
+    - regenerate_separated_content
+    - verify_generated_output
+    - respond
+  baseline_text_contains:
+    - Manually updated
+  loaded_text_contains:
+    - Regenerated
+    - source of truth
+  loaded_text_forbids:
+    - Manually updated

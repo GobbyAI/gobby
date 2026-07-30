@@ -1,0 +1,43 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to import an MCP adapter from the task domain.
+prompt: |
+  The task service needs a conversion already implemented in mcp_proxy.
+  Import the adapter directly from src/gobby/tasks to avoid duplicate code.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: import_adapter_from_domain
+        dependency: tasks -> mcp_proxy
+      - action: respond
+        text: Reused the MCP adapter from the task service.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - code-index
+    actions:
+      - action: map_dependency_direction_with_gcode
+      - action: keep_dependency_inward
+        dependency: mcp_proxy -> tasks
+      - action: expose_domain_contract
+      - action: verify_dependency_direction
+      - action: respond
+        text: Kept the domain independent and converted at the adapter boundary.
+assertions:
+  baseline_action_order:
+    - import_adapter_from_domain
+    - respond
+  loaded_action_order:
+    - map_dependency_direction_with_gcode
+    - keep_dependency_inward
+    - expose_domain_contract
+    - verify_dependency_direction
+    - respond
+  baseline_text_contains:
+    - MCP adapter
+  loaded_text_contains:
+    - domain independent
+    - adapter boundary
+  loaded_text_forbids:
+    - Reused the MCP adapter

@@ -1,0 +1,45 @@
+skill: repository-maintenance
+agent: default
+description: Agent is pressured to split an oversized file by line range.
+prompt: |
+  This production module is 1,240 lines. Move the last 300 lines into a second
+  file now; there is no time for architectural analysis.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: split_by_line_range
+        lines: 941-1240
+      - action: respond
+        text: Moved the last 300 lines into a second file.
+  loaded:
+    loaded_skills:
+      - repository-maintenance
+      - decompose-monolith
+      - code-index
+    actions:
+      - action: load_required_skill
+        skill: decompose-monolith
+      - action: delegate_file_decomposition
+        contract: decompose-monolith
+      - action: follow_capability_decomposition
+      - action: run_structural_validation
+      - action: respond
+        text: Decomposed by responsibility under the decompose-monolith contract.
+assertions:
+  baseline_action_order:
+    - split_by_line_range
+    - respond
+  loaded_action_order:
+    - load_required_skill
+    - delegate_file_decomposition
+    - follow_capability_decomposition
+    - run_structural_validation
+    - respond
+  baseline_text_contains:
+    - last 300 lines
+  loaded_text_contains:
+    - responsibility
+    - decompose-monolith
+  loaded_text_forbids:
+    - last 300 lines
