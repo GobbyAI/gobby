@@ -264,6 +264,82 @@ class PlanReviewEvidenceStore:
             f"finalized evidence cannot be expired: {evidence_id}",
         )
 
+    def write_vote_artifact(
+        self,
+        *,
+        transaction: Transaction,
+        evidence_id: str,
+        artifact: Mapping[str, object],
+        artifact_digest: str,
+        receipt: Mapping[str, object],
+        receipt_digest: str,
+        consume_session_id: str | None = None,
+        receipt_variable: str | None = None,
+    ) -> PlanReviewEvidence:
+        """Persist an artifact and atomically consume its observer receipt."""
+        artifact_payload = json.dumps(artifact, sort_keys=True, separators=(",", ":"))
+        receipt_payload = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+        if consume_session_id is not None:
+            if receipt_variable is None:
+                raise ValueError("receipt_variable is required when consuming a receipt")
+            consumed = transaction.execute(
+                """
+                UPDATE session_variables
+                SET variables = variables - %s,
+                    updated_at = NOW()
+                WHERE session_id = %s
+                  AND variables -> %s = %s::jsonb
+                RETURNING session_id
+                """,
+                (
+                    receipt_variable,
+                    consume_session_id,
+                    receipt_variable,
+                    receipt_payload,
+                ),
+            ).fetchone()
+            if consumed is None:
+                raise ReviewEvidenceError(
+                    "plan_vote_interaction_not_observed",
+                    "The observer receipt was already consumed or changed before recording.",
+                )
+
+        row = transaction.execute(
+            """
+            UPDATE plan_review_evidence
+            SET vote_artifact = %s::jsonb,
+                vote_artifact_digest = %s,
+                vote_receipt = %s::jsonb,
+                vote_receipt_digest = %s
+            WHERE evidence_id = %s
+              AND finalized_at IS NULL
+              AND expired_at IS NULL
+              AND vote_artifact IS NULL
+              AND vote_receipt IS NULL
+            RETURNING *
+            """,
+            (
+                artifact_payload,
+                artifact_digest,
+                receipt_payload,
+                receipt_digest,
+                evidence_id,
+            ),
+        ).fetchone()
+        if row is not None:
+            return PlanReviewEvidence.from_row(row)
+
+        current = self.require(evidence_id, transaction=transaction, for_update=True)
+        if current.vote_artifact is not None or current.vote_receipt is not None:
+            raise ReviewEvidenceError(
+                "plan_vote_artifact_conflict",
+                f"plan review evidence already has a vote artifact: {evidence_id}",
+            )
+        raise ReviewEvidenceError(
+            "evidence_replay",
+            f"inactive evidence cannot record a vote artifact: {evidence_id}",
+        )
+
     def finalize(
         self,
         *,

@@ -543,6 +543,10 @@ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 quality_ledger JSONB,
 repair_attestations JSONB,
 prior_round_context JSONB,
+vote_artifact JSONB,
+vote_artifact_digest TEXT,
+vote_receipt JSONB,
+vote_receipt_digest TEXT,
 CONSTRAINT plan_review_evidence_round_positive CHECK (round_number > 0),
 CONSTRAINT plan_review_evidence_manifest_array
 CHECK (jsonb_typeof(section_manifest) = 'array'),
@@ -552,6 +556,14 @@ CONSTRAINT plan_review_evidence_repair_attestations_type
 CHECK (jsonb_typeof(repair_attestations) = 'array'),
 CONSTRAINT plan_review_evidence_prior_round_context_type
 CHECK (jsonb_typeof(prior_round_context) = 'object'),
+CONSTRAINT plan_review_evidence_vote_artifact_type
+CHECK (jsonb_typeof(vote_artifact) = 'object'),
+CONSTRAINT plan_review_evidence_vote_artifact_pair
+CHECK ((vote_artifact IS NULL) = (vote_artifact_digest IS NULL)),
+CONSTRAINT plan_review_evidence_vote_receipt_type
+CHECK (jsonb_typeof(vote_receipt) = 'object'),
+CONSTRAINT plan_review_evidence_vote_receipt_pair
+CHECK ((vote_receipt IS NULL) = (vote_receipt_digest IS NULL)),
 CONSTRAINT plan_review_evidence_lifecycle_exclusive
 CHECK (NOT (finalized_at IS NOT NULL AND expired_at IS NOT NULL)),
 CONSTRAINT plan_review_evidence_attempt_binding CHECK (

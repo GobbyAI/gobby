@@ -100,6 +100,10 @@ class PlanReviewEvidence:
     quality_ledger: list[dict[str, object]] | None
     repair_attestations: list[dict[str, object]] | None
     prior_round_context: dict[str, object] | None
+    vote_artifact: dict[str, object] | None
+    vote_artifact_digest: str | None
+    vote_receipt: dict[str, object] | None
+    vote_receipt_digest: str | None
     created_at: datetime
 
     @classmethod
@@ -153,6 +157,10 @@ class PlanReviewEvidence:
             quality_ledger=_optional_json_object_list(row["quality_ledger"]),
             repair_attestations=_optional_json_object_list(row["repair_attestations"]),
             prior_round_context=_optional_json_object(row["prior_round_context"]),
+            vote_artifact=_optional_json_object(row["vote_artifact"]),
+            vote_artifact_digest=_optional_string(row["vote_artifact_digest"]),
+            vote_receipt=_optional_json_object(row["vote_receipt"]),
+            vote_receipt_digest=_optional_string(row["vote_receipt_digest"]),
             created_at=cast(datetime, row["created_at"]),
         )
 

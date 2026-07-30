@@ -118,10 +118,11 @@ which runs after enhancement approval and before the adversary gate.
 after approval and before the adversary gate, run the constructive
 Better/Bigger pass.
 
-   1. Spawn `plan-enhancer-taskless` without `task_id` and with
-      `isolation="none"`. Pass `artifact_path`, `round_number`,
-      `max_enhancement_rounds`, and the parent session id in the prompt or
-      variables.
+1. Call `prepare_plan_review_round` for the enhancement round, then spawn
+`plan-enhancer-taskless` without `task_id` and with `isolation="none"`. Pass
+the prepared `evidence_id`, `artifact_path`, `round_number`,
+`max_enhancement_rounds`, and the parent session id in the prompt or
+variables.
    2. Immediately after every enhancer launch, call
       `gobby-sessions:compact_self` for the parent session before waiting or
       doing any other work. This is mandatory on every enhancement round.
@@ -132,19 +133,27 @@ Better/Bigger pass.
       suggested enhancement, and metadata. When a suggestion modifies existing
       text, quote the current plan sections it touches. Collect an individual
       accept/decline vote for each suggestion, and allow per-item exploration
-      before recording its vote. Put the complete presentation and vote prompt
-      in the interaction payload itself, with the full item text inside that
-      payload; free text emitted outside tool calls is not guaranteed to render.
-      After the interaction returns, call
-      `gobby-plans:record_plan_vote_artifact` with `round_kind: enhancement`.
-      Its `interaction_payload.items` must carry every suggestion id, full
-      presented text, and exact proposed edit text; its `votes` must carry a
-      unique vote id and explicit decision for every suggestion. The tool rejects
-      free-text-only presentation, blanket decisions, missing votes, and proposed
-      text omitted from the presented item. Do not edit the plan until the
-      artifact is accepted. Apply accepted `proposed_edit_text` exactly; any
-      amended wording requires a new interaction payload and replacement artifact
-      for that round. If the user declines an item with deferral, record a typed
+before recording its vote. In attended rounds, first set
+`_plan_vote_interaction_context` to the prepared `evidence_id`,
+`round_number`, `round_kind: enhancement`, and pre-fold-in
+`content_sha256`; then put the complete presentation and vote prompt in the
+native interaction payload itself, with the full item text inside that
+payload. After the interaction returns, call
+`gobby-plans:record_plan_vote_artifact`. In unattended rounds, skip the
+native interaction and call `gobby-plans:coordinator_decision`; this route
+requires the operator-authenticated coordinator session and rejects agent
+capability tokens. Both calls carry the prepared `evidence_id` and
+`round_kind: enhancement`.
+Its `interaction_payload.items` must carry every suggestion id, full
+presented text, stable `target_section_id`, and exact proposed edit text; its
+`votes` must carry a unique vote id and explicit decision for every suggestion.
+The tool rejects
+free-text-only presentation, blanket decisions, missing votes, and proposed
+text omitted from the presented item. Do not edit the plan until the
+artifact is accepted. Apply accepted `proposed_edit_text` exactly; any
+amended wording requires a newly prepared round and artifact. The next round
+preparation transaction validates every accepted edit in its recorded target
+section before advancing. If the user declines an item with deferral, record a typed
       `kind: deferred` plan section that points to its follow-up task (section
       2.3 is the worked example). The human is the scope gate
       (present-and-stop): you present, the user decides what ships.
@@ -236,28 +245,36 @@ create a timeout checkpoint. Call `expire_plan_review_evidence`, then retry the
 same display round from a fresh snapshot, inventory, and index token under a
 newly bound adversary run. This is the sole timeout recovery path; do not append
 a changelog entry, increment the round, finalize evidence, or mint lessons.
-Otherwise append a `## V1 Plan Changelog` entry,
-persist the exact fence returned by `render_v1_round_checkpoint`, then call
-`finalize_plan_review_evidence` with that same result. Before any step 7
-revision, present a ranked
+Otherwise, before any finalization or step 7 revision, present a ranked
 summary of every finding, including its `id`, severity, location, impact,
 effort, risk, and a one-line gist. Present each finding's full text verbatim,
 including its description, finding detail, and metadata. When a finding
-   modifies existing text, quote the current plan sections it touches. Collect
-   an individual accept/decline vote for each finding, and allow per-item
-   exploration before recording its vote. Put the complete presentation and
-   vote prompt in the interaction payload itself, with the full item text inside
-   that payload; free text emitted outside tool calls is not guaranteed to
-   render. After the interaction returns, call
-   `gobby-plans:record_plan_vote_artifact` with `round_kind: adversary`.
-   Its `interaction_payload.items` must carry every finding id, full presented
-   text, and exact proposed edit text; its `votes` must carry a unique vote id
-   and explicit decision for every finding. The tool rejects free-text-only
-   presentation, blanket decisions, missing votes, and proposed text omitted
-   from the presented item. Do not revise the plan until the artifact is
-   accepted. Apply accepted `proposed_edit_text` exactly; any amended wording
-   requires a new interaction payload and replacement artifact for that round.
-   If the user declines an item with deferral, record a typed
+modifies existing text, quote the current plan sections it touches. Collect
+an individual accept/decline vote for each finding, and allow per-item
+exploration before recording its vote. In attended rounds, first set
+`_plan_vote_interaction_context` to the prepared `evidence_id`,
+`round_number`, `round_kind: adversary`, and pre-fold-in `content_sha256`;
+then put the complete presentation and vote prompt in the native interaction
+payload itself, with the full item text inside that payload. After the
+interaction returns, call `gobby-plans:record_plan_vote_artifact`. In
+unattended rounds, skip the native interaction and invoke
+`gobby-plans:coordinator_decision`; this route requires the
+operator-authenticated coordinator session and rejects agent capability
+tokens. Both calls carry the prepared `evidence_id` and
+`round_kind: adversary`.
+Its `interaction_payload.items` must carry every finding id, full presented
+text, stable `target_section_id`, and exact proposed edit text; its `votes`
+must carry a unique vote id and explicit decision for every finding. The tool rejects free-text-only
+presentation, blanket decisions, missing votes, and proposed text omitted
+from the presented item. Do not revise the plan until the artifact is
+accepted. Apply accepted `proposed_edit_text` exactly; any amended wording
+requires a newly prepared round and artifact. Then append the
+`## V1 Plan Changelog` entry, persist the exact fence returned by
+`render_v1_round_checkpoint`, and call `finalize_plan_review_evidence` with
+that same result. Finalization validates every accepted edit under
+whitespace-normalized block matching inside its recorded target section in
+the same transaction.
+If the user declines an item with deferral, record a typed
    `kind: deferred` plan section that points to its follow-up task (section 2.3
    is the worked example).
 7. If the verdict is `needs_review`, recall `fixer-induced-defect` plan lessons

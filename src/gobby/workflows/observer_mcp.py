@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.plans.vote_artifacts import (
     INTERACTION_TOOLS,
+    OBSERVER_PROVENANCE,
+    PLAN_VOTE_INTERACTION_CONTEXT_VARIABLE,
     PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE,
+    canonical_digest,
 )
 
 if TYPE_CHECKING:
@@ -28,7 +31,7 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     if not event.data:
         return
 
-    _track_plan_vote_interaction(event, variables)
+    _track_plan_vote_interaction(event, variables, session_id)
 
     server_name = event.data.get("mcp_server", "")
     inner_tool = event.data.get("mcp_tool", "")
@@ -55,7 +58,11 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
             )
 
 
-def _track_plan_vote_interaction(event: HookEvent, variables: dict[str, Any]) -> None:
+def _track_plan_vote_interaction(
+    event: HookEvent,
+    variables: dict[str, Any],
+    session_id: str,
+) -> None:
     """Retain the latest completed native interaction for plan-vote attestation."""
     tool_name = event.data.get("tool_name")
     tool_input = event.data.get("tool_input")
@@ -66,10 +73,37 @@ def _track_plan_vote_interaction(event: HookEvent, variables: dict[str, Any]) ->
         or tool_output in (None, "", {})
     ):
         return
+    context = variables.get(PLAN_VOTE_INTERACTION_CONTEXT_VARIABLE)
+    if not isinstance(context, dict):
+        return
+    evidence_id = context.get("evidence_id")
+    round_number = context.get("round_number")
+    round_kind = context.get("round_kind")
+    content_sha256 = context.get("content_sha256")
+    if (
+        not isinstance(evidence_id, str)
+        or not isinstance(round_number, int)
+        or not isinstance(round_kind, str)
+        or not isinstance(content_sha256, str)
+        or not isinstance(tool_output, dict)
+    ):
+        return
+    canonical_output = json.loads(
+        json.dumps(tool_output, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    )
+    if not isinstance(canonical_output, dict):
+        return
     variables[PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE] = {
+        "evidence_id": evidence_id,
+        "round_number": round_number,
+        "round_kind": round_kind,
+        "content_sha256": content_sha256,
+        "captured_by": session_id,
         "tool": tool_name,
-        "payload": tool_input,
-        "response_observed": True,
+        "tool_input": tool_input,
+        "tool_output": canonical_output,
+        "tool_output_sha256": canonical_digest(canonical_output),
+        "provenance": OBSERVER_PROVENANCE,
     }
 
 

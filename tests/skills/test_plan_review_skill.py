@@ -22,6 +22,14 @@ from gobby.skills.parser import parse_skill_file
 pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
+PLAN_SKILL_PATH = Path("src/gobby/install/shared/skills/plan/SKILL.md")
+
+
+def test_unattended_round_uses_coordinator_decision() -> None:
+    body = PLAN_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "unattended" in body.lower()
+    assert "gobby-plans:coordinator_decision" in body
 
 
 class TestPlanReviewFrontmatter:
