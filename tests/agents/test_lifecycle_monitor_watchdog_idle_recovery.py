@@ -1045,7 +1045,7 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
 
 
 @pytest.mark.asyncio
-async def test_completed_turn_recovery_preserves_unsubmitted_input(
+async def test_completed_turn_recovery_proceeds_despite_unsubmitted_input(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -1060,6 +1060,55 @@ async def test_completed_turn_recovery_preserves_unsubmitted_input(
         sample_project=sample_project,
         agent_run_manager=agent_run_manager,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1015",
+        transcript_path=transcript_path,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ uv run pytest tests/foo.py\n",
+        ),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler._recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="completed continuation",
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    mock_send.assert_has_awaits(
+        [
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "completed continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
+        ]
+    )
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unsubmitted_input_still_suppresses_reprompt_without_completed_turn(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-unsubmitted-incomplete.jsonl"
+    _write_codex_lifecycle_transcript(transcript_path, lifecycle_events=("task_started",))
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1019",
         transcript_path=transcript_path,
     )
 

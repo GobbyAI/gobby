@@ -256,14 +256,6 @@ class IdleCheckHandler:
                 idle_detector.reset_idle(run.id)
                 return 0
 
-        if idle_detector.has_unsubmitted_input(pane_output):
-            logger.info(
-                "Agent %s has unsubmitted prompt input visible; skipping idle reprompt",
-                run.id,
-            )
-            idle_detector.reset_idle(run.id)
-            return 0
-
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
         transcript_path: str | None = None
         if reader is not None and session is not None and (session_stale or capacity_candidate):
@@ -277,6 +269,34 @@ class IdleCheckHandler:
                     reader.provider_id,
                     run.id,
                 )
+
+        if idle_detector.has_unsubmitted_input(pane_output):
+            # Managed runs are autonomous: nobody returns to submit draft composer
+            # text, so a turn completed past the idle window must still recover
+            # (the reprompt path clears the draft with Escape before typing).
+            if (
+                not session_recent
+                and transcript_path is not None
+                and transcript_snapshot is not None
+                and completed_turn_recovery_due(
+                    transcript_snapshot,
+                    idle_timeout_seconds=idle_timeout_seconds,
+                )
+                is True
+            ):
+                return await self._recovery.recover_completed_turn(
+                    run,
+                    tmux_name=tmux_name,
+                    session_id=session_id,
+                    transcript_path=transcript_path,
+                    snapshot=transcript_snapshot,
+                )
+            logger.info(
+                "Agent %s has unsubmitted prompt input visible; skipping idle reprompt",
+                run.id,
+            )
+            idle_detector.reset_idle(run.id)
+            return 0
 
         if (
             capacity_candidate

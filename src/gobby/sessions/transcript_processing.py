@@ -279,7 +279,9 @@ class TranscriptProcessingMixin:
             transcript_path: Path to transcript JSONL file
         """
         if not transcript_path or not os.path.exists(transcript_path):
-            logger.warning("Transcript not found for session %s: %s", session_id, transcript_path)
+            # Expected for purged or CLI-rotated transcripts; the caller
+            # regenerates summaries from the stored digest in that case.
+            logger.info("Transcript not found for session %s: %s", session_id, transcript_path)
             return
 
         # Read entire file
