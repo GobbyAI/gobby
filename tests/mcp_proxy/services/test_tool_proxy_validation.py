@@ -1119,6 +1119,7 @@ class TestWorkflowBeforeToolEnforcement:
             session_type="terminal",
             project_id="project-123",
             external_id="conv-123",
+            agent_run_id=None,
         )
         session_manager = MagicMock()
         session_manager.get.return_value = session
@@ -1467,6 +1468,36 @@ class TestDirectMcpAfterToolWorkflow:
         assert after_event.data["tool_input"]["server_name"] == "gobby-tasks"
         assert after_event.data["tool_input"]["tool_name"] == "create_task"
         assert after_event.data["tool_output"] == {"id": "task-123", "ref": "#123"}
+
+    @pytest.mark.asyncio
+    async def test_spawned_interactive_session_synthesizes_after_tool_workflow(
+        self,
+        tool_proxy_with_hooks,
+        mock_hook_manager,
+        mock_internal_manager,
+    ) -> None:
+        mock_hook_manager._session_manager.get.return_value.agent_run_id = "run-123"
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="session-123",
+        )
+
+        assert result == {"id": "task-123", "ref": "#123"}
+        events = [
+            call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list
+        ]
+        assert [event.event_type for event in events] == [
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+        ]
+        assert events[1].metadata["_mcp_proxy_direct_after_tool"] is True
 
     @pytest.mark.asyncio
     async def test_after_tool_workflow_exception_preserves_successful_result(

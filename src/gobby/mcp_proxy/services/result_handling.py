@@ -77,10 +77,13 @@ def build_after_tool_event(
     from gobby.hooks.events import HookEvent, HookEventType
     from gobby.mcp_proxy.services.session_context import should_synthesize_direct_after_tool
 
-    _hook_manager, _session_manager, _session, source, metadata, cwd, project_id = (
+    _hook_manager, _session_manager, session, source, metadata, cwd, project_id = (
         service._resolve_tool_event_context(effective_session_id)
     )
-    if not should_synthesize_direct_after_tool(source):
+    if not should_synthesize_direct_after_tool(
+        source,
+        spawned_agent=bool(getattr(session, "agent_run_id", None)),
+    ):
         return None
     metadata["_mcp_proxy_direct_after_tool"] = True
 

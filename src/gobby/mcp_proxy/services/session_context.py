@@ -10,11 +10,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.mcp.server")
 
 
-def should_synthesize_direct_after_tool(source: "SessionSource | str | None") -> bool:
+def should_synthesize_direct_after_tool(
+    source: "SessionSource | str | None",
+    *,
+    spawned_agent: bool = False,
+) -> bool:
     """Return whether direct MCP execution owns the after-tool event."""
     from gobby.hooks.events import SessionSource, parse_session_source
 
-    return parse_session_source(source) in {
+    return spawned_agent or parse_session_source(source) in {
         SessionSource.PIPELINE,
         SessionSource.UNKNOWN,
     }
