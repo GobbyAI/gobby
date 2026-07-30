@@ -17,12 +17,13 @@ from gobby.sessions.summary_formatting import (
 pytestmark = pytest.mark.unit
 
 
-def test_seeded_open_tool_errors_are_bounded_before_rendering() -> None:
+def test_seeded_open_tool_errors_are_lossless_with_bounded_retrieval_preview() -> None:
+    full_error = "failed\n## Current State\n```\n" + ("x" * 1_000)
     seeded = [
         {
             "tool": "Bash\n## Current State\n```\n" + ("t" * 1_000),
             "target_key": "/tmp/file\n## Next Steps\n~~~\n" + ("k" * 1_000),
-            "error": "failed\n## Current State\n```\n" + ("x" * 1_000),
+            "error": full_error,
             "first_at": "2026-07-23T00:00:00.000000000000+00:00",
             "last_at": "2026-07-23T00:00:01.000000000000+00:00",
             "count": 10**30,
@@ -40,9 +41,13 @@ def test_seeded_open_tool_errors_are_bounded_before_rendering() -> None:
     assert len(records[0]["tool"]) == 130
     assert len(records[0]["target_key"]) == 130
     assert records[0]["count"] == 999_999
-    assert len(records[0]["error"]) == 300
+    assert records[0]["error"] == full_error.replace("\n", " ")
+    assert records[0]["error_id"].startswith("error-")
     assert rendered.startswith("Unresolved Tool Errors:\n")
     assert len(rendered.splitlines()) == 2
+    assert records[0]["error"] not in rendered
+    assert 'get_variable(name="open_tool_errors", session_id=<current>)' in rendered
+    assert f'error_id="{records[0]["error_id"]}"' in rendered
     assert "\n##" not in rendered
     assert "\n```" not in rendered
     assert "\n~~~" not in rendered
@@ -233,8 +238,8 @@ class TestFormatTurnsForLlm:
         result = format_turns_for_llm(turns)
         assert "[Turn 1 - user]: [Result: File contents here]" in result
 
-    def test_format_tool_result_truncates_long_content(self) -> None:
-        """Test that tool_result content is truncated to 200 chars (default limit)."""
+    def test_format_tool_result_references_long_content(self) -> None:
+        """Long tool results keep a bounded head and name the retrieval operation."""
         long_content = "x" * 500  # 500 characters
         turns = [
             {
@@ -251,9 +256,8 @@ class TestFormatTurnsForLlm:
             }
         ]
         result = format_turns_for_llm(turns)
-        # Should show first 200 chars followed by "..."
-        assert "[Result: " + "x" * 200 + "...]" in result
-        # Should NOT contain the full 500 chars
+        assert "[Result: " + "x" * 200 in result
+        assert "get_handoff_context (gobby-sessions)" in result
         assert "x" * 500 not in result
 
 

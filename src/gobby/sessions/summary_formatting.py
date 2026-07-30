@@ -4,21 +4,53 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.tool_error_tracker import normalize_open_tool_error_records
+from gobby.llm.sdk_utils import head_with_breadcrumb
+
 if TYPE_CHECKING:
     from gobby.sessions.analyzer import HandoffContext
 
+_ERROR_PREVIEW_CHARS = 300
+_OPEN_TOOL_ERRORS_RETRIEVAL = (
+    'get_variable(name="open_tool_errors", session_id=<current>), then select the record by '
+    'error_id="{error_id}"'
+)
+_TRANSCRIPT_CONTENT_RETRIEVAL = (
+    "Call get_handoff_context (gobby-sessions) with the current session to retrieve the full "
+    "stored content."
+)
+
+
+def _stored_transcript_preview(content: str, preview_chars: int) -> str:
+    """Render a bounded head with an exact retrieval operation when content is longer."""
+    if len(content) <= preview_chars:
+        return content
+    return head_with_breadcrumb(
+        content,
+        budget=preview_chars + len(_TRANSCRIPT_CONTENT_RETRIEVAL) + 2,
+        breadcrumb=_TRANSCRIPT_CONTENT_RETRIEVAL,
+    )
+
 
 def format_unresolved_errors(records: list[dict[str, Any]]) -> str:
-    """Render normalized unresolved errors as one bounded line per record."""
+    """Render bounded unresolved-error previews with exact full-payload retrieval."""
     if not records:
         return ""
-    lines = [
-        (
-            f"- tool: {record['tool']} | target: {record['target_key']} | "
-            f"error: {record['error']} | count: {record['count']}"
+    lines: list[str] = []
+    for raw_record in records:
+        normalized = normalize_open_tool_error_records([raw_record])
+        if not normalized:
+            continue
+        record = normalized[0]
+        preview = record["error"][:_ERROR_PREVIEW_CHARS]
+        retrieval = _OPEN_TOOL_ERRORS_RETRIEVAL.format(error_id=record["error_id"])
+        lines.append(
+            f"- error_id: {record['error_id']} | tool: {record['tool']} | "
+            f"target: {record['target_key']} | error preview: {preview} | "
+            f"full error: {retrieval} | count: {record['count']}"
         )
-        for record in records
-    ]
+    if not lines:
+        return ""
     return "Unresolved Tool Errors:\n" + "\n".join(lines)
 
 
@@ -98,7 +130,7 @@ def _format_typed_json_turn(
     elif event_type == "tool_use":
         tool_name = turn.get("tool_name") or turn.get("function_name", "unknown")
         params = turn.get("parameters") or turn.get("args", {})
-        param_preview = str(params)[:100] if params else ""
+        param_preview = _stored_transcript_preview(str(params), 100) if params else ""
         return "assistant", f"[Tool: {tool_name}] {param_preview}"
 
     elif event_type == "tool_result":
@@ -106,9 +138,8 @@ def _format_typed_json_turn(
         output = turn.get("output") or turn.get("result", "")
         output_str = str(output)
         limit = _get_result_truncation_limit(output_str)
-        preview = output_str[:limit]
-        suffix = "..." if len(output_str) > limit else ""
-        return "tool", f"[Result{' from ' + tool_name if tool_name else ''}]: {preview}{suffix}"
+        preview = _stored_transcript_preview(output_str, limit)
+        return "tool", f"[Result{' from ' + tool_name if tool_name else ''}]: {preview}"
 
     elif event_type in ("init", "result"):
         # Skip initialization and final result events
@@ -117,7 +148,7 @@ def _format_typed_json_turn(
     else:
         # Unknown type, try to extract something
         content = turn.get("content", turn.get("message", ""))
-        return "unknown", str(content)[:200]
+        return "unknown", _stored_transcript_preview(str(content), 200)
 
 
 def _format_claude_turn(turn: dict[str, Any]) -> tuple[str, str]:
@@ -150,9 +181,8 @@ def _format_claude_turn(turn: dict[str, Any]) -> tuple[str, str]:
                         result_content = " ".join(extracted)
                     content_str = str(result_content)
                     limit = _get_result_truncation_limit(content_str)
-                    preview = content_str[:limit]
-                    suffix = "..." if len(content_str) > limit else ""
-                    text_parts.append(f"[Result: {preview}{suffix}]")
+                    preview = _stored_transcript_preview(content_str, limit)
+                    text_parts.append(f"[Result: {preview}]")
         content = " ".join(text_parts)
 
     return role, str(content)
@@ -191,7 +221,7 @@ def _format_structured_context(ctx: HandoffContext) -> str:
         sections.append("Task Progress:\n" + "\n".join(progress_lines))
 
     if ctx.initial_goal:
-        sections.append(f"Original Goal: {ctx.initial_goal[:500]}")
+        sections.append(f"Original Goal: {_stored_transcript_preview(ctx.initial_goal, 500)}")
 
     if ctx.unresolved_errors:
         sections.append(format_unresolved_errors(ctx.unresolved_errors))

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -10,7 +9,6 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 
 from gobby.hooks.tool_error_tracker import (
-    MAX_ERROR_CHARS,
     MAX_IDENTITY_COMPONENT_CHARS,
     MAX_OPEN_TOOL_ERRORS,
     MAX_TOOL_ERROR_COUNT,
@@ -144,7 +142,6 @@ def test_normalize_records_enforces_shape_bounds_and_utc_newest_retention() -> N
     for record in normalized:
         assert len(record["tool"]) <= MAX_IDENTITY_COMPONENT_CHARS
         assert len(record["target_key"]) <= MAX_IDENTITY_COMPONENT_CHARS
-        assert len(record["error"]) <= MAX_ERROR_CHARS
         assert "\n" not in record["target_key"]
         assert "\r" not in record["target_key"]
         assert record["target_key"].startswith("\\#")
@@ -154,6 +151,31 @@ def test_normalize_records_enforces_shape_bounds_and_utc_newest_retention() -> N
         assert record["last_at"].endswith("+00:00")
         assert "." not in record["first_at"]
         assert "." not in record["last_at"]
+
+
+def test_full_payload_stored_with_retrieval_id() -> None:
+    timestamp = "2026-07-23T12:00:00+00:00"
+    path_list = " | ".join(f"src/package_{index}/validator.py" for index in range(24))
+    error = f"validator rejected paths: {path_list}".ljust(900, "!")
+
+    records = normalize_open_tool_error_records(
+        [
+            {
+                "tool": "gobby-tasks:close_task",
+                "target_key": "task:#19338",
+                "error": error,
+                "first_at": timestamp,
+                "last_at": timestamp,
+                "count": 1,
+            }
+        ]
+    )
+
+    assert len(records) == 1
+    error_id = records[0]["error_id"]
+    assert records[0]["error"] == error
+    assert {record["error_id"]: record["error"] for record in records}[error_id] == error
+    assert normalize_open_tool_error_records(records)[0]["error_id"] == error_id
 
 
 def test_native_failure_tracks_and_matching_success_resolves() -> None:
@@ -403,13 +425,14 @@ def test_same_identity_executed_failure_updates_without_prior_resolution() -> No
     assert variables.resolutions == []
 
 
-def test_tracker_record_normalization_is_byte_identical_and_size_bounded() -> None:
+def test_tracker_record_normalization_is_byte_identical_and_lossless() -> None:
     timestamp = "2026-07-23T12:00:00+00:00"
+    error = "e" * 900
     records = [
         {
             "tool": "t" * MAX_IDENTITY_COMPONENT_CHARS,
             "target_key": "p" * MAX_IDENTITY_COMPONENT_CHARS,
-            "error": "e" * MAX_ERROR_CHARS,
+            "error": error,
             "first_at": timestamp,
             "last_at": timestamp,
             "count": MAX_TOOL_ERROR_COUNT,
@@ -419,12 +442,9 @@ def test_tracker_record_normalization_is_byte_identical_and_size_bounded() -> No
 
     normalized = normalize_open_tool_error_records(records)
 
-    assert normalized == records
+    assert all(record["error"] == error for record in normalized)
+    assert all(record["error_id"].startswith("error-") for record in normalized)
     assert normalize_open_tool_error_records(normalized) == normalized
-    rendered = "Unresolved Tool Errors:\n" + "\n".join(
-        json.dumps(record, ensure_ascii=False, sort_keys=True) for record in normalized
-    )
-    assert len(rendered) < 8_000
 
 
 def test_long_parseable_fractional_timestamp_is_reemitted_canonically() -> None:

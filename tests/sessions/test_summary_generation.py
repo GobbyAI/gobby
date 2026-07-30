@@ -10,10 +10,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.sessions import SessionSummaryConfig
-from gobby.hooks.tool_error_tracker import load_open_tool_errors
-from gobby.sessions.summary_formatting import format_unresolved_errors
+from gobby.hooks.tool_error_tracker import (
+    load_open_tool_errors,
+    normalize_open_tool_error_records,
+)
+from gobby.sessions.analyzer import HandoffContext
+from gobby.sessions.summary_formatting import (
+    _format_structured_context,
+    format_unresolved_errors,
+)
 from gobby.sessions.summary_generation import _write_summary_file, generate_summary
-from gobby.sessions.summary_transcripts import TRANSCRIPT_FALLBACK_MAX_CHARS
+from gobby.sessions.summary_transcripts import (
+    TRANSCRIPT_FALLBACK_MAX_CHARS,
+    _truncate_markdown,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +42,38 @@ Continue with the remaining task validation and lifecycle handoff steps.
 
 def _valid_summary_template(body: str) -> str:
     return f"{body}\n\n## Current State\n\n## Next Steps"
+
+
+def test_long_error_referenced_not_cut() -> None:
+    timestamp = "2026-07-23T12:00:00+00:00"
+    path_list = " | ".join(f"src/package_{index}/validator.py" for index in range(24))
+    error = f"validator rejected paths: {path_list}".ljust(900, "!")
+    records = normalize_open_tool_error_records(
+        [
+            {
+                "tool": "gobby-tasks:close_task",
+                "target_key": "task:#19338",
+                "error": error,
+                "first_at": timestamp,
+                "last_at": timestamp,
+                "count": 1,
+            }
+        ]
+    )
+
+    rendered = _format_structured_context(HandoffContext(unresolved_errors=records))
+    error_id = records[0]["error_id"]
+
+    assert error not in rendered
+    assert 'get_variable(name="open_tool_errors", session_id=<current>)' in rendered
+    assert f'error_id="{error_id}"' in rendered
+    assert {record["error_id"]: record["error"] for record in records}[error_id] == error
+
+    overflow = _truncate_markdown(error * 30, 500)
+    assert len(overflow) <= 500
+    assert "get_handoff_context (gobby-sessions)" in overflow
+    assert overflow.endswith("... [truncated]")
+    assert _truncate_markdown(error, 16) == "get_handoff_cont"
 
 
 @pytest.mark.parametrize(

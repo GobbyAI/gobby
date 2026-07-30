@@ -20,6 +20,10 @@ TURN_PATTERN = re.compile(r"^### Turn \d+", re.MULTILINE)
 TRANSCRIPT_FALLBACK_MAX_TURNS = 80
 TRANSCRIPT_FALLBACK_MAX_CHARS = 24_000
 DIGEST_FALLBACK_MAX_CHARS = 24_000
+_HANDOFF_RETRIEVAL = (
+    "get_handoff_context (gobby-sessions) retrieves the full stored content for the current "
+    "session.\n... [truncated]"
+)
 
 
 async def _read_transcript(
@@ -105,15 +109,16 @@ def _strip_injected_context_from_value(value: Any) -> Any:
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:
-    """Bound prompt context while keeping an explicit truncation marker."""
+    """Bound inline context and identify how to retrieve the stored full content."""
     if max_chars <= 0:
         return ""
     if len(value) <= max_chars:
         return value
-    marker = "\n... [truncated]"
-    if max_chars <= len(marker):
-        return "..."[:max_chars]
-    return f"{value[: max_chars - len(marker)].rstrip()}{marker}"
+    if max_chars <= len(_HANDOFF_RETRIEVAL):
+        return _HANDOFF_RETRIEVAL[:max_chars]
+    separator = "\n\n"
+    head_chars = max_chars - len(separator) - len(_HANDOFF_RETRIEVAL)
+    return f"{value[:head_chars]}{separator}{_HANDOFF_RETRIEVAL}"
 
 
 def _format_transcript_fallback_summary(
@@ -175,7 +180,7 @@ def _extract_digest_turns(digest_markdown: str | None) -> tuple[str, str]:
 
     if not headings:
         # No turn structure - return first 500 chars as first turn
-        return digest_markdown[:500].strip(), ""
+        return _truncate_markdown(digest_markdown.strip(), 500), ""
 
     # parts[0] is content before first heading (preamble), parts[1:] are turn contents
     # Pair headings with their content
@@ -191,8 +196,8 @@ def _extract_digest_turns(digest_markdown: str | None) -> tuple[str, str]:
 
     # Truncate to avoid blowing up the prompt
     if len(first_turn) > 800:
-        first_turn = first_turn[:800] + "\n..."
+        first_turn = _truncate_markdown(first_turn, 800)
     if len(recent_turns) > 1500:
-        recent_turns = recent_turns[:1500] + "\n..."
+        recent_turns = _truncate_markdown(recent_turns, 1500)
 
     return first_turn, recent_turns

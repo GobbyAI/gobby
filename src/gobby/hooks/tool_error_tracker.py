@@ -1,4 +1,4 @@
-"""Bounded unresolved-tool-error state shared by hook and proxy transports."""
+"""Lossless unresolved-tool-error state shared by hook and proxy transports."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_IDENTITY_COMPONENT_CHARS = 130
-MAX_ERROR_CHARS = 300
 MAX_OPEN_TOOL_ERRORS = 10
 MAX_TOOL_ERROR_COUNT = 999_999
 MAX_HASH_NORMALIZATION_DEPTH = 16
@@ -283,7 +282,7 @@ def _serializable_result(source: object) -> object:
 
 
 def extract_error_snippet(source: object) -> str:
-    """Extract one canonical, bounded, nonempty error message."""
+    """Extract one canonical, nonempty error message without losing payload content."""
     serializable = _serializable_result(source)
     if isinstance(source, str):
         text = source
@@ -294,7 +293,7 @@ def extract_error_snippet(source: object) -> str:
     sanitized = sanitize_record_text(text)
     if not sanitized:
         sanitized = '{"error":"unknown tool failure"}'
-    return sanitized[:MAX_ERROR_CHARS]
+    return sanitized
 
 
 def _canonical_timestamp(value: object) -> tuple[str, datetime] | None:
@@ -338,10 +337,15 @@ def normalize_open_tool_error_records(raw: object) -> list[dict[str, Any]]:
         last = _canonical_timestamp(value["last_at"])
         if first is None or last is None:
             continue
+        tool = _bounded_identity(value["tool"])
+        target_key = _bounded_identity(value["target_key"])
+        error_identity = "\0".join((tool, target_key))
+        error_id = f"error-{_digest(error_identity)}"
         record = {
-            "tool": _bounded_identity(value["tool"]),
-            "target_key": _bounded_identity(value["target_key"]),
-            "error": sanitize_record_text(value["error"])[:MAX_ERROR_CHARS],
+            "error_id": error_id,
+            "tool": tool,
+            "target_key": target_key,
+            "error": sanitize_record_text(value["error"]),
             "first_at": first[0],
             "last_at": last[0],
             "count": _bounded_count(value["count"]),
