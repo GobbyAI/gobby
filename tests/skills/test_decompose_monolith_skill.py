@@ -49,6 +49,21 @@ def test_skill_loads_with_engineering_metadata_and_reference() -> None:
     assert references == {"references/architectural-shapes.md"}
 
 
+def test_skill_discovery_and_contract_cover_projected_same_task_decomposition() -> None:
+    frontmatter = _frontmatter()
+    description = str(frontmatter["description"]).lower()
+    body = SKILL_FILE.read_text()
+    normalized_body = " ".join(body.split())
+
+    assert "projected to cross" in description
+    assert "current claimed feature or fix task" in body
+    assert "must finish in the current session" in body
+    assert "never waives the line ceiling" in body
+    assert "Check both current and projected line counts" in normalized_body
+    assert "exactly the ceiling is a violation" in normalized_body
+    assert "Deferred refactor tasks are prohibited" in body
+
+
 def test_bundled_loader_is_the_discovery_surface() -> None:
     loaded = SkillLoader().load_directory(SKILLS_ROOT)
 

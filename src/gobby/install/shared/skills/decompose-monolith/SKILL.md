@@ -1,6 +1,6 @@
 ---
 name: decompose-monolith
-description: Use when an oversized production source file, monolith, god file, or requested module decomposition needs structural refactoring.
+description: Use when a production source file is oversized, already at its line ceiling, projected to cross that ceiling, or needs structural decomposition.
 version: "1.0.0"
 category: engineering
 triggers:
@@ -26,6 +26,12 @@ indexed by `gcode`. Preserve observable behavior throughout the decomposition.
 
 REQUIRED SKILL: code-index.
 
+Threshold decomposition belongs to the current claimed feature or fix task and
+must finish in the current session. Loading this skill permits the structural
+edits required for decomposition; it never waives the line ceiling or permits
+commit, task or review completion, or turn end while an applicable touched file
+remains at or above that ceiling. Deferred refactor tasks are prohibited.
+
 Direct extraction is the default. Use strangler migration only when old and new
 paths must coexist, consumers require staged migration, delivery spans multiple
 units, or a routing seam provides material rollback safety.
@@ -43,7 +49,8 @@ Find the applicable ceiling in repository instructions, rules, and tooling.
 If the repository defines none, use 1,000 lines. Apply it to hand-maintained
 production source files. Exclude generated, vendored, baseline, documentation,
 fixture, and test artifacts only when repository evidence identifies them as
-such.
+such. Check both current and projected line counts before each edit; exactly the
+ceiling is a violation.
 
 ### 2. Establish a Green Characterization Baseline
 
@@ -137,6 +144,8 @@ and final green validation all succeed.
 ## Structural Completion Criteria
 
 - Every hand-maintained production source file is below the applicable ceiling.
+- Threshold-triggered decomposition is complete in the current claimed task and
+  session.
 - Each resulting file has an independently describable responsibility.
 - Dependencies are acyclic and flow toward stable domain units.
 - Shared mutable state has one explicit owner.

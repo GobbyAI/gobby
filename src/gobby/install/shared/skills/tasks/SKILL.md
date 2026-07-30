@@ -73,8 +73,10 @@ labels, or writing expanded validation criteria.
 - Run focused tests for behavior changes.
 - Fix every error, warning, test failure, lint failure, and type error encountered.
 - Never run the full test suite unless the user explicitly requests it.
-- Every non-test `.py`, `.ts`, `.tsx`, or `.css` source file over 1,000 lines
-  needs an existing refactor task or a newly created one left unclaimed.
+- Check current and projected line counts before touching applicable production
+  source. Exactly 1,000 lines violates the ceiling. Load `decompose-monolith`
+  for threshold-crossing work and finish the decomposition inside the current
+  claimed task and session. Deferred refactor tasks are prohibited.
 
 ## Completion Gates
 

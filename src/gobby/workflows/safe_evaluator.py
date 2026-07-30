@@ -503,6 +503,10 @@ def build_condition_helpers(
         task_type_in,
         touches_claude_memory_path,
     )
+    from .monolith_guard import (
+        outstanding_monolith_paths,
+        projected_monolith_paths,
+    )
 
     ctx = context or {}
     funcs: dict[str, Callable[..., Any]] = {
@@ -639,6 +643,27 @@ def build_condition_helpers(
         loaded_skills = variables.get("loaded_skills", [])
         return isinstance(loaded_skills, list) and name in loaded_skills
 
+    def _projected_monolith_paths(
+        tool_input: Any = None,
+        event_data: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        """Return threshold-crossing paths for the current structured write."""
+        project = ctx.get("project")
+        project_path = project.get("path") if isinstance(project, Mapping) else None
+        event = ctx.get("event")
+        data = event_data or _event_field(event, "data", {})
+        return projected_monolith_paths(
+            tool_input if tool_input is not None else ctx.get("tool_input"),
+            project_path,
+            data if isinstance(data, Mapping) else None,
+        )
+
+    def _outstanding_monolith_paths() -> list[str]:
+        """Return over-budget files attributed to this session's task edits."""
+        project = ctx.get("project")
+        project_path = project.get("path") if isinstance(project, Mapping) else None
+        return outstanding_monolith_paths(_get_variables(ctx), project_path)
+
     def _has_open_tool_error(tool: str, arguments: Mapping[str, Any]) -> bool:
         """Check normalized unresolved errors for one exact tool target."""
         from gobby.hooks.tool_error_tracker import (
@@ -714,6 +739,8 @@ def build_condition_helpers(
     funcs["mcp_result_has"] = _mcp_result_has
     funcs["tool_call_succeeded"] = _tool_call_succeeded
     funcs["skill_loaded"] = _skill_loaded
+    funcs["projected_monolith_paths"] = _projected_monolith_paths
+    funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["first_unloaded_claimed_task_required_skill"] = (
         _first_unloaded_claimed_task_required_skill
