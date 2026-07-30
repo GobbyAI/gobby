@@ -62,6 +62,9 @@ _CODEX_REQUIRED_GOBBY_TOOLS = frozenset(
     }
 )
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
+# GOBBY_PARENT_SESSION_ID is deliberately withheld: the stdio MCP child
+# authenticates as the child session, and schema leases must resolve to that
+# session, never the parent.
 _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS = (
     GOBBY_SESSION_ID,
     GOBBY_PROJECT_ID,

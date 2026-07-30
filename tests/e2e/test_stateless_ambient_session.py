@@ -286,12 +286,21 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
 
 
 @pytest.mark.asyncio
-async def test_managed_spawn_uses_child_identity_for_schema_lease(
+async def test_daemon_binds_schema_lease_to_child_identity_env(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
     postgres_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Daemon-side non-regression: a child-identity env resolves leases to the child.
+
+    The identity env is seeded directly via monkeypatch, so this does not
+    exercise the spawn-side propagation (the Codex override/env_vars scrub
+    model — covered by tests/agents/test_spawn_executor.py::
+    test_scrubbed_child_env_reaches_daemon_proxy_identity). It pins what the
+    daemon does once that env is in place: the schema lease and the following
+    call bind to the child session, never the parent.
+    """
     project_result = cli_events.register_test_project(
         project_id=PROJECT_ID,
         name="E2E Test Project",

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -577,6 +577,8 @@ class TestExecuteSpawn:
             # The capability is forwarded by name; its value never enters argv.
             assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in command
             assert not any("scoped-token" in argument for argument in command)
+            # Deliberately withheld: schema leases must resolve to the child
+            # session, never the parent (see _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS).
             assert not any("GOBBY_PARENT_SESSION_ID" in argument for argument in command)
             assert "--full-auto" not in command
 
@@ -1765,3 +1767,87 @@ def test_capability_token_never_in_argv_or_metadata(
     assert isinstance(persisted_overrides, list)
     assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in persisted_overrides
     assert token_value not in json.dumps(metadata)
+
+
+@pytest.mark.asyncio
+async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The Codex scrub model alone carries the child identity to the proxy.
+
+    Codex launches its stdio MCP subprocess with a scrubbed environment: the
+    child sees only the literal ``mcp_servers.gobby.env.*`` overrides plus the
+    variables forwarded by name through ``env_vars``. This drives that exact
+    model end-to-end and asserts DaemonProxy emits the child's
+    ``X-Gobby-Session-Id`` on both the schema fetch and the following tool
+    call, so the ``get_tool_schema`` lease and the ``call_tool`` resolve to
+    the same session.
+    """
+    import json
+
+    from gobby.agents.constants import get_terminal_env_vars
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+    from gobby.mcp_proxy.stdio_proxy import DaemonProxy
+    from gobby.utils.local_token import local_token_path
+
+    child_session_id = "11111111-2222-3333-4444-555555555555"
+    parent_session_id = "99999999-8888-7777-6666-000000000000"
+    run_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    local_token_path().write_text("operator-token\n")
+    parent_env = get_terminal_env_vars(
+        session_id=child_session_id,
+        parent_session_id=parent_session_id,
+        agent_run_id=run_id,
+        project_id="project-uuid",
+        operator_token="operator-token",
+    )
+
+    overrides = _codex_mcp_config_overrides("/main/repo", managed_identity_env=parent_env)
+
+    # Rebuild the child environment exactly as Codex does for stdio MCP
+    # servers: literal env.* overrides, plus env_vars names copied from the
+    # provider process environment. No other variable is inherited.
+    child_env: dict[str, str] = {}
+    literal_prefix = "mcp_servers.gobby.env."
+    for override in overrides:
+        key, _, raw_value = override.partition("=")
+        if key.startswith(literal_prefix):
+            child_env[key.removeprefix(literal_prefix)] = json.loads(raw_value)
+        elif key == "mcp_servers.gobby.env_vars":
+            for name in json.loads(raw_value):
+                child_env[name] = parent_env[name]
+
+    # Deliberately withheld: schema leases must resolve to the child session,
+    # never the parent (see _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS).
+    assert "GOBBY_PARENT_SESSION_ID" not in child_env
+    assert child_env["GOBBY_SESSION_ID"] == child_session_id
+    capability = child_env["GOBBY_AGENT_API_TOKEN"]
+
+    for variable in parent_env:
+        if variable.startswith("GOBBY_"):
+            monkeypatch.delenv(variable, raising=False)
+    for variable, value in child_env.items():
+        monkeypatch.setenv(variable, value)
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"success": True}
+    client = MagicMock()
+    client.request = AsyncMock(return_value=response)
+    deps = MagicMock()
+    deps.read_project_id.side_effect = lambda: os.environ.get("GOBBY_PROJECT_ID")
+    deps.http_client_factory.return_value = client
+    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+
+    await proxy.get_tool_schema("gobby-tasks", "list_tasks")
+    await proxy.call_tool("gobby-tasks", "list_tasks", {}, preflight_enabled=False)
+
+    assert client.request.await_count == 2
+    for request_call in client.request.await_args_list:
+        headers = request_call.kwargs["headers"]
+        assert headers["X-Gobby-Session-Id"] == child_session_id
+        assert headers["X-Gobby-Agent-Run-Id"] == run_id
+        assert headers["Authorization"] == f"Bearer {capability}"
+        assert all(parent_session_id not in value for value in headers.values())
