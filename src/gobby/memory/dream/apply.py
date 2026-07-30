@@ -24,6 +24,7 @@ from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.memories import Memory
+from gobby.storage.memories_crud import DuplicateMemoryContentError
 
 logger = logging.getLogger(__name__)
 _EXPECTED_ACTION_ERRORS = (ValueError, OSError, psycopg.Error)
@@ -68,7 +69,13 @@ async def apply_dream_plan(
                     "error": str(exc),
                 }
             )
-            logger.warning("Memory dream action failed: %s", exc)
+            if isinstance(exc, DuplicateMemoryContentError):
+                # Benign self-healing collision: the refreshed content already
+                # exists live in the same scope, so skipping the rewrite loses
+                # nothing — the cooldown advance below is the whole remedy.
+                logger.info("Memory dream action skipped duplicate content: %s", exc)
+            else:
+                logger.warning("Memory dream action failed: %s", exc)
             # A failed mutation must not strand the candidate in the sweep window;
             # advance its cooldown cursor so it is not re-dreamed immediately.
             await _advance_cursor(

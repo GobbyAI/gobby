@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -64,6 +65,7 @@ from gobby.prompts.loader import PromptLoader
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories_crud import DuplicateMemoryContentError
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
@@ -3865,3 +3867,189 @@ def test_result_run_id_prefers_top_level_then_nested() -> None:
     assert _result_run_id({"run": {"id": "nested"}}) == "nested"
     assert _result_run_id({"success": True}) is None
     assert _result_run_id("not a dict") is None
+
+
+class _FencedCursor:
+    def __init__(
+        self,
+        row: dict[str, Any] | None = None,
+        rows: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._row = row
+        self._rows = rows or []
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._row
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return self._rows
+
+
+class _FencedConn:
+    """Executes the fenced apply_candidate_action SQL against _FakeDreamDB state."""
+
+    def __init__(self, db: _FakeDreamDB) -> None:
+        self.db = db
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FencedCursor:
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT * FROM memories") and "FOR UPDATE" in normalized:
+            row = self.db.memories.get(str(params[0]))
+            if row is None or row.get("deleted_at") is not None:
+                return _FencedCursor()
+            fence = (
+                row.get("dream_due_version", 0),
+                row["updated_at"],
+                row["project_id"],
+                row["is_global"],
+            )
+            if fence != (params[1], params[2], params[3], params[4]):
+                return _FencedCursor()
+            return _FencedCursor(row=dict(row))
+        if "FROM memory_crossrefs" in normalized:
+            return _FencedCursor(rows=[])
+        if normalized.startswith("INSERT INTO memory_dream_snapshots"):
+            snapshot = {
+                "id": len(self.db.snapshots) + 1,
+                "run_id": params[0],
+                "memory_id": params[1],
+                "action": params[2],
+                "before_data": params[3],
+                "after_data": None,
+                "applied": False,
+            }
+            self.db.snapshots.append(snapshot)
+            return _FencedCursor(row={"id": snapshot["id"]})
+        if normalized.startswith("SELECT id FROM memories WHERE content"):
+            content, project_id, is_global, self_id = params
+            for memory_id, row in self.db.memories.items():
+                if (
+                    memory_id != str(self_id)
+                    and row["content"] == content
+                    and row["project_id"] == project_id
+                    and row["is_global"] == is_global
+                    and row.get("deleted_at") is None
+                ):
+                    return _FencedCursor(row={"id": memory_id})
+            return _FencedCursor()
+        if normalized.startswith("UPDATE memories SET last_dreamed_at"):
+            self.db.memories[str(params[1])]["last_dreamed_at"] = params[0]
+            return _FencedCursor()
+        if normalized.startswith("SELECT * FROM memories WHERE id ="):
+            row = self.db.memories.get(str(params[0]))
+            return _FencedCursor(row=dict(row) if row else None)
+        if normalized.startswith("UPDATE memory_dream_snapshots"):
+            snapshot = next(s for s in self.db.snapshots if s["id"] == int(params[1]))
+            snapshot["after_data"] = params[0]
+            snapshot["applied"] = True
+            return _FencedCursor()
+        raise AssertionError(f"unexpected SQL in fenced fake: {normalized[:100]}")
+
+
+class _FencedDreamDB(_FakeDreamDB):
+    """Selects the primary (fenced) dispatch path and services its SQL."""
+
+    def transaction(self) -> Any:
+        @contextlib.contextmanager
+        def _txn() -> Any:
+            yield _FencedConn(self)
+
+        return _txn()
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_duplicate_content_logs_info_and_advances_cursor(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A refresh colliding with live same-scope content is benign: INFO, not WARNING."""
+    db = _FencedDreamDB()
+    db.memories = {
+        "refresh-me": _row("refresh-me", "stale wording"),
+        "existing": _row("existing", "canonical wording"),
+    }
+    manager = _FakeMemoryManager(db)
+    _set_method(manager, "notify_memory_changed", MagicMock())
+    store = _dream_store(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.dream.apply"):
+        summary = await apply_dream_plan(
+            memory_manager=_as_dream_manager(manager),
+            store=store,
+            run_id=run_id,
+            actions=[
+                DreamAction(
+                    action="refresh",
+                    memory_id="refresh-me",
+                    content="canonical wording",
+                    confidence=1,
+                )
+            ],
+            candidates=[_candidate("refresh-me")],
+            dry_run=False,
+            reconcile_after_apply=False,
+        )
+
+    assert summary["errors"] == 1
+    assert summary["error_details"] == [
+        {
+            "action": DreamAction(
+                action="refresh",
+                memory_id="refresh-me",
+                content="canonical wording",
+                confidence=1,
+            ).to_dict(),
+            "error": "Memory content already exists in this project/global scope",
+        }
+    ]
+    assert summary["mutations"] == 0
+    # The failed refresh must not strand the candidate: cooldown cursor advanced
+    # and the original content survived untouched.
+    assert db.memories["refresh-me"]["last_dreamed_at"] is not None
+    assert db.memories["refresh-me"]["content"] == "stale wording"
+    duplicate_records = [r for r in caplog.records if "already exists" in r.getMessage()]
+    assert duplicate_records, "expected the duplicate collision to be logged"
+    assert all(r.levelno == logging.INFO for r in duplicate_records)
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+@pytest.mark.asyncio
+async def test_apply_action_os_failure_stays_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Real I/O failures keep their WARNING severity and error accounting."""
+    db = _FakeDreamDB()
+    db.memories = {"refresh-me": _row("refresh-me", "stale wording")}
+    manager = _FakeMemoryManager(db)
+    _set_method(manager, "update_memory", AsyncMock(side_effect=OSError("disk unavailable")))
+    store = _dream_store(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.dream.apply"):
+        summary = await apply_dream_plan(
+            memory_manager=_as_dream_manager(manager),
+            store=store,
+            run_id=run_id,
+            actions=[
+                DreamAction(
+                    action="refresh",
+                    memory_id="refresh-me",
+                    content="new wording",
+                    confidence=1,
+                )
+            ],
+            candidates=[_candidate("refresh-me")],
+            dry_run=False,
+            reconcile_after_apply=False,
+        )
+
+    assert summary["errors"] == 1
+    assert summary["error_details"][0]["error"] == "disk unavailable"
+    failure_records = [r for r in caplog.records if "disk unavailable" in r.getMessage()]
+    assert failure_records, "expected the I/O failure to be logged"
+    assert all(r.levelno == logging.WARNING for r in failure_records)
+
+
+def test_duplicate_memory_content_error_is_value_error() -> None:
+    """The MCP create/update surface catches ValueError; the subclass must stay one."""
+    assert issubclass(DuplicateMemoryContentError, ValueError)

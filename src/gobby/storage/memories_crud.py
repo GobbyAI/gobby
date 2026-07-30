@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 MAX_SUPERSEDES_IDS = 20
 
 
+class DuplicateMemoryContentError(ValueError):
+    """Content collides with a live memory in the same project/global scope.
+
+    Subclasses ValueError so existing callers that treat duplicate rejection
+    as a validation error keep working; the dream apply loop catches it to
+    classify the collision as benign self-healing rather than a failure.
+    """
+
+
 def normalize_supersedes(supersedes: list[str] | None) -> list[str]:
     """Validate, canonicalize, and bound public supersession ids."""
     normalized: list[str] = []
@@ -622,7 +631,9 @@ class MemoryCrudMixin(MemoryStoreBase):
                     (content, current["project_id"], current["is_global"], memory_id),
                 ).fetchone()
                 if duplicate is not None:
-                    raise ValueError("Memory content already exists in this project/global scope")
+                    raise DuplicateMemoryContentError(
+                        "Memory content already exists in this project/global scope"
+                    )
             updates.append("content = %s")
             params.append(content)
             if content != current["content"]:

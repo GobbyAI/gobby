@@ -15,6 +15,7 @@ from gobby.memory.dream.storage_journal import (
     restore_crossrefs,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories_crud import DuplicateMemoryContentError
 from gobby.utils.datetime import utc_now
 from gobby.utils.json_helpers import json_dumps
 
@@ -123,7 +124,9 @@ class _DreamActionMixin:
                     (normalized_content, selected_project_id, selected_is_global, memory_id),
                 ).fetchone()
                 if duplicate is not None:
-                    raise ValueError("Memory content already exists in this project/global scope")
+                    raise DuplicateMemoryContentError(
+                        "Memory content already exists in this project/global scope"
+                    )
                 if tags is None:
                     conn.execute(
                         """

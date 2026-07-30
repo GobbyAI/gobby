@@ -6,6 +6,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories_crud import DuplicateMemoryContentError
 from gobby.storage.memories_models import Memory, MemoryType, visibility_predicate
 from gobby.storage.memories_scope import ALL_MEMORIES, GLOBAL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -347,7 +348,7 @@ def test_update_memory_duplicate_content_same_scope_fails(memory_manager) -> Non
     memory = memory_manager.create_memory(content="Before")
     memory_manager.create_memory(content="Existing")
 
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(DuplicateMemoryContentError, match="already exists"):
         memory_manager.update_memory(memory.id, content="Existing")
 
     assert memory_manager.get_memory(memory.id).content == "Before"
