@@ -1,6 +1,5 @@
 """Evaluation helpers for the rule engine."""
 
-import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -12,6 +11,7 @@ from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
+from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.blocked_tool_recovery import (
     CONSECUTIVE_TOOL_BLOCK_RULE,
     block_reason_signature,
@@ -273,7 +273,7 @@ class EvaluationMixin:
                     continue
 
             # Build fresh eval context with current variables
-            ctx = await asyncio.to_thread(
+            ctx = await offload(
                 self._build_eval_context,
                 evaluation.event,
                 evaluation.variables,
@@ -281,12 +281,12 @@ class EvaluationMixin:
             )
 
             # Build allowed_funcs once per iteration - shared by condition and templates
-            allowed_funcs = await asyncio.to_thread(self._build_allowed_funcs, ctx)
+            allowed_funcs = await offload(self._build_allowed_funcs, ctx)
 
             # Check rule-level `when` condition
             if body.when:
                 fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
-                if not await asyncio.to_thread(
+                if not await offload(
                     self._evaluate_condition,
                     body.when,
                     ctx,
@@ -302,7 +302,7 @@ class EvaluationMixin:
                     ):
                         continue
                     if effect.when:
-                        condition_matches = await asyncio.to_thread(
+                        condition_matches = await offload(
                             self._evaluate_condition,
                             effect.when,
                             ctx,
@@ -311,7 +311,7 @@ class EvaluationMixin:
                         )
                         if not condition_matches:
                             continue
-                    reason = await asyncio.to_thread(
+                    reason = await offload(
                         self._render_rule_block_reason,
                         evaluation,
                         row,
@@ -342,7 +342,7 @@ class EvaluationMixin:
 
                 # Check per-effect `when` condition
                 if effect.when:
-                    if not await asyncio.to_thread(
+                    if not await offload(
                         self._evaluate_condition,
                         effect.when,
                         ctx,
@@ -380,7 +380,7 @@ class EvaluationMixin:
             if deferred_block is not None:
                 if self._effect_matches_event(deferred_block, evaluation.event):
                     rule_blocked = True
-                    rendered_block_reason = await asyncio.to_thread(
+                    rendered_block_reason = await offload(
                         self._render_rule_block_reason,
                         evaluation,
                         row,
@@ -427,7 +427,7 @@ class EvaluationMixin:
 
         if self._event_store and metric_records:
             try:
-                await asyncio.to_thread(self._event_store.record_events, metric_records)
+                await offload(self._event_store.record_events, metric_records)
             except Exception as e:
                 logger.debug("Metrics recording failed: %s", e, exc_info=True)
 

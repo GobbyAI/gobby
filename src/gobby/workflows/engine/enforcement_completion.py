@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 from datetime import UTC, datetime
@@ -15,6 +14,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
+from gobby.workflows.engine._offload import offload
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 if TYPE_CHECKING:
@@ -118,7 +118,7 @@ class EnforcementCompletionMixin:
             callable(get_by_session),
         )
         if callable(get_by_session):
-            db_agent = await asyncio.to_thread(get_by_session, session_id)
+            db_agent = await offload(get_by_session, session_id)
             logger.debug(
                 "_complete_agent_workflow_run session=%s workflow=%s db_agent=%s",
                 session_id,
@@ -127,7 +127,7 @@ class EnforcementCompletionMixin:
             )
         fallback_run_id: str | None = None
         if db_agent is None:
-            fallback_run_id = await asyncio.to_thread(
+            fallback_run_id = await offload(
                 self._runner.get_run_id_by_session,
                 session_id,
             )
@@ -151,7 +151,7 @@ class EnforcementCompletionMixin:
         # must be re-read to learn its actual terminal_reason.
         run_row: Any | None = db_agent
         if run_row is None:
-            run_row = await asyncio.to_thread(self._runner.get_run, run_id)
+            run_row = await offload(self._runner.get_run, run_id)
         terminal_reason: str | None = getattr(run_row, "terminal_reason", None)
 
         notify_result: dict[str, Any] = {
@@ -186,7 +186,7 @@ class EnforcementCompletionMixin:
                 workflow_name,
                 run_id,
             )
-            await asyncio.to_thread(
+            await offload(
                 cleanup_agent_runtime_state,
                 self.db,
                 run_id=run_id,
@@ -207,7 +207,7 @@ class EnforcementCompletionMixin:
                 run_id,
                 terminalized,
             )
-            await asyncio.to_thread(
+            await offload(
                 cleanup_agent_runtime_state,
                 self.db,
                 run_id=run_id,
@@ -229,7 +229,7 @@ class EnforcementCompletionMixin:
             notify_result=notify_result,
             message=message,
         )
-        await asyncio.to_thread(
+        await offload(
             cleanup_agent_runtime_state,
             self.db,
             run_id=run_id,
@@ -247,7 +247,7 @@ class EnforcementCompletionMixin:
             or None if no transition happened. The notification includes the
             new step's status_message for injection into AfterTool additionalContext.
         """
-        step, instance, definition = await asyncio.to_thread(
+        step, instance, definition = await offload(
             self._get_step_for_session,
             session_id,
         )
@@ -280,7 +280,7 @@ class EnforcementCompletionMixin:
         tool_output = event.data.get("tool_output")
         tool_failed = bool(event.metadata.get("is_failure", False)) or outcome.succeeded is False
         if not tool_failed:
-            await asyncio.to_thread(
+            await offload(
                 self._audit_step_tool_call,
                 session_id,
                 instance.workflow_name,
@@ -311,7 +311,7 @@ class EnforcementCompletionMixin:
             if handler.get("server") == mcp_server and handler.get("tool") == mcp_tool_name:
                 handler_when = handler.get("when")
                 if handler_when:
-                    handler_matches = await asyncio.to_thread(
+                    handler_matches = await offload(
                         self._evaluate_condition,
                         handler_when,
                         {
@@ -337,7 +337,7 @@ class EnforcementCompletionMixin:
                         "tool_input": handler_tool_input,
                         "tool_output": tool_output,
                     }
-                    ok, var_value = await asyncio.to_thread(
+                    ok, var_value = await offload(
                         self._evaluate_step_handler_value,
                         handler.get("value"),
                         ctx,
@@ -347,7 +347,7 @@ class EnforcementCompletionMixin:
                         instance.variables[var_name] = var_value
                         variables[var_name] = var_value
                         vars_changed = True
-                        await asyncio.to_thread(
+                        await offload(
                             self._audit_step_set_variable,
                             session_id,
                             instance.workflow_name,
@@ -376,7 +376,7 @@ class EnforcementCompletionMixin:
                 # claim -> load_skill transition before the workflow's own
                 # claim_task handler ever runs (see task #12267).
                 ctx = {"vars": {**variables, **instance.variables}}
-                transition_met = not transition.when or await asyncio.to_thread(
+                transition_met = not transition.when or await offload(
                     self._evaluate_condition,
                     transition.when,
                     ctx,
@@ -397,7 +397,7 @@ class EnforcementCompletionMixin:
                     )
                     continue
 
-                await asyncio.to_thread(
+                await offload(
                     self.workflow_audit.log_transition,
                     session_id=session_id,
                     from_step=old_step,
@@ -415,7 +415,7 @@ class EnforcementCompletionMixin:
                 instance.current_step = new_step
                 instance.step_action_count = 0
                 instance.step_entered_at = datetime.now(UTC)
-                await asyncio.to_thread(instance_mgr.save_instance, instance)
+                await offload(instance_mgr.save_instance, instance)
 
                 # Reset consecutive-tool-block counters so failures from the
                 # previous step don't bleed into the new one
@@ -443,13 +443,13 @@ class EnforcementCompletionMixin:
                         "vars": merged_vars,
                         "variables": merged_vars,
                     }
-                    exit_met = await asyncio.to_thread(
+                    exit_met = await offload(
                         self._evaluate_condition,
                         definition.exit_condition,
                         exit_ctx,
                         "block",
                     )
-                    await asyncio.to_thread(
+                    await offload(
                         self.workflow_audit.log_exit_check,
                         session_id=session_id,
                         step=instance.current_step,
@@ -498,6 +498,6 @@ class EnforcementCompletionMixin:
 
         # Save if variables changed without transition
         if vars_changed:
-            await asyncio.to_thread(instance_mgr.save_instance, instance)
+            await offload(instance_mgr.save_instance, instance)
 
         return None

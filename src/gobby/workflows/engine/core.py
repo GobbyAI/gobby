@@ -5,7 +5,6 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
-import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -32,6 +31,7 @@ from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleTriggerEvent,
 )
+from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
     format_consecutive_tool_block_reason,
@@ -165,7 +165,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 project_from_vars = variables.get("project")
                 if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
-                    variables["project"] = await asyncio.to_thread(
+                    variables["project"] = await offload(
                         self._resolve_project_info,
                         event,
                         project_from_vars,
@@ -178,10 +178,10 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # Check global enforcement toggle
                 config_store = ConfigStore(self.db)
-                if await asyncio.to_thread(config_store.get, "rules.enforcement_enabled") is False:
+                if await offload(config_store.get, "rules.enforcement_enabled") is False:
                     return HookResponse(decision="allow")
                 aggregate_blocks = (
-                    await asyncio.to_thread(config_store.get, "rules.aggregate_blocks") is not False
+                    await offload(config_store.get, "rules.aggregate_blocks") is not False
                 )
 
                 if eval_context is None:
@@ -286,21 +286,21 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority
-                rules = await asyncio.to_thread(self._load_rules, resolved_rule_events)
+                rules = await offload(self._load_rules, resolved_rule_events)
 
                 # 2. Apply session overrides
-                overrides = await asyncio.to_thread(self._load_session_overrides, session_id)
-                rules = await asyncio.to_thread(self._apply_overrides, rules, overrides)
+                overrides = await offload(self._load_session_overrides, session_id)
+                rules = await offload(self._apply_overrides, rules, overrides)
 
                 # 3. Filter by agent_scope
                 agent_type = variables.get("_agent_type")
-                rules = await asyncio.to_thread(self._filter_by_agent_scope, rules, agent_type)
+                rules = await offload(self._filter_by_agent_scope, rules, agent_type)
 
                 # 4. Filter by audience
-                rules = await asyncio.to_thread(self._filter_by_audience, rules, variables)
+                rules = await offload(self._filter_by_audience, rules, variables)
 
                 # 5. Filter by active rules (selector-based)
-                rules = await asyncio.to_thread(
+                rules = await offload(
                     self._filter_by_active_rules,
                     rules,
                     variables,
@@ -316,7 +316,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # 4b. Agent-level tool enforcement (broadest scope, preempts everything)
                 if is_before_tool:
-                    agent_block = await asyncio.to_thread(
+                    agent_block = await offload(
                         self._check_agent_tool_enforcement,
                         event,
                         session_id,
@@ -342,7 +342,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
                 if is_before_tool:
-                    step_block = await asyncio.to_thread(
+                    step_block = await offload(
                         self._check_step_tool_enforcement,
                         event,
                         session_id,
