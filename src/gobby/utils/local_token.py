@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,12 @@ LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
 _AGENT_TOKEN_VERSION = "gobby-agent-v1"
 
+# Expiry is defense-in-depth: the daemon's per-request run-liveness check is
+# the real revocation, so the untimed ceiling never strands a legitimate long
+# run mid-flight, and resume re-mints a fresh capability.
+AGENT_TOKEN_MAX_TTL_SECONDS = 86400
+_AGENT_TOKEN_TIMEOUT_GRACE_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class AgentApiTokenClaims:
@@ -23,6 +30,8 @@ class AgentApiTokenClaims:
     agent_run_id: str
     session_id: str
     project_id: str
+    iat: int
+    exp: int
 
 
 def local_token_path() -> Path:
@@ -45,11 +54,23 @@ def issue_agent_api_token(
     agent_run_id: str,
     session_id: str,
     project_id: str,
+    timeout_seconds: float | None = None,
 ) -> str:
-    """Mint a signed daemon capability bound to one managed agent identity."""
+    """Mint a signed daemon capability bound to one managed agent identity.
+
+    A run-declared timeout bounds the token to that timeout plus a fixed
+    grace; untimed runs get the fixed ``AGENT_TOKEN_MAX_TTL_SECONDS`` ceiling.
+    """
+    iat = int(time.time())
+    if timeout_seconds is not None:
+        exp = iat + int(timeout_seconds) + _AGENT_TOKEN_TIMEOUT_GRACE_SECONDS
+    else:
+        exp = iat + AGENT_TOKEN_MAX_TTL_SECONDS
     payload = json.dumps(
         {
             "agent_run_id": agent_run_id,
+            "exp": exp,
+            "iat": iat,
             "project_id": project_id,
             "session_id": session_id,
         },
@@ -66,7 +87,11 @@ def verify_agent_api_token(
     token: str,
     operator_token: str,
 ) -> AgentApiTokenClaims | None:
-    """Verify and decode a run-bound agent capability."""
+    """Verify and decode a run-bound agent capability.
+
+    Tokens without integer ``iat``/``exp`` claims and tokens at or past
+    their expiry are rejected outright.
+    """
     try:
         version, encoded_payload, encoded_signature = token.split(".", maxsplit=2)
         if version != _AGENT_TOKEN_VERSION:
@@ -88,13 +113,23 @@ def verify_agent_api_token(
         isinstance(value, str) and value for value in (agent_run_id, session_id, project_id)
     ):
         return None
+    iat = raw.get("iat")
+    exp = raw.get("exp")
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (iat, exp)):
+        return None
     assert isinstance(agent_run_id, str)
     assert isinstance(session_id, str)
     assert isinstance(project_id, str)
+    assert isinstance(iat, int)
+    assert isinstance(exp, int)
+    if time.time() >= exp:
+        return None
     return AgentApiTokenClaims(
         agent_run_id=agent_run_id,
         session_id=session_id,
         project_id=project_id,
+        iat=iat,
+        exp=exp,
     )
 
 

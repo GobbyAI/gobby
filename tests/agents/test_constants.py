@@ -26,7 +26,11 @@ from gobby.agents.constants import (
     get_terminal_env_vars,
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
-from gobby.utils.local_token import local_token_path, verify_agent_api_token
+from gobby.utils.local_token import (
+    AGENT_TOKEN_MAX_TTL_SECONDS,
+    local_token_path,
+    verify_agent_api_token,
+)
 
 pytestmark = pytest.mark.unit
 _HASH_SUFFIX_RE = re.compile(r".+-[0-9a-f]{16}$")
@@ -133,6 +137,30 @@ class TestGetTerminalEnvVars:
         assert claims.agent_run_id == "run-123"
         assert claims.session_id == "sess-child"
         assert claims.project_id == "proj-abc"
+        # Untimed runs get the fixed expiry ceiling.
+        assert claims.exp - claims.iat == AGENT_TOKEN_MAX_TTL_SECONDS
+
+    def test_run_timeout_bounds_agent_token_expiry(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        local_token_path().write_text("operator-token\n")
+
+        result = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+            operator_token="operator-token",
+            timeout_seconds=300,
+        )
+
+        claims = verify_agent_api_token(result[GOBBY_AGENT_API_TOKEN], "operator-token")
+        assert claims is not None
+        # Declared run timeout plus the fixed 60-second grace.
+        assert claims.exp - claims.iat == 360
 
     def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """uv cache paths are writable temp paths scoped to safe session IDs."""

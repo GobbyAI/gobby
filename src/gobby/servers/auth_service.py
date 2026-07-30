@@ -12,6 +12,7 @@ from typing import Literal, NamedTuple
 
 from starlette.requests import HTTPConnection
 
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
     PASSWORD_HASH_KEY,
@@ -140,9 +141,7 @@ def _agent_identity_matches(
             return False
     if run_id is not None:
         return run_id == claims.agent_run_id
-    # ghook does not send its run id yet; the hooks route keeps this
-    # exemption until the capability-lifecycle work teaches it to.
-    return not bind_identity or request.url.path == _HOOKS_EXECUTE_PATH
+    return not bind_identity
 
 
 def _optional_string(value: object) -> str | None:
@@ -230,12 +229,31 @@ class AuthService:
         entry = _agent_capability_allows(request)
         if entry is None:
             return False
+        if not self._agent_run_is_live(claims.agent_run_id):
+            return False
         return _agent_identity_matches(
             request,
             claims,
             bind_identity=entry.bind_identity,
             resolve_session=lambda ref: self._resolve_agent_session_ref(ref, claims.project_id),
         )
+
+    def _agent_run_is_live(self, run_id: str) -> bool:
+        """A capability dies with its run: only pending/running runs pass.
+
+        Checked on every request; token expiry is only defense-in-depth
+        around this, the real revocation.
+        """
+        try:
+            row = self._database_getter().fetchone(
+                "SELECT status FROM agent_runs WHERE id = %s",
+                (run_id,),
+            )
+        except Exception:
+            # Malformed run ids and storage failures must fail closed at the
+            # auth boundary, never surface as a 500.
+            return False
+        return row is not None and row["status"] in ACTIVE_AGENT_RUN_STATUSES
 
     def _resolve_agent_session_ref(self, ref: str, project_id: str) -> str | None:
         try:

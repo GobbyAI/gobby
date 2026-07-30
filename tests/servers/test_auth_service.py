@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.storage.sessions import SessionManager
 from starlette.requests import Request
 
 import gobby.servers.auth_service as auth_service_module
@@ -21,6 +23,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.ui import AuthConfig
 from gobby.runner_init import storage as storage_module
 from gobby.servers.auth_service import AuthService
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
     AuthStore,
@@ -62,6 +65,26 @@ def _request(
 
 def _set_api_token(db: HubDatabase, token: str) -> None:
     ConfigStore(db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
+
+
+@pytest.fixture
+def live_agent_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> AgentRun:
+    """A pending agent run backing the per-request liveness check."""
+    session = session_manager.register(
+        external_id="auth-service-agent",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    return LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="auth service capability",
+    )
 
 
 def _password_hash(password: str, salt: bytes = b"auth-service-test") -> str:
@@ -186,6 +209,7 @@ def test_is_request_authenticated_precedence(
 def test_agent_bearer_is_bound_to_run_identity_and_routes(
     temp_db: HubDatabase,
     tmp_path: Path,
+    live_agent_run: AgentRun,
 ) -> None:
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
@@ -193,13 +217,13 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
     token = issue_agent_api_token(
         "operator-token",
-        agent_run_id="run-123",
+        agent_run_id=live_agent_run.id,
         session_id="session-123",
         project_id="project-123",
     )
     headers = {
         "Authorization": f"Bearer {token}",
-        "X-Gobby-Agent-Run-Id": "run-123",
+        "X-Gobby-Agent-Run-Id": live_agent_run.id,
         "X-Gobby-Session-Id": "session-123",
         "X-Gobby-Project-Id": "project-123",
     }
@@ -209,13 +233,6 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     )
     assert service.is_request_authenticated(
         _request(headers, method="POST", path="/api/code-index/codewiki/refresh")
-    )
-    assert service.is_request_authenticated(
-        _request(
-            {key: value for key, value in headers.items() if key != "X-Gobby-Agent-Run-Id"},
-            method="POST",
-            path="/api/hooks/execute",
-        )
     )
 
     assert not service.is_request_authenticated(
@@ -307,6 +324,7 @@ def test_agent_capability_matrix(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    live_agent_run: AgentRun,
 ) -> None:
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
@@ -315,13 +333,13 @@ def test_agent_capability_matrix(
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
         "operator-token",
-        agent_run_id="run-123",
+        agent_run_id=live_agent_run.id,
         session_id=session_uuid,
         project_id="project-123",
     )
     identity = {
         "Authorization": f"Bearer {token}",
-        "X-Gobby-Agent-Run-Id": "run-123",
+        "X-Gobby-Agent-Run-Id": live_agent_run.id,
         "X-Gobby-Session-Id": session_uuid,
         "X-Gobby-Caller-Project-Id": "project-123",
     }
@@ -406,6 +424,121 @@ def test_agent_capability_matrix(
         ("POST", "/api/memories/graph/rebuild"),
     ):
         assert not service.is_request_authenticated(_request(identity, method=method, path=path))
+
+
+def _agent_service_and_headers(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    run_id: str,
+    *,
+    timeout_seconds: float | None = None,
+    minted_at: float | None = None,
+) -> tuple[AuthService, dict[str, str]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+
+    def mint() -> str:
+        return issue_agent_api_token(
+            "operator-token",
+            agent_run_id=run_id,
+            session_id="session-123",
+            project_id="project-123",
+            timeout_seconds=timeout_seconds,
+        )
+
+    if minted_at is None:
+        token = mint()
+    else:
+        real_time = time.time
+        time.time = lambda: minted_at
+        try:
+            token = mint()
+        finally:
+            time.time = real_time
+    return service, {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Agent-Run-Id": run_id,
+        "X-Gobby-Session-Id": "session-123",
+        "X-Gobby-Project-Id": "project-123",
+    }
+
+
+def test_agent_token_expiry_rejected_on_both_paths(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    """Expired capabilities fail on the run-timeout and untimed-ceiling paths."""
+    service, headers = _agent_service_and_headers(
+        temp_db,
+        tmp_path / "timed",
+        live_agent_run.id,
+        timeout_seconds=120,
+        minted_at=time.time() - 300,
+    )
+    assert not service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/mcp/tools/call")
+    )
+
+    service, headers = _agent_service_and_headers(
+        temp_db,
+        tmp_path / "untimed",
+        live_agent_run.id,
+        minted_at=time.time() - (86400 + 60),
+    )
+    assert not service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/mcp/tools/call")
+    )
+
+    # A fresh untimed token from the same identity still authenticates.
+    service, headers = _agent_service_and_headers(temp_db, tmp_path / "fresh", live_agent_run.id)
+    assert service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/mcp/tools/call")
+    )
+
+
+def test_terminal_run_token_rejected(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    """Run-liveness is the real revocation: a dead run's token stops working."""
+    service, headers = _agent_service_and_headers(temp_db, tmp_path, live_agent_run.id)
+    request = _request(headers, method="POST", path="/api/mcp/tools/call")
+    assert service.is_request_authenticated(request)
+
+    LocalAgentRunManager(temp_db).complete(live_agent_run.id, result="done")
+    assert not service.is_request_authenticated(request)
+
+
+def test_hooks_route_requires_run_identity(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    """The hooks route lost its run-id exemption: ghook sends the header."""
+    service, headers = _agent_service_and_headers(temp_db, tmp_path, live_agent_run.id)
+
+    assert service.is_request_authenticated(
+        _request(headers, method="POST", path="/api/hooks/execute")
+    )
+    assert not service.is_request_authenticated(
+        _request(
+            {key: value for key, value in headers.items() if key != "X-Gobby-Agent-Run-Id"},
+            method="POST",
+            path="/api/hooks/execute",
+        )
+    )
+    assert not service.is_request_authenticated(
+        _request(
+            headers | {"X-Gobby-Agent-Run-Id": "99999999-8888-7777-6666-555555555555"},
+            method="POST",
+            path="/api/hooks/execute",
+        )
+    )
 
 
 @pytest.mark.asyncio

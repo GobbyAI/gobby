@@ -263,6 +263,13 @@ fn build_dispatch_envelope(
     {
         headers.insert("X-Gobby-Session-Id".into(), sid.to_string());
     }
+    // Managed runs authenticate with a run-bound capability; the daemon
+    // requires the matching run id on this context-bearing route.
+    if let Ok(rid) = std::env::var("GOBBY_AGENT_RUN_ID")
+        && !rid.is_empty()
+    {
+        headers.insert("X-Gobby-Agent-Run-Id".into(), rid);
+    }
 
     Envelope::new(
         cfg.is_critical_hook(hook_type),

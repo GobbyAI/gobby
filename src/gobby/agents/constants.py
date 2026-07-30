@@ -110,6 +110,7 @@ def get_terminal_env_vars(
     prompt: str | None = None,
     prompt_file: str | None = None,
     operator_token: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, str]:
     """
     Build environment variables dict for spawning a terminal-mode agent.
@@ -124,6 +125,8 @@ def get_terminal_env_vars(
         max_agent_depth: Maximum allowed depth (default: 5).
         prompt: Optional short prompt (for inline passing).
         prompt_file: Optional path to file containing prompt (for long prompts).
+        operator_token: Operator token used to mint the run capability.
+        timeout_seconds: The run's declared timeout, bounding capability expiry.
 
     Returns:
         Dict of environment variable name to value.
@@ -144,6 +147,7 @@ def get_terminal_env_vars(
             agent_run_id=agent_run_id,
             session_id=session_id,
             project_id=project_id,
+            timeout_seconds=timeout_seconds,
         )
 
     if parent_session_id:

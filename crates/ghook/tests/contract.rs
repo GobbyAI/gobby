@@ -314,6 +314,12 @@ fn lifecycle_hooks_enqueue_exact_agent_run_identity() -> TestResult {
             envelope["input_data"]["terminal_context"]["gobby_agent_run_id"], RUN_ID,
             "{cli} {hook_type}"
         );
+        // The daemon's auth layer requires the run id header on hook posts
+        // from managed runs; the envelope mirrors what ghook sends live.
+        assert_eq!(
+            envelope["headers"]["X-Gobby-Agent-Run-Id"], RUN_ID,
+            "{cli} {hook_type}"
+        );
     }
 
     Ok(())
@@ -376,6 +382,35 @@ fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
     assert!(output.status.success());
     let envelope = read_single_inbox_envelope(gobby_home.path())?;
     assert!(envelope["input_data"].get("terminal_context").is_none());
+    assert_eq!(
+        envelope["headers"]["X-Gobby-Agent-Run-Id"],
+        "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn unmanaged_hook_omits_agent_run_header() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+        },
+    )?;
+
+    assert!(output.status.success());
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    assert!(envelope["headers"].get("X-Gobby-Agent-Run-Id").is_none());
 
     Ok(())
 }

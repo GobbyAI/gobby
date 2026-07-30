@@ -388,6 +388,7 @@ def _prepare_run_for_session(
         prompt=prompt_env,
         prompt_file=prompt_file,
         operator_token=read_local_api_token(),
+        timeout_seconds=timeout_seconds,
     )
 
     return PreparedSpawn(
