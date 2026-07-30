@@ -9,6 +9,7 @@ from gobby.review_learning.service import (
     MAX_RECALL_FINDINGS,
     ReviewLearningService,
 )
+from gobby.utils.session_context import get_current_session_id
 
 _FINDING_OBJECT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -53,7 +54,10 @@ _RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
         },
         "source": {"type": "string", "description": "Review source identifier."},
         "source_kind": {"type": "string", "description": "Kind of review signal."},
-        "session_id": {"type": "string", "description": "Session scope for project resolution."},
+        "session_id": {
+            "type": "string",
+            "description": "Interactive session; defaults to the ambient caller session.",
+        },
         "repo": {"type": "string", "description": "Repository identifier."},
         "language": {"type": "string", "description": "Programming language context."},
     },
@@ -77,14 +81,14 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
         repo: str | None = None,
         language: str | None = None,
     ) -> dict[str, Any]:
-        """Recall targeted context before review triage decisions."""
+        """Recall targeted context for an explicit or ambient interactive session."""
         try:
             result = await service.recall_context(
                 findings=findings,
                 proposed_changes=proposed_changes,
                 source=source,
                 source_kind=source_kind,
-                session_id=session_id,
+                session_id=session_id or get_current_session_id(),
                 repo=repo,
                 language=language,
             )

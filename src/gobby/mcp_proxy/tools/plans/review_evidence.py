@@ -152,13 +152,17 @@ def register_review_evidence_tools(
         sweep_scope: dict[str, object] | None = None,
         sweep_scope_digest: str | None = None,
     ) -> dict[str, object]:
+        """Bind staged reviews to task/stage, otherwise use the interactive session."""
+        review_session_id = session_id
+        if task_id is None and stage is None:
+            review_session_id = session_id or get_current_session_id()
         try:
             prepared = await asyncio.to_thread(
                 service.prepare_plan_review_round,
                 project_id=resolve_project_id(project),
                 plan_path=plan_path,
                 round_number=round_number,
-                session_id=session_id or get_current_session_id(),
+                session_id=review_session_id,
                 task_id=task_id,
                 stage=stage,
                 prior_finding_resolutions=prior_finding_resolutions,

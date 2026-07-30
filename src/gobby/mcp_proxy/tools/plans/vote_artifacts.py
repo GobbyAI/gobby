@@ -168,6 +168,7 @@ def register_plan_vote_artifact_tools(
         plan_path: str | None = None,
         project: str | None = None,
     ) -> dict[str, object]:
+        """List artifacts for an explicit or ambient interactive session."""
         session_ref = session_id or get_current_session_id()
         if session_ref is None:
             return {
@@ -196,7 +197,10 @@ def register_plan_vote_artifact_tools(
         input_schema={
             "type": "object",
             "properties": {
-                "session_id": {"type": "string"},
+                "session_id": {
+                    "type": "string",
+                    "description": "Interactive session; defaults to the ambient caller session.",
+                },
                 "plan_path": {"type": "string"},
                 "project": {"type": "string"},
             },

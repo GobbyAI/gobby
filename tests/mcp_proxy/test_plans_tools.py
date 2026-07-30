@@ -9,9 +9,12 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans import review_evidence_io as snapshot_io
 from gobby.plans.review_evidence import PlanReviewEvidenceService
@@ -78,6 +81,29 @@ def _write_plan_without_plan_id(root: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _create_plan_daemon_tools(
+    temp_db: HubDatabase,
+    project_id: str,
+) -> tuple[GobbyDaemonTools, SessionManager]:
+    session_manager = SessionManager(temp_db)
+    internal_manager = InternalRegistryManager()
+    internal_manager.add_registry(
+        create_plan_registry(temp_db, default_project_id=project_id),
+    )
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = project_id
+    tools = GobbyDaemonTools(
+        mcp_manager=mcp_manager,
+        daemon_port=60887,
+        websocket_port=60888,
+        start_time=0.0,
+        internal_manager=internal_manager,
+        db=None,
+        session_manager=session_manager,
+    )
+    return tools, session_manager
 
 
 @pytest.mark.asyncio
@@ -492,17 +518,12 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    from unittest.mock import MagicMock
-
-    from gobby.mcp_proxy.server import GobbyDaemonTools
-    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
-
     project_id = (
         LocalProjectManager(temp_db)
         .create(name="envelope-review-evidence", repo_path=str(tmp_path))
         .id
     )
-    session_manager = SessionManager(temp_db)
+    tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     session = session_manager.register(
         external_id="envelope-review-evidence",
         machine_id="test-machine",
@@ -519,21 +540,6 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
         },
     )
     plan_path = _write_plan(tmp_path)
-    internal_manager = InternalRegistryManager()
-    internal_manager.add_registry(
-        create_plan_registry(temp_db, default_project_id=project_id),
-    )
-    mcp_manager = MagicMock()
-    mcp_manager.project_id = project_id
-    tools = GobbyDaemonTools(
-        mcp_manager=mcp_manager,
-        daemon_port=60887,
-        websocket_port=60888,
-        start_time=0.0,
-        internal_manager=internal_manager,
-        db=None,
-        session_manager=session_manager,
-    )
 
     result = await tools.call_tool(
         server_name="gobby-plans",
@@ -548,3 +554,96 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
     assert result["ok"] is True
     evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
     assert evidence.session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_prepare_review_round_staged_binding_with_ambient_context(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = (
+        LocalProjectManager(temp_db)
+        .create(name="staged-review-evidence", repo_path=str(tmp_path))
+        .id
+    )
+    tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
+    ambient_session = session_manager.register(
+        external_id="staged-review-evidence-ambient",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id,
+        "Review staged evidence",
+        validation_criteria="Staged review evidence binds to its task and stage.",
+    )
+    plan_path = _write_plan(tmp_path)
+
+    result = await tools.call_tool(
+        server_name="gobby-plans",
+        tool_name="prepare_plan_review_round",
+        arguments={
+            "plan_path": str(plan_path),
+            "round_number": 1,
+            "task_id": task.id,
+            "stage": "development",
+        },
+        session_id=ambient_session.id,
+    )
+
+    assert result["ok"] is True
+    evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
+    assert evidence.session_id is None
+    assert evidence.task_id == task.id
+    assert evidence.stage == "development"
+
+
+@pytest.mark.asyncio
+async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = (
+        LocalProjectManager(temp_db)
+        .create(name="explicit-review-evidence", repo_path=str(tmp_path))
+        .id
+    )
+    tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
+    ambient_session = session_manager.register(
+        external_id="explicit-review-evidence-ambient",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    explicit_session = session_manager.register(
+        external_id="explicit-review-evidence-target",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        explicit_session.id,
+        {
+            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
+                "explicit-review-evidence-request",
+                "Review the explicitly bound evidence plan",
+            )
+        },
+    )
+    plan_path = _write_plan(tmp_path)
+
+    result = await tools.call_tool(
+        server_name="gobby-plans",
+        tool_name="prepare_plan_review_round",
+        arguments={
+            "plan_path": str(plan_path),
+            "round_number": 1,
+            "session_id": explicit_session.id,
+        },
+        session_id=ambient_session.id,
+    )
+
+    assert result["ok"] is True
+    evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
+    assert evidence.session_id == explicit_session.id
