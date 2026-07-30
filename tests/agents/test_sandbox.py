@@ -873,7 +873,8 @@ class TestComputeSandboxPaths:
         assert str(gobby_home.resolve()) in paths.write_paths
         assert str(gobby_home.resolve()) in paths.read_paths
         assert str(Path.home().resolve()) in paths.deny_read_paths
-        assert str((gobby_home / "local_cli_token").resolve()) in paths.deny_read_paths
+        for required_read_path in ("machine_id", "logs", "bin", "local_cli_token"):
+            assert str((gobby_home / required_read_path).resolve()) not in paths.deny_read_paths
         assert str((gobby_home / "local_cli_token").resolve()) in paths.deny_write_paths
         assert str((gobby_home / "gcode-runtime").resolve()) in paths.deny_read_paths
         assert str(runtime_home.resolve()) in paths.read_paths

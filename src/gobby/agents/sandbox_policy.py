@@ -86,15 +86,14 @@ def canonical_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
 def sensitive_home_roots() -> list[str]:
     """Return broad home roots denied before narrow read exceptions are applied.
 
-    Sandboxed agents get broad access to Gobby state, with the operator token
-    and persistent gcode runtimes explicitly removed from that carveout.
+    Sandboxed agents get broad access to Gobby state, with persistent gcode
+    runtimes explicitly removed from that carveout.
     """
     home = Path.home().resolve(strict=False)
     gobby_home = get_gobby_home()
     return canonical_paths(
         [
             str(home),
-            str(gobby_home / "local_cli_token"),
             str(gobby_home / "gcode-runtime"),
         ]
     )
@@ -141,11 +140,12 @@ def gobby_write_exceptions() -> list[str]:
 
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
-    """Return exact machine, hook, binary, and prompt resources needed by agents."""
+    """Return Gobby state, runtime, and prompt resources needed by agents."""
     # The whole Gobby home: bootstrap.yaml is the root of trust for daemon
     # and hub discovery (ghook, `gobby mcp-server`, gcode, and gwiki re-read
-    # it per invocation), and agents read hook config, binaries, and personal
-    # project state from here. Sensitive token locations are denied separately.
+    # it per invocation), and agents need machine_id, logs, binaries, the local
+    # operator credential, hook config, and personal project state from here.
+    # The credential remains write-denied by sensitive_write_roots().
     paths = [get_gobby_home()]
     runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
     if runtime_home:
