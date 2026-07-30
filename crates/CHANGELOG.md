@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GOBBY_AGENT_RUN_ID`, while preserving provider terminal-context fields.
 - **Reject unsupported CLIs uniformly** — return `{}` with exit code 2 before dispatch
   side effects instead of falling back to Claude configuration.
+- **Display-only Claude statusline adapter** — preserve the configured downstream
+  statusline command and byte-exact stdin/stdout forwarding while leaving usage
+  ingestion to transcript processing.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

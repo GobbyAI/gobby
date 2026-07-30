@@ -1463,10 +1463,10 @@ class TestRecordSessionActivityPulse:
         manager_with_mocks: HookManager,
         make_event: Callable,
     ) -> None:
-        from gobby.servers.routes.sessions import statusline_activity
+        from gobby.sessions import activity as session_activity
 
         manager = manager_with_mocks
-        statusline_activity.reset_for_tests()
+        session_activity.reset_for_tests()
 
         def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> None:
             event.metadata["_platform_session_id"] = "platform-abc"
@@ -1482,17 +1482,17 @@ class TestRecordSessionActivityPulse:
         event = make_event(event_type=HookEventType.BEFORE_AGENT)
         manager._handle_internal(event)
 
-        assert statusline_activity.last_session_activity("platform-abc") is not None
+        assert session_activity.last_session_activity("platform-abc") is not None
 
     def test_session_start_records_activity_after_handler(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable[..., HookEvent],
     ) -> None:
-        from gobby.servers.routes.sessions import statusline_activity
+        from gobby.sessions import activity as session_activity
 
         manager = manager_with_mocks
-        statusline_activity.reset_for_tests()
+        session_activity.reset_for_tests()
 
         def handler(event: HookEvent) -> HookResponse:
             event.metadata["_platform_session_id"] = "platform-xyz"
@@ -1507,17 +1507,17 @@ class TestRecordSessionActivityPulse:
         event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/p"})
         manager._handle_internal(event)
 
-        assert statusline_activity.last_session_activity("platform-xyz") is not None
+        assert session_activity.last_session_activity("platform-xyz") is not None
 
     def test_no_activity_recorded_when_platform_id_missing(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable[..., HookEvent],
     ) -> None:
-        from gobby.servers.routes.sessions import statusline_activity
+        from gobby.sessions import activity as session_activity
 
         manager = manager_with_mocks
-        statusline_activity.reset_for_tests()
+        session_activity.reset_for_tests()
 
         mocks = cast(Any, manager)
         mocks._session_lookup.resolve.return_value = None
@@ -1530,7 +1530,7 @@ class TestRecordSessionActivityPulse:
         event = make_event(event_type=HookEventType.BEFORE_AGENT)
         manager._handle_internal(event)
 
-        assert statusline_activity.last_session_activity("platform-abc") is None
+        assert session_activity.last_session_activity("platform-abc") is None
 
 
 class TestTerminalIngressGate:

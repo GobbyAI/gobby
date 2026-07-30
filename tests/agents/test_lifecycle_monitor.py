@@ -28,7 +28,7 @@ from gobby.agents.tmux import configure_tmux
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
-from gobby.servers.routes.sessions import statusline_activity
+from gobby.sessions import activity as session_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -958,10 +958,10 @@ class TestCheckIdleAgents:
     """Tests for idle agent detection and reprompting."""
 
     @pytest.fixture(autouse=True)
-    def reset_statusline_activity(self) -> Iterator[None]:
-        statusline_activity.reset_for_tests()
+    def reset_session_activity(self) -> Iterator[None]:
+        session_activity.reset_for_tests()
         yield
-        statusline_activity.reset_for_tests()
+        session_activity.reset_for_tests()
 
     @pytest.fixture
     def idle_monitor(
@@ -1527,7 +1527,7 @@ class TestCheckIdleAgents:
         """Recent hook activity should keep stale session rows from reaching idle handling."""
         from gobby.config.tmux import TmuxConfig
 
-        statusline_activity.reset_for_tests()
+        session_activity.reset_for_tests()
         config = TmuxConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
@@ -1550,7 +1550,7 @@ class TestCheckIdleAgents:
             "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_time, child.id),
         )
-        statusline_activity.record_session_activity(child.id)
+        session_activity.record_session_activity(child.id)
 
         _make_terminal_run(
             agent_run_manager,
@@ -1564,7 +1564,7 @@ class TestCheckIdleAgents:
             with patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture:
                 handled = await mon.check_idle_agents()
         finally:
-            statusline_activity.reset_for_tests()
+            session_activity.reset_for_tests()
 
         assert handled == 0
         mock_capture.assert_not_called()

@@ -37,7 +37,6 @@ _PUBLIC_PATHS = frozenset(
         "/api/admin/startup-progress",
         "/api/sessions/register",
         "/api/sessions/find_current",
-        "/api/sessions/statusline",
         "/api/sessions/update_status",
         "/favicon.ico",
         "/logo.png",

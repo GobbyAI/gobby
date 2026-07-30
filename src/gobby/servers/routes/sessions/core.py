@@ -4,38 +4,26 @@ Handles registration, listing, lookup, status updates, expiry, and renaming.
 """
 
 import asyncio
-import inspect
-import json
 import logging
 import subprocess  # nosec B404 # subprocess needed for git commit counting
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import ValidationError
-from starlette.requests import ClientDisconnect
+from fastapi import APIRouter, HTTPException, Query
 
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
-from gobby.llm.context_windows import reconcile_model_context
 from gobby.servers.models import (
     SessionRegisterRequest,
-    StatuslineUpdateRequest,
     WebChatSessionRequest,
-)
-from gobby.servers.routes.sessions.statusline_activity import (
-    STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
-    STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-    record_statusline_seen,
-    should_emit_statusline_gap_warning,
 )
 from gobby.sessions.acp_lifecycle import attach_acp_block
 from gobby.storage.sessions._update_sentinel import UNSET
-from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
+from gobby.storage.token_events import TokenEventStore
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -362,124 +350,6 @@ def register_core_routes(
             dict[str, Any],
             await server.run_db(tracker.get_usage_summary, days=days, project_id=project_id),
         )
-
-    @router.post("/statusline")
-    async def statusline_update(request: Request) -> dict[str, Any]:
-        """Receive usage data from the Claude Code statusline handler.
-
-        This is the primary path for token usage tracking.
-        """
-        try:
-            body = await request.json()
-        except ClientDisconnect:
-            return {"status": "ok", "warning": "client_disconnected"}
-        except (ValueError, json.JSONDecodeError):
-            raise HTTPException(status_code=400, detail="Invalid JSON") from None
-
-        try:
-            update = StatuslineUpdateRequest.model_validate(body)
-        except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors()) from None
-
-        external_id = update.session_id
-        if not external_id:
-            raise HTTPException(status_code=400, detail="Missing session_id") from None
-
-        sm = get_session_manager()
-        session = await server.run_db(sm.find_active_by_external_id, external_id, source="claude")
-        if not session:
-            # Session may not be registered yet (first ~1s of updates)
-            return {"status": "ok", "warning": "session_not_found"}
-
-        reconciled_context = reconcile_model_context(
-            getattr(session, "model", None),
-            update.model_id,
-            update.context_window_size,
-            provider="claude",
-        )
-        now = datetime.now(UTC)
-        gap_snapshot = record_statusline_seen(session.id, now)
-        previous = gap_snapshot.previous_statusline
-        if previous is not None:
-            gap_ms = int((now - previous).total_seconds() * 1000)
-            if gap_ms >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS:
-                first_activity = gap_snapshot.first_activity_since_statusline
-                last_activity = gap_snapshot.last_activity_since_statusline
-                if first_activity is not None and last_activity is not None:
-                    first_activity_ms_ago = int((now - first_activity).total_seconds() * 1000)
-                    last_activity_ms_ago = int((now - last_activity).total_seconds() * 1000)
-                    if (
-                        gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS
-                        and first_activity_ms_ago >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS
-                        and should_emit_statusline_gap_warning(session.id, now)
-                    ):
-                        logger.debug(
-                            "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
-                            "first_activity_ms_ago=%s last_activity_ms_ago=%s",
-                            session.id,
-                            gap_ms,
-                            STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-                            first_activity_ms_ago,
-                            last_activity_ms_ago,
-                        )
-                        inc_counter(
-                            "statusline_usage_gap_warnings_total",
-                            attributes={"source": "claude"},
-                        )
-                    else:
-                        logger.debug(
-                            "statusline_usage_gap_quiet session_id=%s gap_ms=%s "
-                            "observation_threshold_ms=%s warning_threshold_ms=%s "
-                            "first_activity_ms_ago=%s last_activity_ms_ago=%s",
-                            session.id,
-                            gap_ms,
-                            STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
-                            STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-                            first_activity_ms_ago,
-                            last_activity_ms_ago,
-                        )
-                else:
-                    logger.debug(
-                        "statusline_usage_gap_quiet session_id=%s gap_ms=%s "
-                        "observation_threshold_ms=%s",
-                        session.id,
-                        gap_ms,
-                        STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
-                    )
-
-        await server.run_db(
-            sm.update_usage,
-            session_id=session.id,
-            input_tokens=update.input_tokens,
-            output_tokens=update.output_tokens,
-            cache_creation_tokens=update.cache_creation_tokens,
-            cache_read_tokens=update.cache_read_tokens,
-            context_window=reconciled_context.context_window,
-            model=reconciled_context.model,
-        )
-        inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
-
-        ws_server = server.services.websocket_server
-        if ws_server is not None:
-            broadcast_result = ws_server.broadcast_session_usage_updated(
-                build_session_usage_payload(
-                    session_id=session.id,
-                    project_id=session.project_id,
-                    model=reconciled_context.model,
-                    context_window=reconciled_context.context_window,
-                    totals={
-                        "input_tokens": update.input_tokens,
-                        "output_tokens": update.output_tokens,
-                        "cache_creation_tokens": update.cache_creation_tokens,
-                        "cache_read_tokens": update.cache_read_tokens,
-                    },
-                    updated_at=now,
-                )
-            )
-            if inspect.isawaitable(broadcast_result):
-                await broadcast_result
-
-        return {"status": "ok"}
 
     @router.get("/{session_id}/token-events")
     async def get_session_token_events(

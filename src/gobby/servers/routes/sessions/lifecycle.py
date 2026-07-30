@@ -151,6 +151,11 @@ def register_lifecycle_routes(
             logger.exception("Bulk move sessions error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
+    @router.post("/statusline", include_in_schema=False)
+    async def retired_statusline_route() -> None:
+        """Keep the removed route from partially matching the session lookup."""
+        raise HTTPException(status_code=404, detail="Not Found")
+
     @router.get("/{session_id}")
     async def sessions_get(session_id: str) -> dict[str, Any]:
         """
@@ -365,7 +370,7 @@ def register_lifecycle_routes(
                 terminal_killed = await kill_terminal_session(session.terminal_context, session_id)
 
             await server.run_db(server.session_manager.update_status, session_id, "expired")
-            from gobby.servers.routes.sessions.statusline_activity import clear_trackers
+            from gobby.sessions.activity import clear_trackers
 
             clear_trackers(session_id)
 

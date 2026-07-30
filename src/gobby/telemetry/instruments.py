@@ -66,14 +66,6 @@ class TelemetryMetrics:
             "Total number of session registration requests",
         )
         self._register_counter(
-            "statusline_posts_succeeded_total",
-            "Total number of successful statusline usage posts",
-        )
-        self._register_counter(
-            "statusline_usage_gap_warnings_total",
-            "Total number of statusline usage gap warnings",
-        )
-        self._register_counter(
             "tts_feed_failures_total",
             "Total number of attached-session TTS feed failures",
         )

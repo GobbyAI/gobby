@@ -1,25 +1,18 @@
-//! Claude Code statusline handler.
+//! Claude Code statusline display adapter.
 //!
 //! This is intentionally separate from the normal enqueue-first hook path.
 //! Claude reads statusline stdout directly on every tick, so the handler must
-//! preserve downstream stdout bytes exactly and must never expose transport
-//! failures to Claude as hook failures.
+//! preserve downstream stdout bytes exactly.
 
-use crate::json_value::is_python_truthy;
-use serde_json::{Value, json};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::process::CommandExt;
 
-const STATUSLINE_ENDPOINT: &str = "/api/sessions/statusline";
-const DAEMON_POST_TIMEOUT: Duration = Duration::from_secs(2);
-const DAEMON_POST_JOIN_TIMEOUT: Duration = Duration::from_millis(300);
 const DOWNSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) fn is_statusline_hook(cli: &str, hook_type: &str) -> bool {
@@ -29,33 +22,11 @@ pub(crate) fn is_statusline_hook(cli: &str, hook_type: &str) -> bool {
 pub(crate) fn handle(stdin_raw: &[u8]) -> ExitCode {
     let downstream = std::env::var_os("GOBBY_STATUSLINE_DOWNSTREAM");
     let downstream = downstream.as_deref().filter(|command| !command.is_empty());
-    let daemon_url = gobby_core::daemon_url::daemon_url();
     let mut stdout = std::io::stdout().lock();
-    handle_with(stdin_raw, &daemon_url, downstream, &mut stdout)
+    handle_with(stdin_raw, downstream, &mut stdout)
 }
 
-fn handle_with(
-    stdin_raw: &[u8],
-    daemon_url: &str,
-    downstream: Option<&OsStr>,
-    stdout: &mut impl Write,
-) -> ExitCode {
-    let input = match serde_json::from_slice::<Value>(stdin_raw) {
-        Ok(Value::Object(map)) => Value::Object(map),
-        Ok(_) => {
-            eprintln!("ghook statusline: expected JSON object");
-            return ExitCode::SUCCESS;
-        }
-        Err(e) => {
-            eprintln!("ghook statusline: invalid JSON: {e}");
-            return ExitCode::SUCCESS;
-        }
-    };
-
-    if let Some(payload) = extract_payload(&input) {
-        post_to_daemon_best_effort(payload, daemon_url);
-    }
-
+fn handle_with(stdin_raw: &[u8], downstream: Option<&OsStr>, stdout: &mut impl Write) -> ExitCode {
     if let Some(command) = downstream
         && let Some(bytes) = forward_downstream(command, stdin_raw)
     {
@@ -64,58 +35,6 @@ fn handle_with(
     }
 
     ExitCode::SUCCESS
-}
-
-fn extract_payload(input: &Value) -> Option<Value> {
-    let session_id = input.get("session_id")?;
-    if !is_python_truthy(session_id) {
-        return None;
-    }
-
-    let empty = serde_json::Map::new();
-    let cost = input
-        .get("cost")
-        .and_then(Value::as_object)
-        .unwrap_or(&empty);
-    let model = input
-        .get("model")
-        .and_then(Value::as_object)
-        .unwrap_or(&empty);
-    let context_window = input
-        .get("context_window")
-        .and_then(Value::as_object)
-        .unwrap_or(&empty);
-
-    Some(json!({
-        "session_id": session_id.clone(),
-        "model_id": model.get("id").cloned().unwrap_or_else(|| json!("")),
-        "input_tokens": cost.get("input_tokens").cloned().unwrap_or_else(|| json!(0)),
-        "output_tokens": cost.get("output_tokens").cloned().unwrap_or_else(|| json!(0)),
-        "cache_creation_tokens": cost
-            .get("cache_creation_tokens")
-            .cloned()
-            .unwrap_or_else(|| json!(0)),
-        "cache_read_tokens": cost
-            .get("cache_read_tokens")
-            .cloned()
-            .unwrap_or_else(|| json!(0)),
-        "context_window_size": context_window.get("size").cloned().unwrap_or_else(|| json!(0)),
-    }))
-}
-
-fn post_to_daemon_best_effort(payload: Value, daemon_url: &str) {
-    let endpoint = format!("{daemon_url}{STATUSLINE_ENDPOINT}");
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        let _ = ureq::post(&endpoint)
-            .timeout(DAEMON_POST_TIMEOUT)
-            .set("Content-Type", "application/json")
-            .send_json(payload);
-        let _ = tx.send(());
-    });
-
-    let _ = rx.recv_timeout(DAEMON_POST_JOIN_TIMEOUT);
 }
 
 fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
@@ -203,15 +122,6 @@ fn downstream_shell_command(command: &OsStr) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_http::read_http_request;
-    use std::io::Write;
-    use std::net::TcpListener;
-
-    const VALID_INPUT: &str = include_str!("../tests/fixtures/statusline/full-input.json");
-    const VALID_PAYLOAD: &str = include_str!("../tests/fixtures/statusline/full-payload.json");
-    const DEFAULT_INPUT: &str = include_str!("../tests/fixtures/statusline/defaults-input.json");
-    const DEFAULT_PAYLOAD: &str =
-        include_str!("../tests/fixtures/statusline/defaults-payload.json");
 
     #[test]
     fn recognizes_only_claude_statusline_hook() {
@@ -222,91 +132,17 @@ mod tests {
     }
 
     #[test]
-    fn extract_payload_matches_full_golden_fixture() {
-        let input: Value = serde_json::from_str(VALID_INPUT).unwrap();
-        let expected: Value = serde_json::from_str(VALID_PAYLOAD).unwrap();
-        assert_eq!(extract_payload(&input), Some(expected));
-    }
+    fn downstream_stdin_passthrough_preserves_bytes() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
 
-    #[test]
-    fn extract_payload_matches_default_golden_fixture() {
-        let input: Value = serde_json::from_str(DEFAULT_INPUT).unwrap();
-        let expected: Value = serde_json::from_str(DEFAULT_PAYLOAD).unwrap();
-        assert_eq!(extract_payload(&input), Some(expected));
-    }
-
-    #[test]
-    fn extract_payload_returns_none_without_session_id() {
-        assert!(extract_payload(&json!({"cost": {"input_tokens": 1}})).is_none());
-        assert!(extract_payload(&json!({"session_id": ""})).is_none());
-        assert!(extract_payload(&json!({"session_id": null})).is_none());
-        assert!(extract_payload(&json!({"session_id": 0})).is_none());
-        assert!(extract_payload(&json!({"session_id": false})).is_none());
-    }
-
-    #[test]
-    fn malformed_json_exits_success_without_stdout() {
+        let stdin = b"not json\n\x00statusline bytes";
         let mut stdout = Vec::new();
-        let exit = handle_with(b"not json", "http://127.0.0.1:9", None, &mut stdout);
-        assert_eq!(exit, ExitCode::SUCCESS);
-        assert!(stdout.is_empty());
-    }
-
-    #[test]
-    fn posts_statusline_payload_to_daemon_endpoint() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let request = read_http_request(&mut stream);
-            assert!(request.contains("POST /api/sessions/statusline HTTP/1.1"));
-            let expected: Value = serde_json::from_str(VALID_PAYLOAD).unwrap();
-            let body = request.split("\r\n\r\n").nth(1).unwrap();
-            let actual: Value = serde_json::from_str(body).unwrap();
-            assert_eq!(actual, expected);
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
-                .unwrap();
-        });
-
-        let mut stdout = Vec::new();
-        let exit = handle_with(
-            VALID_INPUT.as_bytes(),
-            &format!("http://{addr}"),
-            None,
-            &mut stdout,
-        );
-        handle.join().unwrap();
+        let exit = handle_with(stdin, Some(OsStr::new("cat")), &mut stdout);
 
         assert_eq!(exit, ExitCode::SUCCESS);
-        assert!(stdout.is_empty());
-    }
-
-    #[test]
-    fn statusline_post_honors_gobby_daemon_url_override() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let request = read_http_request(&mut stream);
-            assert!(request.contains("POST /api/sessions/statusline HTTP/1.1"));
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
-                .unwrap();
-        });
-
-        // The env-reading entry point must route the POST through the
-        // GOBBY_DAEMON_URL override, not the bootstrap-derived URL.
-        let exit = temp_env::with_vars(
-            [
-                ("GOBBY_DAEMON_URL", Some(format!("http://{addr}"))),
-                ("GOBBY_STATUSLINE_DOWNSTREAM", None),
-            ],
-            || handle(VALID_INPUT.as_bytes()),
-        );
-        server.join().unwrap();
-
-        assert_eq!(exit, ExitCode::SUCCESS);
+        assert_eq!(stdout, stdin);
     }
 
     #[test]
@@ -314,7 +150,6 @@ mod tests {
         let mut stdout = Vec::new();
         let exit = handle_with(
             br#"{"session_id":"sess-123"}"#,
-            "http://127.0.0.1:9",
             Some(OsStr::new("printf 'status ok'")),
             &mut stdout,
         );
@@ -355,12 +190,7 @@ mod tests {
         );
         let started = Instant::now();
         let mut stdout = Vec::new();
-        let exit = handle_with(
-            stdin.as_bytes(),
-            "http://127.0.0.1:9",
-            Some(OsStr::new("sleep 10")),
-            &mut stdout,
-        );
+        let exit = handle_with(stdin.as_bytes(), Some(OsStr::new("sleep 10")), &mut stdout);
 
         assert_eq!(exit, ExitCode::SUCCESS);
         assert!(stdout.is_empty());
@@ -383,7 +213,6 @@ mod tests {
         let mut stdout = Vec::new();
         let exit = handle_with(
             br#"{"session_id":"sess-123","transcript_path":"/tmp/t.jsonl"}"#,
-            "http://127.0.0.1:9",
             Some(OsStr::new("sleep 30 & sleep 30")),
             &mut stdout,
         );

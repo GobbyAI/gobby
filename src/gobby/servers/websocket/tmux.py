@@ -165,7 +165,7 @@ class TmuxMixin:
         if not session_mgr or not session_ids:
             return []
 
-        from gobby.servers.routes.sessions.statusline_activity import clear_trackers
+        from gobby.sessions.activity import clear_trackers
 
         expired_session_ids: list[str] = []
         for session_id in session_ids:

@@ -12,7 +12,7 @@ from gobby.agents.watchdog.completed_turn_recovery import completed_turn_recover
 from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
 from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
-from gobby.servers.routes.sessions.statusline_activity import last_session_activity
+from gobby.sessions.activity import last_session_activity
 from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:

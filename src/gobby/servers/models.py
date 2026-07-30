@@ -57,15 +57,3 @@ class WebChatSessionRequest(BaseModel):
         None, description="Optional reasoning effort override for supported providers/models"
     )
     chat_mode: str | None = Field(None, description="Optional chat mode override")
-
-
-class StatuslineUpdateRequest(BaseModel):
-    """Request model for statusline usage updates."""
-
-    session_id: str | None = None
-    model_id: str | None = None
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
-    cache_creation_tokens: int = Field(default=0, ge=0)
-    cache_read_tokens: int = Field(default=0, ge=0)
-    context_window_size: int | None = Field(default=None, ge=0)

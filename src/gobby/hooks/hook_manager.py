@@ -33,7 +33,7 @@ from gobby.hooks.session_ref_resolution import (
 )
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
-from gobby.servers.routes.sessions.statusline_activity import record_session_activity
+from gobby.sessions.activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
