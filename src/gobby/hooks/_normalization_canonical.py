@@ -521,6 +521,8 @@ def _classify_shell_segment(
     if input_paths:
         base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
         base_paths = list(base_metadata.paths)
+        if base_metadata.repo_mutation and not base_paths:
+            input_paths = []
         return _ShellSegmentMetadata(
             base_metadata.kind,
             paths=tuple(base_paths + [path for path in input_paths if path not in base_paths]),
@@ -548,6 +550,48 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata("execute")
 
     cmd = shell_command_name(parts[0])
+
+    git_subcommand_index = 1
+    if cmd == "git":
+        while git_subcommand_index < len(parts):
+            part = parts[git_subcommand_index]
+            if part in {"-C", "-c"}:
+                git_subcommand_index += 2
+                continue
+            if part.startswith("-"):
+                git_subcommand_index += 1
+                continue
+            break
+    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["apply"]:
+        apply_args = parts[git_subcommand_index + 1 :]
+        if any(flag in apply_args for flag in {"--check", "--stat", "--numstat"}):
+            return _ShellSegmentMetadata("execute")
+        return _ShellSegmentMetadata("write", repo_mutation=True)
+
+    if cmd == "patch":
+        if "--dry-run" in parts[1:]:
+            return _ShellSegmentMetadata("execute")
+        return _ShellSegmentMetadata("write", repo_mutation=True)
+
+    interpreter_parts = parts
+    if cmd == "uv" and parts[1:2] == ["run"]:
+        interpreter_parts = []
+        for index, part in enumerate(parts[2:], start=2):
+            if shell_command_name(part) in {"python", "python3", "node", "ruby"}:
+                interpreter_parts = parts[index:]
+                break
+    if interpreter_parts:
+        interpreter = shell_command_name(interpreter_parts[0])
+        interpreter_args = interpreter_parts[1:]
+        inline_interpreter = (
+            (interpreter in {"python", "python3"} and "-c" in interpreter_args)
+            or (
+                interpreter == "node" and any(flag in interpreter_args for flag in {"-e", "--eval"})
+            )
+            or (interpreter == "ruby" and "-e" in interpreter_args)
+        )
+        if inline_interpreter:
+            return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd in {"rg", "grep", "git", "find"}:
         if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):

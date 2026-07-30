@@ -1540,8 +1540,95 @@ def _make_reopen_event(task_id: str) -> HookEvent:
     )
 
 
-class TestRequireTaskBeforeEditTargetParity:
-    """Verify equivalent write targets receive the same task-gate decision."""
+class TestWriteRouteParity:
+    """Verify shell write routes receive the same final task-gate decision."""
+
+    @staticmethod
+    def _task_gate_decision(
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        tool_name: str,
+        tool_input: dict[str, str],
+    ) -> tuple[bool, dict[str, object]]:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        data: dict[str, object] = {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "cwd": "/project",
+            "project_root": "/project",
+        }
+        normalize_tool_fields(data)
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": type("Event", (), {"data": data})(),
+            "tool_input": data["tool_input"],
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+        decision = bool(
+            SafeExpressionEvaluator(
+                context=context,
+                allowed_funcs=allowed_funcs,
+            ).evaluate(body.when)
+        )
+        return decision, data
+
+    @pytest.mark.parametrize(
+        ("command", "requires_task"),
+        [
+            ("git apply changes.patch", True),
+            ("git -C /repo apply changes.patch", True),
+            ("git -c core.autocrlf=false apply changes.patch", True),
+            ("patch -p1 < changes.patch", True),
+            ('python -c "print(1)"', True),
+            ('python3 -c "print(1)"', True),
+            ('uv run python -c "print(1)"', True),
+            ('uv run python3 -c "print(1)"', True),
+            ('uv run --with rich python -c "print(1)"', True),
+            ('node -e "console.log(1)"', True),
+            ('node --eval "console.log(1)"', True),
+            ('ruby -e "puts 1"', True),
+            ("git apply --check changes.patch", False),
+            ("git -C /repo apply --check changes.patch", False),
+            ("git apply --stat changes.patch", False),
+            ("git apply --numstat changes.patch", False),
+            ("patch --dry-run -p1 < changes.patch", False),
+        ],
+    )
+    def test_patch_and_inline_interpreter_routes_gate_consistently(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        command: str,
+        requires_task: bool,
+    ) -> None:
+        decision, data = self._task_gate_decision(
+            db,
+            manager,
+            "Bash",
+            {"command": command},
+        )
+
+        assert decision is requires_task
+        if requires_task:
+            assert data["canonical_tool_kind"] == "write"
+            assert data["canonical_repo_mutation"] is True
+            assert data.get("canonical_file_paths", []) == []
+        else:
+            assert data.get("canonical_repo_mutation", False) is False
 
     @pytest.mark.parametrize(
         ("relative_path", "requires_task"),
@@ -1557,47 +1644,13 @@ class TestRequireTaskBeforeEditTargetParity:
         relative_path: str,
         requires_task: bool,
     ) -> None:
-        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
-        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-
-        _sync_bundled(db)
-        row = manager.get_by_name("require-task-before-edit")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-
         tool_payloads: list[tuple[str, dict[str, str]]] = [
             ("Write", {"file_path": f"/project/{relative_path}"}),
             ("Bash", {"command": f"printf content > {relative_path}"}),
         ]
-        decisions: list[bool] = []
-        for tool_name, tool_input in tool_payloads:
-            data: dict[str, object] = {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "cwd": "/project",
-                "project_root": "/project",
-            }
-            normalize_tool_fields(data)
-            context = {
-                "variables": {
-                    "require_task_before_edit": True,
-                    "task_claimed": False,
-                    "plan_mode": False,
-                },
-                "event": type("Event", (), {"data": data})(),
-                "tool_input": data["tool_input"],
-                "source": "claude_code",
-            }
-            allowed_funcs = build_condition_helpers(context=context)
-            allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
-            decisions.append(
-                bool(
-                    SafeExpressionEvaluator(
-                        context=context,
-                        allowed_funcs=allowed_funcs,
-                    ).evaluate(body.when)
-                )
-            )
+        decisions = [
+            self._task_gate_decision(db, manager, tool_name, tool_input)[0]
+            for tool_name, tool_input in tool_payloads
+        ]
 
         assert decisions == [requires_task, requires_task]
