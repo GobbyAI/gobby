@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import psutil
 
-from gobby.agents.capture import capture_then_kill_async
+from gobby.agents.capture import TerminationErrorCode, capture_then_kill_async
 from gobby.agents.kill import kill_agent
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -214,6 +214,14 @@ class MemoryWatchdogHandler:
             terminalize=terminalize,
         )
         if not termination.success:
+            if termination.error_code == TerminationErrorCode.ALREADY_TERMINAL:
+                # Another path terminalized the run first; nothing left to kill.
+                logger.info(
+                    "Memory watchdog kill skipped for run %s: %s",
+                    run.id,
+                    termination.error,
+                )
+                return False
             logger.warning(
                 "Memory watchdog kill failed for run %s: %s (%s)",
                 run.id,

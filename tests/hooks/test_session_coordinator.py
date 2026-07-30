@@ -1323,3 +1323,68 @@ class TestNotifyAgentCompletionDelivery:
         assert registry.notify_calls == []
         assert removals == []
         assert registry.cleanup_calls == []
+
+
+class _AlreadyTerminalRunStorage:
+    """Capture-storage stub for a run that self-terminated before the hook."""
+
+    def __init__(self, run: Any) -> None:
+        self._run = run
+
+    def get(self, run_id: str) -> Any | None:
+        return self._run if run_id == self._run.id else None
+
+    def record_termination_intent(self, run_id: str, **_kwargs: Any) -> Any | None:
+        return None
+
+
+class TestInlineTerminalizationAlreadyTerminal:
+    """Deferred terminalization after self-termination is a benign skip."""
+
+    def test_already_terminal_logs_info_not_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        from datetime import UTC, datetime
+
+        from gobby.storage.agents import AgentRun
+
+        now = datetime.now(UTC)
+        run = AgentRun(
+            id="run-self-terminated",
+            parent_session_id="parent",
+            provider="codex",
+            prompt="test",
+            status="success",
+            created_at=now,
+            updated_at=now,
+            result="done",
+            tmux_session_name="gobby-test-inline",
+        )
+        storage = _AlreadyTerminalRunStorage(run)
+        coordinator = SessionCoordinator(
+            agent_run_manager=cast(LocalAgentRunManager, storage),
+            logger=logging.getLogger("test.inline_terminalization"),
+        )
+
+        with caplog.at_level(logging.INFO, logger="test.inline_terminalization"):
+            outcome = coordinator._terminate_agent_run_inline(
+                run_id=run.id,
+                agent_run=run,
+                action="fail",
+                reason="session ended",
+                result_prefix="",
+                tool_calls_count=0,
+                turns_used=0,
+                session_id="session-inline",
+            )
+
+        assert outcome is None
+        info_messages = [
+            record.message
+            for record in caplog.records
+            if record.levelno == logging.INFO and "already terminal" in record.message
+        ]
+        assert info_messages == [
+            "Agent run run-self-terminated already terminal; "
+            "inline terminalization skipped "
+            "(agent run already terminal (status=success))"
+        ]
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]

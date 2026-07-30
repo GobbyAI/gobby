@@ -4,6 +4,7 @@ import asyncio
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import NoReturn
 
 import pytest
 
@@ -428,3 +429,93 @@ async def test_async_lock_cancellation_deadline_and_next_acquisition() -> None:
         kill=successful_kill,
     )
     assert next_result.success
+
+
+def _must_not_run() -> NoReturn:
+    raise AssertionError("termination side effects must not run on intent rejection")
+
+
+async def _async_must_not_run() -> NoReturn:
+    raise AssertionError("termination side effects must not run on intent rejection")
+
+
+def test_sync_intent_rejection_distinguishes_already_terminal() -> None:
+    run = replace(_run("run-terminal-sync"), status="success")
+    storage = FakeCaptureStorage(run)
+
+    result = capture_then_kill_sync(
+        storage=storage,
+        run_id="run-terminal-sync",
+        session_name="already-terminal-sync",
+        action="fail",
+        reason="watchdog",
+        session_alive=_must_not_run,
+        capture=_must_not_run,
+        kill=_must_not_run,
+    )
+
+    assert result.success is False
+    assert result.error_code == TerminationErrorCode.ALREADY_TERMINAL
+    assert result.error == "agent run already terminal (status=success)"
+    assert result.run is run
+
+
+def test_sync_intent_rejection_reports_missing_run() -> None:
+    storage = FakeCaptureStorage()
+
+    result = capture_then_kill_sync(
+        storage=storage,
+        run_id="run-absent-sync",
+        session_name="missing-run-sync",
+        action="complete",
+        session_alive=_must_not_run,
+        capture=_must_not_run,
+        kill=_must_not_run,
+    )
+
+    assert result.success is False
+    assert result.error_code == TerminationErrorCode.CAPTURE_PERSIST_FAILED
+    assert result.error == "agent run not found"
+    assert result.run is None
+
+
+@pytest.mark.asyncio
+async def test_async_intent_rejection_distinguishes_already_terminal() -> None:
+    run = replace(_run("run-terminal-async"), status="cancelled")
+    storage = FakeCaptureStorage(run)
+
+    result = await capture_then_kill_async(
+        storage=storage,
+        run_id="run-terminal-async",
+        session_name="already-terminal-async",
+        action="fail",
+        reason="watchdog",
+        session_alive=_async_must_not_run,
+        capture=_async_must_not_run,
+        kill=_async_must_not_run,
+    )
+
+    assert result.success is False
+    assert result.error_code == TerminationErrorCode.ALREADY_TERMINAL
+    assert result.error == "agent run already terminal (status=cancelled)"
+    assert result.run is run
+
+
+@pytest.mark.asyncio
+async def test_async_intent_rejection_reports_missing_run() -> None:
+    storage = FakeCaptureStorage()
+
+    result = await capture_then_kill_async(
+        storage=storage,
+        run_id="run-absent-async",
+        session_name="missing-run-async",
+        action="complete",
+        session_alive=_async_must_not_run,
+        capture=_async_must_not_run,
+        kill=_async_must_not_run,
+    )
+
+    assert result.success is False
+    assert result.error_code == TerminationErrorCode.CAPTURE_PERSIST_FAILED
+    assert result.error == "agent run not found"
+    assert result.run is None

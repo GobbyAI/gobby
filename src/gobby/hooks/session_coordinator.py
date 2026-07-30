@@ -21,7 +21,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
-from gobby.agents.capture import capture_then_kill_sync
+from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.hooks.session_types import HookSessionManager
 from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
@@ -541,6 +541,15 @@ class SessionCoordinator:
             terminalize=terminalize,
         )
         if not result.success:
+            if result.error_code == TerminationErrorCode.ALREADY_TERMINAL:
+                # Expected race: the child self-terminated via end_agent_run
+                # before the session-end hook reached inline terminalization.
+                self.logger.info(
+                    "Agent run %s already terminal; inline terminalization skipped (%s)",
+                    run_id,
+                    result.error,
+                )
+                return None
             self.logger.warning(
                 "Deferred terminalization for agent run %s: %s (%s)",
                 run_id,

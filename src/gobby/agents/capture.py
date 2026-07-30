@@ -27,13 +27,14 @@ class KillOutcome(StrEnum):
 
 
 class TerminationErrorCode(StrEnum):
-    """Retryable typed termination failures."""
+    """Typed termination failures; all retryable except ALREADY_TERMINAL."""
 
     CAPTURE_LOCK_TIMEOUT = "capture_lock_timeout"
     CAPTURE_PERSIST_FAILED = "capture_persist_failed"
     CAPTURE_CONFLICT = "capture_conflict"
     KILL_FAILED = "kill_failed"
     TERMINAL_TRANSITION_FAILED = "terminal_transition_failed"
+    ALREADY_TERMINAL = "already_terminal"
 
 
 @dataclass(frozen=True)
@@ -207,6 +208,22 @@ def _failure(
     return CaptureTerminationResult(False, run=run, error_code=code, error=error)
 
 
+def _intent_rejected(existing: AgentRun | None) -> CaptureTerminationResult:
+    """Disambiguate a rejected termination intent: already terminal vs missing."""
+    if existing is None:
+        return _failure(TerminationErrorCode.CAPTURE_PERSIST_FAILED, "agent run not found")
+    if existing.status not in ("pending", "running"):
+        return _failure(
+            TerminationErrorCode.ALREADY_TERMINAL,
+            f"agent run already terminal (status={existing.status})",
+            existing,
+        )
+    return _failure(
+        TerminationErrorCode.CAPTURE_PERSIST_FAILED,
+        "termination intent rejected for active run",
+    )
+
+
 def capture_then_kill_sync(
     *,
     storage: CaptureStorage,
@@ -240,10 +257,7 @@ def capture_then_kill_sync(
         except Exception as exc:
             return _failure(TerminationErrorCode.CAPTURE_PERSIST_FAILED, str(exc))
         if run is None:
-            return _failure(
-                TerminationErrorCode.CAPTURE_PERSIST_FAILED,
-                "agent run is missing or already terminal",
-            )
+            return _intent_rejected(storage.get(run_id))
 
         alive = session_alive()
         captured: str | None = None
@@ -410,10 +424,7 @@ async def capture_then_kill_async(
         except Exception as exc:
             return _failure(TerminationErrorCode.CAPTURE_PERSIST_FAILED, str(exc))
         if run is None:
-            return _failure(
-                TerminationErrorCode.CAPTURE_PERSIST_FAILED,
-                "agent run is missing or already terminal",
-            )
+            return _intent_rejected(await _async_storage_call(run_id, storage.get, run_id))
 
         alive = await session_alive()
         captured: str | None = None
