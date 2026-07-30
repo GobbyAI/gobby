@@ -234,6 +234,9 @@ instructions: |
   - Do NOT call kill_agent.
   - Do NOT terminate without calling end_agent_run.
   - Always use `uv run` for Python commands.
+  - In zsh terminal commands, single-quote CSS/Tailwind payloads containing
+    `@theme`, `@custom-variant`, parenthesized glob forms, or `#`, as required
+    by the Bash skill quoting reference.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 
 workflows:

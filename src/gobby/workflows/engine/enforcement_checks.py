@@ -10,7 +10,7 @@ import pydantic
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
+from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance, WorkflowStep
 from gobby.workflows.enforcement.blocking import (
     is_discovery_tool,
     is_infrastructure_tool,
@@ -25,12 +25,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
+_DENIAL_COUNTS_VARIABLE = "_enforcement_denial_counts"
+_TERMINAL_DENIAL_COUNT = 3
+
 
 def _step_tool_block_guidance(step_name: str) -> str:
     return (
         f"\nThis capability is unavailable for the rest of the '{step_name}' step. "
         "Abandon this call, continue with an allowed operation, and do not retry "
-        "the same blocked tool in this step."
+        "the same blocked tool in this step. Repeating an identical denial three "
+        "times ends an autonomous run in a terminal blocked state."
+    )
+
+
+def _agent_tool_block_guidance() -> str:
+    return (
+        "\nAbandon this call and continue with an operation permitted by the agent "
+        "definition. Do not retry the same denied target. Repeating an identical "
+        "denial three times ends an autonomous run in a terminal blocked state."
+    )
+
+
+def _reserved_variable_block_guidance(variable_name: str, step_name: str | None) -> str:
+    step_scope = f" in the '{step_name}' step" if step_name else ""
+    return (
+        f"\nAbandon only this write to variable '{variable_name}'{step_scope}; "
+        "set_variable remains available for other permitted variables. Continue with "
+        "an allowed operation and do not retry this variable write. Repeating an "
+        "identical denial three times ends an autonomous run in a terminal blocked state."
     )
 
 
@@ -42,6 +64,7 @@ class EnforcementCheckMixin:
 
     if TYPE_CHECKING:
         workflow_audit: WorkflowAuditManager
+        _runner: Any | None
 
         def _audit_step_tool_call(
             self,
@@ -61,7 +84,7 @@ class EnforcementCheckMixin:
             session_id: str,
             variables: dict[str, Any],
             step: WorkflowStep,
-            instance: Any,
+            instance: WorkflowInstance,
             tool_name: str,
             mcp_server: str,
             mcp_tool_name: str,
@@ -69,9 +92,140 @@ class EnforcementCheckMixin:
             handler_tool_input: dict[str, Any],
         ) -> HookResponse | None: ...
 
+    def _active_agent_run(self, session_id: str) -> tuple[Any, Any] | None:
+        """Return the active run and its storage for this child session."""
+        runner = getattr(self, "_runner", None)
+        storage = getattr(runner, "run_storage", None)
+        get_by_session = getattr(storage, "get_by_session", None)
+        if not callable(get_by_session):
+            return None
+        run = get_by_session(session_id)
+        if run is None:
+            return None
+        return run, storage
+
+    @staticmethod
+    def _denial_scope(
+        run_id: str,
+        instance: WorkflowInstance,
+        step: WorkflowStep,
+    ) -> dict[str, str]:
+        entered_at = instance.step_entered_at
+        step_revision = (
+            entered_at.isoformat()
+            if entered_at is not None
+            else f"{step.name}:{instance.total_action_count}"
+        )
+        return {
+            "agent_run_id": run_id,
+            "workflow_instance_id": instance.id,
+            "step_revision": step_revision,
+        }
+
+    def _record_enforcement_denial(
+        self,
+        *,
+        session_id: str,
+        rule: str,
+        target: str,
+        reason: str,
+        step: WorkflowStep | None = None,
+        instance: WorkflowInstance | None = None,
+    ) -> str:
+        """Persist a run/instance/step/rule/target denial and terminalize on the third."""
+        active_run = self._active_agent_run(session_id)
+        if active_run is None:
+            return reason
+        run, storage = active_run
+
+        if step is None or instance is None:
+            resolved_step, resolved_instance, _definition = self._get_step_for_session(session_id)
+            if resolved_step is None or resolved_instance is None:
+                return reason
+            step = resolved_step
+            instance = resolved_instance
+
+        scope = self._denial_scope(str(run.id), instance, step)
+        raw_state = instance.variables.get(_DENIAL_COUNTS_VARIABLE)
+        state = raw_state if isinstance(raw_state, dict) else {}
+        raw_counts = state.get("counts") if state.get("scope") == scope else {}
+        counts = dict(raw_counts) if isinstance(raw_counts, dict) else {}
+        counter_key = json.dumps(
+            {
+                **scope,
+                "rule": rule,
+                "target": target,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        count = int(counts.get(counter_key, 0)) + 1
+        counts[counter_key] = count
+        instance.variables[_DENIAL_COUNTS_VARIABLE] = {
+            "scope": scope,
+            "counts": counts,
+        }
+        self.instance_manager.save_instance(instance)
+
+        if count < _TERMINAL_DENIAL_COUNT:
+            return reason
+
+        terminal_error = (
+            "Agent run blocked after 3 identical enforcement denials: "
+            f"workflow={instance.workflow_name}, step={step.name}, "
+            f"rule={rule}, target={target}"
+        )
+        failed = storage.fail(str(run.id), terminal_error)
+        if failed is None:
+            return reason
+        return (
+            f"{reason}\nThe third identical denial transitioned agent run {run.id} "
+            "to a terminal blocked state. The guarded step was not advanced."
+        )
+
+    def _reset_enforcement_denial_target(
+        self,
+        session_id: str,
+        step: WorkflowStep,
+        instance: WorkflowInstance,
+        target: str,
+    ) -> None:
+        """Clear one target after that previously denied target becomes allowed."""
+        active_run = self._active_agent_run(session_id)
+        if active_run is None:
+            return
+        run, _storage = active_run
+        state = instance.variables.get(_DENIAL_COUNTS_VARIABLE)
+        if not isinstance(state, dict):
+            return
+        if state.get("scope") != self._denial_scope(str(run.id), instance, step):
+            return
+        raw_counts = state.get("counts")
+        if not isinstance(raw_counts, dict):
+            return
+
+        counts = dict(raw_counts)
+        for counter_key in tuple(counts):
+            if not isinstance(counter_key, str):
+                continue
+            try:
+                decoded_key = json.loads(counter_key)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded_key, dict) and decoded_key.get("target") == target:
+                counts.pop(counter_key)
+
+        if len(counts) == len(raw_counts):
+            return
+        if counts:
+            state["counts"] = counts
+        else:
+            instance.variables.pop(_DENIAL_COUNTS_VARIABLE, None)
+        self.instance_manager.save_instance(instance)
+
     def _get_step_for_session(
         self, session_id: str
-    ) -> tuple[WorkflowStep | None, Any | None, WorkflowDefinition | None]:
+    ) -> tuple[WorkflowStep | None, WorkflowInstance | None, WorkflowDefinition | None]:
         """Get the current workflow step, instance, and definition for a session.
 
         Returns (step, instance, definition) or (None, None, None) if no active step workflow.
@@ -113,12 +267,20 @@ class EnforcementCheckMixin:
                 mcp_tool_name=mcp_tool_name if isinstance(mcp_tool_name, str) else None,
             )
             if variable_name:
+                reason = (
+                    "Rule enforced by Gobby: [workflow-runtime-variable]\n"
+                    f"Variable '{variable_name}' is managed by the workflow runtime."
+                    f"{_reserved_variable_block_guidance(variable_name, None)}"
+                )
+                reason = self._record_enforcement_denial(
+                    session_id=session_id,
+                    rule="agent-runtime-variable",
+                    target=f"variable:{variable_name.casefold()}",
+                    reason=reason,
+                )
                 return HookResponse(
                     decision="block",
-                    reason=(
-                        "Rule enforced by Gobby: [workflow-runtime-variable]\n"
-                        f"Variable '{variable_name}' is managed by the workflow runtime."
-                    ),
+                    reason=reason,
                 )
 
         blocked_tools: list[str] = variables.get("_agent_blocked_tools") or []
@@ -130,12 +292,20 @@ class EnforcementCheckMixin:
 
         # Check native tool block-list first so explicit agent blocks override exemptions.
         if blocked_tools and tool_name in blocked_tools:
+            reason = (
+                f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
+                f"Tool '{tool_name}' is blocked for the '{agent_type}' agent."
+                f"{_agent_tool_block_guidance()}"
+            )
+            reason = self._record_enforcement_denial(
+                session_id=session_id,
+                rule="agent-native-tool-block",
+                target=f"tool:{tool_name.casefold()}",
+                reason=reason,
+            )
             return HookResponse(
                 decision="block",
-                reason=(
-                    f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
-                    f"Tool '{tool_name}' is blocked for the '{agent_type}' agent."
-                ),
+                reason=reason,
             )
 
         # Discovery/infrastructure tools pass unless explicitly blocked above.
@@ -166,12 +336,20 @@ class EnforcementCheckMixin:
                     return None
 
                 if mcp_key and self._mcp_tool_matches(mcp_key, blocked_mcp_tools):
+                    reason = (
+                        f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
+                        f"MCP tool '{mcp_key}' is blocked for the '{agent_type}' agent."
+                        f"{_agent_tool_block_guidance()}"
+                    )
+                    reason = self._record_enforcement_denial(
+                        session_id=session_id,
+                        rule="agent-mcp-tool-block",
+                        target=f"mcp:{mcp_key.casefold()}",
+                        reason=reason,
+                    )
                     return HookResponse(
                         decision="block",
-                        reason=(
-                            f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
-                            f"MCP tool '{mcp_key}' is blocked for the '{agent_type}' agent."
-                        ),
+                        reason=reason,
                     )
 
         return None
@@ -186,6 +364,7 @@ class EnforcementCheckMixin:
 
         tool_name = event.data.get("tool_name", "")
         wf_name = instance.workflow_name
+        allowed_target = f"tool:{tool_name.casefold()}"
 
         # ToolSearch (Claude Code deferred tool loader) is always allowed
         if tool_name == "ToolSearch":
@@ -195,12 +374,21 @@ class EnforcementCheckMixin:
             tool_input = event.data.get("tool_input") or {}
             variable_name = ""
             if isinstance(tool_input, dict):
+                allowed_target = self._normalized_enforcement_target(tool_name, tool_input)
                 variable_name = self._is_reserved_variable_write(tool_name, tool_input) or ""
             if variable_name:
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Variable '{variable_name}' is managed by the step workflow runtime."
-                    f"{_step_tool_block_guidance(step.name)}"
+                    f"{_reserved_variable_block_guidance(variable_name, step.name)}"
+                )
+                reason = self._record_enforcement_denial(
+                    session_id=session_id,
+                    rule="step-runtime-variable",
+                    target=f"variable:{variable_name.casefold()}",
+                    reason=reason,
+                    step=step,
+                    instance=instance,
                 )
                 self._audit_step_tool_call(
                     session_id,
@@ -228,6 +416,14 @@ class EnforcementCheckMixin:
                     f"Allowed tools: {', '.join(step.allowed_tools)}{guidance}"
                     f"{_step_tool_block_guidance(step.name)}"
                 )
+                reason = self._record_enforcement_denial(
+                    session_id=session_id,
+                    rule="step-native-tool-allowlist",
+                    target=f"tool:{tool_name.casefold()}",
+                    reason=reason,
+                    step=step,
+                    instance=instance,
+                )
                 self._audit_step_tool_call(
                     session_id,
                     wf_name,
@@ -247,6 +443,14 @@ class EnforcementCheckMixin:
                 f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                 f"Tool '{tool_name}' is blocked in the '{step.name}' step."
                 f"{_step_tool_block_guidance(step.name)}"
+            )
+            reason = self._record_enforcement_denial(
+                session_id=session_id,
+                rule="step-native-tool-block",
+                target=f"tool:{tool_name.casefold()}",
+                reason=reason,
+                step=step,
+                instance=instance,
             )
             self._audit_step_tool_call(
                 session_id,
@@ -279,6 +483,12 @@ class EnforcementCheckMixin:
                     return None
 
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
+                allowed_target = self._normalized_enforcement_target(
+                    tool_name,
+                    tool_input,
+                    mcp_server=mcp_server,
+                    mcp_tool_name=mcp_tool_name,
+                )
 
                 # Explicit blocks override default grants and allow-list exemptions.
                 if mcp_key and step.blocked_mcp_tools:
@@ -287,6 +497,14 @@ class EnforcementCheckMixin:
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
                             f"{_step_tool_block_guidance(step.name)}"
+                        )
+                        reason = self._record_enforcement_denial(
+                            session_id=session_id,
+                            rule="step-mcp-tool-block",
+                            target=f"mcp:{mcp_key.casefold()}",
+                            reason=reason,
+                            step=step,
+                            instance=instance,
                         )
                         self._audit_step_tool_call(
                             session_id,
@@ -315,6 +533,14 @@ class EnforcementCheckMixin:
                             f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}{guidance}"
                             f"{_step_tool_block_guidance(step.name)}"
                         )
+                        reason = self._record_enforcement_denial(
+                            session_id=session_id,
+                            rule="step-mcp-tool-allowlist",
+                            target=f"mcp:{mcp_key.casefold()}",
+                            reason=reason,
+                            step=step,
+                            instance=instance,
+                        )
                         self._audit_step_tool_call(
                             session_id,
                             wf_name,
@@ -342,7 +568,15 @@ class EnforcementCheckMixin:
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"Variable '{variable_name}' is managed by the step workflow runtime."
-                            f"{_step_tool_block_guidance(step.name)}"
+                            f"{_reserved_variable_block_guidance(variable_name, step.name)}"
+                        )
+                        reason = self._record_enforcement_denial(
+                            session_id=session_id,
+                            rule="step-runtime-variable",
+                            target=f"variable:{variable_name.casefold()}",
+                            reason=reason,
+                            step=step,
+                            instance=instance,
                         )
                         self._audit_step_tool_call(
                             session_id,
@@ -374,7 +608,35 @@ class EnforcementCheckMixin:
                     if before_response is not None:
                         return before_response
 
+        self._reset_enforcement_denial_target(
+            session_id,
+            step,
+            instance,
+            allowed_target,
+        )
         return None
+
+    @staticmethod
+    def _normalized_enforcement_target(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        mcp_server: str = "",
+        mcp_tool_name: str = "",
+    ) -> str:
+        """Return the normalized target shared by deny counting and successful unblock."""
+        if EnforcementCheckMixin._is_native_set_variable_tool(tool_name):
+            variable_name = str(tool_input.get("name") or tool_input.get("variable") or "")
+            if variable_name:
+                return f"variable:{variable_name.casefold()}"
+        if mcp_tool_name == "set_variable":
+            resolved_input = EnforcementCheckMixin._step_handler_tool_input(tool_input)
+            variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
+            if variable_name:
+                return f"variable:{variable_name.casefold()}"
+        if mcp_server and mcp_tool_name:
+            return f"mcp:{mcp_server.casefold()}:{mcp_tool_name.casefold()}"
+        return f"tool:{tool_name.casefold()}"
 
     @staticmethod
     def _is_reserved_variable_write(

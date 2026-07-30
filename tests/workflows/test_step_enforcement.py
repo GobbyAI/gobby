@@ -7,12 +7,14 @@ enforcement and step transitions via on_mcp_success handlers.
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
@@ -193,6 +195,313 @@ def _setup_step_workflow(
         variables=dict(defn.variables),
     )
     instance_mgr.save_instance(instance)
+
+
+def _running_rule_engine(
+    db: "HubDatabase",
+) -> tuple[RuleEngine, LocalAgentRunManager, str]:
+    run_manager = LocalAgentRunManager(db)
+    run = run_manager.create(
+        parent_session_id=SESSION_ID,
+        child_session_id=SESSION_ID,
+        provider="claude",
+        prompt="test",
+    )
+    assert run_manager.start(run.id) is not None
+    runner = MagicMock()
+    runner.run_storage = run_manager
+    return RuleEngine(db, runner=runner), run_manager, run.id
+
+
+@pytest.mark.asyncio
+async def test_third_denial_terminates_run(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """A repeated step denial terminalizes its run without advancing the guarded step."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    rule_engine, run_manager, run_id = _running_rule_engine(db)
+    event = _make_event(data={"tool_name": "Edit"})
+
+    for _ in range(2):
+        response = await rule_engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert response.decision == "block"
+        active_run = run_manager.get(run_id)
+        assert active_run is not None
+        assert active_run.status == "running"
+
+    response = await rule_engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "terminal blocked state" in response.reason
+    blocked_run = run_manager.get(run_id)
+    assert blocked_run is not None
+    assert blocked_run.status == "error"
+    assert blocked_run.error is not None
+    assert "blocked after 3 identical enforcement denials" in blocked_run.error
+    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    assert instance is not None
+    assert instance.current_step == "claim"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_allowed_calls_do_not_reset_denial_counter(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """Allowed polling between identical denials cannot prevent terminalization."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    rule_engine, run_manager, run_id = _running_rule_engine(db)
+    denied_event = _make_event(data={"tool_name": "Edit"})
+    allowed_event = _make_event(data={"tool_name": "mcp__gobby__list_tools"})
+
+    for denial_number in range(1, 4):
+        denied = await rule_engine.evaluate(
+            denied_event,
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert denied.decision == "block"
+        if denial_number < 3:
+            allowed = await rule_engine.evaluate(
+                allowed_event,
+                session_id=SESSION_ID,
+                variables={},
+            )
+            assert allowed.decision == "allow"
+
+    blocked_run = run_manager.get(run_id)
+    assert blocked_run is not None
+    assert blocked_run.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_allowed_target_resets_only_its_denial_counter(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """A target that becomes allowed clears its own counter and preserves other targets."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    rule_engine, _run_manager, _run_id = _running_rule_engine(db)
+
+    for tool_name in ("Edit", "Write"):
+        denied = await rule_engine.evaluate(
+            _make_event(data={"tool_name": tool_name}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert denied.decision == "block"
+
+    unblocked_workflow = cast(
+        dict[str, Any],
+        json.loads(json.dumps(_DEVELOPER_WORKFLOW)),
+    )
+    unblocked_workflow["steps"][0]["allowed_tools"].append("Edit")
+    definition = manager.get_by_name("developer-workflow")
+    assert definition is not None
+    manager.update(definition.id, definition_json=json.dumps(unblocked_workflow))
+
+    allowed = await rule_engine.evaluate(
+        _make_event(data={"tool_name": "Edit"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+
+    assert allowed.decision == "allow"
+    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    assert instance is not None
+    state = instance.variables["_enforcement_denial_counts"]
+    assert isinstance(state, dict)
+    counts = state["counts"]
+    assert isinstance(counts, dict)
+    assert len(counts) == 1
+    remaining_key = json.loads(next(iter(counts)))
+    assert remaining_key["target"] == "tool:write"
+
+
+@pytest.mark.asyncio
+async def test_denial_counter_key_and_resets(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """Denials use the full key and a new step revision starts a fresh ledger."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+    rule_engine, run_manager, run_id = _running_rule_engine(db)
+
+    for tool_name in ("Edit", "Write"):
+        response = await rule_engine.evaluate(
+            _make_event(data={"tool_name": tool_name}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+
+    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    assert instance is not None
+    assert instance.step_entered_at is not None
+    state = instance.variables["_enforcement_denial_counts"]
+    assert isinstance(state, dict)
+    counts = state["counts"]
+    assert isinstance(counts, dict)
+    assert len(counts) == 2
+    decoded_keys = [json.loads(key) for key in counts]
+    assert {key["agent_run_id"] for key in decoded_keys} == {run_id}
+    assert {key["workflow_instance_id"] for key in decoded_keys} == {instance.id}
+    assert {key["step_revision"] for key in decoded_keys} == {instance.step_entered_at.isoformat()}
+    assert {key["rule"] for key in decoded_keys} == {"step-native-tool-allowlist"}
+    assert {key["target"] for key in decoded_keys} == {"tool:edit", "tool:write"}
+
+    await rule_engine.evaluate(
+        _make_event(data={"tool_name": "Edit"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    assert instance is not None
+    prior_revision = instance.step_entered_at
+    instance.current_step = "implement"
+    instance.step_entered_at = datetime.now(UTC)
+    instance_mgr.save_instance(instance)
+
+    transitioned_denial = await rule_engine.evaluate(
+        _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#1"},
+                },
+            }
+        ),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert transitioned_denial.decision == "block"
+    instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
+    assert instance is not None
+    assert instance.step_entered_at != prior_revision
+    assert instance.step_entered_at is not None
+    state = instance.variables["_enforcement_denial_counts"]
+    counts = state["counts"]
+    assert len(counts) == 1
+    transitioned_key = json.loads(next(iter(counts)))
+    assert transitioned_key["rule"] == "step-mcp-tool-block"
+    assert transitioned_key["target"] == "mcp:gobby-tasks:close_task"
+    assert transitioned_key["step_revision"] == instance.step_entered_at.isoformat()
+    active_run = run_manager.get(run_id)
+    assert active_run is not None
+    assert active_run.status == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_data", "variables"),
+    [
+        ({"tool_name": "Edit"}, {"_agent_blocked_tools": ["Edit"]}),
+        (
+            {
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-agents",
+                    "tool_name": "spawn_agent",
+                    "arguments": {},
+                },
+            },
+            {"_agent_blocked_mcp_tools": ["gobby-agents:spawn_agent"]},
+        ),
+    ],
+)
+async def test_agent_denials_carry_guidance_and_count(
+    event_data: dict[str, Any],
+    variables: dict[str, Any],
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """Agent-level native and MCP blocks use the same guided terminal counter."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
+    rule_engine, run_manager, run_id = _running_rule_engine(db)
+    variables["_agent_type"] = "backend-developer"
+
+    responses = [
+        await rule_engine.evaluate(
+            _make_event(data=event_data),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        for _ in range(3)
+    ]
+
+    assert all(response.decision == "block" for response in responses)
+    final_reason = responses[-1].reason
+    assert final_reason is not None
+    assert "continue with an operation permitted by the agent definition" in final_reason
+    assert "terminal blocked state" in final_reason
+    blocked_run = run_manager.get(run_id)
+    assert blocked_run is not None
+    assert blocked_run.status == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_data",
+    [
+        {
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {"name": "tool_block_pending", "value": True},
+        },
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby",
+                "tool_name": "set_variable",
+                "arguments": {"name": "tool_block_pending", "value": True},
+            },
+        },
+    ],
+)
+async def test_reserved_variable_denial_is_variable_specific(
+    event_data: dict[str, Any],
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """Native and MCP set_variable routes tell the agent to abandon only one variable."""
+    _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
+
+    response = await engine.evaluate(
+        _make_event(data=event_data),
+        session_id=SESSION_ID,
+        variables={},
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "Abandon only this write to variable 'tool_block_pending'" in response.reason
+    assert "set_variable remains available for other permitted variables" in response.reason
+    assert "This capability is unavailable for the rest" not in response.reason
+
+
+def test_zsh_quoting_guidance_contract() -> None:
+    """The Bash reference and adversary instructions require safe zsh CSS quoting."""
+    repo_root = Path(__file__).parents[2]
+    bash_guidance = (
+        repo_root / "src/gobby/install/shared/skills/bash/references/quoting-and-data.md"
+    ).read_text()
+    adversary_guidance = (
+        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+    ).read_text()
+
+    for required in ("zsh", "single-quote", "@theme", "@custom-variant", "parenthesized", "#"):
+        assert required in bash_guidance.casefold()
+        assert required in adversary_guidance.casefold()
 
 
 @pytest.mark.unit

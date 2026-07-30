@@ -18,6 +18,22 @@ changes regex behavior. Test those expressions directly.
 Use `printf` for data. `echo` varies across implementations and interprets some
 values as options or escapes.
 
+## zsh CSS And Tailwind Payloads
+
+Treat CSS and Tailwind source as data when a command runs under zsh. zsh can
+interpret unquoted `@`, parenthesized glob forms, and `#` as pattern syntax.
+Single-quote the complete payload, especially directives such as `@theme` and
+`@custom-variant`:
+
+```zsh
+printf '%s\n' '@theme { --color-brand: #123456; }'
+printf '%s\n' '@custom-variant dark (&:where(.dark, .dark *));'
+```
+
+Do not paste those payloads as unquoted command arguments. If the payload
+contains a single quote, use a quoted heredoc or pass it through a file so the
+shell never parses the CSS as a zsh `@`-glob, parenthesized glob, or `#` pattern.
+
 ## Arrays And Commands
 
 Represent a command as an array of arguments:
