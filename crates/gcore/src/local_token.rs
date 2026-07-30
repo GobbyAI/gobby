@@ -4,9 +4,25 @@ use anyhow::{Context as _, bail};
 
 pub const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
 pub const AUTHORIZATION_HEADER: &str = "Authorization";
+pub const AGENT_API_TOKEN_ENV: &str = "GOBBY_AGENT_API_TOKEN";
 
 pub fn read_local_cli_token() -> anyhow::Result<String> {
+    // Sandboxed agent runs deny the operator token file; the run-scoped
+    // capability in the environment is their only daemon credential.
+    if let Some(token) = agent_api_token_from_env() {
+        return Ok(token);
+    }
     read_local_cli_token_at(&crate::gobby_home()?)
+}
+
+fn agent_api_token_from_env() -> Option<String> {
+    let value = std::env::var(AGENT_API_TOKEN_ENV).ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 pub fn read_local_cli_token_at(gobby_home: &Path) -> anyhow::Result<String> {
@@ -38,5 +54,49 @@ pub fn apply_bearer_header_with_token(
     match token {
         Some(token) => request.set(AUTHORIZATION_HEADER, &authorization_bearer(token)),
         None => request,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set_env(name: &str, value: Option<&str>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(name, value) },
+            None => unsafe { std::env::remove_var(name) },
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_capability_preferred() -> anyhow::Result<()> {
+        let home = tempfile::tempdir()?;
+        let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
+        let saved_home = std::env::var("GOBBY_HOME").ok();
+        set_env(
+            "GOBBY_HOME",
+            Some(home.path().to_str().expect("utf-8 tempdir")),
+        );
+
+        // Env capability wins over the token file.
+        std::fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), "file-token\n")?;
+        set_env(AGENT_API_TOKEN_ENV, Some(" env-token "));
+        assert_eq!(read_local_cli_token()?, "env-token");
+
+        // Empty or whitespace-only env falls back to the file.
+        set_env(AGENT_API_TOKEN_ENV, Some("   "));
+        assert_eq!(read_local_cli_token()?, "file-token");
+        set_env(AGENT_API_TOKEN_ENV, None);
+        assert_eq!(read_local_cli_token()?, "file-token");
+
+        // Both absent: the file error path is unchanged.
+        std::fs::remove_file(home.path().join(LOCAL_CLI_TOKEN_FILENAME))?;
+        let err = read_local_cli_token().expect_err("no credential available");
+        assert!(err.to_string().contains("missing local CLI token"));
+
+        set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
+        set_env("GOBBY_HOME", saved_home.as_deref());
+        Ok(())
     }
 }
