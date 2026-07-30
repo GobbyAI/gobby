@@ -43,7 +43,6 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.sync.github_issue_sync import GitHubIssueDeliveryHandler
 
 if TYPE_CHECKING:
-    from gobby.storage.cron_models import CronJob
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -824,35 +823,6 @@ class GitHubIssueTriageService:
         if not callable(embed_fn):
             embed_fn = None
         return GitHubIssueIndexer(vector_store=vector_store, embed_fn=embed_fn)
-
-
-def create_github_triage_handler(
-    *,
-    db: HubDatabase,
-    mcp_manager: Any | None,
-    task_manager: LocalTaskManager,
-    memory_manager: Any | None = None,
-    secret_store: Any | None = None,
-) -> Callable[[CronJob], Awaitable[str]]:
-    """Create a cron handler for GitHub issue triage reconciliation."""
-
-    async def _handler(job: CronJob) -> str:
-        service = GitHubIssueTriageService(
-            db=db,
-            mcp_manager=mcp_manager,
-            task_manager=task_manager,
-            memory_manager=memory_manager,
-            secret_store=secret_store,
-        )
-        deliveries = await service.recover_deliveries(job.project_id)
-        result = await service.reconcile_project_repos(job.project_id)
-        return (
-            "GitHub triage reconciliation completed: "
-            f"scanned={result['scanned']} triaged={result['triaged']} errors={result['errors']} "
-            f"deliveries_recovered={deliveries['recovered']}"
-        )
-
-    return _handler
 
 
 _UNVERIFIABLE_HMAC_KEY = sha256(b"gobby webhook authentication sentinel").hexdigest()

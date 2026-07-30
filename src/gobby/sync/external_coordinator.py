@@ -7,7 +7,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.github_triage.service import GitHubIssueTriageService
@@ -368,6 +368,11 @@ class ExternalIssueSyncCoordinator:
         if not self._generation_is_current("github", project.id, generation):
             return
         attempt = utc_now()
+        current_status = await asyncio.to_thread(self.status_store.get, project.id, "github")
+        outbound_cursor = (
+            current_status.last_outbound_success_at if current_status is not None else None
+        )
+        outbound_success_at: datetime | None = None
         await self._write_status(
             project.id,
             "github",
@@ -391,7 +396,12 @@ class ExternalIssueSyncCoordinator:
                 return
             stats: dict[str, Any] = {"repositories": list(repositories)}
             if outbound:
-                stats["outbound"] = await service.push_linked_tasks(project.id)
+                stats["outbound"] = await service.push_linked_tasks(
+                    project.id,
+                    outbound_cursor,
+                )
+                if stats["outbound"]["errors"] == 0:
+                    outbound_success_at = attempt
                 if not self._generation_is_current("github", project.id, generation):
                     await self._record_stale_run("github", project.id)
                     return
@@ -409,7 +419,15 @@ class ExternalIssueSyncCoordinator:
                         memory_manager=self.memory_manager,
                         secret_store=self.secret_store,
                     )
-                    stats["triage"] = await triage.reconcile_project_repos(project.id)
+                    stats["triage"] = {
+                        "deliveries": await triage.recover_deliveries(project.id),
+                    }
+                    if not self._generation_is_current("github", project.id, generation):
+                        await self._record_stale_run("github", project.id)
+                        return
+                    stats["triage"]["repositories"] = await triage.reconcile_project_repos(
+                        project.id
+                    )
                     if not self._generation_is_current("github", project.id, generation):
                         await self._record_stale_run("github", project.id)
                         return
@@ -427,6 +445,7 @@ class ExternalIssueSyncCoordinator:
                     pending,
                     stats,
                     f"GitHub reconciliation reported {failures} failures",
+                    last_outbound_success_at=outbound_success_at,
                 )
             else:
                 await self._write_status(
@@ -437,6 +456,7 @@ class ExternalIssueSyncCoordinator:
                     pending=pending,
                     last_attempt_at=attempt,
                     last_success_at=utc_now(),
+                    last_outbound_success_at=outbound_success_at,
                     consecutive_failures=0,
                     statistics=stats,
                 )
@@ -454,7 +474,14 @@ class ExternalIssueSyncCoordinator:
             state: ExternalIssueSyncState = (
                 "unready" if isinstance(exc, GitHubRepositoryReadinessError) else "degraded"
             )
-            await self._record_exception(project.id, "github", attempt, exc, state=state)
+            await self._record_exception(
+                project.id,
+                "github",
+                attempt,
+                exc,
+                state=state,
+                last_outbound_success_at=outbound_success_at,
+            )
             delay = self._retry_delay(exc)
             now = self.monotonic()
             if outbound:
@@ -472,6 +499,8 @@ class ExternalIssueSyncCoordinator:
         pending: int,
         statistics: Mapping[str, Any],
         error: str,
+        *,
+        last_outbound_success_at: datetime | None = None,
     ) -> None:
         current = await asyncio.to_thread(self.status_store.get, project_id, provider)
         await self._write_status(
@@ -481,6 +510,7 @@ class ExternalIssueSyncCoordinator:
             linked=linked,
             pending=pending,
             last_attempt_at=attempt,
+            last_outbound_success_at=last_outbound_success_at,
             consecutive_failures=(current.consecutive_failures if current else 0) + 1,
             statistics=statistics,
             error=error,
@@ -494,6 +524,7 @@ class ExternalIssueSyncCoordinator:
         exc: Exception,
         *,
         state: ExternalIssueSyncState | None = None,
+        last_outbound_success_at: datetime | None = None,
     ) -> None:
         linked, pending = await asyncio.to_thread(self.status_store.counts, project_id, provider)
         delay = self._retry_delay(exc)
@@ -507,6 +538,7 @@ class ExternalIssueSyncCoordinator:
             pending,
             {},
             str(exc) or type(exc).__name__,
+            last_outbound_success_at=last_outbound_success_at,
         )
         if is_rate_limit:
             current = await asyncio.to_thread(self.status_store.get, project_id, provider)
@@ -533,6 +565,7 @@ class ExternalIssueSyncCoordinator:
         pending: int | None = None,
         last_attempt_at: Any = None,
         last_success_at: Any = None,
+        last_outbound_success_at: datetime | None = None,
         consecutive_failures: int | None = None,
         retry_at: Any = None,
         statistics: Mapping[str, Any] | None = None,
@@ -555,6 +588,9 @@ class ExternalIssueSyncCoordinator:
             pending_count=pending,
             last_attempt_at=last_attempt_at,
             last_success_at=last_success_at or (current.last_success_at if current else None),
+            last_outbound_success_at=(
+                last_outbound_success_at or (current.last_outbound_success_at if current else None)
+            ),
             consecutive_failures=(
                 consecutive_failures
                 if consecutive_failures is not None

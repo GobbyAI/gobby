@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,8 @@ from gobby.sync.github_validation import (
 )
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.utils.datetime import parse_stored_datetime
+
+logger = logging.getLogger(__name__)
 
 TriageIssueCallback = Callable[..., Awaitable[dict[str, Any]]]
 _GITHUB_PAGE_SIZE = 100
@@ -258,19 +261,31 @@ class GitHubIssueSyncService:
                     break
         return stats
 
-    async def push_linked_tasks(self, project_id: str) -> dict[str, int]:
+    async def push_linked_tasks(
+        self,
+        project_id: str,
+        updated_after: datetime | None,
+    ) -> dict[str, int]:
         """Push linked tasks only; local-native tasks never create GitHub issues."""
         project = await asyncio.to_thread(self.project_manager.get, project_id)
         if project is None or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
-        rows = await asyncio.to_thread(
-            self.db.fetchall,
+        query = (
             "SELECT id, github_repo, github_issue_number FROM tasks "
             "WHERE project_id = %s AND github_repo IS NOT NULL "
-            "AND github_issue_number IS NOT NULL ORDER BY created_at, id",
-            (project_id,),
+            "AND github_issue_number IS NOT NULL "
         )
-        stats = {"pushed": 0, "errors": 0}
+        params: list[Any] = [project_id]
+        if updated_after is not None:
+            query += "AND updated_at > %s "
+            params.append(updated_after)
+        query += "ORDER BY updated_at, id"
+        rows = await asyncio.to_thread(
+            self.db.fetchall,
+            query,
+            tuple(params),
+        )
+        stats = {"candidates": len(rows), "pushed": 0, "errors": 0}
         service = GitHubSyncService(
             mcp_manager=self.mcp_manager,
             task_manager=self.task_manager,
@@ -285,6 +300,14 @@ class GitHubIssueSyncService:
                 if is_github_rate_limit_error(exc):
                     raise
                 stats["errors"] += 1
+                logger.warning(
+                    "Failed to push linked GitHub task %s to %s#%s (%s): %s",
+                    row["id"],
+                    row["github_repo"],
+                    row["github_issue_number"],
+                    type(exc).__name__,
+                    exc,
+                )
         return stats
 
     async def _fetch_issue(self, repo: str, issue_number: int) -> dict[str, Any]:

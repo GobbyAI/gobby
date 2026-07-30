@@ -394,8 +394,10 @@ class TestProjectRoutes:
         assert payload["linear"]["state"] == "pending"
         assert payload["linear"]["linked_count"] == 1
         assert payload["linear"]["pending_count"] == 1
+        assert payload["linear"]["last_outbound_success_at"] is None
         assert payload["github"]["linked_count"] == 1
         assert payload["github"]["pending_count"] == 0
+        assert payload["github"]["last_outbound_success_at"] is None
         assert payload["github"]["readiness_error"] == "GitHub connector is unavailable"
 
     def test_integrations_status_normalizes_provider_payloads_and_repository_fallback(
@@ -428,6 +430,7 @@ class TestProjectRoutes:
         for provider in ("linear", "github"):
             assert "project_id" not in payload[provider]
             assert "provider" not in payload[provider]
+            assert "last_outbound_success_at" in payload[provider]
 
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""

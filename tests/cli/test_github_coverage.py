@@ -114,6 +114,7 @@ class TestGithubStatus:
         result = runner.invoke(github, ["status", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No token" in result.output
+        assert json.loads(result.output)["last_outbound_success_at"] is None
 
     @patch("gobby.cli.github.GitHubIssueSyncService")
     @patch("gobby.cli.github.ExternalIssueSyncStatusStore")

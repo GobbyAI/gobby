@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.storage.github_triage import GitHubTriageConfig
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github_issue_sync import (
     GitHubIssueDeliveryHandler,
     GitHubIssueSyncService,
@@ -327,13 +330,81 @@ async def test_outbound_selects_only_fully_linked_tasks(
     remote_sync.sync_task_to_github = AsyncMock()
 
     with patch("gobby.sync.github_issue_sync.GitHubSyncService", return_value=remote_sync):
-        stats = await service.push_linked_tasks("project-1")
+        stats = await service.push_linked_tasks("project-1", None)
 
     sql = db.fetchall.call_args.args[0]
     assert "github_repo IS NOT NULL" in sql
     assert "github_issue_number IS NOT NULL" in sql
+    assert "updated_at >" not in sql
     remote_sync.sync_task_to_github.assert_awaited_once_with("task-1")
-    assert stats == {"pushed": 1, "errors": 0}
+    assert stats == {"candidates": 1, "pushed": 1, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_outbound_selects_tasks_updated_after_cursor(temp_db: HubDatabase) -> None:
+    project_manager = LocalProjectManager(temp_db)
+    project = project_manager.create(name="github-outbound-cursor", repo_path=None)
+    task_manager = LocalTaskManager(temp_db)
+    old_task = task_manager.create_task(
+        project_id=project.id,
+        title="Already pushed",
+        github_repo="owner/repo",
+        github_issue_number=7,
+        validation_criteria="Linked issue updates are synchronized.",
+    )
+    dirty_task = task_manager.create_task(
+        project_id=project.id,
+        title="Dirty task",
+        github_repo="owner/repo",
+        github_issue_number=8,
+        validation_criteria="Linked issue updates are synchronized.",
+    )
+    cursor = datetime(2026, 7, 30, 12, tzinfo=UTC)
+    temp_db.execute(
+        "UPDATE tasks SET updated_at = %s WHERE id = %s",
+        (cursor - timedelta(seconds=1), old_task.id),
+    )
+    temp_db.execute(
+        "UPDATE tasks SET updated_at = %s WHERE id = %s",
+        (cursor + timedelta(seconds=1), dirty_task.id),
+    )
+    service = GitHubIssueSyncService(
+        db=temp_db,
+        mcp_manager=MagicMock(),
+        task_manager=task_manager,
+        project_manager=project_manager,
+    )
+    remote_sync = MagicMock()
+    remote_sync.sync_task_to_github = AsyncMock()
+
+    with patch("gobby.sync.github_issue_sync.GitHubSyncService", return_value=remote_sync):
+        stats = await service.push_linked_tasks(project.id, cursor)
+
+    remote_sync.sync_task_to_github.assert_awaited_once_with(dirty_task.id)
+    assert stats == {"candidates": 1, "pushed": 1, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_outbound_logs_item_context_on_failure(
+    github_sync: GitHubSyncFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, db, _, _, _ = github_sync
+    db.fetchall.return_value = [
+        {"id": "task-1", "github_repo": "owner/repo", "github_issue_number": 7}
+    ]
+    remote_sync = MagicMock()
+    remote_sync.sync_task_to_github = AsyncMock(side_effect=PermissionError("credential rejected"))
+    caplog.set_level("WARNING", logger="gobby.sync.github_issue_sync")
+
+    with patch("gobby.sync.github_issue_sync.GitHubSyncService", return_value=remote_sync):
+        stats = await service.push_linked_tasks("project-1", None)
+
+    assert stats == {"candidates": 1, "pushed": 0, "errors": 1}
+    assert "task-1" in caplog.text
+    assert "owner/repo#7" in caplog.text
+    assert "PermissionError" in caplog.text
+    assert "credential rejected" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -354,7 +425,7 @@ async def test_outbound_propagates_rate_limit_retry_metadata(
         patch("gobby.sync.github_issue_sync.GitHubSyncService", return_value=remote_sync),
         pytest.raises(RateLimited) as raised,
     ):
-        await service.push_linked_tasks("project-1")
+        await service.push_linked_tasks("project-1", None)
 
     assert raised.value.retry_after_seconds == 60
 

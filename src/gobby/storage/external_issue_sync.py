@@ -35,6 +35,7 @@ class ExternalIssueSyncStatus:
     state: ExternalIssueSyncState = "disabled"
     last_attempt_at: datetime | None = None
     last_success_at: datetime | None = None
+    last_outbound_success_at: datetime | None = None
     linked_count: int = 0
     pending_count: int = 0
     consecutive_failures: int = 0
@@ -61,6 +62,7 @@ class ExternalIssueSyncStatus:
             state=row["state"],
             last_attempt_at=row["last_attempt_at"],
             last_success_at=row["last_success_at"],
+            last_outbound_success_at=row["last_outbound_success_at"],
             linked_count=int(row["linked_count"]),
             pending_count=int(row["pending_count"]),
             consecutive_failures=int(row["consecutive_failures"]),
@@ -77,6 +79,7 @@ class ExternalIssueSyncStatus:
             "state": self.state,
             "last_attempt_at": self.last_attempt_at,
             "last_success_at": self.last_success_at,
+            "last_outbound_success_at": self.last_outbound_success_at,
             "linked_count": self.linked_count,
             "pending_count": self.pending_count,
             "consecutive_failures": self.consecutive_failures,
@@ -119,6 +122,7 @@ class ExternalIssueSyncStatusStore:
         pending_count: int,
         last_attempt_at: datetime | None = None,
         last_success_at: datetime | None = None,
+        last_outbound_success_at: datetime | None = None,
         consecutive_failures: int = 0,
         retry_at: datetime | None = None,
         last_statistics: Mapping[str, Any] | None = None,
@@ -129,14 +133,15 @@ class ExternalIssueSyncStatusStore:
             """
             INSERT INTO external_issue_sync_status (
                 project_id, provider, state, last_attempt_at, last_success_at,
-                linked_count, pending_count, consecutive_failures, retry_at,
-                last_statistics, last_error, updated_at
+                last_outbound_success_at, linked_count, pending_count,
+                consecutive_failures, retry_at, last_statistics, last_error, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
             ON CONFLICT(project_id, provider) DO UPDATE SET
                 state = excluded.state,
                 last_attempt_at = excluded.last_attempt_at,
                 last_success_at = excluded.last_success_at,
+                last_outbound_success_at = excluded.last_outbound_success_at,
                 linked_count = excluded.linked_count,
                 pending_count = excluded.pending_count,
                 consecutive_failures = excluded.consecutive_failures,
@@ -152,6 +157,7 @@ class ExternalIssueSyncStatusStore:
                 state,
                 last_attempt_at,
                 last_success_at,
+                last_outbound_success_at,
                 linked_count,
                 pending_count,
                 consecutive_failures,

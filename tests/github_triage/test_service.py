@@ -17,7 +17,6 @@ from gobby.github_triage.service import (
     TriageOutcome,
     TriageWebhookError,
     WebhookAuthenticationError,
-    create_github_triage_handler,
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager
@@ -410,32 +409,6 @@ async def test_close_linked_issue_after_merge_comments_labels_and_closes(
     assert "abc123" in github.called("add_issue_comment")[0]["body"]
     assert github.called("add_labels_to_issue")[0]["labels"] == ["gobby:resolved"]
     assert github.called("update_issue")[0]["state"] == "closed"
-
-
-@pytest.mark.parametrize("status", [403, 429])
-async def test_cron_handler_counts_github_mcp_errors(
-    temp_db,
-    sample_project,
-    status: int,
-) -> None:
-    _enable_config(temp_db, sample_project["id"])
-    github = FakeGitHubMCP(
-        {
-            "list_issues": _mcp_error(
-                status,
-                headers={"Retry-After": "0", "X-RateLimit-Remaining": "0"},
-            )
-        }
-    )
-    handler = create_github_triage_handler(
-        db=temp_db,
-        mcp_manager=github,
-        task_manager=LocalTaskManager(temp_db),
-    )
-
-    result = await handler(SimpleNamespace(project_id=sample_project["id"]))
-
-    assert "scanned=0 triaged=0 errors=1" in result
 
 
 async def test_reconcile_counts_later_page_failure(temp_db, sample_project) -> None:

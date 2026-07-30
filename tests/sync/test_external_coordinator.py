@@ -2,11 +2,13 @@
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.storage.external_issue_sync import ExternalIssueSyncStatus
 from gobby.storage.github_triage import GitHubTriageConfig
 from gobby.sync.external_coordinator import ExternalIssueSyncCoordinator
 
@@ -54,6 +56,25 @@ def _coordinator(
 
 def _status_store(coordinator: ExternalIssueSyncCoordinator) -> MagicMock:
     return cast(MagicMock, coordinator.status_store)
+
+
+def _github_status(cursor: datetime | None) -> ExternalIssueSyncStatus:
+    return ExternalIssueSyncStatus(
+        project_id="project-1",
+        provider="github",
+        state="healthy",
+        last_outbound_success_at=cursor,
+    )
+
+
+def _github_service() -> MagicMock:
+    service = MagicMock()
+    service.check_access = AsyncMock(return_value=("owner/repo",))
+    service.push_linked_tasks = AsyncMock(return_value={"candidates": 1, "pushed": 1, "errors": 0})
+    service.recover_project = AsyncMock(
+        return_value={"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    )
+    return service
 
 
 @pytest.mark.asyncio
@@ -342,3 +363,134 @@ async def test_shutdown_cancels_and_drains_dispatched_work() -> None:
         call.kwargs["state"] == "pending"
         for call in _status_store(coordinator).upsert.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_github_outbound_advances_cursor_to_run_boundary() -> None:
+    project = _project(linear_enabled=False)
+    project.github_repo = "owner/repo"
+    coordinator, _ = _coordinator([project])
+    previous = datetime(2026, 7, 30, 10, tzinfo=UTC)
+    attempt = datetime(2026, 7, 30, 11, tzinfo=UTC)
+    completed = datetime(2026, 7, 30, 12, tzinfo=UTC)
+    _status_store(coordinator).get.return_value = _github_status(previous)
+    service = _github_service()
+    config = GitHubTriageConfig(project_id=project.id, sync_enabled=True)
+
+    with (
+        patch("gobby.sync.external_coordinator.GitHubIssueSyncService", return_value=service),
+        patch("gobby.sync.external_coordinator.utc_now", side_effect=[attempt, completed]),
+    ):
+        await coordinator._run_github(project, config, outbound=True, recovery=False)
+
+    service.push_linked_tasks.assert_awaited_once_with(project.id, previous)
+    final = _status_store(coordinator).upsert.call_args_list[-1].kwargs
+    assert final["state"] == "healthy"
+    assert final["last_outbound_success_at"] == attempt
+    assert final["last_success_at"] == completed
+
+
+@pytest.mark.asyncio
+async def test_github_outbound_failure_preserves_cursor() -> None:
+    project = _project(linear_enabled=False)
+    coordinator, _ = _coordinator([project])
+    previous = datetime(2026, 7, 30, 10, tzinfo=UTC)
+    _status_store(coordinator).get.return_value = _github_status(previous)
+    service = _github_service()
+    service.push_linked_tasks.return_value = {"candidates": 1, "pushed": 0, "errors": 1}
+    config = GitHubTriageConfig(project_id=project.id, sync_enabled=True)
+
+    with patch(
+        "gobby.sync.external_coordinator.GitHubIssueSyncService",
+        return_value=service,
+    ):
+        await coordinator._run_github(project, config, outbound=True, recovery=False)
+
+    final = _status_store(coordinator).upsert.call_args_list[-1].kwargs
+    assert final["state"] == "degraded"
+    assert final["last_outbound_success_at"] == previous
+
+
+@pytest.mark.asyncio
+async def test_github_triage_recovery_runs_deliveries_before_repositories() -> None:
+    project = _project(linear_enabled=False)
+    coordinator, _ = _coordinator([project])
+    previous = datetime(2026, 7, 30, 10, tzinfo=UTC)
+    _status_store(coordinator).get.return_value = _github_status(previous)
+    service = _github_service()
+    triage = MagicMock()
+    triage.recover_deliveries = AsyncMock(return_value={"recovered": 1, "retried": 0, "errors": 0})
+    triage.reconcile_project_repos = AsyncMock(
+        return_value={"scanned": 1, "triaged": 1, "errors": 0}
+    )
+    operations = MagicMock()
+    operations.attach_mock(triage.recover_deliveries, "recover_deliveries")
+    operations.attach_mock(triage.reconcile_project_repos, "reconcile_project_repos")
+    config = GitHubTriageConfig(project_id=project.id, triage_enabled=True)
+
+    with (
+        patch("gobby.sync.external_coordinator.GitHubIssueSyncService", return_value=service),
+        patch("gobby.sync.external_coordinator.GitHubIssueTriageService", return_value=triage),
+    ):
+        await coordinator._run_github(project, config, outbound=False, recovery=True)
+
+    assert operations.mock_calls == [
+        call.recover_deliveries(project.id),
+        call.reconcile_project_repos(project.id),
+    ]
+    final = _status_store(coordinator).upsert.call_args_list[-1].kwargs
+    assert final["state"] == "healthy"
+    assert final["last_outbound_success_at"] == previous
+    assert final["last_statistics"]["triage"] == {
+        "deliveries": {"recovered": 1, "retried": 0, "errors": 0},
+        "repositories": {"scanned": 1, "triaged": 1, "errors": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_github_delivery_recovery_errors_degrade_after_successful_outbound() -> None:
+    project = _project(linear_enabled=False)
+    coordinator, _ = _coordinator([project])
+    previous = datetime(2026, 7, 30, 10, tzinfo=UTC)
+    attempt = datetime(2026, 7, 30, 11, tzinfo=UTC)
+    _status_store(coordinator).get.return_value = _github_status(previous)
+    service = _github_service()
+    triage = MagicMock()
+    triage.recover_deliveries = AsyncMock(return_value={"recovered": 0, "retried": 0, "errors": 1})
+    triage.reconcile_project_repos = AsyncMock(
+        return_value={"scanned": 0, "triaged": 0, "errors": 0}
+    )
+    config = GitHubTriageConfig(
+        project_id=project.id,
+        sync_enabled=True,
+        triage_enabled=True,
+    )
+
+    with (
+        patch("gobby.sync.external_coordinator.GitHubIssueSyncService", return_value=service),
+        patch("gobby.sync.external_coordinator.GitHubIssueTriageService", return_value=triage),
+        patch("gobby.sync.external_coordinator.utc_now", return_value=attempt),
+    ):
+        await coordinator._run_github(project, config, outbound=True, recovery=True)
+
+    final = _status_store(coordinator).upsert.call_args_list[-1].kwargs
+    assert final["state"] == "degraded"
+    assert final["last_outbound_success_at"] == attempt
+    assert final["last_statistics"]["triage"]["deliveries"]["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_github_recovery_skips_triage_when_disabled() -> None:
+    project = _project(linear_enabled=False)
+    coordinator, _ = _coordinator([project])
+    service = _github_service()
+    config = GitHubTriageConfig(project_id=project.id, sync_enabled=True)
+
+    with (
+        patch("gobby.sync.external_coordinator.GitHubIssueSyncService", return_value=service),
+        patch("gobby.sync.external_coordinator.GitHubIssueTriageService") as triage_factory,
+    ):
+        await coordinator._run_github(project, config, outbound=False, recovery=True)
+
+    service.recover_project.assert_awaited_once_with(project.id)
+    triage_factory.assert_not_called()

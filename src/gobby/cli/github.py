@@ -237,6 +237,7 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
                 "pending_count": pending,
                 "last_attempt_at": status.last_attempt_at if status else None,
                 "last_success_at": status.last_success_at if status else None,
+                "last_outbound_success_at": (status.last_outbound_success_at if status else None),
                 "retry_at": status.retry_at if status else None,
                 "last_statistics": status.last_statistics if status else {},
                 "consecutive_failures": status.consecutive_failures if status else 0,

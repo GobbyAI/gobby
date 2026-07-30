@@ -23,6 +23,7 @@ def test_status_upsert_round_trip(
     project = LocalProjectManager(temp_db).create(name="sync-status", repo_path=None)
     store = ExternalIssueSyncStatusStore(temp_db)
     attempted_at = datetime(2026, 7, 21, tzinfo=UTC)
+    outbound_at = datetime(2026, 7, 20, tzinfo=UTC)
 
     def fail_refetch(*args: object, **kwargs: object) -> Never:
         raise AssertionError("upsert must return the row from RETURNING")
@@ -36,6 +37,7 @@ def test_status_upsert_round_trip(
         linked_count=4,
         pending_count=2,
         last_attempt_at=attempted_at,
+        last_outbound_success_at=outbound_at,
         consecutive_failures=3,
         last_statistics={"created": 0},
         last_error="pending work remains",
@@ -43,6 +45,7 @@ def test_status_upsert_round_trip(
 
     assert status.state == "degraded"
     assert status.last_attempt_at == attempted_at
+    assert status.last_outbound_success_at == outbound_at
     assert status.linked_count == 4
     assert status.pending_count == 2
     assert status.consecutive_failures == 3
@@ -72,6 +75,7 @@ def test_status_from_row_handles_statistics_json(
             "state": "healthy",
             "last_attempt_at": now,
             "last_success_at": now,
+            "last_outbound_success_at": now,
             "linked_count": 2,
             "pending_count": 0,
             "consecutive_failures": 0,
@@ -83,6 +87,7 @@ def test_status_from_row_handles_statistics_json(
     )
 
     assert status.last_statistics == expected
+    assert status.last_outbound_success_at == now
     if raw_statistics == "{malformed":
         assert "Ignoring malformed external issue sync statistics" in caplog.text
 

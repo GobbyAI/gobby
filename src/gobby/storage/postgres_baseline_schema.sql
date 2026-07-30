@@ -1239,6 +1239,7 @@ CREATE TABLE external_issue_sync_status (
         )),
     last_attempt_at TIMESTAMPTZ,
     last_success_at TIMESTAMPTZ,
+    last_outbound_success_at TIMESTAMPTZ,
     linked_count INTEGER NOT NULL DEFAULT 0 CHECK (linked_count >= 0),
     pending_count INTEGER NOT NULL DEFAULT 0 CHECK (pending_count >= 0),
     consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),

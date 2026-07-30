@@ -450,6 +450,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 "consecutive_failures": 0,
                 "last_attempt_at": None,
                 "last_success_at": None,
+                "last_outbound_success_at": None,
                 "retry_at": None,
                 "last_statistics": {},
                 "last_error": None,

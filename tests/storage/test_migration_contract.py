@@ -450,6 +450,17 @@ def test_external_issue_sync_migration_preserves_legacy_enablement() -> None:
     assert "CREATE TABLE IF NOT EXISTS external_issue_sync_status" in sql
 
 
+def test_external_issue_outbound_cursor_matches_baseline() -> None:
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "352_external_issue_outbound_cursor.sql"
+    ).read_text()
+
+    expected = "last_outbound_success_at TIMESTAMPTZ"
+    assert expected in baseline
+    assert expected in migration
+
+
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     migration = (
@@ -980,7 +991,9 @@ def test_epic_qa_schema_and_migration_contract() -> None:
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
     baseline = _baseline_text()
     migration = _reconcile_drift_migration_text()
-    runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
+    runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage_schema.py").read_text(
+        encoding="utf-8"
+    )
 
     _assert_contains_all("memory dream baseline interrupted status", baseline, ("'interrupted'",))
     _assert_contains_all(
