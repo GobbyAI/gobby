@@ -57,7 +57,10 @@ _SYSTEM_REMINDER_RE = re.compile(
 )
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
-_PLAN_ACCEPT_RE = re.compile(r"^\s*[$/]gobby\s+plan-accept\s+(\S+)", re.IGNORECASE)
+# MULTILINE + search: the command seals when it starts any line of the message,
+# so prose before it ("this is claude, so...") still counts as an accept. A
+# mid-sentence mention never matches — ``^\s*`` cannot cross non-whitespace.
+_PLAN_ACCEPT_RE = re.compile(r"^\s*[$/]gobby\s+plan-accept\s+(\S+)", re.IGNORECASE | re.MULTILINE)
 
 
 def compute_mode_level(chat_mode: str) -> int:
@@ -252,7 +255,7 @@ def _capture_plan_accept(
     """
     if request_content is None:
         return
-    match = _PLAN_ACCEPT_RE.match(request_content)
+    match = _PLAN_ACCEPT_RE.search(request_content)
     if match is None:
         return
     if _is_spawned_session(variables):

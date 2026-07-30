@@ -154,6 +154,35 @@ def test_plan_accept_slash_form_strips_backticks() -> None:
     assert anchor["content"] == [command]
 
 
+def test_plan_accept_seals_with_prose_before_the_command_line() -> None:
+    variables: dict[str, Any] = {}
+    command = (
+        "this is claude, so...\n"
+        "\n"
+        "/gobby plan-accept .gobby/plans/styling.md two unattended rounds per #19148"
+    )
+
+    resolve_plan_mode(_plan_accept_event(command), variables, SESSION_ID, None)
+
+    anchor = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert anchor["captured_by"] == "plan_accept_command"
+    assert anchor["target_plan_path"] == ".gobby/plans/styling.md"
+    assert anchor["content"] == [command]
+
+
+def test_plan_accept_mid_sentence_mention_never_seals() -> None:
+    variables: dict[str, Any] = {}
+
+    resolve_plan_mode(
+        _plan_accept_event("you should run $gobby plan-accept .gobby/plans/styling.md later"),
+        variables,
+        SESSION_ID,
+        None,
+    )
+
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+
 def test_plan_accept_refused_for_spawned_agent_session() -> None:
     variables: dict[str, Any] = {"is_spawned_agent": True}
 
