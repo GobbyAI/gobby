@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -24,6 +25,32 @@ _ANCHOR_FIELDS = {
     "content_sha256",
     "captured_by",
 }
+_ANCHOR_MIGRATION_FIELD = "migration_evidence"
+_MISSING = object()
+_ACKNOWLEDGEMENTS = frozenset(
+    {
+        "ok",
+        "okay",
+        "k",
+        "y",
+        "yes",
+        "yep",
+        "yeah",
+        "sure",
+        "go",
+        "go ahead",
+        "proceed",
+        "continue",
+        "do it",
+        "sounds good",
+        "lgtm",
+        "approved",
+        "thanks",
+        "thank you",
+        "ty",
+        "👍",
+    }
+)
 _TASK_FIELDS = ("title", "description", "validation_criteria")
 _REQUIREMENT_ID_RE = re.compile(r"^req-[0-9a-f]{12}$")
 _SPAN_FIELDS = {"line_start", "line_end"}
@@ -31,6 +58,15 @@ _SPAN_FIELDS = {"line_start", "line_end"}
 
 def build_request_anchor(anchor_id: str, content: str | Sequence[str]) -> dict[str, object]:
     """Build the server-owned initiating-request anchor."""
+    return _build_request_anchor(anchor_id, content)
+
+
+def _build_request_anchor(
+    anchor_id: str,
+    content: str | Sequence[str],
+    *,
+    migration_evidence: object = _MISSING,
+) -> dict[str, object]:
     if not anchor_id:
         raise ReviewEvidenceError(
             "invalid_request_anchor",
@@ -42,13 +78,16 @@ def build_request_anchor(anchor_id: str, content: str | Sequence[str]) -> dict[s
             "missing_request_anchor",
             "plan-mode entry did not carry initiating request content",
         )
-    return {
+    anchor: dict[str, object] = {
         "version": 2,
         "anchor_id": anchor_id,
         "content": messages,
         "content_sha256": _sha256(_canonical_message_bytes(messages)),
         "captured_by": "plan_mode_observer",
     }
+    if migration_evidence is not _MISSING:
+        anchor[_ANCHOR_MIGRATION_FIELD] = migration_evidence
+    return anchor
 
 
 def validate_request_anchor(raw: object) -> dict[str, object]:
@@ -59,7 +98,12 @@ def validate_request_anchor(raw: object) -> dict[str, object]:
             "taskless plan review requires a server-owned request anchor",
         )
     anchor = canonical_json_object(raw)
-    if set(anchor) != _ANCHOR_FIELDS or anchor.get("version") != 2:
+    fields = set(anchor)
+    if (
+        fields != _ANCHOR_FIELDS
+        and fields != _ANCHOR_FIELDS | {_ANCHOR_MIGRATION_FIELD}
+        or anchor.get("version") != 2
+    ):
         raise ReviewEvidenceError(
             "invalid_request_anchor",
             "request anchor does not match the canonical version-2 schema",
@@ -99,20 +143,13 @@ def capture_request_anchor(
     *,
     anchor_id: str,
     content: str | None,
-) -> dict[str, object]:
-    """Capture observed content, otherwise reuse a valid persisted anchor."""
-    if content is not None:
-        anchor = build_request_anchor(anchor_id, content)
-        variables[REQUEST_ANCHOR_VARIABLE] = anchor
-        return anchor
-    existing = variables.get(REQUEST_ANCHOR_VARIABLE)
-    try:
-        anchor = validate_request_anchor(existing)
-    except ReviewEvidenceError:
-        raise ReviewEvidenceError(
-            "missing_request_anchor",
-            "plan-mode entry has no request content or persisted request anchor",
-        ) from None
+) -> dict[str, object] | None:
+    """Start a plan span from substantive current content only."""
+    variables.pop(REQUEST_ANCHOR_VARIABLE, None)
+    if content is None or not _is_substantive_request(content):
+        return None
+    anchor = build_request_anchor(anchor_id, content)
+    variables[REQUEST_ANCHOR_VARIABLE] = anchor
     return anchor
 
 
@@ -120,18 +157,91 @@ def append_request_anchor(
     variables: dict[str, object],
     *,
     content: str,
-) -> dict[str, object]:
-    """Append one observer-owned message to the current plan-mode span."""
-    anchor = validate_request_anchor(variables.get(REQUEST_ANCHOR_VARIABLE))
+    anchor_id: str | None = None,
+) -> dict[str, object] | None:
+    """Reconcile and append one substantive message to the current plan span."""
+    raw = variables.get(REQUEST_ANCHOR_VARIABLE)
+    anchor = _migrate_request_anchor(raw)
+    if not _is_substantive_request(content):
+        if anchor is not None:
+            variables[REQUEST_ANCHOR_VARIABLE] = anchor
+        elif raw is None:
+            variables.pop(REQUEST_ANCHOR_VARIABLE, None)
+        return anchor
+
+    if anchor is None:
+        selected_anchor_id = anchor_id or _raw_anchor_id(raw)
+        if selected_anchor_id is None:
+            return None
+        migration_evidence = raw if raw is not None else _MISSING
+        appended = _build_request_anchor(
+            selected_anchor_id,
+            content,
+            migration_evidence=migration_evidence,
+        )
+        variables[REQUEST_ANCHOR_VARIABLE] = appended
+        return appended
+
     messages = cast(list[str], anchor["content"])
     if messages[-1] == content:
+        variables[REQUEST_ANCHOR_VARIABLE] = anchor
         return anchor
-    appended = build_request_anchor(
+    appended = _build_request_anchor(
         cast(str, anchor["anchor_id"]),
         [*messages, content],
+        migration_evidence=anchor.get(_ANCHOR_MIGRATION_FIELD, _MISSING),
     )
     variables[REQUEST_ANCHOR_VARIABLE] = appended
     return appended
+
+
+def is_request_acknowledgement(content: str) -> bool:
+    """Return whether content normalizes to the closed acknowledgement set."""
+    normalized = content.strip().casefold()
+    while normalized and unicodedata.category(normalized[-1]).startswith("P"):
+        normalized = normalized[:-1].rstrip()
+    return normalized in _ACKNOWLEDGEMENTS
+
+
+def _is_substantive_request(content: str) -> bool:
+    return bool(content.strip()) and not is_request_acknowledgement(content)
+
+
+def _migrate_request_anchor(raw: object) -> dict[str, object] | None:
+    try:
+        return validate_request_anchor(raw)
+    except (ReviewEvidenceError, TypeError, ValueError, RecursionError):
+        pass
+    try:
+        if not isinstance(raw, Mapping):
+            return None
+        anchor = canonical_json_object(raw)
+        if set(anchor) != _ANCHOR_FIELDS or anchor.get("version") != 1:
+            return None
+        if anchor.get("captured_by") != "plan_mode_observer":
+            return None
+        anchor_id = anchor.get("anchor_id")
+        content = anchor.get("content")
+        digest = anchor.get("content_sha256")
+        if not isinstance(anchor_id, str) or not anchor_id:
+            return None
+        if not isinstance(content, str) or not content:
+            return None
+        if not isinstance(digest, str) or digest != _sha256(content.encode()):
+            return None
+        return build_request_anchor(anchor_id, content)
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
+def _raw_anchor_id(raw: object) -> str | None:
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        anchor_id = raw.get("anchor_id")
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return anchor_id if isinstance(anchor_id, str) and anchor_id else None
 
 
 def parse_requirement_source_paths(plan_snapshot: bytes) -> tuple[str, ...]:
@@ -221,13 +331,16 @@ def assemble_requirements_bundle(
     else:
         anchor = validate_request_anchor(request_anchor)
         anchor_id = cast(str, anchor["anchor_id"])
-        anchor_content = _canonical_message_bytes(cast(list[str], anchor["content"])).decode()
+        anchor_content = _render_anchor_messages(cast(list[str], anchor["content"]))
         sources.append(
             _requirement_source(
                 source_kind="request_anchor",
                 source_ref=f"request:{anchor_id}",
                 content=anchor_content,
-                details={"anchor_id": anchor_id},
+                details={
+                    "anchor_id": anchor_id,
+                    "anchor_content_sha256": cast(str, anchor["content_sha256"]),
+                },
             )
         )
 
@@ -405,7 +518,7 @@ def _validate_requirement_source(raw: object, *, index: int) -> dict[str, object
     source_kind = source.get("source_kind")
     branch_fields = {
         "task_field": {"field"},
-        "request_anchor": {"anchor_id"},
+        "request_anchor": {"anchor_id", "anchor_content_sha256"},
         "repository_document": {"path"},
     }
     details = branch_fields.get(str(source_kind))
@@ -451,11 +564,16 @@ def _validate_requirement_source(raw: object, *, index: int) -> dict[str, object
             "invalid_requirements_bundle",
             f"requirements bundle source {index} content hash mismatch",
         )
-    detail = next(iter(details))
-    if not isinstance(source.get(detail), str) or not source[detail]:
+    for detail in sorted(details):
+        if not isinstance(source.get(detail), str) or not source[detail]:
+            raise ReviewEvidenceError(
+                "invalid_requirements_bundle",
+                f"requirements bundle source {index} has an invalid {detail}",
+            )
+    if source_kind == "request_anchor" and not is_sha256(source["anchor_content_sha256"]):
         raise ReviewEvidenceError(
             "invalid_requirements_bundle",
-            f"requirements bundle source {index} has an invalid {detail}",
+            f"requirements bundle source {index} has an invalid anchor_content_sha256",
         )
     return source
 
@@ -552,3 +670,10 @@ def _canonical_message_bytes(messages: Sequence[str]) -> bytes:
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode()
+
+
+def _render_anchor_messages(messages: Sequence[str]) -> str:
+    return "\n".join(
+        f"--- request message {index} ---\n{message}"
+        for index, message in enumerate(messages, start=1)
+    )

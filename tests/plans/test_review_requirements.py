@@ -11,10 +11,16 @@ from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
+    append_request_anchor,
     assemble_requirements_bundle,
     build_request_anchor,
+    capture_request_anchor,
+    is_request_acknowledgement,
     parse_requirement_source_paths,
+    validate_request_anchor,
+    validate_source_citation,
 )
+from gobby.plans.review_terminal import _taskless_request_anchor_changed
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -256,10 +262,14 @@ def test_bundle_representation_properties(tmp_path: Path) -> None:
         task_id="task-1",
         task_fields=task_fields,
     )
+    request_anchor = build_request_anchor(
+        "request-1",
+        ["First request line\nSecond request line", "Follow-up requirement"],
+    )
     taskless = assemble_requirements_bundle(
         project_root=tmp_path,
         plan_snapshot=snapshot,
-        request_anchor=build_request_anchor("request-1", "Initiating request"),
+        request_anchor=request_anchor,
     )
 
     first_sources = cast(list[dict[str, object]], first["sources"])
@@ -277,6 +287,27 @@ def test_bundle_representation_properties(tmp_path: Path) -> None:
     assert "docs/reference-only.md" not in {
         source.get("path") for source in first_sources + taskless_sources
     }
+    request_source = next(
+        source for source in taskless_sources if source["source_kind"] == "request_anchor"
+    )
+    assert request_source["content"] == (
+        "--- request message 1 ---\n"
+        "First request line\n"
+        "Second request line\n"
+        "--- request message 2 ---\n"
+        "Follow-up requirement"
+    )
+    assert request_source["anchor_content_sha256"] == request_anchor["content_sha256"]
+    assert request_source["content_sha256"] != request_anchor["content_sha256"]
+    assert validate_source_citation(
+        {
+            "requirement_id": request_source["requirement_id"],
+            "content_sha256": request_source["content_sha256"],
+            "line_start": 2,
+            "line_end": 4,
+        },
+        requirements_bundle=taskless,
+    )["line_end"] == 4
 
     document_source = next(source for source in first_sources if "path" in source)
     original_id = document_source["requirement_id"]
@@ -367,3 +398,140 @@ def test_request_anchor_hashes_exact_content() -> None:
             plan_snapshot=b"# Plan\n",
             request_anchor=forged,
         )
+
+
+def test_anchor_migration_is_lossless() -> None:
+    original = "Original v1 request bytes: 🧪\n"
+    v1_anchor = {
+        "version": 1,
+        "anchor_id": "legacy-request",
+        "content": original,
+        "content_sha256": hashlib.sha256(original.encode()).hexdigest(),
+        "captured_by": "plan_mode_observer",
+    }
+    variables: dict[str, object] = {REQUEST_ANCHOR_VARIABLE: v1_anchor}
+
+    migrated = append_request_anchor(
+        variables,
+        content="Current substantive request\n",
+        anchor_id="ignored-fallback",
+    )
+
+    assert migrated is not None
+    assert migrated["anchor_id"] == "legacy-request"
+    assert migrated["content"] == [original, "Current substantive request\n"]
+    assert validate_request_anchor(migrated) == migrated
+
+    malformed = {
+        "version": 1,
+        "content": "malformed raw content\n",
+        "unexpected": ["preserve", {"every": "byte"}],
+    }
+    variables = {REQUEST_ANCHOR_VARIABLE: malformed}
+    recovered = append_request_anchor(
+        variables,
+        content="Replacement request",
+        anchor_id="current-request",
+    )
+
+    assert recovered is not None
+    assert recovered["content"] == ["Replacement request"]
+    assert recovered["migration_evidence"] == malformed
+    assert validate_request_anchor(recovered)["migration_evidence"] == malformed
+
+
+def test_ack_predicate_exact_set() -> None:
+    acknowledgements = {
+        "ok",
+        "okay",
+        "k",
+        "y",
+        "yes",
+        "yep",
+        "yeah",
+        "sure",
+        "go",
+        "go ahead",
+        "proceed",
+        "continue",
+        "do it",
+        "sounds good",
+        "lgtm",
+        "approved",
+        "thanks",
+        "thank you",
+        "ty",
+        "👍",
+    }
+    for acknowledgement in acknowledgements:
+        assert is_request_acknowledgement(f" \t{acknowledgement.swapcase()}?!\n")
+
+    near_misses = (
+        "ok but rename the flag",
+        "yes, after adding tests",
+        "go ahead with option two",
+        "approved except for naming",
+    )
+    assert all(not is_request_acknowledgement(content) for content in near_misses)
+
+    variables: dict[str, object] = {
+        REQUEST_ANCHOR_VARIABLE: build_request_anchor("prior-plan", "Prior plan request")
+    }
+    assert capture_request_anchor(variables, anchor_id="new-plan", content=" OK!!! ") is None
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+    exact_near_miss = "  ok but rename the flag\n"
+    seeded = append_request_anchor(
+        variables,
+        content=exact_near_miss,
+        anchor_id="new-plan",
+    )
+    assert seeded is not None
+    assert seeded["content"] == [exact_near_miss]
+    assert (
+        append_request_anchor(variables, content="Thanks...", anchor_id="new-plan") == seeded
+    )
+
+
+def test_taskless_retry_requires_changed_anchor_hash(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project = LocalProjectManager(temp_db).create(name="anchor-retry", repo_path=str(tmp_path))
+    session = SessionManager(temp_db).register(
+        external_id="anchor-retry-parent",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+    )
+    original = build_request_anchor("request-1", "Original request")
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(session.id, {REQUEST_ANCHOR_VARIABLE: original})
+    bundle = assemble_requirements_bundle(
+        project_root=tmp_path,
+        plan_snapshot=_plan(),
+        request_anchor=original,
+    )
+    context = {"requirements_bundle": bundle}
+
+    assert not _taskless_request_anchor_changed(
+        temp_db,
+        session_id=session.id,
+        prior_round_context=context,
+    )
+
+    changed = build_request_anchor("request-1", ["Original request", "Added requirement"])
+    variables.merge_variables(session.id, {REQUEST_ANCHOR_VARIABLE: changed})
+    assert _taskless_request_anchor_changed(
+        temp_db,
+        session_id=session.id,
+        prior_round_context=context,
+    )
+
+    next_plan = build_request_anchor("request-2", "Different plan")
+    variables.merge_variables(session.id, {REQUEST_ANCHOR_VARIABLE: next_plan})
+    assert not _taskless_request_anchor_changed(
+        temp_db,
+        session_id=session.id,
+        prior_round_context=context,
+    )

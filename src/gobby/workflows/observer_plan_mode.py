@@ -12,7 +12,11 @@ from typing import Any, Protocol
 
 from gobby.hooks.events import HookEvent, SessionSource
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import append_request_anchor, capture_request_anchor
+from gobby.plans.review_requirements import (
+    REQUEST_ANCHOR_VARIABLE,
+    append_request_anchor,
+    capture_request_anchor,
+)
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -41,6 +45,14 @@ _MODE_ALIASES = {
     "fullauto": "bypass",
     "yolo": "bypass",
 }
+_CONVERSATION_HISTORY_RE = re.compile(
+    r"<conversation-history(?:\s[^>]*)?>.*?</conversation-history\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder(?:\s[^>]*)?>.*?</system-reminder\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
 
@@ -70,7 +82,7 @@ def resolve_plan_mode(
     data = event.data or {}
     session_type = metadata.get("session_type") or getattr(session, "session_type", None)
     prompt = data.get("prompt")
-    request_content = prompt if isinstance(prompt, str) and prompt else None
+    request_content = _clean_request_content(prompt) if isinstance(prompt, str) else None
     request_anchor_id = _request_anchor_id(data, session_id, request_content)
 
     if session_type == "web_chat":
@@ -277,14 +289,20 @@ def _apply_resolved_mode(
             request_anchor_id=request_anchor_id,
             request_content=request_content,
         )
-    elif is_plan and request_content is not None:
-        append_request_anchor(variables, content=request_content)
+    elif is_plan:
+        append_request_anchor(
+            variables,
+            content=request_content or "",
+            anchor_id=request_anchor_id,
+        )
     if persist_mode:
         variables["chat_mode"] = mode
     if level_changed:
         variables["mode_level"] = level
     if not is_plan and variables.get("plan_skill_loaded"):
         variables["plan_skill_loaded"] = False
+    if not is_plan:
+        variables.pop(REQUEST_ANCHOR_VARIABLE, None)
     if mode_changed or level_changed or plan_changed:
         logger.debug(
             "Session %s: effective mode changed (mode=%s, level=%s, plan_mode=%s, reason=%s)",
@@ -363,6 +381,12 @@ def _reverse_jsonl_lines(path: Path, chunk_size: int = 64 * 1024) -> Iterator[by
             yield pending
 
 
+def _clean_request_content(prompt: str) -> str | None:
+    cleaned = _CONVERSATION_HISTORY_RE.sub("", prompt)
+    cleaned = _SYSTEM_REMINDER_RE.sub("", cleaned)
+    return cleaned if cleaned.strip() else None
+
+
 def detect_plan_mode_from_context(
     prompt: str | None,
     variables: dict[str, Any],
@@ -374,10 +398,9 @@ def detect_plan_mode_from_context(
     if not prompt:
         return
 
-    cleaned = re.sub(
-        r"<conversation-history>.*?</conversation-history>", "", prompt, flags=re.DOTALL
-    )
-    anchor_id = request_anchor_id or _request_anchor_id({}, session_id, prompt)
+    cleaned = _CONVERSATION_HISTORY_RE.sub("", prompt)
+    request_content = _clean_request_content(prompt)
+    anchor_id = request_anchor_id or _request_anchor_id({}, session_id, request_content)
 
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
@@ -395,7 +418,7 @@ def detect_plan_mode_from_context(
             reason,
             persist_plan_mode=persist_plan_mode,
             request_anchor_id=anchor_id,
-            request_content=prompt,
+            request_content=request_content,
         )
 
     plan_mode_indicators = [

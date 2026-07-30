@@ -1,12 +1,13 @@
 # mypy: disable-error-code="no-untyped-def,type-arg,attr-defined"
 """Tests for detection functions in observers module."""
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from gobby.plans.review_requirements import (
 )
 from gobby.plans.vote_artifacts import PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE
 from gobby.workflows import observers as observers_module
+from gobby.workflows.observer_plan_mode import resolve_plan_mode
 from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
@@ -112,6 +114,109 @@ def make_after_tool_event():
 # =============================================================================
 
 
+def test_resolve_plan_mode_tolerates_v1_and_missing_anchor() -> None:
+    legacy_content = "Original v1 request\n"
+    variables: dict[str, Any] = {
+        "chat_mode": "plan",
+        "mode_level": 0,
+        "plan_mode": True,
+        REQUEST_ANCHOR_VARIABLE: {
+            "version": 1,
+            "anchor_id": "legacy-request",
+            "content": legacy_content,
+            "content_sha256": hashlib.sha256(legacy_content.encode()).hexdigest(),
+            "captured_by": "plan_mode_observer",
+        },
+    }
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={
+            "chat_mode": "plan",
+            "prompt": (
+                "<conversation-history>discard</conversation-history>"
+                "<system-reminder>Plan mode is active</system-reminder>"
+                "ok but rename the flag"
+            ),
+        },
+    )
+
+    resolve_plan_mode(event, variables, SESSION_ID, None)
+
+    migrated = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert migrated["version"] == 2
+    assert migrated["content"] == [legacy_content, "ok but rename the flag"]
+
+    missing: dict[str, Any] = {
+        "chat_mode": "plan",
+        "mode_level": 0,
+        "plan_mode": True,
+    }
+    wrapper_only = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={
+            "chat_mode": "plan",
+            "prompt": "<system-reminder>Plan mode is active</system-reminder>",
+        },
+    )
+    resolve_plan_mode(wrapper_only, missing, SESSION_ID, None)
+    assert missing["plan_mode"] is True
+    assert REQUEST_ANCHOR_VARIABLE not in missing
+
+    malformed_raw = {"version": 2, "content": "wrong shape", "raw": ["preserve"]}
+    malformed: dict[str, Any] = {
+        "chat_mode": "plan",
+        "mode_level": 0,
+        "plan_mode": True,
+        REQUEST_ANCHOR_VARIABLE: malformed_raw,
+    }
+    substantive = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={"chat_mode": "plan", "prompt": "Current request"},
+    )
+    resolve_plan_mode(substantive, malformed, SESSION_ID, None)
+    recovered = cast(dict[str, object], malformed[REQUEST_ANCHOR_VARIABLE])
+    assert recovered["content"] == ["Current request"]
+    assert recovered["migration_evidence"] == malformed_raw
+
+
+def test_plan_reentry_does_not_adopt_prior_anchor() -> None:
+    variables: dict[str, Any] = {
+        "chat_mode": "plan",
+        "mode_level": 0,
+        "plan_mode": True,
+        REQUEST_ANCHOR_VARIABLE: build_request_anchor("prior-plan", "Prior request"),
+    }
+    exit_event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={"chat_mode": "normal"},
+    )
+    resolve_plan_mode(exit_event, variables, SESSION_ID, None)
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+    reentry_event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={"chat_mode": "plan"},
+    )
+    resolve_plan_mode(reentry_event, variables, SESSION_ID, None)
+    assert variables["plan_mode"] is True
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+
 class TestDetectPlanModeFromContext:
     def test_detects_plan_mode_active_indicator(self, variables) -> None:
         prompt = "User prompt here\n<system-reminder>Plan mode is active</system-reminder>"
@@ -135,11 +240,16 @@ class TestDetectPlanModeFromContext:
         variables["mode_level"] = 0
         variables["plan_mode"] = True
         variables["plan_skill_loaded"] = True
+        variables[REQUEST_ANCHOR_VARIABLE] = build_request_anchor(
+            "exiting-plan",
+            "Plan request",
+        )
         prompt = "<system-reminder>Exited Plan Mode</system-reminder>. Now implement."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") != 0
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
+        assert REQUEST_ANCHOR_VARIABLE not in variables
 
     def test_system_reminder_exit_clears_plan_skill_loaded_without_plan_mode(
         self, variables: dict[str, Any]
@@ -193,6 +303,24 @@ class TestDetectPlanModeFromContext:
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
         assert variables.get("plan_mode") is True
+
+    def test_append_uses_cleaned_substantive_prompt(self, variables) -> None:
+        variables["mode_level"] = 0
+        variables["plan_mode"] = True
+        variables[REQUEST_ANCHOR_VARIABLE] = build_request_anchor(
+            "existing-anchor",
+            "Original request",
+        )
+        prompt = (
+            "<conversation-history>discard this</conversation-history>"
+            "<system-reminder>Plan mode is active</system-reminder>"
+            "ok but rename the flag"
+        )
+
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+
+        anchor = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+        assert anchor["content"] == ["Original request", "ok but rename the flag"]
 
     def test_heals_stale_plan_mode_when_no_markers(self, variables) -> None:
         """After clear/compact, mode_level=0 persists but no CLI injects markers."""
