@@ -126,14 +126,17 @@ def test_explicit_commands_are_both_documented(body: str) -> None:
 
 def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     lowered = body.lower()
+    normalized = " ".join(lowered.split())
 
     assert "artifact-first" in lowered
     assert "does not create a planning" in lowered
     assert "review-anchor task" in lowered
     assert "per-round review tasks" in lowered
     assert "do not create or claim tasks" in lowered
-    assert "plan artifact writes under `.gobby/plans/**` are exempt" in lowered
-    assert "`require-task-before-edit`" in lowered
+    assert (
+        "any `.md` under `.gobby/`, `.claude/`, or `.codex/` (cli-owned artifact "
+        "trees) is exempt from `require-task-before-edit`" in normalized
+    )
     assert "do not create review anchors" in lowered
 
 
