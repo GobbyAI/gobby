@@ -200,9 +200,17 @@ def init_servers(runner: GobbyRunner) -> None:
         )
 
     if runner.communications_manager:
-        from gobby.runner_broadcasting import setup_communications_event_broadcasting
+        from gobby.runner_broadcasting import (
+            setup_communications_event_broadcasting,
+            setup_session_status_communications,
+        )
 
         setup_communications_event_broadcasting(
             runner.websocket_server,
             runner.communications_manager,
+        )
+        setup_session_status_communications(
+            runner.session_manager,
+            runner.communications_manager,
+            lambda: runner.main_loop,
         )

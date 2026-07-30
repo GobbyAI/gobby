@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from psycopg.errors import RaiseException
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -726,6 +727,34 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert updated.title == "Recovered Title"
         assert calls == [("session_updated", session.id)]
+
+    def test_status_transition_listener_failure_does_not_break_committed_update(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="broken-status-listener-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        transitions: list[SessionStatusTransition] = []
+
+        def broken_listener(_transition: SessionStatusTransition) -> None:
+            raise RuntimeError("listener failed")
+
+        session_manager.register_status_transition_listener(broken_listener)
+        session_manager.register_status_transition_listener(transitions.append)
+
+        updated = session_manager.update_status(session.id, "paused")
+
+        assert updated is not None
+        assert updated.status == "paused"
+        persisted = session_manager.get(session.id)
+        assert persisted is not None
+        assert persisted.status == "paused"
+        assert [transition.status for transition in transitions] == ["paused"]
 
     def test_update_stats(
         self,

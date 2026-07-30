@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agent_resume import finalize_daemon_resume
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.agents import _lifecycle as agents_lifecycle
@@ -490,6 +491,12 @@ class TestLocalAgentRunManager:
         sample_session: dict[str, Any],
     ) -> None:
         """Completing an agent run expires its child session."""
+        transitions: list[SessionStatusTransition] = []
+        session_manager.register_status_transition_listener(transitions.append)
+        agent_manager = LocalAgentRunManager(
+            agent_manager.db,
+            status_notifier=session_manager._notify_status_transition,
+        )
         child_session = session_manager.register(
             external_id="agent-child-complete",
             machine_id="machine-1",
@@ -513,6 +520,48 @@ class TestLocalAgentRunManager:
         updated_session = session_manager.get(child_session.id)
         assert updated_session is not None
         assert updated_session.status == "expired"
+        assert [(event.session_id, event.status) for event in transitions] == [
+            (child_session.id, "expired")
+        ]
+
+    def test_daemon_stop_pauses_child_session_after_terminal_commit(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+    ) -> None:
+        transitions: list[SessionStatusTransition] = []
+        session_manager.register_status_transition_listener(transitions.append)
+        notifying_manager = LocalAgentRunManager(
+            agent_manager.db,
+            status_notifier=session_manager._notify_status_transition,
+        )
+        child_session = session_manager.register(
+            external_id="agent-child-daemon-stop",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = notifying_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Daemon stop child session test",
+            child_session_id=child_session.id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=agent_run.id,
+        )
+        notifying_manager.start(agent_run.id)
+
+        notifying_manager.cancel(agent_run.id, terminal_reason="daemon_stop")
+
+        updated_session = session_manager.get(child_session.id)
+        assert updated_session is not None
+        assert updated_session.status == "paused"
+        assert [(event.session_id, event.status) for event in transitions] == [
+            (child_session.id, "paused")
+        ]
 
     def test_complete_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test completing nonexistent run returns None."""

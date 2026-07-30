@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.communications.adapters.slack import SlackAdapter
+from gobby.communications.manager import EventSubscriptionNotFoundError
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
@@ -284,7 +285,8 @@ def test_update_channel(client, comms_manager):
     comms_manager.update_channel.return_value = ch
 
     response = client.put(
-        "/api/comms/channels/ch1", json={"config": {"foo": "baz"}, "enabled": False}
+        "/api/comms/channels/ch1",
+        json={"name": "renamed-slack", "config": {"foo": "baz"}, "enabled": False},
     )
 
     assert response.status_code == 200
@@ -293,6 +295,7 @@ def test_update_channel(client, comms_manager):
     comms_manager.update_channel.assert_called_once_with(ch, secrets=None)
     assert ch.config_json == {"foo": "baz"}
     assert ch.enabled is False
+    assert ch.name == "renamed-slack"
 
 
 def test_update_channel_preserves_secret_refs_when_editing_non_secret_config(client, comms_manager):
@@ -448,3 +451,113 @@ def test_list_messages(client: TestClient, comms_manager: MagicMock) -> None:
     comms_manager.list_messages.assert_called_once_with(
         channel_id="ch1", session_id=None, direction=None, limit=50, offset=0
     )
+
+
+def test_event_subscription_http_crud_uses_one_contract(
+    client: TestClient,
+    comms_manager: MagicMock,
+) -> None:
+    rule = MagicMock()
+    contract = {
+        "id": "sub-1",
+        "name": "Agent pauses",
+        "channel_id": "channel-1",
+        "channel_name": "telegram",
+        "scope": {"kind": "project", "project_id": "project-1"},
+        "event_pattern": "session.agent.paused",
+        "session_id": None,
+        "priority": 0,
+        "enabled": True,
+        "created_at": "2026-07-30T18:00:00-05:00",
+        "updated_at": "2026-07-30T18:00:00-05:00",
+    }
+    comms_manager.create_event_subscription.return_value = rule
+    comms_manager.list_event_subscriptions.return_value = [rule]
+    comms_manager.get_event_subscription.return_value = rule
+    comms_manager.update_event_subscription.return_value = rule
+    comms_manager.event_subscription_to_dict.return_value = contract
+
+    created = client.post(
+        "/api/comms/subscriptions",
+        json={
+            "name": "Agent pauses",
+            "channel": "telegram",
+            "event_pattern": "session.agent.paused",
+            "project_id": "project-1",
+        },
+    )
+    listed = client.get(
+        "/api/comms/subscriptions",
+        params={
+            "channel": "telegram",
+            "project_id": "project-1",
+            "enabled": True,
+            "event_pattern": "session.agent.paused",
+        },
+    )
+    fetched = client.get("/api/comms/subscriptions/sub-1")
+    updated = client.patch(
+        "/api/comms/subscriptions/sub-1",
+        json={"priority": 10, "enabled": False},
+    )
+    deleted = client.delete("/api/comms/subscriptions/sub-1")
+
+    assert created.status_code == 200
+    assert created.json() == contract
+    assert listed.status_code == 200
+    assert listed.json() == [contract]
+    assert fetched.status_code == 200
+    assert fetched.json() == contract
+    assert updated.status_code == 200
+    assert updated.json() == contract
+    assert deleted.status_code == 200
+    assert deleted.json() == {"status": "ok", "deleted": "sub-1"}
+    comms_manager.create_event_subscription.assert_called_once_with(
+        name="Agent pauses",
+        channel="telegram",
+        event_pattern="session.agent.paused",
+        project_id="project-1",
+        global_scope=False,
+        session_id=None,
+        priority=0,
+        enabled=True,
+    )
+    comms_manager.list_event_subscriptions.assert_called_once_with(
+        channel="telegram",
+        project_id="project-1",
+        global_scope=None,
+        enabled=True,
+        event_pattern="session.agent.paused",
+    )
+    comms_manager.update_event_subscription.assert_called_once_with(
+        "sub-1",
+        priority=10,
+        enabled=False,
+    )
+    comms_manager.delete_event_subscription.assert_called_once_with("sub-1")
+
+
+def test_event_subscription_http_reports_validation_and_missing_resources(
+    client: TestClient,
+    comms_manager: MagicMock,
+) -> None:
+    comms_manager.create_event_subscription.side_effect = ValueError(
+        "Project scope or explicit global scope is required"
+    )
+    invalid = client.post(
+        "/api/comms/subscriptions",
+        json={
+            "name": "Agent pauses",
+            "channel": "telegram",
+            "event_pattern": "session.agent.paused",
+        },
+    )
+    comms_manager.get_event_subscription.side_effect = EventSubscriptionNotFoundError(
+        "Event subscription 'missing' not found"
+    )
+    missing = client.get("/api/comms/subscriptions/missing")
+
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "Project scope or explicit global scope is required"
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Event subscription 'missing' not found"

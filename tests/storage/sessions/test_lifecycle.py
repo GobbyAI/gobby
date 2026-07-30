@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
@@ -120,6 +121,58 @@ class TestSessionManagerLifecycle:
         updated = session_manager.update_status(session.id, "paused")
         assert updated is not None
         assert updated.status == "paused"
+
+    def test_status_transition_listeners_receive_committed_pause_and_expiry(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="semantic-status-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Semantic session",
+        )
+        transitions: list[SessionStatusTransition] = []
+
+        def capture_committed(transition: SessionStatusTransition) -> None:
+            persisted = session_manager.get(session.id)
+            assert persisted is not None
+            assert persisted.status == transition.status
+            transitions.append(transition)
+
+        session_manager.register_status_transition_listener(capture_committed)
+
+        session_manager.update_status(session.id, "paused")
+        session_manager.update_status(session.id, "expired")
+
+        assert [transition.status for transition in transitions] == ["paused", "expired"]
+        assert all(transition.session_id == session.id for transition in transitions)
+        assert all(transition.project_id == sample_project["id"] for transition in transitions)
+        assert all(transition.source == "claude" for transition in transitions)
+        assert all(transition.transitioned_at.utcoffset().total_seconds() == 0 for transition in transitions)
+
+    def test_same_status_updates_do_not_emit_semantic_transitions(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="same-status-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        transitions: list[SessionStatusTransition] = []
+        session_manager.register_status_transition_listener(transitions.append)
+
+        session_manager.update_status(session.id, "paused")
+        session_manager.update_status(session.id, "paused")
+        session_manager.update_status(session.id, "expired")
+        session_manager.update_status(session.id, "expired")
+
+        assert [transition.status for transition in transitions] == ["paused", "expired"]
 
     def test_expire_if_active_expires_handoff_ready(
         self,

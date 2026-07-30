@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
@@ -157,12 +158,17 @@ class TestSessionManagerPruning:
             "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
+        transitions: list[SessionStatusTransition] = []
+        session_manager.register_status_transition_listener(transitions.append)
 
         count = session_manager.expire_stale_sessions(timeout_hours=24)
         assert count == 1
 
         expired = session_manager.get(session.id)
         assert expired.status == "expired"
+        assert [(event.session_id, event.status) for event in transitions] == [
+            (session.id, "expired")
+        ]
 
     def test_pause_inactive_active_sessions(
         self,
@@ -182,12 +188,17 @@ class TestSessionManagerPruning:
             "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
+        transitions: list[SessionStatusTransition] = []
+        session_manager.register_status_transition_listener(transitions.append)
 
         count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
         assert count == 1
 
         paused = session_manager.get(session.id)
         assert paused.status == "paused"
+        assert [(event.session_id, event.status) for event in transitions] == [
+            (session.id, "paused")
+        ]
 
     def test_pause_inactive_active_sessions_preserves_last_activity_time(
         self,

@@ -35,7 +35,7 @@ from gobby.communications.telegram_access import (
 )
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import datetime_to_local_iso, utc_now
 
 
 class EventSubscriptionNotFoundError(LookupError):
@@ -656,9 +656,6 @@ class CommunicationsManager:
         if channel is None:
             raise ValueError(f"Channel '{rule.channel_id}' not found")
 
-        def serialize_timestamp(value: object) -> str | None:
-            return value.isoformat() if hasattr(value, "isoformat") else None
-
         return {
             "id": rule.id,
             "name": rule.name,
@@ -672,8 +669,8 @@ class CommunicationsManager:
             "session_id": rule.session_id,
             "priority": rule.priority,
             "enabled": rule.enabled,
-            "created_at": serialize_timestamp(rule.created_at),
-            "updated_at": serialize_timestamp(rule.updated_at),
+            "created_at": datetime_to_local_iso(rule.created_at),
+            "updated_at": datetime_to_local_iso(rule.updated_at),
         }
 
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:

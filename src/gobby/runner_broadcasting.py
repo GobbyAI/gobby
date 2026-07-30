@@ -17,7 +17,12 @@ if TYPE_CHECKING:
     from gobby.communications.models import CommsMessage
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.websocket.server import WebSocketServer
+    from gobby.sessions.status_events import (
+        SessionStatusTransition,
+        SessionStatusTransitionCallback,
+    )
     from gobby.storage.cron_models import CronJob, CronRun
+    from gobby.storage.sessions import SessionManager
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
@@ -462,3 +467,41 @@ def setup_communications_event_broadcasting(
 
     communications_manager.event_callback = broadcast_comms_event
     logger.debug("Communications event fan-out enabled")
+
+
+def setup_session_status_communications(
+    session_manager: SessionManager,
+    communications_manager: Any,
+    loop_getter: Callable[[], asyncio.AbstractEventLoop | None],
+) -> SessionStatusTransitionCallback:
+    """Route committed session transitions from database threads onto the daemon loop."""
+    from gobby.communications.session_events import route_session_status_transition
+
+    def on_transition(transition: SessionStatusTransition) -> None:
+        loop = loop_getter()
+        if loop is None or not loop.is_running() or loop.is_closed():
+            logger.warning(
+                "Skipped session communications event for %s; daemon loop unavailable",
+                transition.session_id,
+            )
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            route_session_status_transition(communications_manager, transition),
+            loop,
+        )
+
+        def log_failure(completed: Any) -> None:
+            try:
+                completed.result()
+            except Exception:
+                logger.warning(
+                    "Failed to route session transition for %s",
+                    transition.session_id,
+                    exc_info=True,
+                )
+
+        future.add_done_callback(log_failure)
+
+    session_manager.register_status_transition_listener(on_transition)
+    logger.debug("Session status communications enabled")
+    return on_transition

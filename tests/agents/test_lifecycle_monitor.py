@@ -29,6 +29,7 @@ from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.sessions import activity as session_activity
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -4556,10 +4557,60 @@ def _parked_run(run_id: str, child_session_id: str | None = "child-parked") -> A
 class TestReapDaemonStopOrphans:
     """Tests for the daemon-stop orphan reaper."""
 
+    def test_parked_session_expiry_notifies_after_commit(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+        temp_db: HubDatabase,
+    ) -> None:
+        from gobby.storage.agent_resume import expire_parked_daemon_session
+
+        child_session = session_manager.register(
+            external_id="parked-orphan-expiry",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Parked orphan expiry",
+            child_session_id=child_session.id,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            child_session.id,
+            agent_run_id=run.id,
+        )
+        agent_run_manager.start(run.id)
+        agent_run_manager.cancel(run.id, terminal_reason="daemon_stop")
+        transitions: list[SessionStatusTransition] = []
+
+        def capture_committed(transition: SessionStatusTransition) -> None:
+            persisted = session_manager.get(child_session.id)
+            assert persisted is not None
+            assert persisted.status == "expired"
+            transitions.append(transition)
+
+        session_manager.register_status_transition_listener(capture_committed)
+
+        expired = expire_parked_daemon_session(
+            temp_db,
+            original_run_id=run.id,
+            child_session_id=child_session.id,
+            status_notifier=session_manager._notify_status_transition,
+        )
+
+        assert expired is True
+        assert [(event.session_id, event.status) for event in transitions] == [
+            (child_session.id, "expired")
+        ]
+
     @pytest.mark.asyncio
     async def test_reap_seeds_completion_registry_from_durable_subscribers(
         self,
         temp_db: HubDatabase,
+        session_manager: SessionManager,
     ) -> None:
         """Finding-5 regression: DB-backed waiters get the terminal result.
 
@@ -4576,6 +4627,7 @@ class TestReapDaemonStopOrphans:
             db=temp_db,
             check_interval_seconds=1.0,
             completion_registry=registry,
+            session_manager=session_manager,
             tmux_config=TmuxConfig(),
         )
         recovery = MagicMock(recover_task_from_terminal_agent=AsyncMock())
@@ -4626,6 +4678,7 @@ class TestReapDaemonStopOrphans:
             temp_db,
             original_run_id=run.id,
             child_session_id="child-parked",
+            status_notifier=session_manager._notify_status_transition,
         )
         merged = run_manager.merge_resume_metadata.call_args
         assert merged.args[0] == run.id
