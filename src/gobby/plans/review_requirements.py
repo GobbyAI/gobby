@@ -26,6 +26,9 @@ _ANCHOR_FIELDS = {
     "captured_by",
 }
 _ANCHOR_MIGRATION_FIELD = "migration_evidence"
+ANCHOR_TARGET_FIELD = "target_plan_path"
+PLAN_MODE_CAPTURED_BY = "plan_mode_observer"
+PLAN_ACCEPT_CAPTURED_BY = "plan_accept_command"
 _MISSING = object()
 _ACKNOWLEDGEMENTS = frozenset(
     {
@@ -66,6 +69,8 @@ def _build_request_anchor(
     content: str | Sequence[str],
     *,
     migration_evidence: object = _MISSING,
+    captured_by: str = PLAN_MODE_CAPTURED_BY,
+    target_plan_path: str | None = None,
 ) -> dict[str, object]:
     if not anchor_id:
         raise ReviewEvidenceError(
@@ -83,8 +88,10 @@ def _build_request_anchor(
         "anchor_id": anchor_id,
         "content": messages,
         "content_sha256": _sha256(_canonical_message_bytes(messages)),
-        "captured_by": "plan_mode_observer",
+        "captured_by": captured_by,
     }
+    if target_plan_path is not None:
+        anchor[ANCHOR_TARGET_FIELD] = target_plan_path
     if migration_evidence is not _MISSING:
         anchor[_ANCHOR_MIGRATION_FIELD] = migration_evidence
     return anchor
@@ -99,19 +106,33 @@ def validate_request_anchor(raw: object) -> dict[str, object]:
         )
     anchor = canonical_json_object(raw)
     fields = set(anchor)
+    extras = fields - _ANCHOR_FIELDS
     if (
-        fields != _ANCHOR_FIELDS
-        and fields != _ANCHOR_FIELDS | {_ANCHOR_MIGRATION_FIELD}
+        not _ANCHOR_FIELDS <= fields
+        or not extras <= {_ANCHOR_MIGRATION_FIELD, ANCHOR_TARGET_FIELD}
         or anchor.get("version") != 2
     ):
         raise ReviewEvidenceError(
             "invalid_request_anchor",
             "request anchor does not match the canonical version-2 schema",
         )
-    if anchor.get("captured_by") != "plan_mode_observer":
+    captured_by = anchor.get("captured_by")
+    if captured_by not in {PLAN_MODE_CAPTURED_BY, PLAN_ACCEPT_CAPTURED_BY}:
         raise ReviewEvidenceError(
             "invalid_request_anchor",
-            "request anchor is not owned by the plan-mode entry observer",
+            "request anchor is not owned by a recognized capture surface",
+        )
+    target = anchor.get(ANCHOR_TARGET_FIELD)
+    if captured_by == PLAN_ACCEPT_CAPTURED_BY:
+        if not isinstance(target, str) or not target:
+            raise ReviewEvidenceError(
+                "invalid_request_anchor",
+                "plan-accept anchor requires a non-empty target plan path",
+            )
+    elif ANCHOR_TARGET_FIELD in fields:
+        raise ReviewEvidenceError(
+            "invalid_request_anchor",
+            "target plan path is only valid on a plan-accept anchor",
         )
     anchor_id = anchor.get("anchor_id")
     content = anchor.get("content")
@@ -153,6 +174,54 @@ def capture_request_anchor(
     return anchor
 
 
+def capture_plan_accept_anchor(
+    variables: dict[str, object],
+    *,
+    anchor_id: str,
+    content: str,
+    target_plan_path: str,
+) -> dict[str, object] | None:
+    """Seal one verbatim user plan-accept command as the request anchor."""
+    if not content.strip() or not target_plan_path:
+        return None
+    anchor = _build_request_anchor(
+        anchor_id,
+        content,
+        captured_by=PLAN_ACCEPT_CAPTURED_BY,
+        target_plan_path=target_plan_path,
+    )
+    variables[REQUEST_ANCHOR_VARIABLE] = anchor
+    return anchor
+
+
+def is_plan_accept_anchor(raw: object) -> bool:
+    """Return whether raw is a plan-accept-captured anchor without full validation."""
+    return isinstance(raw, Mapping) and raw.get("captured_by") == PLAN_ACCEPT_CAPTURED_BY
+
+
+def plan_accept_anchor_matches(
+    anchor: Mapping[str, object],
+    *,
+    project_root: Path,
+    plan_path: str,
+) -> bool:
+    """Return whether a plan-accept anchor targets the plan under preparation."""
+    target = anchor.get(ANCHOR_TARGET_FIELD)
+    if not isinstance(target, str) or not target:
+        return False
+    return _resolve_plan_path(project_root, target) == _resolve_plan_path(project_root, plan_path)
+
+
+def _resolve_plan_path(project_root: Path, value: str) -> Path:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    try:
+        return candidate.resolve()
+    except OSError:
+        return candidate
+
+
 def append_request_anchor(
     variables: dict[str, object],
     *,
@@ -161,6 +230,10 @@ def append_request_anchor(
 ) -> dict[str, object] | None:
     """Reconcile and append one substantive message to the current plan span."""
     raw = variables.get(REQUEST_ANCHOR_VARIABLE)
+    if is_plan_accept_anchor(raw):
+        # Appending is a plan-mode-span operation; a user-sealed plan-accept
+        # anchor stays byte-identical until replaced by another explicit capture.
+        return None
     anchor = _migrate_request_anchor(raw)
     if not _is_substantive_request(content):
         if anchor is not None:

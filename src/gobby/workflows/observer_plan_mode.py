@@ -15,7 +15,9 @@ from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     append_request_anchor,
+    capture_plan_accept_anchor,
     capture_request_anchor,
+    is_plan_accept_anchor,
 )
 
 logger = logging.getLogger("gobby.workflows.observers")
@@ -55,6 +57,7 @@ _SYSTEM_REMINDER_RE = re.compile(
 )
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
+_PLAN_ACCEPT_RE = re.compile(r"^\s*[$/]gobby\s+plan-accept\s+(\S+)", re.IGNORECASE)
 
 
 def compute_mode_level(chat_mode: str) -> int:
@@ -84,6 +87,7 @@ def resolve_plan_mode(
     prompt = data.get("prompt")
     request_content = _clean_request_content(prompt) if isinstance(prompt, str) else None
     request_anchor_id = _request_anchor_id(data, session_id, request_content)
+    _capture_plan_accept(variables, session_id, request_content, request_anchor_id)
 
     if session_type == "web_chat":
         mode = _normalize_mode(metadata.get("chat_mode"))
@@ -234,6 +238,47 @@ def _normalize_mode(value: object) -> str | None:
     return _MODE_ALIASES.get(key)
 
 
+def _capture_plan_accept(
+    variables: dict[str, Any],
+    session_id: str,
+    request_content: str | None,
+    request_anchor_id: str,
+) -> None:
+    """Seal a user-typed plan-accept command as the request anchor.
+
+    Only non-spawned sessions may seed this way: a parent could otherwise plant
+    an anchor through a child's spawn prompt, defeating the provenance the
+    anchor exists to attest.
+    """
+    if request_content is None:
+        return
+    match = _PLAN_ACCEPT_RE.match(request_content)
+    if match is None:
+        return
+    if _is_spawned_session(variables):
+        logger.info(
+            "Session %s: ignoring plan-accept command from spawned agent session",
+            session_id,
+        )
+        return
+    target = match.group(1).strip("`'\"")
+    if not target:
+        return
+    capture_plan_accept_anchor(
+        variables,
+        anchor_id=request_anchor_id,
+        content=request_content,
+        target_plan_path=target,
+    )
+
+
+def _is_spawned_session(variables: dict[str, Any]) -> bool:
+    value = variables.get("is_spawned_agent")
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
+
+
 def _request_anchor_id(
     data: dict[str, Any],
     session_id: str,
@@ -289,7 +334,7 @@ def _apply_resolved_mode(
             request_anchor_id=request_anchor_id,
             request_content=request_content,
         )
-    elif is_plan:
+    elif is_plan and not is_plan_accept_anchor(variables.get(REQUEST_ANCHOR_VARIABLE)):
         append_request_anchor(
             variables,
             content=request_content or "",
@@ -301,7 +346,7 @@ def _apply_resolved_mode(
         variables["mode_level"] = level
     if not is_plan and variables.get("plan_skill_loaded"):
         variables["plan_skill_loaded"] = False
-    if not is_plan:
+    if not is_plan and not is_plan_accept_anchor(variables.get(REQUEST_ANCHOR_VARIABLE)):
         variables.pop(REQUEST_ANCHOR_VARIABLE, None)
     if mode_changed or level_changed or plan_changed:
         logger.debug(

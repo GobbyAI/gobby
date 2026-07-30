@@ -18,7 +18,11 @@ from gobby.plans.review_requirements import (
     REQUEST_ANCHOR_VARIABLE,
     build_request_anchor,
 )
-from gobby.plans.vote_artifacts import PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE
+from gobby.plans.vote_artifacts import (
+    OBSERVER_PROVENANCE,
+    PLAN_VOTE_INTERACTION_CONTEXT_VARIABLE,
+    PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE,
+)
 from gobby.workflows import observers as observers_module
 from gobby.workflows.observer_plan_mode import resolve_plan_mode
 from gobby.workflows.observers import (
@@ -112,6 +116,91 @@ def make_after_tool_event():
 # =============================================================================
 # Tests for detect_plan_mode_from_context
 # =============================================================================
+
+
+def _plan_accept_event(prompt: str, chat_mode: str = "normal") -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        source=SessionSource.CLAUDE,
+        session_id=SESSION_ID,
+        timestamp=datetime.now(UTC),
+        data={"chat_mode": chat_mode, "prompt": prompt},
+    )
+
+
+def test_plan_accept_command_seeds_anchor_outside_plan_mode() -> None:
+    variables: dict[str, Any] = {}
+    command = "$gobby plan-accept .gobby/plans/styling.md run two unattended rounds"
+
+    resolve_plan_mode(_plan_accept_event(command), variables, SESSION_ID, None)
+
+    anchor = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert anchor["captured_by"] == "plan_accept_command"
+    assert anchor["target_plan_path"] == ".gobby/plans/styling.md"
+    assert anchor["content"] == [command]
+
+    resolve_plan_mode(_plan_accept_event("unrelated later message"), variables, SESSION_ID, None)
+    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
+
+
+def test_plan_accept_slash_form_strips_backticks() -> None:
+    variables: dict[str, Any] = {}
+    command = "/gobby plan-accept `.gobby/plans/styling.md` per #19148"
+
+    resolve_plan_mode(_plan_accept_event(command), variables, SESSION_ID, None)
+
+    anchor = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert anchor["target_plan_path"] == ".gobby/plans/styling.md"
+    assert anchor["content"] == [command]
+
+
+def test_plan_accept_refused_for_spawned_agent_session() -> None:
+    variables: dict[str, Any] = {"is_spawned_agent": True}
+
+    resolve_plan_mode(
+        _plan_accept_event("$gobby plan-accept .gobby/plans/styling.md"),
+        variables,
+        SESSION_ID,
+        None,
+    )
+
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+
+def test_non_accept_prompt_never_seeds_outside_plan_mode() -> None:
+    variables: dict[str, Any] = {}
+
+    resolve_plan_mode(
+        _plan_accept_event("please accept the plan in .gobby/plans/styling.md"),
+        variables,
+        SESSION_ID,
+        None,
+    )
+
+    assert REQUEST_ANCHOR_VARIABLE not in variables
+
+
+def test_plan_mode_append_skips_plan_accept_anchor() -> None:
+    variables: dict[str, Any] = {}
+    resolve_plan_mode(
+        _plan_accept_event("initial planning request", chat_mode="plan"),
+        variables,
+        SESSION_ID,
+        None,
+    )
+    command = "$gobby plan-accept .gobby/plans/styling.md"
+    resolve_plan_mode(_plan_accept_event(command, chat_mode="plan"), variables, SESSION_ID, None)
+    anchor = cast(dict[str, object], variables[REQUEST_ANCHOR_VARIABLE])
+    assert anchor["captured_by"] == "plan_accept_command"
+
+    resolve_plan_mode(
+        _plan_accept_event("substantive planning message", chat_mode="plan"),
+        variables,
+        SESSION_ID,
+        None,
+    )
+
+    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
 
 
 def test_resolve_plan_mode_tolerates_v1_and_missing_anchor() -> None:
@@ -1167,6 +1256,12 @@ class TestDetectMcpCall:
                 }
             ]
         }
+        variables[PLAN_VOTE_INTERACTION_CONTEXT_VARIABLE] = {
+            "evidence_id": "evidence-1",
+            "round_number": 1,
+            "round_kind": "adversary",
+            "content_sha256": "a" * 64,
+        }
         event = make_after_tool_event(
             "AskUserQuestion",
             tool_input=payload,
@@ -1175,11 +1270,28 @@ class TestDetectMcpCall:
 
         detect_mcp_call(event, variables, SESSION_ID)
 
-        assert variables[PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE] == {
-            "tool": "AskUserQuestion",
-            "payload": payload,
-            "response_observed": True,
-        }
+        receipt = variables[PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE]
+        assert receipt["evidence_id"] == "evidence-1"
+        assert receipt["round_number"] == 1
+        assert receipt["round_kind"] == "adversary"
+        assert receipt["content_sha256"] == "a" * 64
+        assert receipt["captured_by"] == SESSION_ID
+        assert receipt["tool"] == "AskUserQuestion"
+        assert receipt["tool_input"] == payload
+        assert receipt["tool_output"] == {"answers": {"F1": "accept"}}
+        assert receipt["tool_output_sha256"]
+        assert receipt["provenance"] == OBSERVER_PROVENANCE
+
+    def test_plan_vote_interaction_requires_context(self, variables, make_after_tool_event) -> None:
+        event = make_after_tool_event(
+            "AskUserQuestion",
+            tool_input={"questions": [{"id": "F1", "question": "detail"}]},
+            tool_output={"answers": {"F1": "accept"}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE not in variables
 
     def test_tracks_successful_mcp_call(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(

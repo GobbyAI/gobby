@@ -33,8 +33,11 @@ from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
 from gobby.plans.review_requirements import (
+    ANCHOR_TARGET_FIELD,
     REQUEST_ANCHOR_VARIABLE,
     assemble_requirements_bundle,
+    is_plan_accept_anchor,
+    plan_accept_anchor_matches,
     requirements_bundle_from_context,
 )
 from gobby.plans.review_telemetry import validate_convergence_telemetry
@@ -227,6 +230,7 @@ class PlanReviewEvidenceService:
                             snapshot=active.snapshot,
                             session_id=session_id,
                             task_id=task_id,
+                            plan_path=relative_path,
                         )
                         preparation_context = dict(
                             context.prior_round_context
@@ -284,6 +288,7 @@ class PlanReviewEvidenceService:
                         snapshot=snapshot,
                         session_id=session_id,
                         task_id=task_id,
+                        plan_path=relative_path,
                     )
                     evidence = self.store.insert(
                         transaction=transaction,
@@ -842,6 +847,7 @@ class PlanReviewEvidenceService:
         snapshot: bytes,
         session_id: str | None,
         task_id: str | None,
+        plan_path: str,
     ) -> dict[str, object]:
         if task_id is not None:
             task = self.tasks.get_task(task_id, project_id)
@@ -859,6 +865,18 @@ class PlanReviewEvidenceService:
             raise RuntimeError("taskless review preparation requires a session")
         variables = self.session_variables.get_variables(session_id)
         anchor = variables.get(REQUEST_ANCHOR_VARIABLE)
+        if is_plan_accept_anchor(anchor) and isinstance(anchor, Mapping):
+            if not plan_accept_anchor_matches(
+                anchor,
+                project_root=project_root,
+                plan_path=plan_path,
+            ):
+                raise ReviewEvidenceError(
+                    "invalid_request_anchor",
+                    "plan-accept anchor targets "
+                    f"{anchor.get(ANCHOR_TARGET_FIELD)!r}, not {plan_path!r}; "
+                    "run the plan-accept command for this plan to re-seal it",
+                )
         return assemble_requirements_bundle(
             project_root=project_root,
             plan_snapshot=snapshot,

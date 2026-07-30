@@ -10,13 +10,17 @@ import pytest
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.plans.review_requirements import (
+    ANCHOR_TARGET_FIELD,
+    PLAN_ACCEPT_CAPTURED_BY,
     REQUEST_ANCHOR_VARIABLE,
     append_request_anchor,
     assemble_requirements_bundle,
     build_request_anchor,
+    capture_plan_accept_anchor,
     capture_request_anchor,
     is_request_acknowledgement,
     parse_requirement_source_paths,
+    plan_accept_anchor_matches,
     validate_request_anchor,
     validate_source_citation,
 )
@@ -299,15 +303,18 @@ def test_bundle_representation_properties(tmp_path: Path) -> None:
     )
     assert request_source["anchor_content_sha256"] == request_anchor["content_sha256"]
     assert request_source["content_sha256"] != request_anchor["content_sha256"]
-    assert validate_source_citation(
-        {
-            "requirement_id": request_source["requirement_id"],
-            "content_sha256": request_source["content_sha256"],
-            "line_start": 2,
-            "line_end": 4,
-        },
-        requirements_bundle=taskless,
-    )["line_end"] == 4
+    assert (
+        validate_source_citation(
+            {
+                "requirement_id": request_source["requirement_id"],
+                "content_sha256": request_source["content_sha256"],
+                "line_start": 2,
+                "line_end": 4,
+            },
+            requirements_bundle=taskless,
+        )["line_end"]
+        == 4
+    )
 
     document_source = next(source for source in first_sources if "path" in source)
     original_id = document_source["requirement_id"]
@@ -392,12 +399,136 @@ def test_request_anchor_hashes_exact_content() -> None:
     assert anchor["content_sha256"] == hashlib.sha256(encoded).hexdigest()
 
     forged = {**anchor, "captured_by": "plan_coordinator"}
-    with pytest.raises(ReviewEvidenceError, match="not owned by the plan-mode entry observer"):
+    with pytest.raises(ReviewEvidenceError, match="not owned by a recognized capture surface"):
         assemble_requirements_bundle(
             project_root=Path.cwd(),
             plan_snapshot=b"# Plan\n",
             request_anchor=forged,
         )
+
+
+def test_plan_accept_anchor_builds_validates_and_matches(tmp_path: Path) -> None:
+    command = "$gobby plan-accept .gobby/plans/styling.md run two unattended adversarial rounds"
+    variables: dict[str, object] = {}
+    anchor = capture_plan_accept_anchor(
+        variables,
+        anchor_id="request-1",
+        content=command,
+        target_plan_path=".gobby/plans/styling.md",
+    )
+    assert anchor is not None
+    assert variables[REQUEST_ANCHOR_VARIABLE] is anchor
+
+    validated = validate_request_anchor(anchor)
+    assert validated["captured_by"] == PLAN_ACCEPT_CAPTURED_BY
+    assert validated["content"] == [command]
+    assert validated[ANCHOR_TARGET_FIELD] == ".gobby/plans/styling.md"
+
+    assert plan_accept_anchor_matches(
+        anchor, project_root=tmp_path, plan_path=".gobby/plans/styling.md"
+    )
+    assert plan_accept_anchor_matches(
+        anchor,
+        project_root=tmp_path,
+        plan_path=str(tmp_path / ".gobby/plans/styling.md"),
+    )
+    assert not plan_accept_anchor_matches(
+        anchor, project_root=tmp_path, plan_path=".gobby/plans/other.md"
+    )
+
+
+def test_plan_accept_target_field_is_kind_scoped() -> None:
+    variables: dict[str, object] = {}
+    accept = capture_plan_accept_anchor(
+        variables,
+        anchor_id="request-1",
+        content="$gobby plan-accept plan.md",
+        target_plan_path="plan.md",
+    )
+    assert accept is not None
+
+    missing_target = {key: value for key, value in accept.items() if key != ANCHOR_TARGET_FIELD}
+    with pytest.raises(ReviewEvidenceError, match="requires a non-empty target plan path"):
+        validate_request_anchor(missing_target)
+
+    observer = build_request_anchor("request-1", "Original initiating request")
+    with pytest.raises(ReviewEvidenceError, match="only valid on a plan-accept anchor"):
+        validate_request_anchor({**observer, ANCHOR_TARGET_FIELD: "plan.md"})
+
+
+def test_append_leaves_plan_accept_anchor_byte_identical() -> None:
+    variables: dict[str, object] = {}
+    anchor = capture_plan_accept_anchor(
+        variables,
+        anchor_id="request-1",
+        content="$gobby plan-accept plan.md",
+        target_plan_path="plan.md",
+    )
+    result = append_request_anchor(
+        variables,
+        content="substantive follow-up message",
+        anchor_id="request-2",
+    )
+    assert result is None
+    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
+
+
+def test_plan_accept_anchor_seals_and_scopes_to_target_plan(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project = LocalProjectManager(temp_db).create(name="plan-accept", repo_path=str(tmp_path))
+    sessions = SessionManager(temp_db)
+    session = sessions.register(
+        external_id="plan-accept-parent",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+    )
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(_plan())
+    command = "$gobby plan-accept plan.md run two unattended adversarial rounds"
+    variables = SessionVariableManager(temp_db)
+    holder: dict[str, object] = {}
+    anchor = capture_plan_accept_anchor(
+        holder,
+        anchor_id="request-accept",
+        content=command,
+        target_plan_path="plan.md",
+    )
+    assert anchor is not None
+    variables.merge_variables(session.id, {REQUEST_ANCHOR_VARIABLE: anchor})
+    service = PlanReviewEvidenceService(temp_db)
+
+    prepared = service.prepare_plan_review_round(
+        project_id=project.id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session.id,
+    )
+    row = service.get_evidence(prepared.evidence_id)
+    bundle = cast(dict[str, object], row.prior_round_context)["requirements_bundle"]
+    sources = cast(list[dict[str, object]], cast(dict[str, object], bundle)["sources"])
+    assert sources[0]["source_kind"] == "request_anchor"
+    assert sources[0]["content"] == f"--- request message 1 ---\n{command}"
+    service.expire_plan_review_evidence(prepared.evidence_id, spawn_failed=True)
+
+    mismatched = capture_plan_accept_anchor(
+        holder,
+        anchor_id="request-accept-2",
+        content="$gobby plan-accept other-plan.md",
+        target_plan_path="other-plan.md",
+    )
+    assert mismatched is not None
+    variables.merge_variables(session.id, {REQUEST_ANCHOR_VARIABLE: mismatched})
+    with pytest.raises(ReviewEvidenceError, match="plan-accept anchor targets") as excinfo:
+        service.prepare_plan_review_round(
+            project_id=project.id,
+            plan_path=plan_path,
+            round_number=1,
+            session_id=session.id,
+        )
+    assert excinfo.value.code == "invalid_request_anchor"
 
 
 def test_anchor_migration_is_lossless() -> None:
@@ -488,9 +619,7 @@ def test_ack_predicate_exact_set() -> None:
     )
     assert seeded is not None
     assert seeded["content"] == [exact_near_miss]
-    assert (
-        append_request_anchor(variables, content="Thanks...", anchor_id="new-plan") == seeded
-    )
+    assert append_request_anchor(variables, content="Thanks...", anchor_id="new-plan") == seeded
 
 
 def test_taskless_retry_requires_changed_anchor_hash(
