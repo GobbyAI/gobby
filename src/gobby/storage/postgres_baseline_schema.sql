@@ -371,7 +371,7 @@ CREATE TABLE tasks (
     project_id UUID NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
     parent_task_id UUID REFERENCES tasks(id) DEFERRABLE INITIALLY IMMEDIATE,
     created_in_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
-    claimed_by_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    claimed_by_session_id UUID REFERENCES sessions(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
     closed_in_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     closed_commit_sha TEXT,
     closed_at TIMESTAMPTZ,

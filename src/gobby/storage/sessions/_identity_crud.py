@@ -5,18 +5,61 @@ from __future__ import annotations
 from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase, SessionSeqMutation
+from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import is_session_uuid
+from gobby.storage.sql_dialect import table_column_names
 from gobby.utils.datetime import utc_now
 
 from ._registration_cache import invalidate_session_caches
 from ._web_chat_crud import _SessionWebChatCRUDMixin
+
+_BLOCKING_REFERENCE_COLUMNS = (
+    ("sessions", ("parent_session_id",), "child sessions"),
+    (
+        "agent_runs",
+        ("parent_session_id", "child_session_id", "claimed_session_id"),
+        "agent runs",
+    ),
+    ("workflow_audit_log", ("session_id",), "workflow audit entries"),
+    ("pending_approvals", ("session_id",), "pending approvals"),
+)
+
+
+def _blocking_reference_names(
+    host: _SessionIdentityCRUDHost,
+    session_id: str,
+) -> list[str]:
+    task_refs = host.fetch_task_refs_by_session([session_id])[session_id]
+    names = [
+        f"{role} tasks {', '.join(f'#{seq_num}' for seq_num in seq_nums)}"
+        for role, seq_nums in task_refs.items()
+        if seq_nums
+    ]
+    for table_name, columns, label in _BLOCKING_REFERENCE_COLUMNS:
+        existing_columns = table_column_names(host.db, table_name)
+        matched_columns = [column for column in columns if column in existing_columns]
+        if not matched_columns:
+            continue
+        predicate = " OR ".join(f"{column} = %s" for column in matched_columns)
+        row = host.db.fetchone(
+            f"SELECT 1 FROM {table_name} WHERE {predicate} LIMIT 1",  # nosec B608
+            (session_id,) * len(matched_columns),
+        )
+        if row:
+            names.append(label)
+    return names
 
 
 class _SessionIdentityCRUDHost(Protocol):
     db: HubDatabase
 
     def get(self, session_id: str) -> Session | None: ...
+
+    def fetch_task_refs_by_session(
+        self,
+        session_ids: list[str],
+    ) -> dict[str, dict[str, list[int]]]: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
@@ -80,6 +123,14 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
     def delete(self: _SessionIdentityCRUDHost, session_id: str) -> bool:
         """Delete session by ID."""
         with self.db.transaction():
+            if session_has_retained_references(self.db, session_id):
+                blocking_references = _blocking_reference_names(self, session_id)
+                if blocking_references:
+                    raise ValueError(
+                        f"Cannot delete session {session_id}: retained references: "
+                        f"{'; '.join(blocking_references)}. "
+                        "Release or reassign them before deleting the session."
+                    )
             cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
         deleted = cursor.rowcount > 0
         if deleted:
