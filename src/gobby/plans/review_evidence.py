@@ -365,6 +365,7 @@ class PlanReviewEvidenceService:
             shadow_manifest_status=expected_shadow,
             expected_shadow_manifest_status=expected_shadow,
             prior_round_context=evidence.prior_round_context,
+            plan_bytes=evidence.snapshot,
         )
 
     def verify_plan_unchanged(

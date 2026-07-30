@@ -300,6 +300,31 @@ def test_valid_coverage_returns_canonical_attestation(tmp_path: Path) -> None:
     assert validate_coverage_attestation(attestation, verdict="approved") == attestation
 
 
+def test_snapshot_document_with_deleted_source_uses_plan_bytes(tmp_path: Path) -> None:
+    """Snapshot documents are parsed from a temp dir that is deleted before
+    validation runs; plan_bytes must stand in for the vanished source file."""
+    document, lanes, dispositions, shadow = _coverage_case(tmp_path)
+    plan_bytes = document.source_path.read_bytes()
+    document.source_path.unlink()
+
+    with pytest.raises(FileNotFoundError):
+        _validate(tmp_path, document, lanes, dispositions, shadow)
+
+    attestation = validate_review_coverage(
+        evidence_id="evidence-1",
+        project_root=tmp_path,
+        document=document,
+        plan_hash="a" * 64,
+        lane_results=lanes,
+        candidate_dispositions=dispositions,
+        shadow_manifest_status=shadow,
+        expected_shadow_manifest_status=shadow,
+        prior_round_context=None,
+        plan_bytes=plan_bytes,
+    )
+    assert validate_coverage_attestation(attestation, verdict="approved") == attestation
+
+
 def test_derived_sweep_booleans(tmp_path: Path) -> None:
     document, lanes, records, shadow = _coverage_case(tmp_path, candidate_count=2)
     first_lane = lanes[0]

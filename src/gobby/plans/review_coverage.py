@@ -99,8 +99,14 @@ def validate_review_coverage(
     shadow_manifest_status: Mapping[str, object],
     expected_shadow_manifest_status: Mapping[str, object],
     prior_round_context: Mapping[str, object] | None,
+    plan_bytes: bytes | None = None,
 ) -> dict[str, object]:
-    """Validate exhaustive lane output and return a canonical attestation."""
+    """Validate exhaustive lane output and return a canonical attestation.
+
+    plan_bytes carries the reviewed plan content when document.source_path is
+    not re-readable (snapshot documents are parsed from a temp dir that is
+    deleted before validation runs).
+    """
     lanes = _validate_lanes(
         document,
         lane_results,
@@ -126,7 +132,9 @@ def validate_review_coverage(
     source_hashes = _rehash_sources(project_root, citations)
     current_section_hashes = {
         section.section_id: section.section_hash
-        for section in build_section_manifest(document.source_path.read_bytes())
+        for section in build_section_manifest(
+            plan_bytes if plan_bytes is not None else document.source_path.read_bytes()
+        )
     }
     _reject_unchanged_dismissal_reopens(
         dispositions=sweep_validation.dispositions,
