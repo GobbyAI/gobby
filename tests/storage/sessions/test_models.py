@@ -100,8 +100,9 @@ class TestSession:
         assert session.to_dict()["title_source"] == "manual"
         assert session.to_brief()["title_source"] == "manual"
 
-    def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self) -> None:
-        """Paused tmux sessions remain attachable while terminal liveness metadata exists."""
+    @pytest.mark.parametrize("status", ["paused", "handoff_ready"])
+    def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
+        """Eligible tmux sessions remain attachable while liveness metadata exists."""
         session = Session(
             id="sess-live-tmux",
             external_id="ext-live-tmux",
@@ -109,7 +110,7 @@ class TestSession:
             source="qwen",
             project_id="proj-1",
             title="Live tmux session",
-            status="paused",
+            status=status,
             transcript_path=None,
             summary_path=None,
             summary_markdown=None,
@@ -124,7 +125,7 @@ class TestSession:
         assert session.can_proxy_attach is True
         assert session.to_dict()["can_proxy_attach"] is True
 
-    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["expired", "deleted"])
     def test_ineligible_status_disables_stored_terminal_liveness(self, status: str) -> None:
         session = Session(
             id="sess-stale-tmux",

@@ -47,6 +47,7 @@ class _RecordingTmuxManager:
     def __init__(self, config: Any) -> None:
         self.config = config
         self.rename_calls: list[tuple[str, str]] = []
+        self.release_calls: list[str] = []
         self.fail = False
         self.instances.append(self)
 
@@ -54,6 +55,10 @@ class _RecordingTmuxManager:
         if self.fail:
             raise OSError("no tmux")
         self.rename_calls.append((target, title))
+        return True
+
+    async def release_window_title_ownership(self, target: str) -> bool:
+        self.release_calls.append(target)
         return True
 
 
@@ -150,9 +155,10 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99 My Title")]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", ["active", "paused"])
+    @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
     async def test_queued_rename_reloads_authoritative_persisted_title(self, status: str) -> None:
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
+        from gobby.terminal_ownership import PaneOwnershipDecision
 
         _RecordingTmuxManager.instances = []
         stale_session = SimpleNamespace(
@@ -177,9 +183,20 @@ class TestRenameTmuxWindow:
             status=status,
         )
         container = _ReloadingAppContext(persisted_session)
+        ownership = PaneOwnershipDecision(
+            identity=("machine", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
+            requested_session_id="session-id",
+            owner=persisted_session,
+            reason="validated_foreground_process",
+            validated_session_ids=frozenset({"session-id"}),
+        )
 
         with (
             patch("gobby.app_context.get_app_context", return_value=container),
+            patch(
+                "gobby.sessions.tmux_window_naming._resolve_tmux_pane_ownership",
+                return_value=ownership,
+            ),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
         ):
             await _rename_tmux_window(stale_session, "#99 Codex")
@@ -242,7 +259,7 @@ class TestRenameTmuxWindow:
         assert _RecordingTmuxManager.instances == []
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", ["expired", "handoff_ready"])
+    @pytest.mark.parametrize("status", ["expired", "deleted"])
     async def test_queued_rename_skips_persisted_ineligible_session(
         self, status: str, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -749,6 +766,79 @@ class TestEnforceWindowNameIfUnmanaged:
 
         assert acted is False
         assert _EnforceTmuxManager.instances == []
+
+
+class TestReleaseWindowNameIfUnowned:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["expired", "deleted"])
+    async def test_releases_inactive_ownerless_pane(self, status: str) -> None:
+        from gobby.sessions.tmux_window_naming import release_window_name_if_unowned
+        from gobby.terminal_ownership import PaneOwnershipDecision
+
+        _RecordingTmuxManager.instances = []
+        session = SimpleNamespace(
+            id="stale-session",
+            status=status,
+            title="#7951 Frozen title",
+            terminal_context={
+                "tmux_pane": "%42",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        )
+        ownership = PaneOwnershipDecision(
+            identity=("machine", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
+            requested_session_id="stale-session",
+            owner=None,
+            reason="ownerless",
+        )
+
+        with (
+            patch(
+                "gobby.sessions.tmux_window_naming._reload_persisted_session",
+                return_value=session,
+            ),
+            patch(
+                "gobby.sessions.tmux_window_naming._resolve_tmux_pane_ownership",
+                return_value=ownership,
+            ),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
+        ):
+            released = await release_window_name_if_unowned(session)
+
+        assert released is True
+        assert _RecordingTmuxManager.instances[0].release_calls == ["%42"]
+
+    @pytest.mark.asyncio
+    async def test_preserves_title_when_foreground_owner_exists(self) -> None:
+        from gobby.sessions.tmux_window_naming import release_window_name_if_unowned
+        from gobby.terminal_ownership import PaneOwnershipDecision
+
+        inactive = SimpleNamespace(
+            id="stale-session",
+            status="expired",
+            terminal_context={"tmux_pane": "%42"},
+        )
+        active = SimpleNamespace(id="active-session", status="active")
+        ownership = PaneOwnershipDecision(
+            identity=("machine", "tmux_socket_name:gobby", "%42"),
+            requested_session_id="stale-session",
+            owner=active,
+            reason="validated_foreground_process",
+        )
+
+        with (
+            patch(
+                "gobby.sessions.tmux_window_naming._reload_persisted_session",
+                return_value=inactive,
+            ),
+            patch(
+                "gobby.sessions.tmux_window_naming._resolve_tmux_pane_ownership",
+                return_value=ownership,
+            ),
+        ):
+            released = await release_window_name_if_unowned(inactive)
+
+        assert released is False
 
 
 class TestSynthesizeFallbackTitle:

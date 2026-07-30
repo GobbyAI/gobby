@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
@@ -250,7 +251,7 @@ class Session:
     @property
     def has_terminal_liveness(self) -> bool:
         """Best-effort durable liveness signal for tmux-backed terminal sessions."""
-        if self.status not in {"active", "paused"}:
+        if self.status not in TERMINAL_OWNER_STATUSES:
             return False
         if not self.terminal_context:
             return False
@@ -266,8 +267,6 @@ class Session:
         """Whether the web chat can proxy-attach to this session right now."""
         if self.session_type != "terminal":
             return False
-        if self.status == "active":
-            return True
         return self.has_terminal_liveness
 
     def to_dict(self) -> dict[str, Any]:

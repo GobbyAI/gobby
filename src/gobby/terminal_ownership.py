@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal, Protocol
 
 import psutil
 
 TerminalIdentity = tuple[str, str, str]
+TERMINAL_OWNER_STATUSES = ("active", "paused", "handoff_ready")
+TERMINAL_INACTIVE_STATUSES = ("expired", "deleted")
+TERMINAL_TITLE_REPAIR_STATUSES = TERMINAL_OWNER_STATUSES + TERMINAL_INACTIVE_STATUSES
 OwnershipReason = Literal[
-    "validated_live_process",
+    "validated_foreground_process",
     "nested_outermost_process",
-    "ambiguous_live_processes",
-    "single_lifecycle_fallback",
-    "ambiguous_lifecycle_fallback",
+    "ambiguous_foreground_processes",
+    "process_inspection_error",
     "ownerless",
     "invalid_identity",
 ]
@@ -36,6 +40,18 @@ class _ProcessLike(Protocol):
     def parents(self) -> list[Any]: ...
 
 
+class OwnershipState(str, Enum):
+    OWNED = "owned"
+    OWNERLESS = "ownerless"
+    INDETERMINATE = "indeterminate"
+
+
+@dataclass(frozen=True, slots=True)
+class ForegroundOwnershipInspection:
+    state: OwnershipState
+    process: _ProcessLike | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class PaneOwnershipDecision:
     """One canonical decision for a physical tmux pane."""
@@ -45,6 +61,18 @@ class PaneOwnershipDecision:
     owner: object | None
     reason: OwnershipReason
     validated_session_ids: frozenset[str] = frozenset()
+
+    @property
+    def state(self) -> OwnershipState:
+        if self.owner is not None:
+            return OwnershipState.OWNED
+        if self.reason in {
+            "ambiguous_foreground_processes",
+            "invalid_identity",
+            "process_inspection_error",
+        }:
+            return OwnershipState.INDETERMINATE
+        return OwnershipState.OWNERLESS
 
     @property
     def owner_session_id(self) -> str | None:
@@ -129,28 +157,51 @@ def _recorded_create_time(session: object) -> float | None:
         return None
 
 
-def _validated_process(
+def foreground_process_group(tty: str) -> int:
+    """Return the foreground process group for a terminal device."""
+    flags = os.O_RDONLY | getattr(os, "O_NOCTTY", 0)
+    fd = os.open(tty, flags)
+    try:
+        return os.tcgetpgrp(fd)
+    finally:
+        os.close(fd)
+
+
+def inspect_foreground_ownership(
     session: object,
-    process_factory: Callable[[int], _ProcessLike],
-) -> _ProcessLike | None:
+    *,
+    process_factory: Callable[[int], _ProcessLike] = psutil.Process,
+    process_group_factory: Callable[[int], int] = os.getpgid,
+    foreground_group_factory: Callable[[str], int] = foreground_process_group,
+) -> ForegroundOwnershipInspection:
+    """Validate the recorded CLI process and its foreground terminal ownership."""
     pid = _normalized_parent_pid(session)
     expected_create_time = _recorded_create_time(session)
-    if pid is None or expected_create_time is None:
-        return None
+    terminal_context = getattr(session, "terminal_context", None)
+    tty = (
+        _non_empty_text(terminal_context.get("tty"))
+        if isinstance(terminal_context, Mapping)
+        else None
+    )
+    if pid is None or expected_create_time is None or tty is None:
+        return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
     try:
         process = process_factory(pid)
         if abs(process.create_time() - expected_create_time) >= 1.0:
-            return None
-        return process
-    except (
-        TypeError,
-        ValueError,
-        psutil.NoSuchProcess,
-        psutil.AccessDenied,
-        psutil.ZombieProcess,
-        OSError,
-    ):
-        return None
+            return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
+        process_group = process_group_factory(pid)
+    except (TypeError, ValueError, psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError):
+        return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
+    except (psutil.AccessDenied, PermissionError, OSError):
+        return ForegroundOwnershipInspection(OwnershipState.INDETERMINATE)
+
+    try:
+        foreground_group = foreground_group_factory(tty)
+    except OSError:
+        return ForegroundOwnershipInspection(OwnershipState.INDETERMINATE)
+    if foreground_group <= 0 or process_group != foreground_group:
+        return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
+    return ForegroundOwnershipInspection(OwnershipState.OWNED, process)
 
 
 def _process_ancestor_pids(process: _ProcessLike) -> set[int] | None:
@@ -178,23 +229,52 @@ def resolve_pane_ownership(
     *,
     requested_session_id: str | None = None,
     process_factory: Callable[[int], _ProcessLike] = psutil.Process,
+    process_group_factory: Callable[[int], int] = os.getpgid,
+    foreground_group_factory: Callable[[str], int] = foreground_process_group,
 ) -> PaneOwnershipDecision:
-    """Select the process-backed owner of one physical tmux pane."""
+    """Select the foreground-process-backed owner of one physical tmux pane."""
     requested = _non_empty_text(requested_session_id)
+    eligible_sessions = [
+        session
+        for session in sessions
+        if getattr(session, "status", None) in TERMINAL_OWNER_STATUSES
+    ]
     identities = {
         identity
-        for session in sessions
+        for session in eligible_sessions
         if (identity := terminal_session_identity(session)) is not None
     }
+    if not identities:
+        identities = {
+            identity
+            for session in sessions
+            if (identity := terminal_session_identity(session)) is not None
+        }
     if len(identities) != 1:
         return PaneOwnershipDecision(None, requested, None, "invalid_identity")
     identity = next(iter(identities))
-    candidates = [session for session in sessions if terminal_session_identity(session) == identity]
+    candidates = [
+        session for session in eligible_sessions if terminal_session_identity(session) == identity
+    ]
 
     live_by_pid: dict[int, tuple[_ProcessLike, list[object]]] = {}
     validated_ids: set[str] = set()
     for session in candidates:
-        process = _validated_process(session, process_factory)
+        inspection = inspect_foreground_ownership(
+            session,
+            process_factory=process_factory,
+            process_group_factory=process_group_factory,
+            foreground_group_factory=foreground_group_factory,
+        )
+        if inspection.state is OwnershipState.INDETERMINATE:
+            return PaneOwnershipDecision(
+                identity,
+                requested,
+                None,
+                "process_inspection_error",
+                frozenset(validated_ids),
+            )
+        process = inspection.process
         if process is None:
             continue
         session_id = _session_id(session)
@@ -209,7 +289,7 @@ def resolve_pane_ownership(
             identity,
             requested,
             owner,
-            "validated_live_process",
+            "validated_foreground_process",
             frozenset(validated_ids),
         )
 
@@ -218,6 +298,14 @@ def resolve_pane_ownership(
             pid: _process_ancestor_pids(process)
             for pid, (process, _sessions) in live_by_pid.items()
         }
+        if any(parent_pids is None for parent_pids in ancestors.values()):
+            return PaneOwnershipDecision(
+                identity,
+                requested,
+                None,
+                "process_inspection_error",
+                frozenset(validated_ids),
+            )
         outermost = [
             pid
             for pid in live_by_pid
@@ -239,24 +327,11 @@ def resolve_pane_ownership(
             identity,
             requested,
             None,
-            "ambiguous_live_processes",
+            "ambiguous_foreground_processes",
             frozenset(validated_ids),
         )
 
-    fallback = [
-        session
-        for session in candidates
-        if getattr(session, "status", None) in {"active", "paused"}
-    ]
-    if len(fallback) == 1:
-        return PaneOwnershipDecision(
-            identity,
-            requested,
-            fallback[0],
-            "single_lifecycle_fallback",
-        )
-    reason: OwnershipReason = "ambiguous_lifecycle_fallback" if fallback else "ownerless"
-    return PaneOwnershipDecision(identity, requested, None, reason)
+    return PaneOwnershipDecision(identity, requested, None, "ownerless")
 
 
 def log_pane_ownership_decision(

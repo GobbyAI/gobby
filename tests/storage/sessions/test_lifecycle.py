@@ -121,7 +121,7 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
-    def test_expire_if_active_does_not_overwrite_handoff_ready(
+    def test_expire_if_active_expires_handoff_ready(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -134,10 +134,10 @@ class TestSessionManagerLifecycle:
         )
         session_manager.update_status(session.id, "handoff_ready")
 
-        assert session_manager.expire_if_active(session.id) is None
-        preserved = session_manager.get(session.id)
-        assert preserved is not None
-        assert preserved.status == "handoff_ready"
+        expired = session_manager.expire_if_active(session.id)
+
+        assert expired is not None
+        assert expired.status == "expired"
 
     def test_expire_if_active_updates_active_session(
         self,
@@ -704,7 +704,7 @@ class TestSessionManagerLifecycle:
         assert independent is not None
         assert independent.status == "active"
 
-    def test_find_by_terminal_identity_is_global_across_projects_providers_and_statuses(
+    def test_find_by_terminal_identity_is_global_and_filters_ineligible_statuses(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -730,7 +730,15 @@ class TestSessionManagerLifecycle:
             project_id=other_project.id,
             terminal_context=terminal_context,
         )
-        session_manager.update_status(grok.id, "expired")
+        session_manager.update_status(grok.id, "handoff_ready")
+        expired = session_manager.register(
+            external_id="terminal-owner-expired",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(expired.id, "expired")
         session_manager.register(
             external_id="other-terminal-socket",
             machine_id="machine",

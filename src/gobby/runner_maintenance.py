@@ -30,9 +30,7 @@ from gobby.runner_maintenance_recurring import (
 from gobby.runner_maintenance_recurring import (
     metrics_cleanup_loop as metrics_cleanup_loop,
 )
-from gobby.runner_tmux_repair import (
-    TmuxRepairSessionManager,
-)
+from gobby.runner_tmux_repair import TmuxRepairSessionManager
 from gobby.runner_tmux_repair import (
     _select_tmux_repair_sessions as _select_tmux_repair_sessions,
 )
@@ -45,6 +43,7 @@ from gobby.runner_tmux_repair import (
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.sessions.tmux_window_naming import (
     enforce_window_name_if_unmanaged,
+    release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
 from gobby.shutdown_intent import (
@@ -54,6 +53,7 @@ from gobby.shutdown_intent import (
     read_shutdown_intent,
     recover_stale_restart_intent,
 )
+from gobby.terminal_ownership import TERMINAL_TITLE_REPAIR_STATUSES
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -299,7 +299,7 @@ async def tmux_window_name_repair_loop(
         try:
             sessions = await asyncio.to_thread(
                 session_manager.list,
-                statuses=["active", "paused", "expired", "handoff_ready"],
+                statuses=list(TERMINAL_TITLE_REPAIR_STATUSES),
                 limit=normalized_session_list_limit,
             )
         except Exception as e:
@@ -310,6 +310,8 @@ async def tmux_window_name_repair_loop(
             try:
                 owner = await resolve_tmux_repair_owner(session)
                 if owner is not None and await enforce_window_name_if_unmanaged(owner):
+                    renamed += 1
+                elif owner is None and await release_window_name_if_unowned(session):
                     renamed += 1
             except Exception:
                 logger.warning(

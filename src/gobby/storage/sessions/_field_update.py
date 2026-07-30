@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from gobby.storage.hub.protocol import SessionLineageMutation
 from gobby.storage.session_models import Session
 from gobby.terminal_ownership import (
+    TERMINAL_OWNER_STATUSES,
     terminal_session_creation_order,
     terminal_session_identity,
 )
@@ -119,16 +120,16 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         return updated
 
     def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
-        """Expire an active or paused session without overwriting a newer status."""
+        """Expire an eligible terminal session without overwriting a newer status."""
         now = utc_now()
         with self.db.transaction():
             cursor = self.db.execute(
                 """
                 UPDATE sessions
                 SET status = 'expired', updated_at = %s
-                WHERE id = %s AND status IN ('active', 'paused')
+                WHERE id = %s AND status = ANY(%s)
                 """,
-                (now, session_id),
+                (now, session_id, list(TERMINAL_OWNER_STATUSES)),
             )
         if cursor.rowcount <= 0:
             return None

@@ -739,6 +739,40 @@ class TmuxSessionManager:
             return False
         return True
 
+    async def release_window_title_ownership(self, target: str) -> bool:
+        """Release Gobby's window and pane title overrides for *target*."""
+        rc, _stdout, stderr = await self._run(
+            "set-option",
+            "-w",
+            "-u",
+            "-t",
+            target,
+            "automatic-rename",
+            ";",
+            "set-option",
+            "-w",
+            "-u",
+            "-t",
+            target,
+            "allow-rename",
+            ";",
+            "select-pane",
+            "-t",
+            target,
+            "-T",
+            "",
+        )
+        if rc != 0:
+            message = stderr.strip()
+            if _is_missing_tmux_target_error(message):
+                logger.debug(
+                    "Skipping tmux title release for missing target '%s': %s", target, message
+                )
+            else:
+                logger.warning("Failed to release tmux title for '%s': %s", target, message)
+            return False
+        return True
+
     async def capture_pane(self, session_name: str, lines: int = 5) -> str | None:
         """Capture the last N lines from a tmux session's pane.
 

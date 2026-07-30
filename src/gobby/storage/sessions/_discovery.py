@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
-from gobby.terminal_ownership import TerminalIdentity, terminal_session_identity
+from gobby.terminal_ownership import (
+    TERMINAL_OWNER_STATUSES,
+    TerminalIdentity,
+    terminal_session_identity,
+)
 
 from ._discovery_helpers import (
     handoff_candidate_matches,
@@ -42,9 +46,10 @@ class _DiscoveryMixin:
             WHERE machine_id = %s
               AND session_type = 'terminal'
               AND terminal_context ->> 'tmux_pane' = %s
+              AND status = ANY(%s)
             ORDER BY created_at, id
             """,
-            (machine_id, pane),
+            (machine_id, pane, list(TERMINAL_OWNER_STATUSES)),
         )
         return [
             session
@@ -236,7 +241,7 @@ class _DiscoveryMixin:
             (
                 candidate
                 for candidate in candidates
-            if handoff_candidate_matches(candidate, requested_context)
+                if handoff_candidate_matches(candidate, requested_context)
             ),
             None,
         )

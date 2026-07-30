@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from gobby.servers.websocket.db import run_db
+from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -142,13 +143,12 @@ def _can_proxy_attach_session(session: Any) -> bool:
     """Return True when a terminal session is eligible for interactive proxy attach."""
     if getattr(session, "session_type", None) != "terminal":
         return False
+    if getattr(session, "status", None) not in TERMINAL_OWNER_STATUSES:
+        return False
 
     explicit = getattr(session, "can_proxy_attach", None)
     if isinstance(explicit, bool):
         return explicit
-
-    if getattr(session, "status", None) == "active":
-        return True
 
     return _has_terminal_liveness(getattr(session, "terminal_context", None))
 

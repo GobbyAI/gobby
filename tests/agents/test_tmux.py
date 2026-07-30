@@ -2426,3 +2426,46 @@ class TestGetWindowName:
 
             mock_run.return_value = (0, "\n", "")
             assert await mgr.get_window_name("%1") is None
+
+
+class TestReleaseWindowTitleOwnership:
+    @pytest.mark.asyncio
+    async def test_unsets_window_overrides_and_clears_pane_title(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "", "")
+
+            result = await mgr.release_window_title_ownership("%1")
+
+        assert result is True
+        mock_run.assert_awaited_once_with(
+            "set-option",
+            "-w",
+            "-u",
+            "-t",
+            "%1",
+            "automatic-rename",
+            ";",
+            "set-option",
+            "-w",
+            "-u",
+            "-t",
+            "%1",
+            "allow-rename",
+            ";",
+            "select-pane",
+            "-t",
+            "%1",
+            "-T",
+            "",
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_tmux_rejects_release(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "can't find pane: %1")
+
+            result = await mgr.release_window_title_ownership("%1")
+
+        assert result is False

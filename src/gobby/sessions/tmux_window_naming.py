@@ -11,6 +11,9 @@ from gobby.hooks.background_tasks import create_background_task
 from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.terminal_ownership import (
+    TERMINAL_INACTIVE_STATUSES,
+    TERMINAL_OWNER_STATUSES,
+    OwnershipState,
     PaneOwnershipDecision,
     log_pane_ownership_decision,
     resolve_pane_ownership,
@@ -240,6 +243,8 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
         if persisted_session is None:
             return
         session = persisted_session
+        if getattr(session, "status", None) not in TERMINAL_OWNER_STATUSES:
+            return
         ownership = await _resolve_tmux_pane_ownership(session)
         if ownership is None or not ownership.requested_session_owns_pane:
             return
@@ -332,6 +337,34 @@ async def resolve_tmux_repair_owner(session: Any) -> Any | None:
     return ownership.owner if ownership is not None else None
 
 
+async def release_window_name_if_unowned(session: Any) -> bool:
+    """Release stale Gobby title overrides recorded by inactive metadata."""
+    persisted_session = await _reload_persisted_session(session)
+    if persisted_session is None:
+        return False
+    session = persisted_session
+    if getattr(session, "status", None) not in TERMINAL_INACTIVE_STATUSES:
+        return False
+
+    ownership = await _resolve_tmux_pane_ownership(session)
+    if ownership is None or ownership.state is not OwnershipState.OWNERLESS:
+        return False
+
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not tc:
+        return False
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return False
+
+    mgr = _tmux_manager_for_session(session, tc)
+    try:
+        return bool(await mgr.release_window_title_ownership(pane))
+    except Exception:
+        logger.debug("Failed to release stale title for pane %s", pane, exc_info=True)
+        return False
+
+
 async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     """Rename a tracked session's tmux window when unmanaged or visibly stale.
 
@@ -355,6 +388,8 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
         if persisted_session is None:
             return False
         session = persisted_session
+        if getattr(session, "status", None) not in TERMINAL_OWNER_STATUSES:
+            return False
         ownership = await _resolve_tmux_pane_ownership(session)
         if ownership is None or not ownership.requested_session_owns_pane:
             return False
