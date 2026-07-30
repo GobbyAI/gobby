@@ -714,16 +714,25 @@ class AgentLifecycleMonitor:
                 if not run.task_id:
                     skipped += 1
                     continue
-                if storage.refresh_mutex_for_run(
-                    run.task_id,
-                    run.id,
-                    lease_holder="dispatcher",
-                    ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
-                ):
-                    refreshed += 1
-                    continue
-                if storage.get_mutex(run.task_id) is not None:
-                    skipped += 1
+                mutex = storage.get_mutex(run.task_id)
+                if mutex is not None:
+                    # Refresh with the row's stored holder: spawn_agent leases
+                    # carry a spawn-agent:<nonce> holder that a hardcoded
+                    # 'dispatcher' refresh would never match, letting the lease
+                    # expire under an active run.
+                    if (
+                        mutex.run_id == run.id
+                        and mutex.lease_holder
+                        and storage.refresh_mutex_for_run(
+                            run.task_id,
+                            run.id,
+                            lease_holder=mutex.lease_holder,
+                            ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
+                        )
+                    ):
+                        refreshed += 1
+                    else:
+                        skipped += 1
                     continue
                 if not _has_dispatch_stage_context(run):
                     skipped += 1

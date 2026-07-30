@@ -385,6 +385,117 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     assert refreshed.lease_until > before_refresh
 
 
+async def test_refresh_active_run_dispatch_mutexes_extends_spawn_held_mutex(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict[str, Any],
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-refresh-spawn-mutex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task, run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id=_rid("run-refresh-spawn-mutex"),
+        tmux_session_name="gobby-refresh-spawn-mutex",
+    )
+    spawn_holder = "spawn-agent:0a5c9b1ed2f34cd6:11111111-2222-3333-4444-555555555555"
+    past = datetime.now(UTC) - timedelta(minutes=10)
+    assert mutexes.force_release(task.id)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder=spawn_holder,
+        kind="spawn_agent",
+        ttl_seconds=60,
+        run_id=run.id,
+        now=past,
+    )
+    stale = mutexes.get_mutex(task.id)
+    assert stale is not None
+    assert stale.lease_until is not None
+    assert stale.lease_until < datetime.now(UTC)
+
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    before_refresh = datetime.now(UTC)
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
+
+    refreshed = mutexes.get_mutex(task.id)
+    assert refreshed is not None
+    assert refreshed.run_id == run.id
+    assert refreshed.lease_holder == spawn_holder
+    assert refreshed.lease_until is not None
+    assert refreshed.lease_until > before_refresh
+
+
+async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_run(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict[str, Any],
+    sample_project: dict[str, Any],
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-refresh-foreign-mutex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task, _run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id=_rid("run-refresh-foreign-mutex"),
+        tmux_session_name="gobby-refresh-foreign-mutex",
+    )
+    other_run_id = _rid("run-foreign-mutex-holder")
+    past = datetime.now(UTC) - timedelta(minutes=10)
+    assert mutexes.force_release(task.id)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="spawn-agent:feedbeefcafe0123:66666666-7777-8888-9999-aaaaaaaaaaaa",
+        kind="spawn_agent",
+        ttl_seconds=60,
+        run_id=other_run_id,
+        now=past,
+    )
+    stale = mutexes.get_mutex(task.id)
+    assert stale is not None
+
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+
+    after = mutexes.get_mutex(task.id)
+    assert after is not None
+    assert after.run_id == other_run_id
+    assert after.lease_until == stale.lease_until
+
+
 @pytest.mark.asyncio
 async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
     agent_run_manager: LocalAgentRunManager,
