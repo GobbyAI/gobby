@@ -200,27 +200,17 @@ class SessionLivenessMonitor:
                     # A failed tmux probe is inconclusive, so preserve lifecycle
                     # and title state until the next sweep.
                     continue
+                repaired = await self._repair_tmux_target(record, inventory)
+                if repaired is None:
+                    if await self._expire_record(record, now):
+                        await self._release_tmux_title(record)
+                    continue
+                record = repaired
                 identity = terminal_session_identity(record)
                 if identity is None:
-                    inspection = await asyncio.to_thread(
-                        inspect_foreground_ownership,
-                        record,
-                    )
-                    if inspection.state is OwnershipState.INDETERMINATE:
-                        continue
-                    if inspection.state is OwnershipState.OWNERLESS:
-                        if await self._expire_record(record, now):
-                            await self._release_tmux_title(record)
-                        continue
-                    repaired = await self._repair_tmux_target(record, inventory)
-                    if repaired is None:
-                        if await self._expire_record(record, now):
-                            await self._release_tmux_title(record)
-                        continue
-                    record = repaired
-                    identity = terminal_session_identity(record)
-                    if identity is None:
-                        continue
+                    # A live tmux target is sufficient lifecycle evidence even
+                    # when persisted socket metadata cannot form a group key.
+                    continue
 
                 records, existing_inventory = pane_groups.setdefault(
                     identity,
@@ -261,33 +251,15 @@ class SessionLivenessMonitor:
         *,
         inventory: _TmuxLivenessInventory,
     ) -> None:
-        """Expire ownerless rows while retaining the canonical foreground owner."""
+        """Preserve live-pane rows while retaining canonical owner selection."""
         decision = await asyncio.to_thread(
             resolve_pane_ownership,
             list(records),
             requested_session_id=records[0].session_id,
         )
         log_pane_ownership_decision(logger, decision)
-        if decision.state is OwnershipState.INDETERMINATE:
-            return
-
-        expired_any = False
-        for record in records:
-            if (
-                record.session_id not in decision.validated_session_ids
-                and record.session_id not in self._recently_handled
-            ):
-                logger.info(
-                    "Expiring non-owner session %s for tmux pane %s",
-                    record.session_id,
-                    record.tmux_pane,
-                )
-                expired_any = await self._expire_record(record, now) or expired_any
-
         owner = decision.owner
         if not isinstance(owner, _TerminalLivenessRecord):
-            if expired_any:
-                await self._release_tmux_title(records[0])
             return
 
         repaired = await self._repair_tmux_target(owner, inventory)

@@ -94,7 +94,7 @@ def monitor(storage: _Storage) -> SessionLivenessMonitor:
 
 class TestPaneOwnershipLifecycle:
     @pytest.mark.asyncio
-    async def test_ownerless_group_expires_and_releases_title(
+    async def test_ownerless_group_preserves_sessions_and_title(
         self,
         monitor: SessionLivenessMonitor,
     ) -> None:
@@ -129,11 +129,11 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        assert expire.await_args_list == [(("first",), {}), (("second",), {})]
-        release.assert_awaited_once_with(first)
+        expire.assert_not_awaited()
+        release.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_background_peer_expires_while_foreground_owner_is_retained(
+    async def test_background_peer_is_preserved_with_foreground_owner(
         self,
         monitor: SessionLivenessMonitor,
     ) -> None:
@@ -174,7 +174,7 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_awaited_once_with("background")
+        expire.assert_not_awaited()
         repair.assert_awaited_once_with(owner, _inventory())
         release.assert_not_awaited()
 
@@ -219,7 +219,7 @@ class TestPaneOwnershipLifecycle:
         repair.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handoff_ready_ownerless_row_expires(
+    async def test_handoff_ready_ownerless_row_is_preserved(
         self,
         monitor: SessionLivenessMonitor,
     ) -> None:
@@ -253,7 +253,48 @@ class TestPaneOwnershipLifecycle:
                 inventory=_inventory(),
             )
 
-        expire.assert_awaited_once_with("handoff")
+        expire.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_live_target_without_group_identity_skips_process_expiry(
+        self,
+        monitor: SessionLivenessMonitor,
+    ) -> None:
+        record = _record("missing-socket")
+        assert record.terminal_context is not None
+        record.terminal_context.pop("tmux_socket_name")
+        inventory = _inventory()
+
+        with (
+            patch.object(
+                monitor,
+                "_get_active_terminal_sessions",
+                return_value=[record],
+            ),
+            patch.object(
+                monitor,
+                "_get_tmux_inventories_by_socket",
+                return_value={monitor._socket_identity(record): inventory},
+            ),
+            patch(
+                "gobby.sessions.liveness_monitor.inspect_foreground_ownership",
+            ) as inspect,
+            patch.object(
+                monitor,
+                "_expire_session",
+                new=AsyncMock(return_value=True),
+            ) as expire,
+            patch.object(
+                monitor,
+                "_release_tmux_title",
+                new=AsyncMock(),
+            ) as release,
+        ):
+            await monitor._check_sessions()
+
+        inspect.assert_not_called()
+        expire.assert_not_awaited()
+        release.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -305,28 +346,23 @@ class TestPaneOwnershipLifecycle:
         release.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_missing_target_expires_proven_owner_then_releases_title(
+    async def test_missing_target_expires_session_then_releases_title(
         self,
         monitor: SessionLivenessMonitor,
     ) -> None:
         owner = _record("owner")
-        decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
-            requested_session_id="owner",
-            owner=owner,
-            reason="validated_foreground_process",
-            validated_session_ids=frozenset({"owner"}),
-        )
+        socket = monitor._socket_identity(owner)
 
         with (
-            patch(
-                "gobby.sessions.liveness_monitor.resolve_pane_ownership",
-                return_value=decision,
+            patch.object(
+                monitor,
+                "_get_active_terminal_sessions",
+                return_value=[owner],
             ),
             patch.object(
                 monitor,
-                "_repair_tmux_target",
-                new=AsyncMock(return_value=None),
+                "_get_tmux_inventories_by_socket",
+                return_value={socket: _TmuxLivenessInventory(set(), set(), {}, {}, {})},
             ),
             patch.object(
                 monitor,
@@ -339,11 +375,7 @@ class TestPaneOwnershipLifecycle:
                 new=AsyncMock(),
             ) as release,
         ):
-            await monitor._handle_live_pane_group(
-                [owner],
-                100.0,
-                inventory=_TmuxLivenessInventory(set(), set(), {}, {}, {}),
-            )
+            await monitor._check_sessions()
 
         expire.assert_awaited_once_with("owner")
         release.assert_awaited_once_with(owner)

@@ -76,7 +76,7 @@ def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
     assert refreshed.status == "active"
 
 
-def test_expire_stale_sessions_keeps_tracked_terminal_session_with_recent_activity(
+def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -91,7 +91,8 @@ def test_expire_stale_sessions_keeps_tracked_terminal_session_with_recent_activi
         """
         UPDATE sessions
         SET created_at = NOW() - INTERVAL '25 hours',
-            updated_at = CURRENT_TIMESTAMP
+            updated_at = NOW() - INTERVAL '25 hours',
+            status = 'paused'
         WHERE id = %s
         """,
         (session.id,),
@@ -102,7 +103,7 @@ def test_expire_stale_sessions_keeps_tracked_terminal_session_with_recent_activi
     assert expired == 0
     refreshed = session_mgr.get(session.id)
     assert refreshed is not None
-    assert refreshed.status == "active"
+    assert refreshed.status == "paused"
 
 
 def test_expire_stale_sessions_keeps_web_chat_session_with_recent_activity(

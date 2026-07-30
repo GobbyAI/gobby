@@ -106,12 +106,20 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
     empty_terminal_context_sql = "terminal_context IS NULL"
+    tmux_target_sql = """
+        session_type = 'terminal'
+        AND (
+            NULLIF(BTRIM(terminal_context->>'tmux_pane'), '') IS NOT NULL
+            OR NULLIF(BTRIM(terminal_context->>'tmux_window_id'), '') IS NOT NULL
+        )
+    """
     cursor = db.execute(
         f"""
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused', 'handoff_ready')
         AND id != %s
+        AND NOT ({tmux_target_sql})
         AND (
             {updated_stale_sql}
             OR (

@@ -157,6 +157,7 @@ let hookState: HookResult;
 let outputListener: ((runId: string, data: string) => void) | null;
 
 beforeEach(() => {
+  window.sessionStorage.clear();
   outputListener = null;
   terminalViewState.mounts = 0;
   hookState = makeHookState({
@@ -185,6 +186,44 @@ describe("attach lifecycle", () => {
     });
     expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
       "gobby:agent",
+    );
+  });
+
+  it("restores the exact selected target after a component remount", async () => {
+    const user = userEvent.setup();
+    const sessions = [
+      makeTmuxSession({ name: "one", socket: "default" }),
+      makeTmuxSession({ name: "two", socket: "gobby" }),
+    ];
+    hookState = makeHookState({ sessionsLoaded: true, sessions });
+    const firstRender = render(<TerminalTab />);
+
+    await waitFor(() => {
+      expect(hookState.attachSession).toHaveBeenCalledWith("one", "default");
+    });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+      "gobby:two",
+    );
+    await waitFor(() => {
+      expect(hookState.attachSession).toHaveBeenCalledWith("two", "gobby");
+      expect(
+        JSON.parse(
+          window.sessionStorage.getItem("gobby:terminal:selected-target") ?? "null",
+        ),
+      ).toEqual({ socket: "gobby", sessionName: "two" });
+    });
+
+    firstRender.unmount();
+    hookState = makeHookState({ sessionsLoaded: true, sessions });
+    render(<TerminalTab />);
+
+    await waitFor(() => {
+      expect(hookState.attachSession).toHaveBeenCalledTimes(1);
+      expect(hookState.attachSession).toHaveBeenCalledWith("two", "gobby");
+    });
+    expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
+      "gobby:two",
     );
   });
 
@@ -586,6 +625,13 @@ describe("attach error and reconnect gating", () => {
     expect(hookState.attachSession).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Dismiss ended session" }));
+    expect(hookState.attachSession).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("gobby:terminal:selected-target")).toBeNull();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Terminal session" }),
+      "gobby:shared",
+    );
     await waitFor(() => {
       expect(hookState.attachSession).toHaveBeenCalledWith("shared", "gobby");
     });

@@ -62,6 +62,44 @@ function targetKey(target: { name: string; socket: string } | null): string | nu
   return target ? `${target.socket}:${target.name}` : null;
 }
 
+const TERMINAL_TARGET_STORAGE_KEY = "gobby:terminal:selected-target";
+
+function loadStoredTerminalTargetKey(): string | null {
+  try {
+    const raw = window.sessionStorage.getItem(TERMINAL_TARGET_STORAGE_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const target = parsed as Record<string, unknown>;
+    if (
+      typeof target.socket !== "string" ||
+      target.socket.length === 0 ||
+      typeof target.sessionName !== "string" ||
+      target.sessionName.length === 0
+    ) {
+      return null;
+    }
+    return `${target.socket}:${target.sessionName}`;
+  } catch {
+    return null;
+  }
+}
+
+function storeTerminalTarget(target: { name: string; socket: string } | null): void {
+  try {
+    if (target === null) {
+      window.sessionStorage.removeItem(TERMINAL_TARGET_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(
+      TERMINAL_TARGET_STORAGE_KEY,
+      JSON.stringify({ socket: target.socket, sessionName: target.name }),
+    );
+  } catch {
+    // Terminal access remains usable when browser storage is unavailable.
+  }
+}
+
 function PlusIcon() {
   return (
     <svg
@@ -100,7 +138,7 @@ export function TerminalTab({
     resizeTerminal,
     onOutput,
   } = useTmuxSessions();
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(loadStoredTerminalTargetKey);
   const [composerContext, setComposerContext] = useState<TerminalContext | null>(null);
   const [endedKey, setEndedKey] = useState<string | null>(null);
   const [readyContext, setReadyContext] = useState<TerminalContext | null>(null);
@@ -110,6 +148,7 @@ export function TerminalTab({
   const lastAttachedKeyRef = useRef<string | null>(null);
   const consumedFocusIdRef = useRef<string | null>(null);
   const consumedCreatedKeyRef = useRef<string | null>(null);
+  const allowInitialSelectionRef = useRef(selectedKey === null);
 
   const joinedSessions = useMemo(
     () => joinTmuxSessions(tmuxSessions, sessions),
@@ -146,6 +185,7 @@ export function TerminalTab({
   const chooseSession = useCallback(
     (nextKey: string) => {
       if (nextKey === selectedKey) return;
+      allowInitialSelectionRef.current = false;
       lastAttachedKeyRef.current = null;
       setEndedKey(null);
       setReadyContext(null);
@@ -156,6 +196,10 @@ export function TerminalTab({
     },
     [clearAttachError, dismissEndedSession, hookSessionEnded, selectedKey],
   );
+
+  useEffect(() => {
+    if (selected !== null) storeTerminalTarget(selected.tmux);
+  }, [selected]);
 
   useEffect(() => {
     if (createdSession === null) return;
@@ -231,12 +275,16 @@ export function TerminalTab({
       endedKey !== null ||
       selectedKey !== null ||
       joinedSessions.length === 0 ||
-      focusSessionId !== null
+      focusSessionId !== null ||
+      !allowInitialSelectionRef.current
     ) {
       return;
     }
     const fallback = joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
-    const timer = window.setTimeout(() => setSelectedKey(sessionKey(fallback.tmux)), 0);
+    const timer = window.setTimeout(() => {
+      allowInitialSelectionRef.current = false;
+      setSelectedKey(sessionKey(fallback.tmux));
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [endedKey, focusSessionId, joinedSessions, selectedKey, sessionsLoaded]);
 
@@ -310,11 +358,13 @@ export function TerminalTab({
   );
 
   const dismissVanishedSession = useCallback(() => {
+    allowInitialSelectionRef.current = false;
     lastAttachedKeyRef.current = null;
     setSelectedKey(null);
     setEndedKey(null);
     setReadyContext(null);
     setComposerContext(null);
+    storeTerminalTarget(null);
     clearAttachError();
     dismissEndedSession();
   }, [clearAttachError, dismissEndedSession]);
