@@ -7,6 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +16,7 @@ from gobby.sessions.compact_continuation import (
     _COMPACT_SELF_CONTINUATION_TASKS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    COMPACT_SELF_INTERRUPT_WARNING,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
@@ -27,8 +29,10 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_compact_self_continuation_readiness,
     schedule_compact_self_continuation,
 )
-from gobby.skills.formatting import skill_fetch_batch_directive
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.workflows.definitions import RuleEffect
+from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 
@@ -383,61 +387,61 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     sv_mgr.merge_variables(
         SESSION_ID,
         {
-            "required_skills": ["python"],
+            "required_skills": ["loading-skills", "python"],
             "claimed_task_required_skills": ["tasks", "python", "development-discipline"],
             "loaded_skills": ["code-index", "tasks"],
         },
     )
 
-    skills = persist_compact_resume_required_skills(db, SESSION_ID)
+    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skills == [
-        "loading-skills",
-        "python",
-        "tasks",
-        "development-discipline",
-        "code-index",
-    ]
+    assert skill_tiers == {
+        "required": [
+            "loading-skills",
+            "python",
+            "tasks",
+            "development-discipline",
+        ],
+        "advisory": ["code-index"],
+    }
     variables = sv_mgr.get_variables(SESSION_ID)
-    assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skills
+    assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
 
 
 def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill(
     session_db: HubDatabase,
 ) -> None:
-    """Workflow-requested skills and the session's loaded-skill ledger both resume."""
+    """Workflow-requested skills are required; residual loaded skills are advisory."""
     db = session_db
     sv_mgr = SessionVariableManager(db)
     sv_mgr.merge_variables(
         SESSION_ID,
         {
-            "required_skills": ["python"],
+            "required_skills": ["loading-skills", "python"],
             WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan", "elicit"],
             "loaded_skills": ["code-index", "brevity"],
         },
     )
 
-    skills = persist_compact_resume_required_skills(db, SESSION_ID)
+    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skills == [
-        "loading-skills",
-        "python",
-        "plan",
-        "elicit",
-        "code-index",
-        "brevity",
-    ]
+    assert skill_tiers == {
+        "required": ["loading-skills", "python", "plan", "elicit"],
+        "advisory": ["code-index", "brevity"],
+    }
 
 
-def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() -> None:
+def test_reload_directive_normalized() -> None:
     prompt = build_compact_self_continue_prompt(
-        ["python", "python", "development-discipline"],
+        {
+            "required": ["python", "python", "development-discipline"],
+            "advisory": ["python", "code-index", "code-index"],
+        },
         summary_session_id=SOURCE_SESSION_ID,
     )
 
     assert prompt.startswith("Continue where you last left off.")
-    assert "rejected or cancelled compact_self tool-use message" in prompt
-    assert "expected terminal self-compaction delivery, not user refusal" in prompt
+    assert COMPACT_SELF_INTERRUPT_WARNING in prompt
     assert "`<!-- gobby:injected-context:begin -->`" in prompt
     assert prompt.index("use that injected context directly") < prompt.index(
         "gobby-sessions.wait_for_summary"
@@ -448,7 +452,55 @@ def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() ->
     assert "list_mcp_servers" not in prompt
     assert "list_tools" not in prompt
     assert "get_tool_schema" not in prompt
-    assert (
-        skill_fetch_batch_directive(["loading-skills", "python", "development-discipline"])
-        in prompt
+    assert prompt.count('"get_skill"') == 1
+    required_index = prompt.index("Required tier (must load; rule-enforced):")
+    advisory_index = prompt.index("Advisory tier (agent judgment):")
+    assert required_index < advisory_index
+    assert prompt.count("- `python`") == 1
+    assert prompt.count("- `development-discipline`") == 1
+    assert prompt.count("- `code-index`") == 1
+    assert "reload any still relevant to your remaining work" in prompt
+    assert "- `python`" not in prompt[advisory_index:]
+
+
+@pytest.mark.asyncio
+async def test_load_skill_effect_flows_to_persisted_resume_prompt(
+    session_db: HubDatabase,
+) -> None:
+    variables: dict[str, object] = {
+        "required_skills": ["loading-skills", "python"],
+        "additional_skills": ["pytest", "python"],
+        "loaded_skills": ["plan", "brevity", "pytest"],
+    }
+    context_parts: list[str] = []
+    effects = EffectsMixin()
+
+    block_reason = await effects._apply_effect(
+        RuleEffect(type="load_skill", skill="plan"),
+        cast(WorkflowDefinitionRow, SimpleNamespace()),
+        variables,
+        {},
+        {},
+        context_parts,
+        [],
     )
+
+    assert block_reason is None
+    assert variables[WORKFLOW_REQUESTED_SKILLS_VARIABLE] == ["plan"]
+    assert len(context_parts) == 1
+    assert '"get_skill"' in context_parts[0]
+
+    sv_mgr = SessionVariableManager(session_db)
+    sv_mgr.merge_variables(SESSION_ID, variables)
+    skill_tiers = persist_compact_resume_required_skills(session_db, SESSION_ID)
+    prompt = build_compact_self_continue_prompt(skill_tiers)
+
+    assert skill_tiers == {
+        "required": ["loading-skills", "python", "plan"],
+        "advisory": ["pytest", "brevity"],
+    }
+    persisted = sv_mgr.get_variables(SESSION_ID)
+    assert persisted[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
+    assert prompt.count('"get_skill"') == 1
+    assert prompt.index("- `plan`") < prompt.index("Advisory tier")
+    assert prompt.index("- `pytest`") > prompt.index("Advisory tier")

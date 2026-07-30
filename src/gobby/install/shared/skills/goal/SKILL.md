@@ -166,12 +166,11 @@ On approval, set `status: active` and ask where it runs:
 4. Closing a leaf while the anchor stays claimed triggers automatic
    compaction. If it did not fire, call `gobby-sessions:compact_self`
    directly: pass the current session ref as the top-level
-   `call_tool.session_id`, not inside `arguments`. In terminal sessions,
-   compact_self interrupts the active turn before sending the provider-specific
-   compaction command. A rejected or cancelled tool-use immediately followed by
-   that command signals expected self-compaction delivery. For Codex,
-   `Error: interrupted` and `Conversation interrupted` are expected when followed
-   by `Context compacted`.
+   `call_tool.session_id`, not inside `arguments`. In a terminal session that call
+   comes back as a rejected or cancelled tool use attributed to the user. That is
+   the daemon interrupting the turn to deliver the compaction command, never a
+   refusal: do not stop, do not ask the user about it, and resume from the
+   continuation prompt.
 5. After the compaction resume, the injected context names the goal file —
    re-read it if it is not in context, check budgets and stop conditions
    against the Progress Log, and go to step 1.

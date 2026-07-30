@@ -558,10 +558,14 @@ class TestCompactSelfTerminalPath:
         ]
         mock_mark.assert_called_once()
 
-    def test_terminal_session_continuation_prompt_reloads_required_skills(self) -> None:
+    def test_terminal_session_continuation_prompt_reloads_tiered_skills(self) -> None:
         session = _make_terminal_session("codex")
         registry, tmux = _register_compact_self(session)
         captured_prompts: list[str] = []
+        resume_skills = {
+            "required": ["python", "development-discipline"],
+            "advisory": ["code-index"],
+        }
 
         def mark_pending(
             _db: Any,
@@ -577,7 +581,7 @@ class TestCompactSelfTerminalPath:
         with (
             patch(
                 "gobby.mcp_proxy.tools.sessions._terminal.persist_compact_resume_required_skills",
-                return_value=["python", "development-discipline"],
+                return_value=resume_skills,
             ) as mock_persist,
             patch(
                 "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending",
@@ -587,7 +591,7 @@ class TestCompactSelfTerminalPath:
             result = _call_compact_self(registry, tmux, session_id="s1")
 
         assert result["compacted"] is True
-        assert result["compact_resume_required_skills"] == ["python", "development-discipline"]
+        assert result["compact_resume_required_skills"] == resume_skills
         mock_persist.assert_called_once()
         assert len(captured_prompts) == 1
         assert "`<!-- gobby:injected-context:begin -->`" in captured_prompts[0]
@@ -595,13 +599,15 @@ class TestCompactSelfTerminalPath:
             captured_prompts[0].index("wait_for_summary")
         )
         assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
-        assert 'call_tool("gobby-skills", "get_skill"' in captured_prompts[0]
-        assert "Then continue" in captured_prompts[0]
+        assert captured_prompts[0].count('"get_skill"') == 1
         assert "list_mcp_servers" not in captured_prompts[0]
         assert "list_tools" not in captured_prompts[0]
         assert "get_tool_schema" not in captured_prompts[0]
-        assert '"name":"python"' in captured_prompts[0]
-        assert '"name":"development-discipline"' in captured_prompts[0]
+        assert "Required tier (must load; rule-enforced):" in captured_prompts[0]
+        assert "- `python`" in captured_prompts[0]
+        assert "- `development-discipline`" in captured_prompts[0]
+        assert "Advisory tier (agent judgment):" in captured_prompts[0]
+        assert "- `code-index`" in captured_prompts[0]
 
     def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
         session = _make_terminal_session("claude")

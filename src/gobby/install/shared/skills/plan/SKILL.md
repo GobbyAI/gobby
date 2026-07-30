@@ -125,7 +125,11 @@ the prepared `evidence_id`, `artifact_path`, `round_number`,
 variables.
    2. Immediately after every enhancer launch, call
       `gobby-sessions:compact_self` for the parent session before waiting or
-      doing any other work. This is mandatory on every enhancement round.
+      doing any other work. This is mandatory on every enhancement round. In a
+      terminal session that call comes back as a rejected or cancelled tool use
+      attributed to the user. That is the daemon interrupting the turn to deliver
+      the compaction command, never a refusal: do not stop, do not ask the user
+      about it, and resume from the continuation prompt.
    3. Wait as described in **Waiting on Spawned Runs**, then present a ranked
       summary of every suggestion — highest impact-vs-effort first — including
       its `id`, lens, location, impact, effort, risk, and a one-line gist.

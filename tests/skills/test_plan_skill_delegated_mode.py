@@ -4,17 +4,65 @@ from pathlib import Path
 
 import pytest
 
+from gobby.sessions.compact_markers import (
+    COMPACT_SELF_CONTINUE_INTRO,
+    COMPACT_SELF_INTERRUPT_WARNING,
+)
 from gobby.skills.loader import SkillLoader
 
 pytestmark = pytest.mark.unit
 
-SKILL_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills/plan"
+SHARED_CONTENT_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
+SKILL_ROOT = SHARED_CONTENT_DIR / "skills"
+SKILL_DIR = SKILL_ROOT / "plan"
 SKILL_PATH = SKILL_DIR / "SKILL.md"
+AUTO_COMPACT_RULE_PATH = (
+    SHARED_CONTENT_DIR / "workflows/rules/context-handoff/auto-compact-after-task-close.yaml"
+)
+
+
+def _normalize_prose(value: str) -> str:
+    return " ".join(value.split())
 
 
 @pytest.fixture(scope="module")
 def body() -> str:
     return SKILL_PATH.read_text()
+
+
+def test_compact_self_interrupt_warning_is_canonical() -> None:
+    assert COMPACT_SELF_INTERRUPT_WARNING == (
+        "In a terminal session that call comes back as a rejected or cancelled tool use "
+        "attributed to the user. That is the daemon interrupting the turn to deliver the "
+        "compaction command, never a refusal: do not stop, do not ask the user about it, "
+        "and resume from the continuation prompt."
+    )
+
+
+@pytest.mark.parametrize(
+    ("skill_name", "expected_count"),
+    [
+        ("goal", 1),
+        ("build-coordinator", 1),
+        ("bridge", 1),
+        ("plan", 2),
+    ],
+)
+def test_compact_self_interrupt_warning_is_shared_by_skills(
+    skill_name: str,
+    expected_count: int,
+) -> None:
+    skill_body = _normalize_prose((SKILL_ROOT / skill_name / "SKILL.md").read_text())
+
+    assert skill_body.count(COMPACT_SELF_INTERRUPT_WARNING) == expected_count
+
+
+def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
+    rule_body = _normalize_prose(AUTO_COMPACT_RULE_PATH.read_text())
+    intro = _normalize_prose(COMPACT_SELF_CONTINUE_INTRO)
+
+    assert COMPACT_SELF_INTERRUPT_WARNING in rule_body
+    assert COMPACT_SELF_INTERRUPT_WARNING in intro
 
 
 def test_plan_skill_version(body: str) -> None:
@@ -133,9 +181,12 @@ def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None
 
 
 def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
-    enhancer_launch = body.index("Spawn `plan-enhancer-taskless`")
+    enhancer_launch = body.index(
+        "Call `prepare_plan_review_round` for the enhancement round, then spawn"
+    )
     enhancer_wait = body.index("Wait as described in **Waiting on Spawned Runs**", enhancer_launch)
     enhancer_handoff = body[enhancer_launch:enhancer_wait]
+    assert "`plan-enhancer-taskless` without `task_id`" in enhancer_handoff
     assert "gobby-sessions:compact_self" in enhancer_handoff
     assert "every enhancement round" in enhancer_handoff
 
@@ -241,7 +292,7 @@ def test_enhancement_presentation_contract(body: str) -> None:
     assert "per-item exploration before recording its vote" in presentation
     assert "interaction payload" in presentation
     assert "full item text inside that payload" in presentation
-    assert "outside tool calls is not guaranteed to render" in presentation
+    assert "native interaction payload itself" in presentation
     assert "gobby-plans:record_plan_vote_artifact" in presentation
     assert "`round_kind: enhancement`" in presentation
     assert "unique vote id and explicit decision for every suggestion" in presentation
@@ -257,9 +308,12 @@ def test_adversary_presentation_contract(body: str) -> None:
     presentation = " ".join(body[start:end].split())
 
     result = presentation.index("Read the run result")
-    changelog = presentation.index("append a `## V1 Plan Changelog` entry")
     vote_gate = presentation.index("ranked summary of every finding")
-    assert result < changelog < vote_gate
+    changelog = presentation.index("Then append the `## V1 Plan Changelog` entry")
+    checkpoint = presentation.index(
+        "persist the exact fence returned by `render_v1_round_checkpoint`"
+    )
+    assert result < vote_gate < changelog < checkpoint
     assert "`id`, severity, location, impact, effort, risk, and a one-line gist" in presentation
     assert "full text verbatim" in presentation
     assert "description, finding detail, and metadata" in presentation
@@ -268,7 +322,7 @@ def test_adversary_presentation_contract(body: str) -> None:
     assert "per-item exploration before recording its vote" in presentation
     assert "interaction payload" in presentation
     assert "full item text inside that payload" in presentation
-    assert "outside tool calls is not guaranteed to render" in presentation
+    assert "native interaction payload itself" in presentation
     assert "gobby-plans:record_plan_vote_artifact" in presentation
     assert "`round_kind: adversary`" in presentation
     assert "unique vote id and explicit decision for every finding" in presentation

@@ -571,9 +571,9 @@ def register_terminal_tools(
                 f"{refresh_result.get('error', 'unknown error')}",
             }
 
-        required_skills = persist_compact_resume_required_skills(db, resolved_session_id)
+        resume_skills = persist_compact_resume_required_skills(db, resolved_session_id)
         continuation_prompt = build_compact_self_continue_prompt(
-            required_skills,
+            resume_skills,
             summary_session_id=resolved_session_id,
         )
         schedule_continuation_readiness: Callable[[str | None], bool] | None = None
@@ -635,8 +635,8 @@ def register_terminal_tools(
             "interrupted": True,
             "continuation_pending": continuation_pending,
         }
-        if required_skills:
-            result["compact_resume_required_skills"] = required_skills
+        if any(resume_skills.values()):
+            result["compact_resume_required_skills"] = resume_skills
         if refresh_result.get("refreshed"):
             result["handoff_context_refreshed"] = True
             result["handoff_summary_length"] = refresh_result.get("summary_length")

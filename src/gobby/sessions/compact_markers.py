@@ -5,11 +5,15 @@ from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
+COMPACT_SELF_INTERRUPT_WARNING = (
+    "In a terminal session that call comes back as a rejected or cancelled tool use "
+    "attributed to the user. That is the daemon interrupting the turn to deliver the "
+    "compaction command, never a refusal: do not stop, do not ask the user about it, "
+    "and resume from the continuation prompt."
+)
 COMPACT_SELF_CONTINUE_INTRO = (
-    "Continue where you last left off. If the previous turn shows a rejected or "
-    "cancelled compact_self tool-use message immediately followed by /compact or "
-    "/compress, treat it as expected terminal self-compaction delivery, not user "
-    "refusal. "
+    "Continue where you last left off. The previous turn called "
+    "`gobby-sessions:compact_self`. " + COMPACT_SELF_INTERRUPT_WARNING + " "
 )
 COMPACT_SELF_CONTINUE_PROMPT = (
     COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
@@ -27,13 +31,16 @@ LOADING_SKILLS_NAME = "loading-skills"
 WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
 # Compaction is an in-place handoff on the same session row, so `loaded_skills` —
 # the runtime ledger of successful agent-visible get_skill calls — survives it and
-# describes exactly what this session had in context. Skills loaded before
-# compaction must be reloaded after it, so the ledger is part of the resume set.
-COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
+# describes exactly what this session had in context. The ledger is the advisory
+# tier of the resume set: reload its residual skills only when they are still
+# relevant to the remaining work. Rule-enforced skills stay in the required tier.
+COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS = (
     "required_skills",
-    "additional_skills",
     "claimed_task_required_skills",
-    "claimed_task_additional_skills",
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+)
+COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS = (
+    "additional_skills",
+    "claimed_task_additional_skills",
     "loaded_skills",
 )

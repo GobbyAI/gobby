@@ -7,22 +7,24 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
+    COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
+    COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-    COMPACT_RESUME_SKILL_VARIABLE_KEYS,
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_INTRO,
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    COMPACT_SELF_INTERRUPT_WARNING,
     LOADING_SKILLS_NAME,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
-from gobby.skills.formatting import skill_fetch_batch_directive
+from gobby.skills.formatting import skill_fetch_proxy_path
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
@@ -31,12 +33,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
+    "COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS",
     "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
-    "COMPACT_RESUME_SKILL_VARIABLE_KEYS",
+    "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
     "COMPACT_SELF_CONTINUE_FRESH_SECONDS",
     "COMPACT_SELF_CONTINUE_INTRO",
     "COMPACT_SELF_CONTINUE_PROMPT",
     "COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS",
+    "COMPACT_SELF_INTERRUPT_WARNING",
     "COMPACT_SELF_CONTINUE_VARIABLE",
     "LOADING_SKILLS_NAME",
     "WORKFLOW_REQUESTED_SKILLS_VARIABLE",
@@ -49,6 +53,13 @@ _COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
+
+
+class CompactResumeSkillTiers(TypedDict):
+    """Skill names captured before compact resets the current-context ledgers."""
+
+    required: list[str]
+    advisory: list[str]
 
 
 def mark_compact_self_continuation_pending(
@@ -81,38 +92,56 @@ def mark_compact_self_continuation_pending(
 def persist_compact_resume_required_skills(
     db: HubDatabase,
     session_id: str,
-) -> list[str]:
-    """Persist skills that should be reloaded after compact_self resumes."""
+) -> CompactResumeSkillTiers:
+    """Persist required skills and return both pre-compact resume tiers."""
     variables = _load_session_variables(db, session_id)
-    skills = _collect_compact_resume_required_skills(variables)
+    skill_tiers = _collect_compact_resume_required_skills(variables)
     try:
-        _merge_session_variable(db, session_id, COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE, skills)
+        _merge_session_variable(
+            db,
+            session_id,
+            COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
+            skill_tiers["required"],
+        )
     except Exception:
         logger.warning(
             "Failed to persist compact resume required skills for session %s",
             session_id,
             exc_info=True,
         )
-    return skills
+    return skill_tiers
 
 
 def build_compact_self_continue_prompt(
-    required_skills: list[str] | None,
+    resume_skills: CompactResumeSkillTiers | None,
     *,
     summary_session_id: str | None = None,
 ) -> str:
     """Build the post-compact continuation prompt with skill reload directives."""
     wait_directive = _build_wait_for_summary_directive(summary_session_id)
-    skills = _prepare_compact_resume_skills(required_skills or [])
-    if not skills:
+    skill_tiers = _prepare_compact_resume_skill_tiers(
+        resume_skills or {"required": [], "advisory": []}
+    )
+    if not any(skill_tiers.values()):
         return wait_directive
 
-    directives = skill_fetch_batch_directive(skills)
-    return (
-        f"{wait_directive}\n\n"
-        "Before continuing the task, reload these required skills directly in order:\n\n"
-        f"{directives}"
+    sections: list[str] = []
+    if required := skill_tiers["required"]:
+        sections.append(
+            "Required tier (must load; rule-enforced):\n" + _format_skill_name_list(required)
+        )
+    if advisory := skill_tiers["advisory"]:
+        sections.append(
+            "Advisory tier (agent judgment): reload any still relevant to your remaining work:\n"
+            + _format_skill_name_list(advisory)
+        )
+
+    instruction = (
+        "For each skill name below, call "
+        f"`{skill_fetch_proxy_path('<skill-name>')}` with `<skill-name>` replaced by "
+        "that name."
     )
+    return f"{wait_directive}\n\n{instruction}\n\n" + "\n\n".join(sections)
 
 
 def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
@@ -557,19 +586,39 @@ def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
     return _load_variables(_row_variables(row))
 
 
-def _collect_compact_resume_required_skills(variables: dict[str, Any]) -> list[str]:
-    skills: list[str] = []
-    for key in COMPACT_RESUME_SKILL_VARIABLE_KEYS:
-        _extend_unique_strings(skills, variables.get(key))
-    return _prepare_compact_resume_skills(skills)
+def _collect_compact_resume_required_skills(
+    variables: dict[str, Any],
+) -> CompactResumeSkillTiers:
+    required: list[str] = []
+    for key in COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS:
+        _extend_unique_strings(required, variables.get(key))
+
+    advisory: list[str] = []
+    for key in COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS:
+        _extend_unique_strings(advisory, variables.get(key))
+
+    return _prepare_compact_resume_skill_tiers({"required": required, "advisory": advisory})
 
 
-def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
-    skills = _unique_strings(values)
-    if len(skills) <= 1:
-        return skills
+def _prepare_compact_resume_skill_tiers(
+    skill_tiers: CompactResumeSkillTiers,
+) -> CompactResumeSkillTiers:
+    required = _unique_strings(skill_tiers["required"])
+    required_names = set(required)
+    advisory = _unique_strings(
+        [skill for skill in skill_tiers["advisory"] if skill not in required_names]
+    )
+    if len(required) + len(advisory) > 1:
+        required = [
+            LOADING_SKILLS_NAME,
+            *(skill for skill in required if skill != LOADING_SKILLS_NAME),
+        ]
+        advisory = [skill for skill in advisory if skill != LOADING_SKILLS_NAME]
+    return {"required": required, "advisory": advisory}
 
-    return [LOADING_SKILLS_NAME, *(skill for skill in skills if skill != LOADING_SKILLS_NAME)]
+
+def _format_skill_name_list(skills: list[str]) -> str:
+    return "\n".join(f"- `{skill}`" for skill in skills)
 
 
 def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:

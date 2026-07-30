@@ -15,6 +15,9 @@ rules:
         variable: loaded_skills
         value: []
       - type: set_variable
+        variable: workflow_requested_skills
+        value: []
+      - type: set_variable
         variable: memory_nudge_fired
         value: false
       - type: set_variable
