@@ -10,6 +10,7 @@ from gobby.plans.review_repair import (
     consumed_repair_submission,
     encode_repair_submission,
 )
+from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -318,11 +319,24 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         commit_sha: str | None = None,
+        merge_report_ref: str | None = None,
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
         dispatch_run_id: str | None = None,
         preheld_mutex_run_id: str | None = None,
     ) -> StageState:
+        transaction_mutation: Callable[[Transaction], None] | None = None
+        if stage_name == "merge":
+
+            def record_merged_campaign(conn: Transaction) -> None:
+                upsert_merged_campaign_in_transaction(
+                    conn,
+                    task_id,
+                    merge_sha=commit_sha,
+                    merge_report_ref=merge_report_ref,
+                )
+
+            transaction_mutation = record_merged_campaign
         return self._transition(
             task_id,
             stage_name,
@@ -333,6 +347,7 @@ class StageStatesManager:
             validation_override_reason=validation_override_reason,
             dispatch_run_id=dispatch_run_id,
             preheld_mutex_run_id=preheld_mutex_run_id,
+            _transaction_mutation=transaction_mutation,
         )
 
     def fail_stage(

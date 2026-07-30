@@ -488,6 +488,39 @@ def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
     assert closed.closed_commit_sha == "repair-commit-sha"
 
 
+def test_close_task_completes_merge_and_records_campaign_from_close_sha(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "in_progress", work_attempt_count=1)
+
+    manager = LocalTaskManager(temp_db)
+    manager.close_task(
+        task.id,
+        reason="completed",
+        closed_commit_sha="close-merge-sha",
+    )
+
+    campaign = TaskDeliveryStateManager(temp_db).get_state(task.id)["campaign"]
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert stage_row(temp_db, task.id, "merge")["completed_commit_sha"] == "close-merge-sha"
+    assert campaign["state"] == "merged"
+    assert campaign["merge_sha"] == "close-merge-sha"
+    assert campaign["last_error"] == ""
+    assert count_row is not None
+    assert count_row["campaign_count"] == 1
+
+
 def _closed_leaf_for_epic_failure(temp_db, sample_project, parent_id: str, title: str):
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(

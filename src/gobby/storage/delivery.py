@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,34 @@ UNIT_JSON_COLUMNS = frozenset({"protection_json", "gate_snapshot_json"})
 
 def _now() -> datetime:
     return utc_now()
+
+
+def upsert_merged_campaign_in_transaction(
+    conn: Transaction,
+    task_id: str,
+    *,
+    merge_sha: str | None = None,
+    merge_report_ref: str | None = None,
+) -> None:
+    """Record merge completion inside the caller's transaction."""
+    conn.execute(
+        """
+        INSERT INTO task_delivery_campaigns (
+            task_id, state, merge_sha, merge_report_ref, last_error, updated_at
+        )
+        VALUES (%s, 'merged', %s, %s, '', %s)
+        ON CONFLICT(task_id) DO UPDATE SET
+            state = excluded.state,
+            merge_sha = COALESCE(excluded.merge_sha, task_delivery_campaigns.merge_sha),
+            merge_report_ref = COALESCE(
+                excluded.merge_report_ref,
+                task_delivery_campaigns.merge_report_ref
+            ),
+            last_error = excluded.last_error,
+            updated_at = excluded.updated_at
+        """,
+        (task_id, merge_sha, merge_report_ref, _now()),
+    )
 
 
 def _encode_json(value: Any) -> str | None:

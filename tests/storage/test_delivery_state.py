@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.delivery import DeliveryStateError, TaskDeliveryStateManager
+from gobby.storage.delivery import (
+    DeliveryStateError,
+    TaskDeliveryStateManager,
+    upsert_merged_campaign_in_transaction,
+)
 from tests.storage.tasks._stage_test_helpers import create_task
 
 pytestmark = pytest.mark.unit
@@ -109,6 +113,30 @@ def test_delivery_campaign_upsert_preserves_null_updates(
 
     assert updated["last_error"] is None
     assert manager.get_state(task.id)["campaign"]["last_error"] is None
+
+
+def test_merged_campaign_upsert_preserves_absent_metadata(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+    manager.record_campaign(
+        task.id,
+        state="failed",
+        merge_sha="existing-sha",
+        merge_report_ref="existing-report.md",
+        last_error="prior failure",
+    )
+
+    with temp_db.transaction() as conn:
+        upsert_merged_campaign_in_transaction(conn, task.id)
+
+    campaign = manager.get_state(task.id)["campaign"]
+    assert campaign["state"] == "merged"
+    assert campaign["merge_sha"] == "existing-sha"
+    assert campaign["merge_report_ref"] == "existing-report.md"
+    assert campaign["last_error"] == ""
 
 
 def test_delivery_unit_upsert_preserves_null_updates(

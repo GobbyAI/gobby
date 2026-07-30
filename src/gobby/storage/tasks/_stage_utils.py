@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
+from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._models import TaskStaleStateError
@@ -161,7 +162,7 @@ def _complete_terminal_delivery_stage_for_close(
         row["stage_name"],
         commit_sha,
     )
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE task_stage_states
            SET state = 'done',
@@ -184,6 +185,12 @@ def _complete_terminal_delivery_stage_for_close(
             row["stage_name"],
         ),
     )
+    if cursor.rowcount > 0 and row["stage_name"] == "merge":
+        upsert_merged_campaign_in_transaction(
+            conn,
+            task_id,
+            merge_sha=completion_commit_sha,
+        )
 
 
 def _is_terminal_delivery_stage(row: Any) -> bool:

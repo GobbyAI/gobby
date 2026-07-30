@@ -164,6 +164,7 @@ def _complete_ready_merge_stage(
     task_id: str,
     session_id: str | None,
     merge_sha: str,
+    merge_report_ref: str | None,
     dispatch_run_id: str | None,
 ) -> StageState:
     dispatch_kwargs: dict[str, Any] = (
@@ -181,6 +182,7 @@ def _complete_ready_merge_stage(
         "merge",
         by_session_id=session_id,
         commit_sha=merge_sha,
+        merge_report_ref=merge_report_ref,
         **dispatch_kwargs,
     )
 
@@ -669,6 +671,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "merge",
                 by_session_id=resolved_session_id,
                 commit_sha=merge_sha,
+                merge_report_ref=report_ref,
                 **dispatch_kwargs,
             )
         except IllegalStageTransitionError as exc:
@@ -681,6 +684,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     task_id=resolved_id,
                     session_id=resolved_session_id,
                     merge_sha=merge_sha,
+                    merge_report_ref=report_ref,
                     dispatch_run_id=dispatch_run_id,
                 )
                 reconciled_ready_merge = True
@@ -692,13 +696,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     raise
                 stage = completed_stage
                 idempotent_completed_merge = True
-        delivery.record_campaign(
-            resolved_id,
-            state="merged",
-            merge_sha=merge_sha,
-            merge_report_ref=report_ref or "",
-            last_error="",
-        )
+        if idempotent_completed_merge:
+            delivery.record_campaign(
+                resolved_id,
+                state="merged",
+                merge_sha=merge_sha,
+                merge_report_ref=report_ref or "",
+                last_error="",
+            )
         if resolved_session_id:
             _release_current_agent_dispatch_mutex(
                 ctx,

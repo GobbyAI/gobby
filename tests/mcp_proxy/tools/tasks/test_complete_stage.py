@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -28,7 +31,7 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def _ops_context(temp_db):
+def _ops_context(temp_db: HubDatabase) -> SimpleNamespace:
     return SimpleNamespace(
         task_manager=LocalTaskManager(temp_db),
         session_task_manager=SessionTaskManager(temp_db),
@@ -37,7 +40,7 @@ def _ops_context(temp_db):
     )
 
 
-def _complete_stage(ctx):
+def _complete_stage(ctx: Any) -> Any:
     tool = stage_ops.create_stage_ops_registry(ctx).get_tool("complete_stage")
     assert tool is not None
     return tool
@@ -349,6 +352,82 @@ def test_complete_stage_keeps_other_running_agent_dispatch_mutex_blocking(
     assert row["run_id"] == other_run_id
     assert row["lease_holder"] == "dispatcher"
     assert stage_row(temp_db, task.id, "architecture")["state"] == "in_progress"
+
+
+def test_complete_merge_stage_records_one_campaign(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    initialize_manifest(temp_db, task.id, [spec("merge", 0)])
+    LocalTaskManager(temp_db).stage_states.start_stage(
+        task.id,
+        "merge",
+        by_session_id="merge-agent",
+    )
+
+    result = _complete_stage(_ops_context(temp_db))(
+        task_id=task.id,
+        stage_name="merge",
+        commit_sha="complete-stage-sha",
+    )
+
+    campaign = TaskDeliveryStateManager(temp_db).get_state(task.id)["campaign"]
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert result["stage"]["state"] == "done"
+    assert campaign["state"] == "merged"
+    assert campaign["merge_sha"] == "complete-stage-sha"
+    assert campaign["last_error"] == ""
+    assert count_row is not None
+    assert count_row["campaign_count"] == 1
+
+
+def test_complete_non_merge_stage_does_not_record_campaign(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = _in_progress_architecture_task(
+        temp_db,
+        sample_project,
+        session_id="architecture-agent",
+    )
+
+    _complete_stage(_ops_context(temp_db))(
+        task_id=task.id,
+        stage_name="architecture",
+    )
+
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert count_row is not None
+    assert count_row["campaign_count"] == 0
+
+
+def test_rejected_merge_completion_does_not_record_campaign(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    initialize_manifest(temp_db, task.id, [spec("merge", 0)])
+
+    with pytest.raises(IllegalStageTransitionError):
+        _complete_stage(_ops_context(temp_db))(
+            task_id=task.id,
+            stage_name="merge",
+            commit_sha="rejected-sha",
+        )
+
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert count_row is not None
+    assert count_row["campaign_count"] == 0
 
 
 register_contract_tests(

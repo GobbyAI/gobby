@@ -194,7 +194,7 @@ def _merge_task_in_progress(
     return task
 
 
-def test_success_writes_artifacts_and_completes_merge(
+def test_success_forwards_artifacts_and_completes_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_stage_view(monkeypatch)
@@ -212,21 +212,17 @@ def test_success_writes_artifacts_and_completes_merge(
         report_ref="merge-report.md",
     )
 
-    sql, params = next(
-        (sql, params)
-        for sql, params in ctx.task_manager.db.executed
-        if "INSERT INTO task_delivery_campaigns" in sql
+    assert all(
+        "INSERT INTO task_delivery_campaigns" not in sql
+        for sql, _params in ctx.task_manager.db.executed
     )
-    assert "task_delivery_campaigns" in sql
-    assert "merge_sha" in sql
-    assert "merge_report_ref" in sql
-    assert params[3:5] == ("abc123", "merge-report.md")
     assert result["stage"] == {"stage_name": "merge", "state": "done"}
     ctx.task_manager.stage_states.complete_stage.assert_called_once()
     args, kwargs = ctx.task_manager.stage_states.complete_stage.call_args
     assert args == ("task-1", "merge")
     assert kwargs["by_session_id"] is None
     assert kwargs["commit_sha"] == "abc123"
+    assert kwargs["merge_report_ref"] == "merge-report.md"
     ctx.task_manager.close_task.assert_not_called()
     assert cleanup_calls == [(ctx.task_manager.db, "task-1")]
 
@@ -261,6 +257,7 @@ def test_success_transition_failure_does_not_write_merged_campaign(
     assert ctx.task_manager.stage_states.complete_stage.call_args.kwargs == {
         "by_session_id": None,
         "commit_sha": "merge-sha",
+        "merge_report_ref": None,
     }
 
 
@@ -299,6 +296,43 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
         "merge_sha": "mergeabc123",
         "merge_report_ref": "merge-report.md",
     }
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert count_row is not None
+    assert count_row["campaign_count"] == 1
+
+
+def test_complete_stage_then_record_merge_result_enriches_one_campaign(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = _merge_task_in_progress(temp_db, sample_project)
+    LocalTaskManager(temp_db).stage_states.complete_stage(
+        task.id,
+        "merge",
+        by_session_id="merge-agent",
+        commit_sha="shared-merge-sha",
+    )
+
+    result = _record_merge_result(_real_context(temp_db))(
+        task_id=task.id,
+        merge_sha="shared-merge-sha",
+        report_ref="enriched-report.md",
+    )
+
+    count_row = temp_db.fetchone(
+        "SELECT COUNT(*) AS campaign_count FROM task_delivery_campaigns WHERE task_id = %s",
+        (task.id,),
+    )
+    assert result["idempotent"] is True
+    assert _artifact_row(temp_db, task.id) == {
+        "merge_sha": "shared-merge-sha",
+        "merge_report_ref": "enriched-report.md",
+    }
+    assert count_row is not None
+    assert count_row["campaign_count"] == 1
 
 
 def test_success_is_idempotent_after_worker_recorded_merge(
