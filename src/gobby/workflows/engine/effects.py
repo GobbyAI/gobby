@@ -4,7 +4,6 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, and block matching.
 """
 
-import asyncio
 import json
 import logging
 import re
@@ -16,6 +15,7 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
     _is_empty_inject_payload,
@@ -78,7 +78,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            await asyncio.to_thread(
+            await offload(
                 self._apply_set_variable,
                 effect,
                 variables,
@@ -93,7 +93,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             # variables by the SESSION_START handler before rules evaluate, making
             # them available as {{ session_summary }}, {{ task_context }} in templates.
             if effect.template:
-                template_text = await asyncio.to_thread(
+                template_text = await offload(
                     self._render_template,
                     effect.template,
                     ctx,
@@ -108,7 +108,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         elif effect.type == "observe":
             obs_list = variables.get("_observations", [])
             msg = effect.message or ""
-            msg = await asyncio.to_thread(self._render_template, msg, ctx, allowed_funcs)
+            msg = await offload(self._render_template, msg, ctx, allowed_funcs)
             obs_list.append(
                 {
                     "category": effect.category or "general",
@@ -121,7 +121,7 @@ class EffectsMixin(DeliveryFormattingMixin):
 
         elif effect.type == "mcp_call":
             raw_args = effect.arguments or {}
-            rendered_args = await asyncio.to_thread(
+            rendered_args = await offload(
                 lambda: {
                     k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
                     for k, v in raw_args.items()
@@ -167,7 +167,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                                 if effect.tool == "recall_review_lessons_by_class"
                                 else "matched file"
                             )
-                            formatted = await asyncio.to_thread(
+                            formatted = await offload(
                                 self._format_review_lessons_result,
                                 raw_result,
                                 platform_session_id,
@@ -237,7 +237,7 @@ class EffectsMixin(DeliveryFormattingMixin):
 
         elif effect.type == "rewrite_input":
             if effect.input_updates:
-                rendered_updates = await asyncio.to_thread(
+                rendered_updates = await offload(
                     self._render_nested_value,
                     effect.input_updates,
                     ctx,
@@ -275,7 +275,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             if effect.permission_decision:
                 permission_meta["permission_decision"] = effect.permission_decision
             if effect.input_updates is not None:
-                permission_meta["input_updates"] = await asyncio.to_thread(
+                permission_meta["input_updates"] = await offload(
                     self._render_nested_value,
                     effect.input_updates,
                     ctx,
@@ -310,7 +310,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                 ):
                     variables["_worktree_path"] = effect.worktree_path
                 else:
-                    variables["_worktree_path"] = await asyncio.to_thread(
+                    variables["_worktree_path"] = await offload(
                         self._render_nested_value,
                         effect.worktree_path,
                         ctx,
@@ -322,14 +322,14 @@ class EffectsMixin(DeliveryFormattingMixin):
             if effect.elicitation_action:
                 elicitation_meta["action"] = effect.elicitation_action
             if effect.elicitation_content is not None:
-                elicitation_meta["content"] = await asyncio.to_thread(
+                elicitation_meta["content"] = await offload(
                     self._render_nested_value,
                     effect.elicitation_content,
                     ctx,
                     allowed_funcs,
                 )
             if effect.elicitation_error is not None:
-                elicitation_meta["error"] = await asyncio.to_thread(
+                elicitation_meta["error"] = await offload(
                     self._render_nested_value,
                     effect.elicitation_error,
                     ctx,
