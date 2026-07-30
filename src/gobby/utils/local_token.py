@@ -107,9 +107,26 @@ def _urlsafe_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(f"{value}{padding}")
 
 
+# Spawn-env identity forwarded beside the run capability so context-bearing
+# routes can bind the request to the token's claims.
+_AGENT_IDENTITY_ENV_HEADERS = (
+    ("GOBBY_SESSION_ID", "X-Gobby-Session-Id"),
+    ("GOBBY_PROJECT_ID", "X-Gobby-Caller-Project-Id"),
+    ("GOBBY_AGENT_RUN_ID", "X-Gobby-Agent-Run-Id"),
+)
+
+
 def daemon_auth_headers() -> dict[str, str]:
     """Build daemon bearer headers, preferring a managed run capability."""
-    token = os.environ.get(GOBBY_AGENT_API_TOKEN_ENV, "").strip() or read_local_api_token()
+    agent_token = os.environ.get(GOBBY_AGENT_API_TOKEN_ENV, "").strip()
+    if agent_token:
+        headers = {"Authorization": f"Bearer {agent_token}"}
+        for env_name, header_name in _AGENT_IDENTITY_ENV_HEADERS:
+            value = os.environ.get(env_name, "").strip()
+            if value:
+                headers[header_name] = value
+        return headers
+    token = read_local_api_token()
     if token is None:
         return {}
     return {"Authorization": f"Bearer {token}"}

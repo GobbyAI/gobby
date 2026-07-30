@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.mcp_proxy.manager import MCPClientManager
 from starlette.requests import Request
 
 import gobby.servers.auth_service as auth_service_module
@@ -295,6 +301,150 @@ async def test_session_and_ws_verifiers(temp_db: HubDatabase, tmp_path: Path) ->
     assert service.validate_session("wrong-session") is False
     assert await service.verify_ws_token("api-token") == "local-cli"
     assert await service.verify_ws_token("wrong-token") is None
+
+
+def test_agent_capability_matrix(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    session_uuid = "11111111-2222-3333-4444-555555555555"
+    token = issue_agent_api_token(
+        "operator-token",
+        agent_run_id="run-123",
+        session_id=session_uuid,
+        project_id="project-123",
+    )
+    identity = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Agent-Run-Id": "run-123",
+        "X-Gobby-Session-Id": session_uuid,
+        "X-Gobby-Caller-Project-Id": "project-123",
+    }
+
+    # Cross-project targeting: the target header may differ from the caller
+    # project bound into the claims.
+    assert service.is_request_authenticated(
+        _request(
+            identity | {"X-Gobby-Project-Id": "other-project"},
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+
+    # A "#N" self-ref in the session header authenticates via resolution.
+    resolved: list[tuple[str, str | None]] = []
+
+    def fake_resolve(db: HubDatabase, ref: str, project_id: str | None = None) -> str:
+        resolved.append((ref, project_id))
+        return session_uuid
+
+    monkeypatch.setattr(auth_service_module, "resolve_session_reference", fake_resolve)
+    assert service.is_request_authenticated(
+        _request(
+            identity | {"X-Gobby-Session-Id": "#7"},
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+    assert resolved == [("#7", "project-123")]
+
+    # A ref that resolves to a different session is rejected.
+    monkeypatch.setattr(
+        auth_service_module,
+        "resolve_session_reference",
+        lambda db, ref, project_id=None: "99999999-8888-7777-6666-555555555555",
+    )
+    assert not service.is_request_authenticated(
+        _request(
+            identity | {"X-Gobby-Session-Id": "#8"},
+            method="POST",
+            path="/api/mcp/tools/call",
+        )
+    )
+
+    # Context-free read-only routes authenticate without identity headers
+    # (the Rust binaries send none) ...
+    bearer_only = {"Authorization": f"Bearer {token}"}
+    assert service.is_request_authenticated(
+        _request(bearer_only, method="GET", path="/api/comms/channels")
+    )
+    assert service.is_request_authenticated(
+        _request(bearer_only, method="GET", path="/api/embeddings/status")
+    )
+    assert service.is_request_authenticated(
+        _request(bearer_only, method="POST", path="/api/code-index/graph/rebuild")
+    )
+    # ... but a present-and-wrong identity header still rejects.
+    assert not service.is_request_authenticated(
+        _request(
+            bearer_only | {"X-Gobby-Caller-Project-Id": "other-project"},
+            method="GET",
+            path="/api/comms/channels",
+        )
+    )
+
+    # Context-bearing routes require the full caller identity.
+    assert not service.is_request_authenticated(
+        _request(bearer_only, method="POST", path="/api/workflows/variables/set")
+    )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/workflows/variables/set")
+    )
+
+    # Out-of-matrix routes stay rejected, whatever the headers.
+    for method, path in (
+        ("POST", "/api/agents/spawn"),
+        ("DELETE", "/api/mcp/servers/github"),
+        ("PUT", "/api/mcp/servers/github"),
+        ("POST", "/api/pipelines/run"),
+        ("GET", "/api/configuration/secrets"),
+        ("POST", "/api/memories/graph/rebuild"),
+    ):
+        assert not service.is_request_authenticated(_request(identity, method=method, path=path))
+
+
+@pytest.mark.asyncio
+async def test_agent_listing_redaction() -> None:
+    from gobby.servers.routes.mcp.endpoints.server import list_mcp_servers
+
+    config = SimpleNamespace(
+        name="github",
+        transport="stdio",
+        project_id="project-123",
+        description="external server",
+        url=None,
+        command="gh-mcp",
+        args=[],
+        env={"API_KEY": "raw-secret-value", "SAFE_REF": "$secret:github/api-key"},
+        headers={"Authorization": "Bearer raw-header-secret", "X-Ref": "$secret:github/header"},
+        enabled=True,
+        requires_oauth=False,
+        oauth_provider=None,
+        connect_timeout=5.0,
+    )
+    mcp_manager = SimpleNamespace(
+        server_configs=[config],
+        health={},
+        is_connected=lambda name: False,
+    )
+
+    result = await list_mcp_servers(
+        internal_manager=None,
+        mcp_manager=cast("MCPClientManager", mcp_manager),
+    )
+
+    assert result["success"] is True
+    (entry,) = [item for item in result["servers"] if item["name"] == "github"]
+    assert entry["env"] == {"SAFE_REF": "$secret:github/api-key"}
+    assert entry["headers"] == {"X-Ref": "$secret:github/header"}
+    serialized = json.dumps(result)
+    assert "raw-secret-value" not in serialized
+    assert "raw-header-secret" not in serialized
 
 
 def test_dead_run_server_removed() -> None:

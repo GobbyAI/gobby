@@ -63,9 +63,33 @@ def test_daemon_auth_headers_prefer_agent_capability(
 ) -> None:
     local_token_path().write_text("operator-token\n")
     monkeypatch.setenv(GOBBY_AGENT_API_TOKEN_ENV, "scoped-agent-token")
+    for name in ("GOBBY_SESSION_ID", "GOBBY_PROJECT_ID", "GOBBY_AGENT_RUN_ID"):
+        monkeypatch.delenv(name, raising=False)
 
     assert read_local_api_token() == "operator-token"
     assert daemon_auth_headers() == {"Authorization": "Bearer scoped-agent-token"}
+
+
+def test_daemon_auth_headers_carry_spawn_identity(
+    local_token_home: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(GOBBY_AGENT_API_TOKEN_ENV, "scoped-agent-token")
+    monkeypatch.setenv("GOBBY_SESSION_ID", "spawn-session-uuid")
+    monkeypatch.setenv("GOBBY_PROJECT_ID", "spawn-project")
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-123")
+
+    assert daemon_auth_headers() == {
+        "Authorization": "Bearer scoped-agent-token",
+        "X-Gobby-Session-Id": "spawn-session-uuid",
+        "X-Gobby-Caller-Project-Id": "spawn-project",
+        "X-Gobby-Agent-Run-Id": "run-123",
+    }
+
+    # Operator-token callers never attach spawn identity.
+    monkeypatch.delenv(GOBBY_AGENT_API_TOKEN_ENV)
+    local_token_path().write_text("operator-token\n")
+    assert daemon_auth_headers() == {"Authorization": "Bearer operator-token"}
 
 
 def test_ensure_local_api_token_generates(

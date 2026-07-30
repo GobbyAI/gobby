@@ -157,7 +157,16 @@ class DaemonProxy:
         }
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id
-        effective_session_id = session_id or self._environment_session_id
+        managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
+        effective_session_id: str | None
+        if managed_run_id and self._environment_session_id:
+            # A managed agent's caller identity is pinned by its spawn env:
+            # the environment value is the resolved session UUID, while
+            # per-call refs like "#42" cannot be resolved client-side and the
+            # run capability only ever authenticates as its own session.
+            effective_session_id = self._environment_session_id
+        else:
+            effective_session_id = session_id or self._environment_session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
         if caller_project_id:
@@ -166,7 +175,6 @@ class DaemonProxy:
             headers["X-Gobby-Session-Id"] = effective_session_id
         else:
             headers[TERMINAL_CONTEXT_HEADER] = self._terminal_context_header
-        managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")
         if managed_run_id:
             headers[AGENT_RUN_ID_HEADER] = managed_run_id
 

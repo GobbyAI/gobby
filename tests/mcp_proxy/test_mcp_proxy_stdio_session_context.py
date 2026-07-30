@@ -12,6 +12,14 @@ from gobby.mcp_proxy.stdio import DaemonProxy
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _clear_managed_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these tests hermetic when the suite itself runs inside a managed agent."""
+    monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.delenv("GOBBY_AGENT_API_TOKEN", raising=False)
+
+
 def test_project_id_reads_nearest_parent_project_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,6 +151,31 @@ async def test_call_tool_sends_caller_project_header_with_target_project_overrid
     assert kwargs["headers"]["X-Gobby-Project-Id"] == "target-project"
     assert kwargs["headers"]["X-Gobby-Caller-Project-Id"] == "caller-project"
     assert kwargs["headers"]["X-Gobby-Session-Id"] == "#7"
+
+
+@pytest.mark.asyncio
+async def test_managed_agent_pins_session_header_to_spawn_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_SESSION_ID", "spawn-session-uuid")
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-123")
+    proxy = DaemonProxy(60887)
+
+    with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+        client = _mock_http_client(mock_client_cls)
+
+        await proxy._request(
+            "POST",
+            "/some/path",
+            json={"session_id": "#42"},
+            session_id="#42",
+        )
+
+    _, kwargs = client.request.call_args
+    assert kwargs["headers"]["X-Gobby-Session-Id"] == "spawn-session-uuid"
+    assert kwargs["headers"]["X-Gobby-Agent-Run-Id"] == "run-123"
+    # The body session_id stays a target-tool argument, untouched by pinning.
+    assert kwargs["json"] == {"session_id": "#42"}
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from starlette.requests import HTTPConnection
 
@@ -22,6 +22,7 @@ from gobby.storage.auth import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     local_token_path,
@@ -36,43 +37,112 @@ _SESSION_COOKIE = "gobby_session"
 _LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
 _NEVER_REFRESHED = float("-inf")
 
+_CALLER_PROJECT_HEADER = "X-Gobby-Caller-Project-Id"
+_TARGET_PROJECT_HEADER = "X-Gobby-Project-Id"
+_SESSION_HEADER = "X-Gobby-Session-Id"
+_AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
+_HOOKS_EXECUTE_PATH = "/api/hooks/execute"
 
-def _agent_capability_allows(request: HTTPConnection) -> bool:
+
+class _AgentRoute(NamedTuple):
+    method: str
+    route: str
+    bind_identity: bool
+
+
+# The single enumerated method+route capability matrix for run-scoped agent
+# tokens. "*" matches exactly one path segment; every other segment matches
+# exactly. bind_identity marks context-bearing routes (the daemon derives
+# caller/session context from them) whose identity headers are mandatory;
+# context-free routes verify identity headers only when present, because the
+# Rust binaries other than ghook send none. Operator mutation and
+# configuration routes stay excluded.
+_AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
+    # MCP proxy discovery and execution.
+    _AgentRoute("GET", "/api/mcp/servers", True),
+    _AgentRoute("GET", "/api/mcp/status", True),
+    _AgentRoute("GET", "/api/mcp/tools", True),
+    _AgentRoute("GET", "/api/mcp/*/tools", True),
+    _AgentRoute("POST", "/api/mcp/tools/schema", True),
+    _AgentRoute("POST", "/api/mcp/tools/call", True),
+    _AgentRoute("POST", "/api/mcp/tools/recommend", True),
+    _AgentRoute("POST", "/api/mcp/tools/search", True),
+    _AgentRoute("POST", "/api/mcp/*/tools/*", True),
+    # Session-scoped workflow variables (stdio proxy get/set_variable).
+    _AgentRoute("POST", "/api/workflows/variables/get", True),
+    _AgentRoute("POST", "/api/workflows/variables/set", True),
+    # Hook execution (ghook).
+    _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
+    # Code index (gcode): codewiki refresh and graph lifecycle.
+    _AgentRoute("POST", "/api/code-index/codewiki/refresh", False),
+    _AgentRoute("POST", "/api/code-index/graph/clear", False),
+    _AgentRoute("POST", "/api/code-index/graph/rebuild", False),
+    # AI compute and read-only capability probes (gcore-backed binaries).
+    _AgentRoute("POST", "/api/embeddings", False),
+    _AgentRoute("GET", "/api/embeddings/status", False),
+    _AgentRoute("GET", "/api/embeddings/doctor", False),
+    _AgentRoute("GET", "/api/llm/status", False),
+    _AgentRoute("GET", "/api/llm/vision/status", False),
+    _AgentRoute("GET", "/api/voice/status", False),
+    _AgentRoute("GET", "/api/providers/models", False),
+    _AgentRoute("GET", "/api/config/effective", False),
+    # Read-only `gobby` CLI listings backed by DaemonClient.
+    _AgentRoute("GET", "/api/comms/channels", False),
+    _AgentRoute("GET", "/api/webhooks", False),
+    _AgentRoute("GET", "/api/embeddings/switch/status", False),
+    _AgentRoute("GET", "/api/memories/graph/counts", False),
+    _AgentRoute("GET", "/api/memories/graph/rebuild/status", False),
+)
+
+
+def _agent_capability_allows(request: HTTPConnection) -> _AgentRoute | None:
+    """Match a request against the agent capability matrix.
+
+    Returns the matched entry, or None when the route is outside agent
+    capability. The matrix above is the single source of agent capability.
+    """
     method = str(request.scope.get("method", "GET")).upper()
-    path = request.url.path
-    if method == "POST" and path in {
-        "/api/mcp/tools/schema",
-        "/api/mcp/tools/call",
-        "/api/hooks/execute",
-        "/api/code-index/codewiki/refresh",
-    }:
-        return True
-    if method == "GET" and path in {
-        "/api/mcp/servers",
-        "/api/mcp/tools",
-        "/api/mcp/status",
-    }:
-        return True
-    parts = path.strip("/").split("/")
-    if method == "GET":
-        return len(parts) == 4 and parts[:2] == ["api", "mcp"] and parts[3] == "tools"
-    return (
-        method == "POST" and len(parts) == 5 and parts[:2] == ["api", "mcp"] and parts[3] == "tools"
-    )
+    segments = request.url.path.strip("/").split("/")
+    if not all(segments):
+        return None
+    for entry in _AGENT_CAPABILITY_MATRIX:
+        if entry.method != method:
+            continue
+        template = entry.route.strip("/").split("/")
+        if len(template) != len(segments):
+            continue
+        if all(
+            part == "*" or part == segment for part, segment in zip(template, segments, strict=True)
+        ):
+            return entry
+    return None
 
 
 def _agent_identity_matches(
     request: HTTPConnection,
     claims: AgentApiTokenClaims,
+    *,
+    bind_identity: bool,
+    resolve_session: Callable[[str], str | None],
 ) -> bool:
     headers = request.headers
-    if headers.get("X-Gobby-Session-Id") != claims.session_id:
+    caller_project = headers.get(_CALLER_PROJECT_HEADER) or headers.get(_TARGET_PROJECT_HEADER)
+    session_ref = headers.get(_SESSION_HEADER)
+    run_id = headers.get(_AGENT_RUN_HEADER)
+    if bind_identity and (caller_project is None or session_ref is None):
         return False
-    if headers.get("X-Gobby-Project-Id") != claims.project_id:
+    if caller_project is not None and caller_project != claims.project_id:
         return False
-    if request.url.path == "/api/hooks/execute":
-        return True
-    return headers.get("X-Gobby-Agent-Run-Id") == claims.agent_run_id
+    if session_ref is not None and session_ref != claims.session_id:
+        # Refs like "#42" or UUID prefixes are legal caller spellings of the
+        # claimed session; compare canonical UUIDs, never raw refs.
+        if resolve_session(session_ref) != claims.session_id:
+            return False
+    if run_id is not None:
+        return run_id == claims.agent_run_id
+    # ghook does not send its run id yet; the hooks route keeps this
+    # exemption until the capability-lifecycle work teaches it to.
+    return not bind_identity or request.url.path == _HOOKS_EXECUTE_PATH
 
 
 def _optional_string(value: object) -> str | None:
@@ -155,11 +225,25 @@ class AuthService:
         if operator_token is None:
             return False
         claims = verify_agent_api_token(token, operator_token)
-        return bool(
-            claims
-            and _agent_capability_allows(request)
-            and _agent_identity_matches(request, claims)
+        if claims is None:
+            return False
+        entry = _agent_capability_allows(request)
+        if entry is None:
+            return False
+        return _agent_identity_matches(
+            request,
+            claims,
+            bind_identity=entry.bind_identity,
+            resolve_session=lambda ref: self._resolve_agent_session_ref(ref, claims.project_id),
         )
+
+    def _resolve_agent_session_ref(self, ref: str, project_id: str) -> str | None:
+        try:
+            return resolve_session_reference(self._database_getter(), ref, project_id)
+        except Exception:
+            # Unresolvable or malformed refs must fail closed at the auth
+            # boundary, never surface as a 500.
+            return None
 
     def validate_session(self, token: str) -> bool:
         if not token:
