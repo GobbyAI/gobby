@@ -213,7 +213,6 @@ def setup_internal_registries(
             memory_backup_manager=memory_backup_manager,
             session_manager=session_manager,
             config=_config,
-            task_manager=task_manager,
             dream_coordinator_resolver=dream_coordinator_resolver,
         )
         manager.add_registry(memory_registry)

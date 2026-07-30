@@ -195,15 +195,11 @@ class TestCreateMemory:
         mock_memory_manager.create_memory.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_memory_redirects_session_start_proposal_to_task(
+    async def test_create_memory_persists_proposal_without_task_redirect(
         self,
         mock_memory_manager,
     ) -> None:
-        task_manager = MagicMock()
-        task_manager.create_task_with_decomposition.return_value = {
-            "task": {"id": "task-123", "seq_num": 14475}
-        }
-        registry = create_memory_registry(mock_memory_manager, task_manager=task_manager)
+        registry = create_memory_registry(mock_memory_manager)
         proposal = (
             "SessionStart should persist a durable completion marker. If any invariant is "
             "missing, call an idempotent ensure_session_activation(session_id) helper that "
@@ -217,50 +213,10 @@ class TestCreateMemory:
         ):
             result = await registry.call("create_memory", {"content": proposal})
 
-        assert result == {
-            "success": True,
-            "redirected_to_task_note": True,
-            "task_id": "task-123",
-            "task_ref": "#14475",
-        }
-        mock_memory_manager.create_memory.assert_not_called()
-        task_manager.create_task_with_decomposition.assert_called_once()
-        call_kwargs = task_manager.create_task_with_decomposition.call_args.kwargs
-        assert call_kwargs["title"] == "gobby-session-start-reconciliation-proposal"
-        assert call_kwargs["category"] == "planning"
-        assert call_kwargs["task_type"] == "research_spike"
-
-    @pytest.mark.asyncio
-    async def test_create_memory_persists_original_when_speculative_redirect_fails(
-        self,
-        mock_memory_manager,
-    ) -> None:
-        task_manager = MagicMock()
-        task_manager.create_task_with_decomposition.side_effect = RuntimeError("task store down")
-        registry = create_memory_registry(mock_memory_manager, task_manager=task_manager)
-        proposal = (
-            "SessionStart proposal: call an idempotent ensure_session_activation helper "
-            "rather than replay raw SessionStart side effects wholesale."
-        )
-
-        with patch(
-            "gobby.utils.project_context.get_project_context",
-            return_value={"id": "11111111-1111-4111-8111-111111110001"},
-        ):
-            result = await registry.call(
-                "create_memory",
-                {
-                    "content": proposal,
-                    "memory_type": "pattern",
-                    "tags": ["session-start"],
-                },
-            )
-
         assert result["success"] is True
-        task_manager.create_task_with_decomposition.assert_called_once()
+        assert "redirected_to_task_note" not in result
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
-        assert call_kwargs["memory_type"] == "pattern"
-        assert call_kwargs["tags"] == ["session-start"]
+        assert call_kwargs["content"] == proposal
 
     @pytest.mark.asyncio
     async def test_create_memory_rejects_noncanonical_type(

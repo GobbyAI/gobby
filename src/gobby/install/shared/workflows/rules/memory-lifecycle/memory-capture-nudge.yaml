@@ -20,6 +20,10 @@ rules:
 
           Do NOT create memories for bugs, errors, or issues you encounter.
           Create tasks instead so they get fixed.
+
+          Draft direction, enhancement suggestions, and review findings are plan
+          content. Keep them in the plan artifact or evidence. Reserve memory for
+          explicit durable user preferences and finalized decisions.
       - type: set_variable
         variable: memory_nudge_fired
         value: true

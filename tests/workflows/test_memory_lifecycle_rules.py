@@ -11,6 +11,7 @@ Active memory-lifecycle rules:
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
+- guard-plan-memory-writes: one-time block on create_memory and update_memory
 - require-memory-recall-before-tool: block on before_tool
 - require-memory-recall-before-turn-end: block on turn_end
 - require-memory-review-before-status: block on before_tool (close_task, submit_for_review, approve_review, reject_review)
@@ -43,6 +44,7 @@ MEMORY_RULES = {
     "increment-parent-turn-seq",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
+    "guard-plan-memory-writes",
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
     "require-memory-review-before-status",
@@ -326,6 +328,10 @@ class TestMemoryCaptureNudge:
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "create_memory" in body.effects[0].template
+        assert "Draft direction, enhancement suggestions, and review findings" in (
+            body.effects[0].template
+        )
+        assert "plan artifact or evidence" in body.effects[0].template
 
     def test_has_when_condition(self, db, manager) -> None:
         """Only nudge on substantial prompts (not slash commands)."""
@@ -413,3 +419,63 @@ class TestClearMemoryReviewOnCreate:
         assert body.when is not None
         assert "create_memory" in body.when
         assert "gobby-memory" in body.when
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# guard-plan-memory-writes
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestGuardPlanMemoryWrites:
+    """Guard planning-context memory writes once per planning epoch."""
+
+    def test_rule_contract(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("guard-plan-memory-writes")
+        assert row is not None
+        assert row.enabled is True
+        assert row.priority == 11
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.agent_scope is None
+        assert body.effects is not None
+        effect = body.effects[0]
+        assert effect.type == "block"
+        assert effect.mcp_tools == [
+            "gobby-memory:create_memory",
+            "gobby-memory:update_memory",
+        ]
+        assert effect.acknowledge_variable == "plan_memory_write_nudge_fired"
+        assert effect.reason == (
+            "Plan drafts, enhancement suggestions, and review findings belong in the "
+            "plan artifact or evidence. Memory is reserved for explicit durable user "
+            "preferences and finalized decisions. Retry only when the write satisfies "
+            "that boundary."
+        )
+
+    def test_condition_covers_planning_contexts_and_recall_precedence(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("guard-plan-memory-writes")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "variables.get('plan_mode')" in body.when
+        assert "not pending_memory_recall_request_id()" in body.when
+        for agent_type in (
+            "planner",
+            "plan-adversary",
+            "plan-adversary-taskless",
+            "plan-enhancer",
+            "plan-enhancer-taskless",
+        ):
+            assert f"'{agent_type}'" in body.when

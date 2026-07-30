@@ -30,6 +30,7 @@ Memory is one of several persistence mechanisms. Pick the right one:
 | User preference or convention | **Memory** | Durable, cross-session, hard to rediscover |
 | A bug or issue to fix | **Task** | Actionable, trackable, closeable |
 | Implementation approach for current work | **Plan** | Scoped to conversation, structured |
+| Draft direction, enhancement suggestion, or review finding | **Plan** | Belongs in the plan artifact or evidence |
 | Something the code already shows | **Nothing** | Code is the source of truth |
 | Something git log already shows | **Nothing** | Git is the source of truth |
 
@@ -66,6 +67,7 @@ Memories that survive are **specific, contextual, and time-resilient**.
 - **Bug fixes or solutions** — the fix is in the code, context in the commit
 - **Anything in CLAUDE.md** — already loaded every session
 - **Ephemeral state** — current task, temporary config, in-progress work
+- **Plan content** — draft direction, enhancement suggestions, and review findings
 
 ## Tags
 

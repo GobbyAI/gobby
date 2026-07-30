@@ -1,0 +1,32 @@
+tags: [memory-lifecycle, memory, enforcement, planning, gobby, default]
+
+rules:
+  guard-plan-memory-writes:
+    description: "Confirm memory writes are durable while planning"
+    event: before_tool
+    enabled: true
+    priority: 11
+    when: >-
+      not pending_memory_recall_request_id()
+      and not variables.get('plan_memory_write_nudge_fired')
+      and (
+        variables.get('plan_mode')
+        or variables.get('_agent_type') in [
+          'planner',
+          'plan-adversary',
+          'plan-adversary-taskless',
+          'plan-enhancer',
+          'plan-enhancer-taskless'
+        ]
+      )
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-memory:create_memory"
+          - "gobby-memory:update_memory"
+        acknowledge_variable: plan_memory_write_nudge_fired
+        reason: >-
+          Plan drafts, enhancement suggestions, and review findings belong in the
+          plan artifact or evidence. Memory is reserved for explicit durable user
+          preferences and finalized decisions. Retry only when the write satisfies
+          that boundary.

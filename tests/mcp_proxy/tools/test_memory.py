@@ -72,23 +72,6 @@ async def test_create_memory_supersedes_guard_bypass(mock_memory_manager: MagicM
     assert persisted["success"] is True, persisted
     assert mock_memory_manager.create_memory.call_args.kwargs["supersedes"] == [superseded_id]
 
-    mock_memory_manager.create_memory.reset_mock()
-    proposal = (
-        "SessionStart should persist a durable completion marker. If any invariant is "
-        "missing, call an idempotent ensure_session_activation(session_id) helper."
-    )
-    task_manager = MagicMock()
-    proposal_registry = create_memory_registry(
-        mock_memory_manager,
-        task_manager=task_manager,
-    )
-    await proposal_registry.call(
-        "create_memory",
-        {"content": proposal, "supersedes": [superseded_id]},
-    )
-    mock_memory_manager.create_memory.assert_awaited_once()
-    task_manager.create_task_with_decomposition.assert_not_called()
-
 
 @pytest.fixture
 def mock_memory_manager() -> MagicMock:

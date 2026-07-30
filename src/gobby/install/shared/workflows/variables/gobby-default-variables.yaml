@@ -89,6 +89,9 @@ variables:
   memory_nudge_fired:
     value: false
     description: "True after memory-capture-nudge has fired once this session"
+  plan_memory_write_nudge_fired:
+    value: false
+    description: "True after the planning-context memory-write guard has fired once this epoch"
   context7_nudge_fired:
     value: false
     description: "True after block-and-teach-context7 has fired once this session"

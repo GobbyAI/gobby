@@ -205,7 +205,7 @@
     "skills/lua/references/performance-and-security.md": "96f31bc19c2da1434ac4880f09b34e62c3178af7e09f1f92f62015e445186659",
     "skills/lua/references/tables-types-and-metatables.md": "6c850b2cb2c293d1f1fa94d5cc2517817562ef6a26a6d0fa4e7796a077fa2979",
     "skills/lua/references/testing-and-tooling.md": "d948c622255f9dd3232ff6a2185a1adc7326c04c9eb2b7b9b6b211cf0f28d3de",
-    "skills/memory/SKILL.md": "6f6700c06cec2f8d62afbe0279fe78378d67a3aee7dd8952aedc94b7c51eefd3",
+    "skills/memory/SKILL.md": "74154d33adbdfd5e6e8415ea32ee302328dd453d33ceddc817d3563d0b279284",
     "skills/merge-expert/SKILL.md": "7a643a500d4c5591025cc9c3ccc606c04a102b10cd7ac3ca1bfb2189d0b2275b",
     "skills/merge/SKILL.md": "2453f280c4cce801fdc57408cd5d294c1da9b229ade1ef20d60d849ce922238e",
     "skills/objc/SKILL.md": "b70f3c8d0ca5e12a3ac510e9758337cfee91d9634ea61af31c65827922dc56d7",
@@ -360,8 +360,9 @@
     "workflows/rules/memory-lifecycle/clear-memory-review-on-create.yaml": "3ee8a3835a2dc8b925a057961fa89e4a0654274b6a02a45e69f3d4b9d9217ecb",
     "workflows/rules/memory-lifecycle/digest-on-plan-turn-end.yaml": "c368689c821dd658523a3efc6b302edf8c0a7775b530528a0d8f623b32877d53",
     "workflows/rules/memory-lifecycle/digest-on-response.yaml": "e838b43e643e53a7001108a6cfb200244f0a4ac8b3b0c6eb13cb8d95683a9012",
+    "workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml": "b41b52c971c37b98cbd237d76ee5f395996a183c4495bc36b3b5e117c809703f",
     "workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml": "4ec100000dc8599fc5cb6e753157c573996469088c627e3f1d02147d69edebda",
-    "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "b2916a3e9c04a559140b356213840389997a071264d64fd11d84aba06a854918",
+    "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "79982467931356ede3a35fbc98a8732568bf124f166275b82b4f013ce3552b28",
     "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "633aeb3b013155c1da5d361004286dcdd03aff9c52cc7e4ad62dc862e9efc8a7",
     "workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml": "1ff1260cf3ad45869377934cc10fd03397c9dbfe0c8e19810cb8b423316d8cd1",
     "workflows/rules/memory-lifecycle/require-memory-review-before-status.yaml": "454515f01b3e9292c47f430c8749843dd988e60bd0f74d7d7feb9b3289468a97",
@@ -451,7 +452,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "9ad99361899c380394a01afde1fa5b29f780ba9ce6ce4159135311eb7de51de2"
+    "workflows/variables/gobby-default-variables.yaml": "8ef6fee8e31901937ac5a5bae5b314f2749731fc1cf0220454649839ae7fbef8"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

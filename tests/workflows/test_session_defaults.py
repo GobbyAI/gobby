@@ -214,6 +214,7 @@ variables:
             "require_commit_before_status",
             "enforce_tool_schema_check",
             "auto_inject_handoff",
+            "plan_memory_write_nudge_fired",
             "servers_listed",
             "listed_servers",
             "unlocked_tools",
@@ -222,3 +223,12 @@ variables:
         rows = mgr.list_all(workflow_type="variable", include_deleted=False)
         synced_names = {r.name for r in rows}
         assert expected_vars.issubset(synced_names), f"Missing: {expected_vars - synced_names}"
+
+    def test_plan_memory_write_nudge_defaults_false(self, db: HubDatabase) -> None:
+        sync_bundled_variables(db)
+        mgr = LocalWorkflowDefinitionManager(db)
+
+        row = mgr.get_by_name("plan_memory_write_nudge_fired")
+        assert row is not None
+        body = json.loads(row.definition_json)
+        assert body["value"] is False

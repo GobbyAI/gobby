@@ -315,6 +315,7 @@ def _set_plan_mode_with_anchor(
             anchor_id=request_anchor_id,
             content=request_content,
         )
+        variables["plan_memory_write_nudge_fired"] = False
     variables["plan_mode"] = is_plan
 
 

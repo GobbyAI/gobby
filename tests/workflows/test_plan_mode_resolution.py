@@ -546,6 +546,7 @@ def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
         "chat_mode": "normal",
         "mode_level": 1,
         "plan_mode": False,
+        "plan_memory_write_nudge_fired": True,
         REQUEST_ANCHOR_VARIABLE: anchor,
     }
     event = _tool_event(HookEventType.BEFORE_TOOL, data={"permission_mode": "plan"})
@@ -554,6 +555,7 @@ def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
 
     assert variables["plan_mode"] is True
     assert variables["mode_level"] == 0
+    assert variables["plan_memory_write_nudge_fired"] is False
     assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
 
 
