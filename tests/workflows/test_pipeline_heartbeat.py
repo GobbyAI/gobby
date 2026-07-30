@@ -711,6 +711,31 @@ async def test_interactive_session_task_not_recovered(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("agent_depth", [0, 1])
+async def test_handoff_ready_session_task_not_recovered(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+    agent_depth: int,
+) -> None:
+    """A handoff-ready owner retains its in-progress task claim."""
+    _seed_db(temp_db)
+    temp_db.execute(
+        "UPDATE sessions SET status = 'handoff_ready', agent_depth = %s WHERE id = %s",
+        (agent_depth, SESSION_ID),
+    )
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
+
+    result = await heartbeat_with_tasks.check_stale_tasks()
+    assert result.recovered == 0
+
+    task = task_manager.get_task(task_id)
+    assert task is not None
+    assert projected_task_state(task) == "in_progress"
+    assert task.claimed_by_session_id == SESSION_ID
+
+
+@pytest.mark.asyncio
 async def test_expired_session_task_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
