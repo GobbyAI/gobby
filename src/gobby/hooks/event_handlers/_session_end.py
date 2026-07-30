@@ -5,6 +5,7 @@ from __future__ import annotations
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import SessionEndReason
+from gobby.sessions.tmux_context import is_configured_tmux_socket
 
 
 class SessionEndMixin(EventHandlersBase):
@@ -61,6 +62,12 @@ class SessionEndMixin(EventHandlersBase):
             end_reason = SessionEndReason.OTHER
         if end_reason == SessionEndReason.COMPACT:
             end_status = "handoff_ready"
+        elif (
+            session is not None
+            and session.session_type == "terminal"
+            and is_configured_tmux_socket(session.terminal_context) is False
+        ):
+            end_status = "paused"
         elif (
             end_reason == SessionEndReason.IDLE
             and session is not None

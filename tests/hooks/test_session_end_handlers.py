@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -395,6 +396,7 @@ class TestSessionEndHandling:
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
         mock_session.session_type = "terminal"
+        mock_session.terminal_context = {"tmux_socket_name": "spawn"}
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -405,12 +407,51 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        response = handlers.handle_session_end(event)
+        with patch(
+            "gobby.hooks.event_handlers._session_end.is_configured_tmux_socket",
+            return_value=True,
+        ):
+            response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status.assert_called_once_with(
             "sess-123", "expired"
         )
+
+    def test_session_end_pauses_interactive_tmux_session(self, mock_dependencies: dict) -> None:
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = "run-456"
+        mock_session.session_type = "terminal"
+        mock_session.terminal_context = {
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "tmux_window_id": "@7",
+            "tmux_pane": "%6",
+        }
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_end.is_configured_tmux_socket",
+                return_value=False,
+            ),
+            patch("gobby.workflows.state_manager.WorkflowInstanceManager") as manager_cls,
+        ):
+            response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "paused"
+        )
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+        manager_cls.return_value.delete_instances_for_session.assert_not_called()
 
     def test_session_end_handoff_ready_error_handled(
         self,
@@ -438,7 +479,7 @@ class TestSessionEndHandling:
         assert "sess-123" in caplog.text
 
     def test_session_end_marks_liveness_monitor_recently_handled(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         monitor = MagicMock()
         handlers = EventHandlers(**mock_dependencies)

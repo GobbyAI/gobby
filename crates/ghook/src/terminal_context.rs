@@ -12,14 +12,33 @@
 
 use serde_json::{Value, json};
 use std::env;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const TMUX_IDENTITY_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Debug, PartialEq)]
+struct TmuxIdentity {
+    window_id: String,
+    session_name: String,
+}
 
 /// Build a terminal-context object for injection under
 /// `input_data.terminal_context`.
 pub fn capture() -> Value {
-    build_context(
-        env::var("TMUX").ok().as_deref(),
-        env::var("TMUX_PANE").ok().as_deref(),
-    )
+    let tmux = env::var("TMUX").ok();
+    let tmux_pane = env::var("TMUX_PANE").ok();
+    let identity = tmux
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .zip(tmux_pane.as_deref().filter(|pane| is_valid_tmux_pane(pane)))
+        .and_then(|(tmux_env, pane)| {
+            parse_tmux_socket_path(tmux_env)
+                .and_then(|socket_path| query_tmux_identity(&socket_path, pane))
+        });
+    build_context(tmux.as_deref(), tmux_pane.as_deref(), identity.as_ref())
 }
 
 pub fn enabled_for_hook(hook_type: &str) -> bool {
@@ -34,7 +53,11 @@ pub fn enabled_for_hook(hook_type: &str) -> bool {
     )
 }
 
-fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
+fn build_context(
+    tmux: Option<&str>,
+    tmux_pane: Option<&str>,
+    identity: Option<&TmuxIdentity>,
+) -> Value {
     let parent_pid = parent_pid_or_null();
     let tty = tty_name_or_null();
     let valid_tmux = tmux
@@ -48,6 +71,12 @@ fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
         .and_then(|(tmux, _)| parse_tmux_socket_path(tmux))
         .map(Value::String)
         .unwrap_or(Value::Null);
+    let tmux_window_id = identity
+        .map(|value| Value::String(value.window_id.clone()))
+        .unwrap_or(Value::Null);
+    let tmux_session = identity
+        .map(|value| Value::String(value.session_name.clone()))
+        .unwrap_or(Value::Null);
     let term_program = env_or_null("TERM_PROGRAM");
 
     json!({
@@ -55,6 +84,8 @@ fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
         "tty": tty,
         "tmux_pane": tmux_pane,
         "tmux_socket_path": tmux_socket_path,
+        "tmux_window_id": tmux_window_id,
+        "tmux_session": tmux_session,
         "term_program": term_program,
         "gobby_session_id": env_or_null("GOBBY_SESSION_ID"),
         "gobby_parent_session_id": env_or_null("GOBBY_PARENT_SESSION_ID"),
@@ -164,6 +195,68 @@ fn parse_tmux_socket_path(tmux_env: &str) -> Option<String> {
     }
 }
 
+fn parse_tmux_identity(output: &str) -> Option<TmuxIdentity> {
+    let (window_id, session_name) = output.trim().split_once('\t')?;
+    let window_number = window_id.strip_prefix('@')?;
+    if window_number.is_empty()
+        || !window_number
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        || session_name.is_empty()
+    {
+        return None;
+    }
+    Some(TmuxIdentity {
+        window_id: window_id.to_string(),
+        session_name: session_name.to_string(),
+    })
+}
+
+fn query_tmux_identity(socket_path: &str, pane: &str) -> Option<TmuxIdentity> {
+    let mut child = Command::new("tmux")
+        .args([
+            "-S",
+            socket_path,
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{window_id}\t#{session_name}",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let deadline = Instant::now() + TMUX_IDENTITY_TIMEOUT;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut output = String::new();
+                stdout.read_to_string(&mut output).ok()?;
+                return parse_tmux_identity(&output);
+            }
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,9 +278,19 @@ mod tests {
 
     #[test]
     fn build_context_sets_tmux_pane_verbatim() {
-        let ctx = build_context(Some("/private/tmp/tmux-501/default,12345,0"), Some("%42"));
+        let identity = TmuxIdentity {
+            window_id: "@17".to_string(),
+            session_name: "work".to_string(),
+        };
+        let ctx = build_context(
+            Some("/private/tmp/tmux-501/default,12345,0"),
+            Some("%42"),
+            Some(&identity),
+        );
         assert_eq!(ctx["tmux_pane"], "%42");
         assert_eq!(ctx["tmux_socket_path"], "/private/tmp/tmux-501/default");
+        assert_eq!(ctx["tmux_window_id"], "@17");
+        assert_eq!(ctx["tmux_session"], "work");
     }
 
     #[test]
@@ -200,10 +303,26 @@ mod tests {
             (Some(""), Some("%42")),
             (None, Some("%42")),
         ] {
-            let ctx = build_context(tmux, pane);
+            let ctx = build_context(tmux, pane, None);
             assert_eq!(ctx["tmux_pane"], Value::Null);
             assert_eq!(ctx["tmux_socket_path"], Value::Null);
+            assert_eq!(ctx["tmux_window_id"], Value::Null);
+            assert_eq!(ctx["tmux_session"], Value::Null);
         }
+    }
+
+    #[test]
+    fn parse_tmux_identity_requires_window_and_session() {
+        assert_eq!(
+            parse_tmux_identity("@290\twork\n"),
+            Some(TmuxIdentity {
+                window_id: "@290".to_string(),
+                session_name: "work".to_string(),
+            })
+        );
+        assert_eq!(parse_tmux_identity("290\twork"), None);
+        assert_eq!(parse_tmux_identity("@invalid\twork"), None);
+        assert_eq!(parse_tmux_identity("@290\t"), None);
     }
 
     #[test]
@@ -273,13 +392,15 @@ mod tests {
 
     #[test]
     fn capture_emits_expected_keys() {
-        let ctx = build_context(Some("/tmp/tmux,1,0"), Some("%9"));
+        let ctx = build_context(Some("/tmp/tmux,1,0"), Some("%9"), None);
         let obj = ctx.as_object().expect("object");
         for key in [
             "parent_pid",
             "tty",
             "tmux_pane",
             "tmux_socket_path",
+            "tmux_window_id",
+            "tmux_session",
             "term_program",
             "gobby_session_id",
             "gobby_parent_session_id",

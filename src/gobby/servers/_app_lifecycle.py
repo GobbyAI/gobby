@@ -297,6 +297,7 @@ def create_lifespan(
                     app.state.hook_manager, "_dispatch_session_summaries", None
                 ),
                 message_processor=getattr(app.state.hook_manager, "_message_processor", None),
+                tmux_config=server.services.config.tmux if server.services.config else None,
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)

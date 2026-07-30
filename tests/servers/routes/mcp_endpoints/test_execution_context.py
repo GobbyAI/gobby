@@ -304,6 +304,7 @@ class TestSetContextForRequest:
             "parent_pid": 4242,
             "tmux_pane": "%1",
             "tmux_socket_path": "/tmp/tmux/default",
+            "tmux_window_id": "@7",
         }
         server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
             id=SESSION_UUID,

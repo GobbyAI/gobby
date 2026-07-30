@@ -7,10 +7,13 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.sessions.tmux_context import query_tmux_identity
+
 TERMINAL_CONTEXT_KEYS = (
     "parent_pid",
     "tmux_pane",
     "tmux_socket_path",
+    "tmux_window_id",
     "tmux_session",
     "tty",
     "term_program",
@@ -31,6 +34,8 @@ def current_terminal_context() -> dict[str, Any]:
         tmux_socket_path = tmux.split(",", 1)[0]
         if tmux_socket_path:
             context["tmux_socket_path"] = tmux_socket_path
+            if tmux_pane and (identity := query_tmux_identity(tmux_socket_path, tmux_pane)):
+                context["tmux_window_id"], context["tmux_session"] = identity
 
     for env_name, context_name in (
         ("TMUX_SESSION", "tmux_session"),
@@ -40,7 +45,7 @@ def current_terminal_context() -> dict[str, Any]:
     ):
         value = os.environ.get(env_name)
         if value:
-            context[context_name] = value
+            context.setdefault(context_name, value)
 
     return context
 

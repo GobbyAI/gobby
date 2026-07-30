@@ -1,10 +1,9 @@
 """CLI session liveness monitor.
 
-Polls active sessions to detect when the owning terminal disappears. For
-tmux-backed terminal sessions, the recorded tmux pane is the authoritative
-liveness signal; parent PID checks cover non-tmux rows and tmux command
-failures. When liveness is gone the session is expired and summary generation is
-dispatched while the JSONL transcript file still exists on disk.
+Polls active sessions to detect when the owning terminal disappears.
+Interactive tmux sessions use their stable window as the authoritative
+liveness signal. Sessions on Gobby's configured spawn socket retain pane-based
+lifecycle behavior. Parent PID checks cover non-tmux rows.
 
 This is the fast-path counterpart to the 24-hour stale-session expiry in
 SessionLifecycleManager, reducing the detection window from hours to
@@ -23,6 +22,13 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.tmux import TmuxConfig
+from gobby.sessions.tmux_context import (
+    get_tmux_session_name,
+    get_tmux_socket_name,
+    get_tmux_window_id,
+    is_configured_tmux_socket,
+)
 from gobby.terminal_ownership import (
     log_pane_ownership_decision,
     resolve_pane_ownership,
@@ -50,9 +56,27 @@ class _TerminalLivenessRecord:
     parent_pid: int | None
     tmux_pane: str | None
     tmux_socket_path: str | None
+    tmux_socket_name: str | None = None
+    tmux_window_id: str | None = None
+    tmux_session: str | None = None
     status: str = "active"
     machine_id: str | None = None
     terminal_context: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _TmuxSocketIdentity:
+    socket_path: str | None
+    socket_name: str | None
+
+
+@dataclass
+class _TmuxLivenessInventory:
+    live_windows: set[str]
+    live_panes: set[str]
+    window_by_pane: dict[str, str]
+    active_pane_by_window: dict[str, str]
+    session_by_window: dict[str, str]
 
 
 class SessionLivenessMonitor:
@@ -81,12 +105,14 @@ class SessionLivenessMonitor:
         generate_summaries_fn: Callable[..., Coroutine[Any, Any, None]] | None = None,
         message_processor: SessionMessageProcessor | None = None,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
+        tmux_config: TmuxConfig | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
         self._generate_summaries_fn = generate_summaries_fn
         self._message_processor = message_processor
         self._poll_interval = poll_interval
+        self._tmux_config = tmux_config
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
@@ -139,7 +165,6 @@ class SessionLivenessMonitor:
 
     async def _check_sessions(self) -> None:
         """Check active sessions for dead terminal owners."""
-        # 1. Prune expired entries from recently-handled set
         now = time.monotonic()
         expired = [
             sid for sid, ts in self._recently_handled.items() if now - ts > _RECENTLY_HANDLED_TTL
@@ -152,53 +177,69 @@ class SessionLivenessMonitor:
         if not active_sessions:
             return
 
-        live_panes_by_socket = await asyncio.to_thread(
-            self._get_live_tmux_panes_by_socket,
+        inventories = await asyncio.to_thread(
+            self._get_tmux_inventories_by_socket,
             active_sessions,
         )
 
-        pane_groups: dict[tuple[str, str, str], list[_TerminalLivenessRecord]] = {}
-        for record in active_sessions:
-            identity = terminal_session_identity(record)
-            if identity is not None:
-                pane_groups.setdefault(identity, []).append(record)
-        processed_panes: set[tuple[str, str, str]] = set()
         missing_pane_expired_count = 0
         missing_pane_session_samples: list[str] = []
         missing_pane_samples: list[str] = []
+        live_records: list[tuple[_TerminalLivenessRecord, bool]] = []
 
-        # 3. A live tmux pane is authoritative, but only its canonical process owner
-        # may retain the pane when multiple nested provider records share it.
         for record in active_sessions:
             if record.session_id in self._recently_handled:
                 continue
 
-            if record.tmux_pane:
-                live_panes = live_panes_by_socket.get(record.tmux_socket_path)
-                if live_panes is None:
-                    # tmux command failed unexpectedly. Avoid mass-expiring live sessions;
-                    # PID fallback below can still catch plainly dead terminals.
-                    if record.parent_pid is not None and self._is_pid_alive(record.parent_pid):
+            has_tmux_target = bool(record.tmux_pane or getattr(record, "tmux_window_id", None))
+            if has_tmux_target:
+                socket = self._socket_identity(record)
+                inventory = inventories.get(socket)
+                configured_socket = is_configured_tmux_socket(
+                    getattr(record, "terminal_context", None),
+                    config=self._configured_tmux_config(),
+                )
+
+                if configured_socket is False:
+                    if inventory is None:
+                        # Window identity is authoritative for interactive
+                        # sessions, so a failed tmux query must fail open.
                         continue
-                elif record.tmux_pane not in live_panes:
-                    expired_missing_pane = await self._expire_record_for_missing_pane(record, now)
-                    if expired_missing_pane:
-                        missing_pane_expired_count += 1
-                        if len(missing_pane_session_samples) < _LOG_SAMPLE_LIMIT:
-                            missing_pane_session_samples.append(record.session_id)
-                            missing_pane_samples.append(record.tmux_pane)
+                    repaired = await self._repair_interactive_tmux_target(record, inventory)
+                    if repaired is None:
+                        expired_missing_pane = await self._expire_record_for_missing_pane(
+                            record, now
+                        )
+                        if expired_missing_pane:
+                            missing_pane_expired_count += 1
+                            if len(missing_pane_session_samples) < _LOG_SAMPLE_LIMIT:
+                                missing_pane_session_samples.append(record.session_id)
+                                missing_pane_samples.append(
+                                    getattr(record, "tmux_window_id", None)
+                                    or record.tmux_pane
+                                    or ""
+                                )
+                    else:
+                        live_records.append((repaired, True))
                     continue
 
-                if live_panes is not None:
-                    identity = terminal_session_identity(record)
-                    if identity is None:
-                        await self._refresh_for_tmux_pid_churn(record)
+                if record.tmux_pane:
+                    if inventory is None:
+                        if record.parent_pid is not None and self._is_pid_alive(record.parent_pid):
+                            continue
+                    else:
+                        if record.tmux_pane not in inventory.live_panes:
+                            expired_missing_pane = await self._expire_record_for_missing_pane(
+                                record, now
+                            )
+                            if expired_missing_pane:
+                                missing_pane_expired_count += 1
+                                if len(missing_pane_session_samples) < _LOG_SAMPLE_LIMIT:
+                                    missing_pane_session_samples.append(record.session_id)
+                                    missing_pane_samples.append(record.tmux_pane)
+                            continue
+                        live_records.append((record, False))
                         continue
-                    if identity in processed_panes:
-                        continue
-                    processed_panes.add(identity)
-                    await self._handle_live_pane_group(pane_groups[identity], now)
-                    continue
 
             if getattr(record, "status", "active") not in {"active", "paused"}:
                 continue
@@ -225,9 +266,29 @@ class SessionLivenessMonitor:
             await self._expire_session(record.session_id)
             self._recently_handled[record.session_id] = now
 
+        pane_groups: dict[
+            tuple[str, str, str],
+            tuple[list[_TerminalLivenessRecord], bool],
+        ] = {}
+        for record, interactive in live_records:
+            identity = terminal_session_identity(record)
+            if identity is None:
+                if interactive:
+                    await self._reconcile_live_interactive_session(record)
+                else:
+                    await self._refresh_for_tmux_pid_churn(record)
+                continue
+            records, existing_interactive = pane_groups.setdefault(identity, ([], interactive))
+            records.append(record)
+            if existing_interactive != interactive:
+                logger.warning("Conflicting tmux socket classification for %s", identity)
+
+        for records, interactive in pane_groups.values():
+            await self._handle_live_pane_group(records, now, interactive=interactive)
+
         if missing_pane_expired_count:
             logger.info(
-                "Expired %d session(s) whose tmux panes are missing",
+                "Expired %d session(s) whose tmux targets are missing",
                 missing_pane_expired_count,
                 extra={
                     "event": "session_liveness_missing_panes_expired",
@@ -241,6 +302,8 @@ class SessionLivenessMonitor:
         self,
         records: list[_TerminalLivenessRecord],
         now: float,
+        *,
+        interactive: bool,
     ) -> None:
         """Expire dead nested records while retaining the canonical live owner."""
         decision = await asyncio.to_thread(
@@ -250,6 +313,9 @@ class SessionLivenessMonitor:
         )
         log_pane_ownership_decision(logger, decision)
         if decision.owner is None:
+            if interactive:
+                for record in records:
+                    await self._reconcile_live_interactive_session(record)
             return
 
         if decision.reason in {"validated_live_process", "nested_outermost_process"}:
@@ -266,11 +332,98 @@ class SessionLivenessMonitor:
                     )
                     await self._expire_session(record.session_id)
                     self._recently_handled[record.session_id] = now
-            return
 
         owner = decision.owner
         if isinstance(owner, _TerminalLivenessRecord):
-            await self._refresh_for_tmux_pid_churn(owner)
+            if interactive:
+                await self._reconcile_live_interactive_session(owner)
+            elif decision.reason not in {"validated_live_process", "nested_outermost_process"}:
+                await self._refresh_for_tmux_pid_churn(owner)
+
+    async def _repair_interactive_tmux_target(
+        self,
+        record: _TerminalLivenessRecord,
+        inventory: _TmuxLivenessInventory,
+    ) -> _TerminalLivenessRecord | None:
+        """Backfill stable window identity and repair a replaced pane."""
+        recorded_window = getattr(record, "tmux_window_id", None)
+        recorded_session = getattr(record, "tmux_session", None)
+        window_id = recorded_window if recorded_window in inventory.live_windows else None
+        pane_id = record.tmux_pane if record.tmux_pane in inventory.live_panes else None
+
+        if window_id is not None:
+            if pane_id is None or inventory.window_by_pane.get(pane_id) != window_id:
+                pane_id = inventory.active_pane_by_window.get(window_id)
+        elif pane_id is not None:
+            window_id = inventory.window_by_pane.get(pane_id)
+
+        if window_id is None or pane_id is None:
+            return None
+
+        tmux_session = inventory.session_by_window.get(window_id) or recorded_session
+        context = dict(record.terminal_context or {})
+        patch: dict[str, str] = {}
+        if recorded_window != window_id:
+            patch["tmux_window_id"] = window_id
+        if record.tmux_pane != pane_id:
+            patch["tmux_pane"] = pane_id
+        if tmux_session and recorded_session != tmux_session:
+            patch["tmux_session"] = tmux_session
+
+        if patch:
+            try:
+                await asyncio.to_thread(
+                    self._session_manager.update,
+                    record.session_id,
+                    terminal_context=patch,
+                )
+            except Exception:
+                logger.warning(
+                    "SessionLivenessMonitor: failed to repair tmux target for %s",
+                    record.session_id,
+                    exc_info=True,
+                )
+            context.update(patch)
+
+        return _TerminalLivenessRecord(
+            session_id=record.session_id,
+            source=record.source,
+            parent_pid=record.parent_pid,
+            tmux_pane=pane_id,
+            tmux_socket_path=record.tmux_socket_path,
+            tmux_socket_name=getattr(record, "tmux_socket_name", None),
+            tmux_window_id=window_id,
+            tmux_session=tmux_session,
+            status=record.status,
+            machine_id=record.machine_id,
+            terminal_context=context,
+        )
+
+    async def _reconcile_live_interactive_session(
+        self,
+        record: _TerminalLivenessRecord,
+    ) -> None:
+        """Touch a live interactive owner and revive a false-expired row."""
+        try:
+            updated = await asyncio.to_thread(
+                self._session_manager.revive_expired_terminal_session,
+                record.session_id,
+            )
+            status = getattr(updated, "status", record.status)
+            if record.status == "expired" and status == "active":
+                await asyncio.to_thread(
+                    self._session_manager.update_status,
+                    record.session_id,
+                    "paused",
+                )
+            elif status in {"active", "paused"}:
+                await asyncio.to_thread(self._session_manager.touch, record.session_id)
+        except Exception:
+            logger.warning(
+                "SessionLivenessMonitor: failed to reconcile live interactive session %s",
+                record.session_id,
+                exc_info=True,
+            )
 
     async def _expire_record_for_missing_pane(
         self,
@@ -357,8 +510,11 @@ class SessionLivenessMonitor:
             tmux_socket_path = ctx.get("tmux_socket_path")
             if tmux_socket_path is not None and not isinstance(tmux_socket_path, str):
                 tmux_socket_path = None
+            tmux_socket_name = get_tmux_socket_name(ctx)
+            tmux_window_id = get_tmux_window_id(ctx)
+            tmux_session = get_tmux_session_name(ctx)
 
-            if parent_pid is None and not tmux_pane:
+            if parent_pid is None and not tmux_pane and not tmux_window_id:
                 continue
 
             result.append(
@@ -368,6 +524,9 @@ class SessionLivenessMonitor:
                     parent_pid=parent_pid,
                     tmux_pane=tmux_pane,
                     tmux_socket_path=tmux_socket_path,
+                    tmux_socket_name=tmux_socket_name,
+                    tmux_window_id=tmux_window_id,
+                    tmux_session=tmux_session,
                     status=self._row_value(row, "status") or "active",
                     machine_id=self._row_value(row, "machine_id"),
                     terminal_context=ctx,
@@ -416,43 +575,75 @@ class SessionLivenessMonitor:
         except OSError:
             return False
 
-    @staticmethod
-    def _is_tmux_pane_alive(pane_id: str, socket_path: str | None = None) -> bool:
-        """Check if a tmux pane is still alive.
+    def _configured_tmux_config(self) -> TmuxConfig | None:
+        if self._tmux_config is not None:
+            return self._tmux_config
+        try:
+            from gobby.agents.tmux import get_configured_tmux_config
 
-        Args:
-            pane_id: Tmux pane identifier (e.g. ``%6``).
-            socket_path: Exact tmux socket path, when known.
-
-        Returns:
-            True if the pane exists in any tmux session, False otherwise
-            (including when tmux is not installed or the server isn't running).
-        """
-        live_panes = SessionLivenessMonitor._list_tmux_panes(socket_path)
-        return live_panes is not None and pane_id in live_panes
+            return get_configured_tmux_config()
+        except RuntimeError:
+            return None
 
     @staticmethod
-    def _list_tmux_panes(socket_path: str | None = None) -> set[str] | None:
-        """Return live pane IDs for a tmux server, or None when the command failed."""
-        candidate_commands: list[list[str]]
-        if socket_path:
-            candidate_commands = [["tmux", "-S", socket_path]]
-        else:
-            candidate_commands = [["tmux"]]
-            try:
-                from gobby.agents.tmux import get_configured_tmux_command_prefix
+    def _socket_identity(record: _TerminalLivenessRecord) -> _TmuxSocketIdentity:
+        return _TmuxSocketIdentity(
+            record.tmux_socket_path,
+            getattr(record, "tmux_socket_name", None),
+        )
 
-                configured_command = get_configured_tmux_command_prefix()
-            except RuntimeError:
-                configured_command = ["tmux", "-L", "gobby"]
-            if configured_command not in candidate_commands:
-                candidate_commands.append(configured_command)
+    def _tmux_commands_for_socket(self, socket: _TmuxSocketIdentity) -> list[list[str]]:
+        config = self._configured_tmux_config()
+        command = config.command if config is not None else "tmux"
+        if socket.socket_path:
+            return [[command, "-S", socket.socket_path]]
+        if socket.socket_name:
+            return [[command, "-L", socket.socket_name]]
 
-        live_panes: set[str] = set()
-        for command in candidate_commands:
+        commands = [[command]]
+        if config is not None:
+            configured = [command]
+            if config.socket_path:
+                configured.extend(["-S", config.socket_path])
+            elif config.socket_name:
+                configured.extend(["-L", config.socket_name])
+            if configured not in commands:
+                commands.append(configured)
+        return commands
+
+    @staticmethod
+    def _empty_tmux_inventory() -> _TmuxLivenessInventory:
+        return _TmuxLivenessInventory(set(), set(), {}, {}, {})
+
+    @classmethod
+    def _parse_tmux_inventory(cls, output: str) -> _TmuxLivenessInventory:
+        inventory = cls._empty_tmux_inventory()
+        for line in output.splitlines():
+            fields = line.rstrip().split("\t")
+            if len(fields) != 5:
+                continue
+            session_name, window_id, pane_id, pane_active, pane_dead = fields
+            if not session_name or not window_id or not pane_id or pane_dead == "1":
+                continue
+            inventory.live_windows.add(window_id)
+            inventory.live_panes.add(pane_id)
+            inventory.window_by_pane[pane_id] = window_id
+            inventory.session_by_window[window_id] = session_name
+            if pane_active == "1" or window_id not in inventory.active_pane_by_window:
+                inventory.active_pane_by_window[window_id] = pane_id
+        return inventory
+
+    def _list_tmux_inventory(
+        self,
+        socket: _TmuxSocketIdentity,
+    ) -> _TmuxLivenessInventory | None:
+        """Return live windows and panes for one recorded tmux socket."""
+        inventory = self._empty_tmux_inventory()
+        tmux_format = "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_active}\t#{pane_dead}"
+        for command in self._tmux_commands_for_socket(socket):
             try:
                 result = subprocess.run(
-                    [*command, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_dead}"],
+                    [*command, "list-panes", "-a", "-F", tmux_format],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -461,19 +652,25 @@ class SessionLivenessMonitor:
                 return None
             if result.returncode != 0:
                 return None
-            for line in result.stdout.splitlines():
-                pane_id, _separator, pane_dead = line.strip().partition("\t")
-                if pane_id and pane_dead != "1":
-                    live_panes.add(pane_id)
-        return live_panes
+            current = self._parse_tmux_inventory(result.stdout)
+            inventory.live_windows.update(current.live_windows)
+            inventory.live_panes.update(current.live_panes)
+            inventory.window_by_pane.update(current.window_by_pane)
+            inventory.active_pane_by_window.update(current.active_pane_by_window)
+            inventory.session_by_window.update(current.session_by_window)
+        return inventory
 
-    def _get_live_tmux_panes_by_socket(
+    def _get_tmux_inventories_by_socket(
         self,
         records: list[_TerminalLivenessRecord],
-    ) -> dict[str | None, set[str] | None]:
-        """Batch tmux pane liveness by recorded socket path."""
-        socket_paths = {record.tmux_socket_path for record in records if record.tmux_pane}
-        return {socket_path: self._list_tmux_panes(socket_path) for socket_path in socket_paths}
+    ) -> dict[_TmuxSocketIdentity, _TmuxLivenessInventory | None]:
+        """Probe each recorded tmux socket once per poll."""
+        sockets = {
+            self._socket_identity(record)
+            for record in records
+            if record.tmux_pane or getattr(record, "tmux_window_id", None)
+        }
+        return {socket: self._list_tmux_inventory(socket) for socket in sockets}
 
     async def _expire_session(self, session_id: str) -> None:
         """Dispatch summaries and expire a session."""

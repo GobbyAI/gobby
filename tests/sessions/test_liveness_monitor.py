@@ -13,10 +13,33 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.sessions.liveness_monitor import _LOG_SAMPLE_LIMIT, SessionLivenessMonitor
+from gobby.config.tmux import TmuxConfig
+from gobby.sessions.liveness_monitor import (
+    _LOG_SAMPLE_LIMIT,
+    SessionLivenessMonitor,
+    _TmuxLivenessInventory,
+    _TmuxSocketIdentity,
+)
 from gobby.terminal_ownership import PaneOwnershipDecision
 
 pytestmark = pytest.mark.unit
+
+
+def _inventories(
+    socket_path: str | None,
+    *panes: str,
+) -> dict[_TmuxSocketIdentity, _TmuxLivenessInventory]:
+    window_id = "@1"
+    active_pane = panes[0] if panes else None
+    return {
+        _TmuxSocketIdentity(socket_path, None): _TmuxLivenessInventory(
+            live_windows={window_id} if panes else set(),
+            live_panes=set(panes),
+            window_by_pane=dict.fromkeys(panes, window_id),
+            active_pane_by_window={window_id: active_pane} if active_pane else {},
+            session_by_window={window_id: "work"} if panes else {},
+        )
+    }
 
 
 def _as_tuples(records):
@@ -153,15 +176,15 @@ class TestCheckSessions:
         def get_active_terminal_sessions():
             return [record]
 
-        def get_live_tmux_panes_by_socket(records):
+        def get_tmux_inventories_by_socket(records):
             assert records == [record]
-            return {None: {"%1"}}
+            return _inventories(None, "%1")
 
         monkeypatch.setattr(monitor, "_get_active_terminal_sessions", get_active_terminal_sessions)
         monkeypatch.setattr(
             monitor,
-            "_get_live_tmux_panes_by_socket",
-            get_live_tmux_panes_by_socket,
+            "_get_tmux_inventories_by_socket",
+            get_tmux_inventories_by_socket,
         )
 
         async def run_in_place(func, *args, **kwargs):
@@ -175,7 +198,7 @@ class TestCheckSessions:
 
         assert to_thread.await_args_list == [
             call(get_active_terminal_sessions),
-            call(get_live_tmux_panes_by_socket, [record]),
+            call(get_tmux_inventories_by_socket, [record]),
             call(mock_session_storage.touch, "sess-tmux"),
         ]
         mock_session_storage.touch.assert_called_once_with("sess-tmux")
@@ -300,8 +323,8 @@ class TestCheckSessions:
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
             patch.object(
                 SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: {"%6"}},
+                "_get_tmux_inventories_by_socket",
+                return_value=_inventories(None, "%6"),
             ),
         ):
             await monitor._check_sessions()
@@ -327,8 +350,8 @@ class TestCheckSessions:
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
             patch.object(
                 SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: {"%6"}},
+                "_get_tmux_inventories_by_socket",
+                return_value=_inventories(None, "%6"),
             ),
         ):
             await monitor._check_sessions()
@@ -354,8 +377,8 @@ class TestCheckSessions:
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
             patch.object(
                 SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: set()},
+                "_get_tmux_inventories_by_socket",
+                return_value=_inventories(None),
             ),
         ):
             await monitor._check_sessions()
@@ -380,8 +403,8 @@ class TestCheckSessions:
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
             patch.object(
                 SessionLivenessMonitor,
-                "_get_live_tmux_panes_by_socket",
-                return_value={None: set()},
+                "_get_tmux_inventories_by_socket",
+                return_value=_inventories(None),
             ),
         ):
             await monitor._check_sessions()
@@ -417,8 +440,8 @@ class TestCheckSessions:
         monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
         monkeypatch.setattr(
             monitor,
-            "_get_live_tmux_panes_by_socket",
-            lambda _records: {"/tmp/tmux": set()},
+            "_get_tmux_inventories_by_socket",
+            lambda _records: _inventories("/tmp/tmux"),
         )
 
         with (
@@ -468,8 +491,8 @@ class TestCheckSessions:
         monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
         monkeypatch.setattr(
             monitor,
-            "_get_live_tmux_panes_by_socket",
-            lambda _records: {"/tmp/tmux": set()},
+            "_get_tmux_inventories_by_socket",
+            lambda _records: _inventories("/tmp/tmux"),
         )
 
         with (
@@ -577,8 +600,8 @@ class TestCheckSessions:
 
         with patch.object(
             SessionLivenessMonitor,
-            "_get_live_tmux_panes_by_socket",
-            return_value={None: {"%6"}},
+            "_get_tmux_inventories_by_socket",
+            return_value=_inventories(None, "%6"),
         ):
             await monitor._check_sessions()
 
@@ -601,8 +624,8 @@ class TestCheckSessions:
 
         with patch.object(
             SessionLivenessMonitor,
-            "_get_live_tmux_panes_by_socket",
-            return_value={None: set()},
+            "_get_tmux_inventories_by_socket",
+            return_value=_inventories(None),
         ):
             await monitor._check_sessions()
 
@@ -656,8 +679,8 @@ class TestCheckSessions:
         )
         monkeypatch.setattr(
             monitor,
-            "_get_live_tmux_panes_by_socket",
-            lambda _records: {"/tmp/tmux-501/gobby": {"%226"}},
+            "_get_tmux_inventories_by_socket",
+            lambda _records: _inventories("/tmp/tmux-501/gobby", "%226"),
         )
 
         with (
@@ -676,6 +699,235 @@ class TestCheckSessions:
         assert expire.await_args == call("grok-child")
         assert expire.await_count == 1
         assert set(monitor._recently_handled) == {"grok-child"}
+
+    @pytest.mark.asyncio
+    async def test_interactive_window_survives_pane_replacement(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        context = {
+            "tmux_socket_path": "/tmp/tmux-501/default",
+            "tmux_window_id": "@7",
+            "tmux_pane": "%6",
+            "tmux_session": "work",
+        }
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "interactive",
+                "status": "paused",
+                "machine_id": "machine",
+                "terminal_context": context,
+            }
+        ]
+        mock_session_storage.revive_expired_terminal_session.return_value = SimpleNamespace(
+            status="paused"
+        )
+        inventory = _TmuxLivenessInventory(
+            live_windows={"@7"},
+            live_panes={"%9"},
+            window_by_pane={"%9": "@7"},
+            active_pane_by_window={"@7": "%9"},
+            session_by_window={"@7": "work"},
+        )
+
+        with patch.object(
+            monitor,
+            "_get_tmux_inventories_by_socket",
+            return_value={_TmuxSocketIdentity("/tmp/tmux-501/default", None): inventory},
+        ):
+            await monitor._check_sessions()
+
+        mock_session_storage.update.assert_called_once_with(
+            "interactive",
+            terminal_context={"tmux_pane": "%9"},
+        )
+        mock_session_storage.touch.assert_called_once_with("interactive")
+        mock_dispatch_fn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_interactive_window_removal_expires_once(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "interactive",
+                "status": "paused",
+                "terminal_context": {
+                    "parent_pid": 123,
+                    "tmux_socket_path": "/tmp/tmux-501/default",
+                    "tmux_window_id": "@7",
+                    "tmux_pane": "%6",
+                },
+            }
+        ]
+
+        with (
+            patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
+            patch.object(
+                monitor,
+                "_get_tmux_inventories_by_socket",
+                return_value={
+                    _TmuxSocketIdentity(
+                        "/tmp/tmux-501/default", None
+                    ): SessionLivenessMonitor._empty_tmux_inventory()
+                },
+            ),
+        ):
+            await monitor._check_sessions()
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_called_once_with("interactive", False, None)
+        mock_session_storage.expire_if_active.assert_called_once_with("interactive")
+
+    @pytest.mark.asyncio
+    async def test_interactive_probe_failure_fails_open_with_dead_pid(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        socket = _TmuxSocketIdentity("/tmp/tmux-501/default", None)
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "interactive",
+                "status": "paused",
+                "terminal_context": {
+                    "parent_pid": 99999,
+                    "tmux_socket_path": socket.socket_path,
+                    "tmux_window_id": "@7",
+                    "tmux_pane": "%6",
+                },
+            }
+        ]
+
+        with (
+            patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
+            patch.object(
+                monitor,
+                "_get_tmux_inventories_by_socket",
+                return_value={socket: None},
+            ),
+        ):
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_not_called()
+        mock_session_storage.expire_if_active.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_interactive_pane_backfills_window_identity(
+        self, monitor, mock_session_storage
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        socket = _TmuxSocketIdentity("/tmp/tmux-501/default", None)
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "legacy",
+                "status": "paused",
+                "machine_id": "machine",
+                "terminal_context": {
+                    "tmux_socket_path": socket.socket_path,
+                    "tmux_pane": "%6",
+                },
+            }
+        ]
+        mock_session_storage.revive_expired_terminal_session.return_value = SimpleNamespace(
+            status="paused"
+        )
+        inventory = _TmuxLivenessInventory(
+            live_windows={"@7"},
+            live_panes={"%6"},
+            window_by_pane={"%6": "@7"},
+            active_pane_by_window={"@7": "%6"},
+            session_by_window={"@7": "work"},
+        )
+
+        with patch.object(
+            monitor,
+            "_get_tmux_inventories_by_socket",
+            return_value={socket: inventory},
+        ):
+            await monitor._check_sessions()
+
+        mock_session_storage.update.assert_called_once_with(
+            "legacy",
+            terminal_context={"tmux_window_id": "@7", "tmux_session": "work"},
+        )
+        mock_session_storage.touch.assert_called_once_with("legacy")
+
+    @pytest.mark.asyncio
+    async def test_live_interactive_window_revives_false_expiry_as_paused(
+        self, monitor, mock_session_storage
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        socket = _TmuxSocketIdentity("/tmp/tmux-501/default", None)
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "expired-interactive",
+                "status": "expired",
+                "machine_id": "machine",
+                "terminal_context": {
+                    "tmux_socket_path": socket.socket_path,
+                    "tmux_window_id": "@7",
+                    "tmux_pane": "%6",
+                },
+            }
+        ]
+        mock_session_storage.revive_expired_terminal_session.return_value = SimpleNamespace(
+            status="active"
+        )
+        inventory = _TmuxLivenessInventory(
+            live_windows={"@7"},
+            live_panes={"%6"},
+            window_by_pane={"%6": "@7"},
+            active_pane_by_window={"@7": "%6"},
+            session_by_window={"@7": "work"},
+        )
+
+        with patch.object(
+            monitor,
+            "_get_tmux_inventories_by_socket",
+            return_value={socket: inventory},
+        ):
+            await monitor._check_sessions()
+
+        mock_session_storage.revive_expired_terminal_session.assert_called_once_with(
+            "expired-interactive"
+        )
+        mock_session_storage.update_status.assert_called_once_with("expired-interactive", "paused")
+
+    @pytest.mark.asyncio
+    async def test_configured_spawn_socket_keeps_pane_lifecycle(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        monitor._tmux_config = TmuxConfig(socket_name="spawn")
+        socket = _TmuxSocketIdentity("/tmp/tmux-501/spawn", None)
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "spawned",
+                "status": "paused",
+                "terminal_context": {
+                    "tmux_socket_path": socket.socket_path,
+                    "tmux_window_id": "@7",
+                    "tmux_pane": "%6",
+                },
+            }
+        ]
+        inventory = _TmuxLivenessInventory(
+            live_windows={"@7"},
+            live_panes={"%9"},
+            window_by_pane={"%9": "@7"},
+            active_pane_by_window={"@7": "%9"},
+            session_by_window={"@7": "spawned"},
+        )
+
+        with patch.object(
+            monitor,
+            "_get_tmux_inventories_by_socket",
+            return_value={socket: inventory},
+        ):
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_called_once_with("spawned", False, None)
+        mock_session_storage.expire_if_active.assert_called_once_with("spawned")
 
 
 class TestExpireSession:
@@ -788,119 +1040,51 @@ class TestIsPidAlive:
             assert SessionLivenessMonitor._is_pid_alive(1) is False
 
 
-class TestIsTmuxPaneAlive:
-    """Tests for the static _is_tmux_pane_alive method."""
-
-    def test_alive_pane(self):
-        """Pane ID in tmux output means pane is alive."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "%5\t0\n%6\t0\n%7\t1\n"
-        with patch("subprocess.run", return_value=mock_result):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
-
-    def test_dead_pane(self):
-        """Pane ID not in tmux output means pane is dead."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "%5\t0\n%7\t0\n"
-        with patch("subprocess.run", return_value=mock_result):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
-
-    def test_pane_dead_marker_is_not_alive(self):
-        """pane_dead=1 excludes panes that tmux still lists after process exit."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "%6\t1\n"
-        with patch("subprocess.run", return_value=mock_result):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
-
-    def test_alive_pane_with_socket_path(self):
-        """When a socket path is known, liveness checks that exact tmux server."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "%6\t0\n"
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6", "/tmp/tmux-1000/gobby") is True
-
-        mock_run.assert_called_once_with(
-            [
-                "tmux",
-                "-S",
-                "/tmp/tmux-1000/gobby",
-                "list-panes",
-                "-a",
-                "-F",
-                "#{pane_id}\t#{pane_dead}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
+class TestTmuxInventory:
+    def test_parses_live_windows_panes_and_active_mapping(self):
+        inventory = SessionLivenessMonitor._parse_tmux_inventory(
+            "work\t@7\t%5\t0\t0\nwork\t@7\t%6\t1\t0\ndead\t@8\t%7\t1\t1\n"
         )
 
-    def test_dead_pane_checks_default_and_gobby_socket_when_path_unknown(self):
-        """Legacy rows without a socket path check both the default server and Gobby's socket."""
-        default_result = MagicMock()
-        default_result.returncode = 0
-        default_result.stdout = ""
-        gobby_result = MagicMock()
-        gobby_result.returncode = 0
-        gobby_result.stdout = "%6\t0\n"
+        assert inventory.live_windows == {"@7"}
+        assert inventory.live_panes == {"%5", "%6"}
+        assert inventory.window_by_pane == {"%5": "@7", "%6": "@7"}
+        assert inventory.active_pane_by_window == {"@7": "%6"}
+        assert inventory.session_by_window == {"@7": "work"}
 
-        with (
-            patch(
-                "gobby.agents.tmux.get_configured_tmux_command_prefix",
-                return_value=["tmux", "-L", "gobby"],
-            ),
-            patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run,
-        ):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
+    def test_exact_socket_path_uses_configured_command(self, monitor):
+        monitor._tmux_config = TmuxConfig(command="custom-tmux", socket_name="spawn")
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="work\t@7\t%6\t1\t0\n",
+            stderr="",
+        )
+        socket = _TmuxSocketIdentity("/tmp/user-tmux", None)
 
-        assert mock_run.call_args_list[0].args[0] == [
-            "tmux",
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id}\t#{pane_dead}",
-        ]
-        assert mock_run.call_args_list[1].args[0] == [
-            "tmux",
-            "-L",
-            "gobby",
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id}\t#{pane_dead}",
-        ]
+        with patch("subprocess.run", return_value=result) as mock_run:
+            inventory = monitor._list_tmux_inventory(socket)
 
-    def test_tmux_not_installed(self):
-        """FileNotFoundError (tmux not installed) returns False."""
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
+        assert inventory is not None
+        assert inventory.live_panes == {"%6"}
+        assert mock_run.call_args.args[0][:3] == ["custom-tmux", "-S", "/tmp/user-tmux"]
 
-    def test_tmux_timeout(self):
-        """Subprocess timeout returns False."""
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("tmux", 5)):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
+    @pytest.mark.parametrize(
+        "error",
+        [
+            FileNotFoundError(),
+            subprocess.TimeoutExpired("tmux", 5),
+            OSError("tmux server not running"),
+        ],
+    )
+    def test_probe_error_returns_none(self, monitor, error):
+        with patch("subprocess.run", side_effect=error):
+            assert monitor._list_tmux_inventory(_TmuxSocketIdentity(None, None)) is None
 
-    def test_os_error(self):
-        """Generic OSError returns False."""
-        with patch("subprocess.run", side_effect=OSError("tmux server not running")):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
-
-    def test_empty_output(self):
-        """Empty tmux output (no panes) returns False."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = ""
-        with patch("subprocess.run", return_value=mock_result):
-            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
-
-    def test_nonzero_exit_returns_probe_failure(self):
-        """A non-zero tmux exit is a failed probe, not an empty pane list."""
+    def test_nonzero_exit_returns_probe_failure(self, monitor):
         result = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="tmux error")
         with patch("subprocess.run", return_value=result):
-            assert SessionLivenessMonitor._list_tmux_panes() is None
+            assert monitor._list_tmux_inventory(_TmuxSocketIdentity(None, None)) is None
 
 
 class TestGetActiveTerminalSessions:
@@ -917,6 +1101,9 @@ class TestGetActiveTerminalSessions:
                         "parent_pid": 67890,
                         "tmux_pane": "%3",
                         "tmux_socket_path": "/tmp/tmux-1000/gobby",
+                        "tmux_socket_name": "spawn",
+                        "tmux_window_id": "@9",
+                        "tmux_session": "work",
                     }
                 ),
             },
@@ -928,6 +1115,9 @@ class TestGetActiveTerminalSessions:
             ("s1", 12345, None, None),
             ("s2", 67890, "%3", "/tmp/tmux-1000/gobby"),
         ]
+        assert result[1].tmux_socket_name == "spawn"
+        assert result[1].tmux_window_id == "@9"
+        assert result[1].tmux_session == "work"
 
     def test_skips_missing_pid(self, monitor, mock_session_storage):
         """Sessions without any terminal liveness metadata are excluded."""

@@ -35,6 +35,7 @@ _TERMINAL_CONTEXT_KEYS = frozenset(
         "parent_pid",
         "tmux_pane",
         "tmux_socket_path",
+        "tmux_window_id",
         "tmux_session",
         "tty",
         "term_program",

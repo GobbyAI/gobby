@@ -409,16 +409,16 @@ class TestWakeDispatch:
         assert not ism_manager.create_message.called
 
     @pytest.mark.asyncio
-    async def test_interactive_tmux_session_gets_pane_wake_signal(
+    async def test_interactive_tmux_session_uses_repaired_active_pane(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """Depth 0 tmux-backed sessions get durable ISM plus pane wake."""
+        """Wake delivery uses the active pane persisted by liveness repair."""
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"tmux_window_id": "@7", "tmux_pane": "%19"}',
         )
         tmux_pane_sender = AsyncMock()
         dispatcher = WakeDispatcher(
@@ -433,7 +433,7 @@ class TestWakeDispatch:
         assert ism_manager.create_message.call_count == 1
         assert ism_manager.create_message.call_args is not None
         tmux_pane_sender.assert_awaited_once_with(
-            "%12",
+            "%19",
             CONTINUE_WAKE_MESSAGE,
             None,
             submit=True,
