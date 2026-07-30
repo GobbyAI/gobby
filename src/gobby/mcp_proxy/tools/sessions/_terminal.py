@@ -573,7 +573,6 @@ def register_terminal_tools(
 
         resume_skills = persist_compact_resume_required_skills(db, resolved_session_id)
         continuation_prompt = build_compact_self_continue_prompt(
-            resume_skills,
             summary_session_id=resolved_session_id,
         )
         schedule_continuation_readiness: Callable[[str | None], bool] | None = None

@@ -599,15 +599,12 @@ class TestCompactSelfTerminalPath:
             captured_prompts[0].index("wait_for_summary")
         )
         assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
-        assert captured_prompts[0].count('"get_skill"') == 1
-        assert "list_mcp_servers" not in captured_prompts[0]
-        assert "list_tools" not in captured_prompts[0]
-        assert "get_tool_schema" not in captured_prompts[0]
-        assert "Required tier (must load; rule-enforced):" in captured_prompts[0]
-        assert "- `python`" in captured_prompts[0]
-        assert "- `development-discipline`" in captured_prompts[0]
-        assert "Advisory tier (agent judgment):" in captured_prompts[0]
-        assert "- `code-index`" in captured_prompts[0]
+        # Skill tiers ride the SessionStart injected context via the persisted
+        # tier variables; the typed trigger stays a single skill-free paste line.
+        assert "\n" not in captured_prompts[0]
+        assert "get_skill" not in captured_prompts[0]
+        assert "Required tier" not in captured_prompts[0]
+        assert "Advisory tier" not in captured_prompts[0]
 
     def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
         session = _make_terminal_session("claude")
@@ -1328,7 +1325,7 @@ class TestCompactSelfWebChatPath:
         }
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
         mock_mark.assert_not_called()
 
@@ -1378,7 +1375,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
         live_session._on_pre_compact.assert_awaited_once_with({"trigger": "manual"})
         assert precompact_outputs == [{"decision": "allow", "context": "pipeline output"}]
@@ -1407,7 +1404,7 @@ class TestCompactSelfWebChatPath:
         assert result["command"] == "/compact"
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
 
     @pytest.mark.unit
@@ -1455,7 +1452,7 @@ class TestCompactSelfWebChatPath:
         await queued_task
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
 
     def test_web_chat_session_ref_resolves_before_registry_lookup(self) -> None:
@@ -1483,7 +1480,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="resolved-db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="resolved-db-id")),
         ]
 
     @pytest.mark.parametrize("lookup_id", ["db-id", "conv-1"])
@@ -1530,7 +1527,7 @@ class TestCompactSelfWebChatPath:
         }
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
 
     def test_web_chat_fallback_continues_after_registry_lookup_error(self) -> None:
@@ -1576,7 +1573,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
+            call(build_compact_self_continue_prompt(summary_session_id="db-id")),
         ]
 
     def test_web_chat_fallback_returns_original_error_after_registry_compact_error(

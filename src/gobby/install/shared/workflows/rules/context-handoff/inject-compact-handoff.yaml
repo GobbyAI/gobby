@@ -23,7 +23,19 @@ rules:
 
           {{ skill_fetch_batch_directive(resume_skills) }}
           {% endif %}
+          {% set advisory_skills = variables.get('compact_resume_advisory_skills') or [] %}
+          {% if advisory_skills %}
+
+          ## Advisory Skill Reload
+          Reload any of these with the same get_skill call only if they are still relevant to your remaining work (agent judgment):
+
+          {% for skill in advisory_skills %}- `{{ skill }}`
+          {% endfor %}
+          {% endif %}
           <!-- gobby:injected-context:end -->
       - type: set_variable
         variable: compact_resume_required_skills
+        value: []
+      - type: set_variable
+        variable: compact_resume_advisory_skills
         value: []

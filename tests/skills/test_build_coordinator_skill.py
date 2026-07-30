@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
 from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import parse_skill_file
 
@@ -156,10 +157,7 @@ def test_build_coordinator_documents_compact_self_tool_path() -> None:
     assert 'get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")' in body
     assert 'call_tool("gobby-sessions", "compact_self", {})' in body
     assert "top-level `call_tool.session_id`" in body
-    assert "interrupts the active turn before sending" in normalized
-    assert "provider-specific compaction command" in normalized
-    assert "`Error: interrupted` and `Conversation interrupted`" in normalized
-    assert "followed by `Context compacted`" in normalized
+    assert COMPACT_SELF_INTERRUPT_WARNING in normalized
 
 
 def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> None:

@@ -129,7 +129,6 @@ class WebChatSessionRegistry:
             session,
             command,
             continuation_prompt=build_compact_self_continue_prompt(
-                None,
                 summary_session_id=summary_session_id,
             ),
         )

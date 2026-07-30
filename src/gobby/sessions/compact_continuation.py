@@ -12,19 +12,20 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
+    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
     COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_INTRO,
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS,
+    COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
     COMPACT_SELF_INTERRUPT_WARNING,
     LOADING_SKILLS_NAME,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
-from gobby.skills.formatting import skill_fetch_proxy_path
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COMPACT_HANDOFF_MARKER_VARIABLE",
+    "COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE",
     "COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS",
     "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
     "COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS",
@@ -40,6 +42,7 @@ __all__ = [
     "COMPACT_SELF_CONTINUE_INTRO",
     "COMPACT_SELF_CONTINUE_PROMPT",
     "COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS",
+    "COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "COMPACT_SELF_INTERRUPT_WARNING",
     "COMPACT_SELF_CONTINUE_VARIABLE",
     "LOADING_SKILLS_NAME",
@@ -93,55 +96,36 @@ def persist_compact_resume_required_skills(
     db: HubDatabase,
     session_id: str,
 ) -> CompactResumeSkillTiers:
-    """Persist required skills and return both pre-compact resume tiers."""
+    """Persist both pre-compact resume tiers and return them."""
     variables = _load_session_variables(db, session_id)
     skill_tiers = _collect_compact_resume_required_skills(variables)
-    try:
-        _merge_session_variable(
-            db,
-            session_id,
-            COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
-            skill_tiers["required"],
-        )
-    except Exception:
-        logger.warning(
-            "Failed to persist compact resume required skills for session %s",
-            session_id,
-            exc_info=True,
-        )
+    for variable, values in (
+        (COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE, skill_tiers["required"]),
+        (COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE, skill_tiers["advisory"]),
+    ):
+        try:
+            _merge_session_variable(db, session_id, variable, values)
+        except Exception:
+            logger.warning(
+                "Failed to persist compact resume skills variable %s for session %s",
+                variable,
+                session_id,
+                exc_info=True,
+            )
     return skill_tiers
 
 
 def build_compact_self_continue_prompt(
-    resume_skills: CompactResumeSkillTiers | None,
     *,
     summary_session_id: str | None = None,
 ) -> str:
-    """Build the post-compact continuation prompt with skill reload directives."""
-    wait_directive = _build_wait_for_summary_directive(summary_session_id)
-    skill_tiers = _prepare_compact_resume_skill_tiers(
-        resume_skills or {"required": [], "advisory": []}
-    )
-    if not any(skill_tiers.values()):
-        return wait_directive
+    """Build the single-line post-compact continuation trigger.
 
-    sections: list[str] = []
-    if required := skill_tiers["required"]:
-        sections.append(
-            "Required tier (must load; rule-enforced):\n" + _format_skill_name_list(required)
-        )
-    if advisory := skill_tiers["advisory"]:
-        sections.append(
-            "Advisory tier (agent judgment): reload any still relevant to your remaining work:\n"
-            + _format_skill_name_list(advisory)
-        )
-
-    instruction = (
-        "For each skill name below, call "
-        f"`{skill_fetch_proxy_path('<skill-name>')}` with `<skill-name>` replaced by "
-        "that name."
-    )
-    return f"{wait_directive}\n\n{instruction}\n\n" + "\n\n".join(sections)
+    Skill reload tiers ride the SessionStart injected context (the
+    inject-compact-handoff rule reads the persisted tier variables); the typed
+    prompt stays one paste line so terminal submission is reliable.
+    """
+    return _build_wait_for_summary_directive(summary_session_id)
 
 
 def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
@@ -358,7 +342,27 @@ async def _send_compact_self_continuation(
         return False
     if not ok:
         logger.warning("tmux send-keys returned false for compact_self continuation %s", session_id)
-    return bool(ok)
+        return False
+    # A composer still settling the bracketed paste can swallow the Enter that
+    # send_keys appended; this second Enter submits in that case and is a no-op
+    # on an already-submitted (empty) composer. Delivery already succeeded, so
+    # a retry failure is logged, never propagated.
+    await asyncio.sleep(COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
+    try:
+        retry_ok = await tmux.send_keys(target, "Enter", literal=False)
+    except Exception:
+        retry_ok = False
+        logger.warning(
+            "Failed follow-up Enter for compact_self continuation %s",
+            session_id,
+            exc_info=True,
+        )
+    if not retry_ok:
+        logger.warning(
+            "tmux follow-up Enter returned false for compact_self continuation %s",
+            session_id,
+        )
+    return True
 
 
 async def _continue_after_codex_compaction_ready(
@@ -615,10 +619,6 @@ def _prepare_compact_resume_skill_tiers(
         ]
         advisory = [skill for skill in advisory if skill != LOADING_SKILLS_NAME]
     return {"required": required, "advisory": advisory}
-
-
-def _format_skill_name_list(skills: list[str]) -> str:
-    return "\n".join(f"- `{skill}`" for skill in skills)
 
 
 def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:

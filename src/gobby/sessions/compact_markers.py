@@ -4,6 +4,7 @@ from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
+COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
 COMPACT_SELF_INTERRUPT_WARNING = (
     "In a terminal session that call comes back as a rejected or cancelled tool use "
@@ -25,6 +26,10 @@ COMPACT_SELF_CONTINUE_PROMPT = (
 )
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
+# A composer still settling a bracketed paste can swallow the Enter that
+# follows it; a second Enter after this delay submits the trigger and is a
+# no-op when the first Enter already submitted (empty composer).
+COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS = 1.5
 LOADING_SKILLS_NAME = "loading-skills"
 # Written by the workflow engine's load_skill effect: the skills the session's
 # active workflow asked for, whether or not the agent got to them yet.

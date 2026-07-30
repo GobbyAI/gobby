@@ -14,6 +14,7 @@ import pytest
 
 from gobby.sessions.compact_continuation import (
     _COMPACT_SELF_CONTINUATION_TASKS,
+    COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
     COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_VARIABLE,
     COMPACT_SELF_INTERRUPT_WARNING,
@@ -82,9 +83,15 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
     tmux = BlockingTmux()
     prompt = "Continue the task.\nPreserve the existing context."
 
-    with patch(
-        "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
-        return_value=tmux,
+    with (
+        patch(
+            "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+            return_value=tmux,
+        ),
+        patch(
+            "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+            0.0,
+        ),
     ):
         assert schedule_compact_self_continuation(session, prompt, delay_seconds=0)
         await send_started.wait()
@@ -97,6 +104,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
         await task
         await drain_asyncio_tasks()
 
+    assert tmux.sent_keys[-1] == ("%12", "Enter", False)
     assert not _COMPACT_SELF_CONTINUATION_TASKS
 
 
@@ -126,16 +134,25 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
 
     tmux = ReadinessTmux()
 
-    await _continue_after_codex_compaction_ready(
-        session_db,
-        tmux=tmux,
-        target="%12",
-        pending_session_id=SESSION_ID,
-        before_command=before_command,
-        poll_seconds=0,
-    )
+    with patch(
+        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    ):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            tmux=tmux,
+            target="%12",
+            pending_session_id=SESSION_ID,
+            before_command=before_command,
+            poll_seconds=0,
+        )
 
-    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+    # The paste is followed by a settle-tolerant second Enter (a no-op when the
+    # first Enter already submitted).
+    assert tmux.sent_keys == [
+        ("%12", f"{prompt}\n", True),
+        ("%12", "Enter", False),
+    ]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
 
@@ -184,16 +201,23 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
 
     tmux = RollingTmux()
 
-    await _continue_after_codex_compaction_ready(
-        session_db,
-        tmux=tmux,
-        target="%12",
-        pending_session_id=SESSION_ID,
-        before_command=before_command,
-        poll_seconds=0,
-    )
+    with patch(
+        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    ):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            tmux=tmux,
+            target="%12",
+            pending_session_id=SESSION_ID,
+            before_command=before_command,
+            poll_seconds=0,
+        )
 
-    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+    assert tmux.sent_keys == [
+        ("%12", f"{prompt}\n", True),
+        ("%12", "Enter", False),
+    ]
 
 
 @pytest.mark.asyncio
@@ -220,16 +244,23 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
 
     tmux = ProseTmux()
 
-    await _continue_after_codex_compaction_ready(
-        session_db,
-        tmux=tmux,
-        target="%12",
-        pending_session_id=SESSION_ID,
-        before_command=before_command,
-        poll_seconds=0,
-    )
+    with patch(
+        "gobby.sessions.compact_continuation.COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
+        0.0,
+    ):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            tmux=tmux,
+            target="%12",
+            pending_session_id=SESSION_ID,
+            before_command=before_command,
+            poll_seconds=0,
+        )
 
-    assert tmux.sent_keys == [("%12", f"{prompt}\n", True)]
+    assert tmux.sent_keys == [
+        ("%12", f"{prompt}\n", True),
+        ("%12", "Enter", False),
+    ]
 
 
 def test_codex_readiness_rejects_missing_baseline(session_db: HubDatabase) -> None:
@@ -406,6 +437,7 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     }
     variables = sv_mgr.get_variables(SESSION_ID)
     assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
+    assert variables[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
 
 
 def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill(
@@ -432,13 +464,8 @@ def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill
 
 
 def test_reload_directive_normalized() -> None:
-    prompt = build_compact_self_continue_prompt(
-        {
-            "required": ["python", "python", "development-discipline"],
-            "advisory": ["python", "code-index", "code-index"],
-        },
-        summary_session_id=SOURCE_SESSION_ID,
-    )
+    """The typed trigger is one paste line; skill tiers ride the injected context."""
+    prompt = build_compact_self_continue_prompt(summary_session_id=SOURCE_SESSION_ID)
 
     assert prompt.startswith("Continue where you last left off.")
     assert COMPACT_SELF_INTERRUPT_WARNING in prompt
@@ -448,19 +475,10 @@ def test_reload_directive_normalized() -> None:
     )
     assert f'gobby-sessions.wait_for_summary(session_id="{SOURCE_SESSION_ID}")' in prompt
     assert "`completed=false`" in prompt
-    assert "directly" in prompt
-    assert "list_mcp_servers" not in prompt
-    assert "list_tools" not in prompt
-    assert "get_tool_schema" not in prompt
-    assert prompt.count('"get_skill"') == 1
-    required_index = prompt.index("Required tier (must load; rule-enforced):")
-    advisory_index = prompt.index("Advisory tier (agent judgment):")
-    assert required_index < advisory_index
-    assert prompt.count("- `python`") == 1
-    assert prompt.count("- `development-discipline`") == 1
-    assert prompt.count("- `code-index`") == 1
-    assert "reload any still relevant to your remaining work" in prompt
-    assert "- `python`" not in prompt[advisory_index:]
+    assert "\n" not in prompt
+    assert "Required tier" not in prompt
+    assert "Advisory tier" not in prompt
+    assert "get_skill" not in prompt
 
 
 @pytest.mark.asyncio
@@ -493,14 +511,16 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
     sv_mgr = SessionVariableManager(session_db)
     sv_mgr.merge_variables(SESSION_ID, variables)
     skill_tiers = persist_compact_resume_required_skills(session_db, SESSION_ID)
-    prompt = build_compact_self_continue_prompt(skill_tiers)
+    prompt = build_compact_self_continue_prompt()
 
     assert skill_tiers == {
         "required": ["loading-skills", "python", "plan"],
         "advisory": ["pytest", "brevity"],
     }
+    # The inject-compact-handoff rule reads both persisted tiers into the
+    # SessionStart injected context; the typed trigger stays skill-free.
     persisted = sv_mgr.get_variables(SESSION_ID)
     assert persisted[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
-    assert prompt.count('"get_skill"') == 1
-    assert prompt.index("- `plan`") < prompt.index("Advisory tier")
-    assert prompt.index("- `pytest`") > prompt.index("Advisory tier")
+    assert persisted[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
+    assert "get_skill" not in prompt
+    assert "\n" not in prompt

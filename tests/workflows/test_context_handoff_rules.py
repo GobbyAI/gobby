@@ -20,6 +20,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
+from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -222,9 +223,14 @@ class TestInjectCompactHandoff:
         assert body.effects[0].template is not None
         assert "Continuation Context" in body.effects[0].template
         assert "skill_fetch_batch_directive" in body.effects[0].template
+        assert "Advisory Skill Reload" in body.effects[0].template
+        assert "compact_resume_advisory_skills" in body.effects[0].template
         assert body.effects[1].type == "set_variable"
         assert body.effects[1].variable == "compact_resume_required_skills"
         assert body.effects[1].value == []
+        assert body.effects[2].type == "set_variable"
+        assert body.effects[2].variable == "compact_resume_advisory_skills"
+        assert body.effects[2].value == []
 
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
@@ -248,6 +254,7 @@ class TestInjectWikiOverview:
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "session_start"
+        assert body.effects is not None
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "Project Wiki" in body.effects[0].template
@@ -299,6 +306,7 @@ class TestInjectTaskContextOnStart:
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "session_start"
+        assert body.effects is not None
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
 
@@ -450,6 +458,7 @@ class TestNudgeCompactOnContextPressure:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when == "variables.get('context_compact_guidance_message')"
+        assert body.effects is not None
         assert body.effects[0].type == "inject_context"
         assert "context_compact_guidance_message" in (body.effects[0].template or "")
 
@@ -705,10 +714,7 @@ class TestAutoCompactAfterTaskClose:
 
         assert "compact_self" in fallback_nudge.template
         fallback_template = " ".join(fallback_nudge.template.split())
-        assert "interrupts the active turn before sending" in fallback_template
-        assert "provider-specific compaction command" in fallback_template
-        assert "`Error: interrupted` and `Conversation interrupted`" in fallback_template
-        assert "followed by `Context compacted`" in fallback_template
+        assert COMPACT_SELF_INTERRUPT_WARNING in fallback_template
 
     def test_condition_references_close_task_and_helpers(self, db, manager) -> None:
         _sync_bundled(db)

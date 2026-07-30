@@ -68,7 +68,7 @@ class TestWebChatSessionRegistry:
         }
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
+            build_compact_self_continue_prompt(summary_session_id="db-id"),
         ]
 
     @pytest.mark.asyncio
@@ -132,7 +132,7 @@ class TestWebChatSessionRegistry:
         await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
+            build_compact_self_continue_prompt(summary_session_id="db-id"),
         ]
 
     @pytest.mark.asyncio
@@ -204,7 +204,7 @@ class TestWebChatSessionRegistry:
             await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
+            build_compact_self_continue_prompt(summary_session_id="db-id"),
             WEB_CHAT_WAKE_PROMPT,
         ]
 
