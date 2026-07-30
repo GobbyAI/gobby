@@ -9,6 +9,18 @@ import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.compact_markers import (
+    COMPACT_HANDOFF_MARKER_VARIABLE,
+    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
+    COMPACT_RESUME_SKILL_VARIABLE_KEYS,
+    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    COMPACT_SELF_CONTINUE_INTRO,
+    COMPACT_SELF_CONTINUE_PROMPT,
+    COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS,
+    COMPACT_SELF_CONTINUE_VARIABLE,
+    LOADING_SKILLS_NAME,
+    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+)
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.skills.formatting import skill_fetch_batch_directive
 from gobby.storage.hub.protocol import SessionVariableMutation
@@ -17,48 +29,26 @@ from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+__all__ = [
+    "COMPACT_HANDOFF_MARKER_VARIABLE",
+    "COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE",
+    "COMPACT_RESUME_SKILL_VARIABLE_KEYS",
+    "COMPACT_SELF_CONTINUE_FRESH_SECONDS",
+    "COMPACT_SELF_CONTINUE_INTRO",
+    "COMPACT_SELF_CONTINUE_PROMPT",
+    "COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS",
+    "COMPACT_SELF_CONTINUE_VARIABLE",
+    "LOADING_SKILLS_NAME",
+    "WORKFLOW_REQUESTED_SKILLS_VARIABLE",
+]
+
 logger = logging.getLogger(__name__)
 
 _COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 
-COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
-COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
-COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
-_COMPACT_SELF_CONTINUE_INTRO = (
-    "Continue where you last left off. If the previous turn shows a rejected or "
-    "cancelled compact_self tool-use message immediately followed by /compact or "
-    "/compress, treat it as expected terminal self-compaction delivery, not user "
-    "refusal. "
-)
-COMPACT_SELF_CONTINUE_PROMPT = (
-    _COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
-    f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
-    "Only if the injected context is missing or incomplete, call "
-    "`gobby-sessions.wait_for_summary` for the compacted session. If it returns "
-    "`completed=false`, repeat the same wait call. Once complete, use the returned "
-    "`context` and continue."
-)
-COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
-COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
-LOADING_SKILLS_NAME = "loading-skills"
-# Written by the workflow engine's load_skill effect: the skills the session's
-# active workflow asked for, whether or not the agent got to them yet.
-WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
-# Compaction is an in-place handoff on the same session row, so `loaded_skills` —
-# the runtime ledger of successful agent-visible get_skill calls — survives it and
-# describes exactly what this session had in context. Skills loaded before
-# compaction must be reloaded after it, so the ledger is part of the resume set.
-COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
-    "required_skills",
-    "additional_skills",
-    "claimed_task_required_skills",
-    "claimed_task_additional_skills",
-    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
-    "loaded_skills",
-)
 
 
 def mark_compact_self_continuation_pending(
@@ -585,7 +575,7 @@ def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
 def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:
     if summary_session_id:
         return (
-            _COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
+            COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
             f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
             "Only if the injected context is missing or incomplete, call "
             "`gobby-sessions.wait_for_summary("

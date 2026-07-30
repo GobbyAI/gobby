@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
+from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
@@ -337,9 +338,6 @@ class EffectsMixin(DeliveryFormattingMixin):
 
         elif effect.type == "load_skill":
             if effect.skill:
-                from gobby.sessions.compact_continuation import (
-                    WORKFLOW_REQUESTED_SKILLS_VARIABLE,
-                )
                 from gobby.skills.formatting import skill_fetch_directive
 
                 context_parts.append(skill_fetch_directive(effect.skill))

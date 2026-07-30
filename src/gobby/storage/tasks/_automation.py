@@ -1,12 +1,8 @@
 """Task automation candidate and stale-claim helpers."""
 
-from datetime import timedelta
+import logging
 from typing import Any
 
-from gobby.sessions.compact_continuation import (
-    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
-    COMPACT_SELF_CONTINUE_VARIABLE,
-)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
@@ -15,6 +11,8 @@ from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.utils.datetime import utc_now
+
+logger = logging.getLogger(__name__)
 
 
 def _is_unattended(task: Any) -> bool:
@@ -106,35 +104,23 @@ def list_automation_candidates(
     ]
 
 
-def sweep_stale_claims(
+def release_task_claim(
     db: HubDatabase,
+    task_id: str,
     *,
-    project_id: str | None = None,
-) -> int:
-    """Release task claims held by sessions that are no longer active."""
+    expected_owner_session_id: str,
+    actor: str,
+    reason: str,
+) -> bool:
+    """Release one stale claim if its owner remains ineligible."""
     now = utc_now()
-    params: list[Any] = [now]
     live_session_clause, live_session_params = json_array_contains_condition(
         db,
         "tasks.labels",
         "live-session",
     )
+    params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
-    compact_cutoff = now - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS)
-    params.extend(
-        (
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            compact_cutoff.isoformat(),
-            COMPACT_SELF_CONTINUE_VARIABLE,
-            now.isoformat(),
-        )
-    )
-    project_filter = ""
-    if project_id is not None:
-        project_filter = "AND project_id = %s"
-        params.append(project_id)
 
     with db.transaction() as conn:
         cursor = conn.execute(
@@ -142,31 +128,90 @@ def sweep_stale_claims(
             UPDATE tasks
                SET claimed_by_session_id = NULL,
                    updated_at = %s
-             WHERE closed_at IS NULL
+             WHERE id = %s
+               AND claimed_by_session_id = %s
+               AND closed_at IS NULL
                AND escalated_at IS NULL
                AND COALESCE(is_escalated, FALSE) IS FALSE
-               AND claimed_by_session_id IS NOT NULL
                AND NOT COALESCE(({live_session_clause}), FALSE)
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
                       AND s.status IN ('active', 'paused', 'handoff_ready')
                )
-               AND NOT EXISTS (
-                   SELECT 1
-                     FROM session_variables sv
-                    WHERE sv.session_id = tasks.claimed_by_session_id
-                      AND jsonb_typeof(
-                          sv.variables -> %s
-                      ) = 'object'
-                      AND jsonb_typeof(
-                          sv.variables -> %s -> 'created_at'
-                      ) = 'string'
-                      AND sv.variables -> %s ->> 'created_at' >= %s
-                      AND sv.variables -> %s ->> 'created_at' <= %s
-               )
-               {project_filter}
-            """,  # nosec B608 # project_filter is static SQL selected above.
+            """,
             tuple(params),
         )
-        return cursor.rowcount
+
+    if cursor.rowcount != 1:
+        return False
+
+    logger.info(
+        "Released task claim task_id=%s owner_session_id=%s actor=%s reason=%s",
+        task_id,
+        expected_owner_session_id,
+        actor,
+        reason,
+    )
+    return True
+
+
+def sweep_stale_claims(
+    db: HubDatabase,
+    *,
+    project_id: str | None = None,
+) -> int:
+    """Release task claims held by sessions that are no longer active."""
+    live_session_clause, live_session_params = json_array_contains_condition(
+        db,
+        "tasks.labels",
+        "live-session",
+    )
+    params: list[Any] = list(live_session_params)
+    project_filter = ""
+    if project_id is not None:
+        project_filter = "AND tasks.project_id = %s"
+        params.append(project_id)
+
+    rows = db.fetchall(
+        f"""
+        SELECT tasks.id,
+               tasks.claimed_by_session_id,
+               owner.status AS owner_status
+          FROM tasks
+          LEFT JOIN sessions owner ON owner.id = tasks.claimed_by_session_id
+         WHERE tasks.closed_at IS NULL
+           AND tasks.escalated_at IS NULL
+           AND COALESCE(tasks.is_escalated, FALSE) IS FALSE
+           AND tasks.claimed_by_session_id IS NOT NULL
+           AND NOT COALESCE(({live_session_clause}), FALSE)
+           AND NOT EXISTS (
+               SELECT 1 FROM sessions s
+                WHERE s.id = tasks.claimed_by_session_id
+                  AND s.status IN ('active', 'paused', 'handoff_ready')
+           )
+           {project_filter}
+        """,  # nosec B608 # project_filter is static SQL selected above.
+        tuple(params),
+    )
+
+    released = 0
+    for row in rows:
+        owner_session_id = row["claimed_by_session_id"]
+        if not isinstance(owner_session_id, str):
+            continue
+        owner_status = row["owner_status"]
+        reason = (
+            "owner session is missing"
+            if owner_status is None
+            else f"owner session status is {owner_status}"
+        )
+        if release_task_claim(
+            db,
+            str(row["id"]),
+            expected_owner_session_id=owner_session_id,
+            actor="sweep_stale_claims",
+            reason=reason,
+        ):
+            released += 1
+    return released
