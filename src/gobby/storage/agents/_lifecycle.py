@@ -8,9 +8,11 @@ from typing import Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.deployment import deployment_advisory_key
+from gobby.sessions.status_events import SessionStatusTransition, SessionStatusTransitionCallback
 from gobby.storage.daemon_resume_keys import daemon_resume_consumed_condition
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
@@ -56,6 +58,7 @@ def _execute_terminal_transition(
 
 class _AgentRunLifecycleHost(Protocol):
     db: HubDatabase
+    _status_notifier: SessionStatusTransitionCallback | None
 
     def get(self, run_id: str) -> AgentRun | None: ...
 
@@ -176,6 +179,16 @@ class _AgentRunLifecycleMixin:
         """Pause parked sessions and expire sessions for genuine terminal outcomes."""
         status = "paused" if run.terminal_reason == "daemon_stop" else "expired"
         now = utc_now()
+        rows = self.db.execute(
+            """
+            SELECT *
+            FROM sessions
+            WHERE status IN ('active', 'paused')
+              AND agent_run_id = %s
+            FOR UPDATE
+            """,
+            (run.id,),
+        ).fetchall()
         cursor = self.db.execute(
             """
             UPDATE sessions
@@ -186,32 +199,50 @@ class _AgentRunLifecycleMixin:
             """,
             (status, now, run.id),
         )
+        if self._status_notifier is not None:
+            for row in rows:
+                session = Session.from_row(row)
+                if session.status != status:
+                    self._status_notifier(
+                        SessionStatusTransition.from_session(
+                            session,
+                            status=status,
+                            transitioned_at=now,
+                        )
+                    )
         return _positive_rowcount(cursor)
 
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
         now = utc_now()
         consumed_sql = daemon_resume_consumed_condition(self.db, "ar.resume_metadata_json")
-        cursor = self.db.execute(
-            f"""
-            UPDATE sessions
-            SET status = 'expired',
-                updated_at = %s
-            WHERE status IN ('active', 'paused')
-              AND EXISTS (
-                    SELECT 1
-                    FROM agent_runs ar
-                    WHERE ar.id = sessions.agent_run_id
-                      AND ar.status = ANY(%s)
-                      AND (
-                            ar.terminal_reason IS DISTINCT FROM 'daemon_stop'
-                            OR {consumed_sql}
-                      )
-              )
-            """,
-            (now, list(TERMINAL_AGENT_RUN_STATUSES)),
-        )
-        return _positive_rowcount(cursor)
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                UPDATE sessions
+                SET status = 'expired',
+                    updated_at = %s
+                WHERE status IN ('active', 'paused')
+                  AND EXISTS (
+                        SELECT 1
+                        FROM agent_runs ar
+                        WHERE ar.id = sessions.agent_run_id
+                          AND ar.status = ANY(%s)
+                          AND (
+                                ar.terminal_reason IS DISTINCT FROM 'daemon_stop'
+                                OR {consumed_sql}
+                          )
+                  )
+                RETURNING *
+                """,
+                (now, list(TERMINAL_AGENT_RUN_STATUSES)),
+            ).fetchall()
+            if self._status_notifier is not None:
+                for row in rows:
+                    self._status_notifier(
+                        SessionStatusTransition.from_session(Session.from_row(row))
+                    )
+        return len(rows)
 
     def complete(
         self: _AgentRunLifecycleHost,

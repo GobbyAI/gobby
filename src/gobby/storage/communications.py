@@ -442,12 +442,6 @@ SELECT
 
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
         """Save a new routing rule to the database."""
-        if not rule.id:
-            rule.id = str(uuid.uuid4())
-
-        if rule.project_id is None and self.project_id:
-            rule.project_id = self.project_id
-
         with self.db.transaction() as conn:
             conn.execute(
                 """
@@ -478,19 +472,35 @@ SELECT
         return CommsRoutingRule.from_row(dict(row)) if row else None
 
     def list_routing_rules(
-        self, channel_id: str | None = None, enabled_only: bool = True
+        self,
+        channel_id: str | None = None,
+        project_id: str | None = None,
+        global_scope: bool | None = None,
+        enabled: bool | None = None,
+        event_pattern: str | None = None,
     ) -> list[CommsRoutingRule]:
-        """List routing rules."""
+        """List routing rules using exact administrative filters."""
         sql = "SELECT * FROM comms_routing_rules WHERE 1=1"
         params: list[Any] = []
 
-        if enabled_only:
-            sql += " AND enabled IS TRUE"
-        if channel_id:
-            sql += " AND (channel_id = %s OR channel_id IS NULL)"
+        if channel_id is not None:
+            sql += " AND channel_id = %s"
             params.append(channel_id)
+        if global_scope is True:
+            sql += " AND project_id IS NULL"
+        elif project_id is not None:
+            sql += " AND project_id = %s"
+            params.append(project_id)
+        elif global_scope is False:
+            sql += " AND project_id IS NOT NULL"
+        if enabled is not None:
+            sql += " AND enabled = %s"
+            params.append(enabled)
+        if event_pattern is not None:
+            sql += " AND event_pattern = %s"
+            params.append(event_pattern)
 
-        sql += " ORDER BY priority DESC"
+        sql += " ORDER BY priority DESC, created_at ASC, id ASC"
 
         rows = self.db.fetchall(sql, tuple(params))
         return [CommsRoutingRule.from_row(dict(row)) for row in rows]

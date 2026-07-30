@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2185,46 +2186,145 @@ def test_thread_map_move_to_end_on_track() -> None:
     assert manager._get_thread_id("ch", "s3") == "t3"
 
 
-def test_routing_rule_crud_invalidates_cache() -> None:
-    """Manager routing rule CRUD methods should invalidate router cache."""
-    from gobby.communications.models import CommsRoutingRule
+def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None:
+    """Manager CRUD owns subscription identity, validation, and cache invalidation."""
+    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
+    store = make_store([channel])
+    rules: dict[str, CommsRoutingRule] = {}
+    store.get_channel.side_effect = lambda channel_id: (
+        channel if channel_id == channel.id else None
+    )
+    store.create_routing_rule.side_effect = lambda rule: rules.setdefault(rule.id, rule)
+    store.get_routing_rule.side_effect = rules.get
+    store.list_routing_rules.side_effect = lambda **_filters: list(rules.values())
+    store.update_routing_rule.side_effect = lambda rule: rules.setdefault(rule.id, rule)
+    store.delete_routing_rule.side_effect = rules.pop
+    session_store = MagicMock()
+    session_store.get.return_value = MagicMock(project_id="project-1")
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), session_store)
+    manager._router._rules_cache = []
 
-    store = make_store()
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-
-    rule = CommsRoutingRule(
-        id="rule-1",
-        name="Test Rule",
-        channel_id="chan-1",
-        event_pattern="task.*",
+    created = manager.create_event_subscription(
+        name=" Agent pauses ",
+        channel="Telegram",
+        event_pattern=" session.agent.paused ",
+        project_id="project-1",
+        global_scope=False,
+        session_id="session-1",
         priority=10,
     )
 
-    # Populate cache by setting it directly
-    manager._router._rules_cache = [rule]
-    manager._router._cache_expires_at = float("inf")
-
-    # Create should invalidate
-    store.create_routing_rule.return_value = rule
-    manager.create_routing_rule(rule)
+    assert str(uuid.UUID(created.id)) == created.id
+    assert created.name == "Agent pauses"
+    assert created.event_pattern == "session.agent.paused"
+    assert created.channel_id == channel.id
+    assert created.project_id == "project-1"
+    assert created.session_id == "session-1"
+    assert created.config_json == {}
+    assert created.created_at == created.updated_at
     assert manager._router._rules_cache is None
 
-    # Repopulate cache
-    manager._router._rules_cache = [rule]
-    manager._router._cache_expires_at = float("inf")
+    manager._router._rules_cache = [created]
+    assert manager.get_event_subscription(created.id) is created
+    assert manager.list_event_subscriptions(
+        channel=channel.id,
+        project_id="project-1",
+        enabled=False,
+        event_pattern="session.agent.paused",
+    ) == [created]
+    store.list_routing_rules.assert_called_once_with(
+        channel_id=channel.id,
+        project_id="project-1",
+        global_scope=None,
+        enabled=False,
+        event_pattern="session.agent.paused",
+    )
 
-    # Update should invalidate
-    store.update_routing_rule.return_value = rule
-    manager.update_routing_rule(rule)
+    updated = manager.update_event_subscription(
+        created.id,
+        name="Expired agents",
+        event_pattern="session.agent.expired",
+        session_id=None,
+        priority=20,
+        enabled=False,
+    )
+    assert updated.name == "Expired agents"
+    assert updated.event_pattern == "session.agent.expired"
+    assert updated.session_id is None
+    assert updated.priority == 20
+    assert updated.enabled is False
     assert manager._router._rules_cache is None
 
-    # Repopulate cache
-    manager._router._rules_cache = [rule]
-    manager._router._cache_expires_at = float("inf")
+    public = manager.event_subscription_to_dict(updated)
+    assert public["channel_id"] == channel.id
+    assert public["channel_name"] == "Telegram"
+    assert public["scope"] == {"kind": "project", "project_id": "project-1"}
+    assert "config_json" not in public
 
-    # Delete should invalidate
-    manager.delete_routing_rule("rule-1")
+    manager._router._rules_cache = [updated]
+    manager.delete_event_subscription(created.id)
+    assert rules == {}
     assert manager._router._rules_cache is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"name": " "}, "Subscription name is required"),
+        ({"event_pattern": " "}, "Event pattern is required"),
+        ({"channel": "missing"}, "Channel 'missing' not found"),
+        (
+            {"project_id": None, "global_scope": False},
+            "Project scope or explicit global scope is required",
+        ),
+        (
+            {"project_id": "project-1", "global_scope": True},
+            "Choose either project scope or global scope",
+        ),
+        (
+            {"project_id": None, "global_scope": True, "session_id": "session-1"},
+            "Global subscriptions cannot be session-scoped",
+        ),
+    ],
+)
+def test_event_subscription_create_rejects_invalid_contract(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
+    store = make_store([channel])
+    store.get_channel.return_value = None
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    kwargs: dict[str, object] = {
+        "name": "Agent pauses",
+        "channel": "Telegram",
+        "event_pattern": "session.agent.paused",
+        "project_id": "project-1",
+        "global_scope": False,
+    }
+    kwargs.update(overrides)
+
+    with pytest.raises(ValueError, match=message):
+        manager.create_event_subscription(**kwargs)
+
+
+def test_event_subscription_session_must_belong_to_selected_project() -> None:
+    channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
+    store = make_store([channel])
+    store.get_channel.return_value = None
+    session_store = MagicMock()
+    session_store.get.return_value = MagicMock(project_id="project-2")
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), session_store)
+
+    with pytest.raises(ValueError, match="Session does not belong"):
+        manager.create_event_subscription(
+            name="Agent pauses",
+            channel="Telegram",
+            event_pattern="session.agent.paused",
+            project_id="project-1",
+            global_scope=False,
+            session_id="session-1",
+        )
 
 
 def _telegram_group_message(*, sender_id: str, mentioned: bool) -> CommsMessage:

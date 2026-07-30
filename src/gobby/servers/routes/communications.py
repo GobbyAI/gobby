@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from gobby.communications.manager import EventSubscriptionNotFoundError
 from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,30 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         secrets: dict[str, Any] | None = Field(None, description="Optional secrets")
 
     class ChannelUpdateRequest(BaseModel):
+        name: str | None = Field(None, description="Updated channel name")
         config: dict[str, Any] | None = Field(None, description="Updated channel config")
         enabled: bool | None = Field(None, description="Enable or disable channel")
         secrets: dict[str, Any] | None = Field(None, description="Updated channel secrets")
+
+    class EventSubscriptionCreateRequest(BaseModel):
+        name: str
+        channel: str
+        event_pattern: str
+        project_id: str | None = None
+        global_scope: bool = False
+        session_id: str | None = None
+        priority: int = 0
+        enabled: bool = True
+
+    class EventSubscriptionUpdateRequest(BaseModel):
+        name: str | None = None
+        channel: str | None = None
+        event_pattern: str | None = None
+        project_id: str | None = None
+        global_scope: bool | None = None
+        session_id: str | None = None
+        priority: int | None = None
+        enabled: bool | None = None
 
     class SendMessageRequest(BaseModel):
         channel_name: str = Field(..., description="Name of the destination channel")
@@ -159,6 +181,11 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
 
+        if request.name is not None:
+            name = request.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="Channel name is required")
+            channel.name = name
         if request.config is not None:
             preserved_secret_refs = {
                 key: value
@@ -227,5 +254,94 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             offset=offset,
         )
         return [asdict(m) for m in messages]
+
+    @router.post("/subscriptions")
+    async def create_event_subscription(
+        request: EventSubscriptionCreateRequest,
+    ) -> dict[str, Any]:
+        """Create an event subscription."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        try:
+            rule = comms_manager.create_event_subscription(
+                name=request.name,
+                channel=request.channel,
+                event_pattern=request.event_pattern,
+                project_id=request.project_id,
+                global_scope=request.global_scope,
+                session_id=request.session_id,
+                priority=request.priority,
+                enabled=request.enabled,
+            )
+            return comms_manager.event_subscription_to_dict(rule)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/subscriptions")
+    async def list_event_subscriptions(
+        channel: str | None = None,
+        project_id: str | None = None,
+        global_scope: bool | None = None,
+        enabled: bool | None = None,
+        event_pattern: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List event subscriptions with exact filters."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        try:
+            rules = comms_manager.list_event_subscriptions(
+                channel=channel,
+                project_id=project_id,
+                global_scope=global_scope,
+                enabled=enabled,
+                event_pattern=event_pattern,
+            )
+            return [comms_manager.event_subscription_to_dict(rule) for rule in rules]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/subscriptions/{subscription_id}")
+    async def get_event_subscription(subscription_id: str) -> dict[str, Any]:
+        """Get an event subscription."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        try:
+            rule = comms_manager.get_event_subscription(subscription_id)
+            return comms_manager.event_subscription_to_dict(rule)
+        except EventSubscriptionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @router.patch("/subscriptions/{subscription_id}")
+    async def update_event_subscription(
+        subscription_id: str,
+        request: EventSubscriptionUpdateRequest,
+    ) -> dict[str, Any]:
+        """Partially update an event subscription."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        changes = request.model_dump(exclude_unset=True)
+        try:
+            rule = comms_manager.update_event_subscription(subscription_id, **changes)
+            return comms_manager.event_subscription_to_dict(rule)
+        except EventSubscriptionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.delete("/subscriptions/{subscription_id}")
+    async def delete_event_subscription(subscription_id: str) -> dict[str, Any]:
+        """Delete an event subscription."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        try:
+            comms_manager.delete_event_subscription(subscription_id)
+            return {"status": "ok", "deleted": subscription_id}
+        except EventSubscriptionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     return router

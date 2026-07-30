@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from gobby.sessions.status_events import (
+    SessionStatusTransition,
+    SessionStatusTransitionCallback,
+)
+
 type TitleChangeCallback = Callable[[str, str], None]
 type SessionChangeCallback = Callable[[str, str], None]
 
@@ -12,6 +17,7 @@ type SessionChangeCallback = Callable[[str, str], None]
 class _SessionBootstrapHost(Protocol):
     _title_listeners: list[TitleChangeCallback]
     _session_change_listeners: list[SessionChangeCallback]
+    _status_transition_listeners: list[SessionStatusTransitionCallback]
     db: Any
 
 
@@ -43,6 +49,49 @@ class _SessionBootstrapMixin:
             self._session_change_listeners.remove(listener)
         except ValueError:
             return
+
+    def register_status_transition_listener(
+        self: _SessionBootstrapHost,
+        listener: SessionStatusTransitionCallback,
+    ) -> None:
+        """Register a sync callback fired after committed status transitions."""
+        self._status_transition_listeners.append(listener)
+
+    def unregister_status_transition_listener(
+        self: _SessionBootstrapHost,
+        listener: SessionStatusTransitionCallback,
+    ) -> None:
+        """Remove a previously registered status-transition listener."""
+        try:
+            self._status_transition_listeners.remove(listener)
+        except ValueError:
+            return
+
+    def _notify_status_transition(
+        self: _SessionBootstrapHost,
+        transition: SessionStatusTransition,
+    ) -> None:
+        """Notify semantic status listeners after the transaction commits."""
+
+        def _run() -> None:
+            from ._constants import get_logger
+
+            for listener in list(self._status_transition_listeners):
+                try:
+                    listener(transition)
+                except Exception:
+                    get_logger().warning(
+                        "Session status listener failed for %s (%s)",
+                        transition.session_id,
+                        transition.status,
+                        exc_info=True,
+                    )
+
+        after_commit = getattr(self.db, "after_commit", None)
+        if callable(after_commit):
+            after_commit(_run)
+            return
+        _run()
 
     def _notify_session_change(
         self: _SessionBootstrapHost,

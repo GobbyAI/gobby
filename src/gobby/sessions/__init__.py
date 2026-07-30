@@ -6,6 +6,15 @@ This package provides:
 - Transcript parsers: CLI-specific transcript parsing (Claude, Codex, Qwen, etc.)
 """
 
-from gobby.storage.sessions import SessionManager
+from __future__ import annotations
 
 __all__ = ["SessionManager"]
+
+
+def __getattr__(name: str) -> object:
+    """Load the storage manager lazily so session submodules stay cycle-free."""
+    if name != "SessionManager":
+        raise AttributeError(name)
+    from gobby.storage.sessions import SessionManager
+
+    return SessionManager

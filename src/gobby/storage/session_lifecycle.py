@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import logging
 
+from gobby.sessions.status_events import (
+    SessionStatusTransition,
+    SessionStatusTransitionCallback,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +98,12 @@ def session_has_retained_references(db: HubDatabase, session_id: str) -> bool:
     return row is not None
 
 
-def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
+def expire_stale_sessions(
+    db: HubDatabase,
+    timeout_hours: int = 24,
+    *,
+    status_notifier: SessionStatusTransitionCallback | None = None,
+) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.
 
@@ -113,32 +124,42 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
             OR NULLIF(BTRIM(terminal_context->>'tmux_window_id'), '') IS NOT NULL
         )
     """
-    cursor = db.execute(
-        f"""
-        UPDATE sessions
-        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-        WHERE status IN ('active', 'paused', 'handoff_ready')
-        AND id != %s
-        AND NOT ({tmux_target_sql})
-        AND (
-            {updated_stale_sql}
-            OR (
-                session_type = 'terminal'
-                AND {empty_terminal_context_sql}
-                AND {empty_terminal_created_stale_sql}
-                AND {updated_stale_sql}
+    with db.transaction() as conn:
+        rows = conn.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('active', 'paused', 'handoff_ready')
+            AND id != %s
+            AND NOT ({tmux_target_sql})
+            AND (
+                {updated_stale_sql}
+                OR (
+                    session_type = 'terminal'
+                    AND {empty_terminal_context_sql}
+                    AND {empty_terminal_created_stale_sql}
+                    AND {updated_stale_sql}
+                )
             )
-        )
-        """,  # nosec B608 # cutoff expressions are selected by storage dialect.
-        (SYSTEM_SESSION_ID, timeout_hours, timeout_hours, timeout_hours),
-    )
-    count = cursor.rowcount or 0
+            RETURNING *
+            """,  # nosec B608 # cutoff expressions are selected by storage dialect.
+            (SYSTEM_SESSION_ID, timeout_hours, timeout_hours, timeout_hours),
+        ).fetchall()
+        if status_notifier is not None:
+            for row in rows:
+                status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))
+    count = len(rows)
     if count > 0:
         logger.info("Expired %s stale sessions (>%sh inactive)", count, timeout_hours)
     return count
 
 
-def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
+def expire_orphaned_handoff_sessions(
+    db: HubDatabase,
+    timeout_minutes: int = 30,
+    *,
+    status_notifier: SessionStatusTransitionCallback | None = None,
+) -> int:
     """
     Expire handoff_ready sessions whose compact restart never arrived.
 
@@ -155,17 +176,22 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
         Number of sessions expired.
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
-    cursor = db.execute(
-        f"""
-        UPDATE sessions
-        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-        WHERE status = 'handoff_ready'
-          AND id != %s
-          AND {updated_stale_sql}
-        """,  # nosec B608 # cutoff expression is selected by storage dialect.
-        (SYSTEM_SESSION_ID, timeout_minutes),
-    )
-    count = cursor.rowcount or 0
+    with db.transaction() as conn:
+        rows = conn.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'handoff_ready'
+              AND id != %s
+              AND {updated_stale_sql}
+            RETURNING *
+            """,  # nosec B608 # cutoff expression is selected by storage dialect.
+            (SYSTEM_SESSION_ID, timeout_minutes),
+        ).fetchall()
+        if status_notifier is not None:
+            for row in rows:
+                status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))
+    count = len(rows)
     if count > 0:
         logger.info("Expired %s orphaned handoff_ready sessions (>%sm)", count, timeout_minutes)
     return count
@@ -211,7 +237,12 @@ def prune_stale_compact_workflow_instances(db: HubDatabase, retention_hours: int
     return count
 
 
-def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
+def pause_inactive_active_sessions(
+    db: HubDatabase,
+    timeout_minutes: int = 30,
+    *,
+    status_notifier: SessionStatusTransitionCallback | None = None,
+) -> int:
     """
     Mark active sessions as paused if they've been inactive for too long.
 
@@ -225,24 +256,40 @@ def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -
     Returns:
         Number of sessions paused.
     """
+    transitioned_at = utc_now()
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
-    cursor = db.execute(
-        f"""
-        UPDATE sessions
-        SET status = 'paused'
-        WHERE status = 'active'
-        AND id != %s
-        AND {updated_stale_sql}
-        """,  # nosec B608 # cutoff expression is selected by storage dialect.
-        (SYSTEM_SESSION_ID, timeout_minutes),
-    )
-    count = cursor.rowcount or 0
+    with db.transaction() as conn:
+        rows = conn.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'paused'
+            WHERE status = 'active'
+            AND id != %s
+            AND {updated_stale_sql}
+            RETURNING *
+            """,  # nosec B608 # cutoff expression is selected by storage dialect.
+            (SYSTEM_SESSION_ID, timeout_minutes),
+        ).fetchall()
+        if status_notifier is not None:
+            for row in rows:
+                status_notifier(
+                    SessionStatusTransition.from_session(
+                        Session.from_row(row),
+                        transitioned_at=transitioned_at,
+                    )
+                )
+    count = len(rows)
     if count > 0:
         logger.info("Paused %s inactive active sessions (>%sm)", count, timeout_minutes)
     return count
 
 
-def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
+def expire_empty_sessions(
+    db: HubDatabase,
+    timeout_hours: int = 2,
+    *,
+    status_notifier: SessionStatusTransitionCallback | None = None,
+) -> int:
     """
     Fast-expire sessions that never received any messages.
 
@@ -258,18 +305,23 @@ def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
         Number of sessions expired.
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
-    cursor = db.execute(
-        f"""
-        UPDATE sessions
-        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-        WHERE status IN ('active', 'paused')
-        AND id != %s
-        AND COALESCE(message_count, 0) = 0
-        AND {updated_stale_sql}
-        """,  # nosec B608 # cutoff expression is selected by storage dialect.
-        (SYSTEM_SESSION_ID, timeout_hours),
-    )
-    count = cursor.rowcount or 0
+    with db.transaction() as conn:
+        rows = conn.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('active', 'paused')
+            AND id != %s
+            AND COALESCE(message_count, 0) = 0
+            AND {updated_stale_sql}
+            RETURNING *
+            """,  # nosec B608 # cutoff expression is selected by storage dialect.
+            (SYSTEM_SESSION_ID, timeout_hours),
+        ).fetchall()
+        if status_notifier is not None:
+            for row in rows:
+                status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))
+    count = len(rows)
     if count > 0:
         logger.info(
             "Fast-expired %s empty sessions (0 messages, >%sh inactive)", count, timeout_hours

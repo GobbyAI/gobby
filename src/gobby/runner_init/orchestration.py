@@ -97,7 +97,10 @@ def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | 
         heartbeat = PipelineHeartbeat(
             execution_manager=execution_manager,
             task_manager=runner.task_manager,
-            agent_run_manager=LocalAgentRunManager(runner.database),
+            agent_run_manager=LocalAgentRunManager(
+                runner.database,
+                status_notifier=runner.session_manager._notify_status_transition,
+            ),
             session_manager=runner.session_manager,
             run_db=runner.db_executor.run,
         )

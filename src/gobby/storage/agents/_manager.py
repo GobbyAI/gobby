@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gobby.sessions.status_events import SessionStatusTransitionCallback
 from gobby.storage.hub.protocol import HubDatabase
 
 from ._cleanup import _AgentRunCleanupMixin
@@ -24,6 +25,12 @@ class LocalAgentRunManager(
 
     db: HubDatabase
 
-    def __init__(self, db: HubDatabase):
+    def __init__(
+        self,
+        db: HubDatabase,
+        *,
+        status_notifier: SessionStatusTransitionCallback | None = None,
+    ):
         """Initialize with database connection."""
         self.db = db
+        self._status_notifier = status_notifier

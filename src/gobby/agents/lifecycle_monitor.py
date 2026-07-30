@@ -493,11 +493,18 @@ class AgentLifecycleMonitor:
             notification_message=f"Agent {run.id} recovery window expired",
             force_full_cleanup=True,
         )
+        expire_kwargs: dict[str, object] = {
+            "original_run_id": run.id,
+            "child_session_id": run.child_session_id,
+        }
+        if self._session_manager is not None:
+            expire_kwargs["status_notifier"] = (
+                self._session_manager._notify_status_transition
+            )
         await self._run_db(
             expire_parked_daemon_session,
             self._db,
-            original_run_id=run.id,
-            child_session_id=run.child_session_id,
+            **expire_kwargs,
         )
         await self._run_db(
             self._agent_run_manager.merge_resume_metadata,

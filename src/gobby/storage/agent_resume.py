@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.resume_metadata import dump_resume_metadata, normalize_resume_metadata
+from gobby.sessions.status_events import (
+    SessionStatusTransition,
+    SessionStatusTransitionCallback,
+)
 from gobby.storage.daemon_resume_keys import (
     CONSUMED_AT_KEY as _CONSUMED_AT_KEY,
 )
@@ -22,6 +26,7 @@ from gobby.storage.daemon_resume_keys import (
     RESUMED_FROM_RUN_ID_KEY as _RESUMED_FROM_RUN_ID_KEY,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
 
@@ -350,20 +355,25 @@ def expire_parked_daemon_session(
     *,
     original_run_id: str,
     child_session_id: str,
+    status_notifier: SessionStatusTransitionCallback | None = None,
 ) -> bool:
     """Expire a parked session only while the unconsumed original still owns it."""
-    cursor = db.execute(
-        """
-        UPDATE sessions
-        SET status = 'expired',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-          AND agent_run_id = %s
-          AND status IN ('active', 'paused', 'handoff_ready')
-        """,
-        (child_session_id, original_run_id),
-    )
-    return bool(cursor.rowcount)
+    with db.transaction() as conn:
+        row = conn.execute(
+            """
+            UPDATE sessions
+            SET status = 'expired',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+              AND agent_run_id = %s
+              AND status IN ('active', 'paused', 'handoff_ready')
+            RETURNING *
+            """,
+            (child_session_id, original_run_id),
+        ).fetchone()
+        if row is not None and status_notifier is not None:
+            status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))
+    return row is not None
 
 
 def claim_daemon_stop_orphan_reap(

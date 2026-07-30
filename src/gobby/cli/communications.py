@@ -11,6 +11,7 @@ import click
 import httpx
 
 from gobby.cli.mcp_proxy import get_daemon_client
+from gobby.cli.utils_resolution import resolve_project_ref
 
 
 def print_error(msg: str) -> None:
@@ -266,6 +267,225 @@ def channels_remove_cmd(ctx: click.Context, name: str) -> None:
             print_error(f"Failed to remove channel: {response.text}")
             ctx.exit(1)
 
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@comms.group("subscriptions")
+def subscriptions_group() -> None:
+    """Manage event subscriptions."""
+
+
+@subscriptions_group.command("create")
+@click.argument("name")
+@click.option("--channel", required=True, help="Channel UUID or exact name.")
+@click.option("--event", "event_pattern", required=True, help="Event name or glob.")
+@click.option("--project", "project_ref", help="Project UUID or exact name.")
+@click.option("--global", "global_scope", is_flag=True)
+@click.option("--session", "session_id", help="Optional session UUID.")
+@click.option("--priority", type=int, default=0, show_default=True)
+@click.option("--disabled", is_flag=True)
+@click.pass_context
+def subscriptions_create_cmd(
+    ctx: click.Context,
+    name: str,
+    channel: str,
+    event_pattern: str,
+    project_ref: str | None,
+    global_scope: bool,
+    session_id: str | None,
+    priority: int,
+    disabled: bool,
+) -> None:
+    """Create an event subscription."""
+    if global_scope and project_ref:
+        print_error("Choose either --project or --global.")
+        ctx.exit(1)
+    project_id = None if global_scope else resolve_project_ref(project_ref)
+    if not global_scope and project_id is None:
+        print_error("No project context found; pass --project or --global.")
+        ctx.exit(1)
+
+    client = get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            "/api/comms/subscriptions",
+            method="POST",
+            json_data={
+                "name": name,
+                "channel": channel,
+                "event_pattern": event_pattern,
+                "project_id": project_id,
+                "global_scope": global_scope,
+                "session_id": session_id,
+                "priority": priority,
+                "enabled": not disabled,
+            },
+        )
+        if response.status_code not in (200, 201):
+            print_error(f"Failed to create subscription: {response.text}")
+            ctx.exit(1)
+        click.echo(json.dumps(response.json(), indent=2))
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@subscriptions_group.command("list")
+@click.option("--channel")
+@click.option("--project", "project_ref")
+@click.option("--global", "global_scope", is_flag=True, default=False)
+@click.option("--enabled", "enabled_filter", flag_value=True, default=None)
+@click.option("--disabled", "enabled_filter", flag_value=False)
+@click.option("--event", "event_pattern")
+@click.pass_context
+def subscriptions_list_cmd(
+    ctx: click.Context,
+    channel: str | None,
+    project_ref: str | None,
+    global_scope: bool,
+    enabled_filter: bool | None,
+    event_pattern: str | None,
+) -> None:
+    """List event subscriptions."""
+    if global_scope and project_ref:
+        print_error("Choose either --project or --global.")
+        ctx.exit(1)
+    params: dict[str, Any] = {}
+    if channel is not None:
+        params["channel"] = channel
+    if project_ref is not None:
+        params["project_id"] = resolve_project_ref(project_ref)
+    if global_scope:
+        params["global_scope"] = True
+    if enabled_filter is not None:
+        params["enabled"] = enabled_filter
+    if event_pattern is not None:
+        params["event_pattern"] = event_pattern
+
+    client = get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            "/api/comms/subscriptions",
+            method="GET",
+            params=params,
+        )
+        if response.status_code != 200:
+            print_error(f"Failed to list subscriptions: {response.text}")
+            ctx.exit(1)
+        click.echo(json.dumps(response.json(), indent=2))
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@subscriptions_group.command("get")
+@click.argument("subscription_id")
+@click.pass_context
+def subscriptions_get_cmd(ctx: click.Context, subscription_id: str) -> None:
+    """Get one event subscription."""
+    client = get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            f"/api/comms/subscriptions/{subscription_id}",
+            method="GET",
+        )
+        if response.status_code != 200:
+            print_error(f"Failed to get subscription: {response.text}")
+            ctx.exit(1)
+        click.echo(json.dumps(response.json(), indent=2))
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@subscriptions_group.command("update")
+@click.argument("subscription_id")
+@click.option("--name")
+@click.option("--channel")
+@click.option("--event", "event_pattern")
+@click.option("--project", "project_ref")
+@click.option("--global", "global_scope", is_flag=True, default=False)
+@click.option("--session", "session_id")
+@click.option("--clear-session", is_flag=True)
+@click.option("--priority", type=int)
+@click.option("--enabled", "enabled_value", flag_value=True, default=None)
+@click.option("--disabled", "enabled_value", flag_value=False)
+@click.pass_context
+def subscriptions_update_cmd(
+    ctx: click.Context,
+    subscription_id: str,
+    name: str | None,
+    channel: str | None,
+    event_pattern: str | None,
+    project_ref: str | None,
+    global_scope: bool,
+    session_id: str | None,
+    clear_session: bool,
+    priority: int | None,
+    enabled_value: bool | None,
+) -> None:
+    """Partially update an event subscription."""
+    if global_scope and project_ref:
+        print_error("Choose either --project or --global.")
+        ctx.exit(1)
+    if session_id and clear_session:
+        print_error("Choose either --session or --clear-session.")
+        ctx.exit(1)
+
+    changes: dict[str, Any] = {}
+    for key, value in (
+        ("name", name),
+        ("channel", channel),
+        ("event_pattern", event_pattern),
+        ("priority", priority),
+        ("enabled", enabled_value),
+    ):
+        if value is not None:
+            changes[key] = value
+    if project_ref is not None:
+        changes["project_id"] = resolve_project_ref(project_ref)
+        changes["global_scope"] = False
+    elif global_scope:
+        changes["global_scope"] = True
+    if session_id is not None or clear_session:
+        changes["session_id"] = session_id
+    if not changes:
+        print_error("No updates specified.")
+        ctx.exit(1)
+
+    client = get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            f"/api/comms/subscriptions/{subscription_id}",
+            method="PATCH",
+            json_data=changes,
+        )
+        if response.status_code != 200:
+            print_error(f"Failed to update subscription: {response.text}")
+            ctx.exit(1)
+        click.echo(json.dumps(response.json(), indent=2))
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@subscriptions_group.command("delete")
+@click.argument("subscription_id")
+@click.pass_context
+def subscriptions_delete_cmd(ctx: click.Context, subscription_id: str) -> None:
+    """Delete an event subscription."""
+    client = get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            f"/api/comms/subscriptions/{subscription_id}",
+            method="DELETE",
+        )
+        if response.status_code not in (200, 204):
+            print_error(f"Failed to delete subscription: {response.text}")
+            ctx.exit(1)
+        click.echo(json.dumps(response.json(), indent=2))
     except httpx.RequestError as e:
         print_error(f"Daemon connection failed: {e}")
         ctx.exit(1)

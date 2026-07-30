@@ -57,7 +57,10 @@ class AgentRunner:
             session_storage,
             max_agent_depth=max_agent_depth,
         )
-        self._run_storage = LocalAgentRunManager(db)
+        self._run_storage = LocalAgentRunManager(
+            db,
+            status_notifier=session_storage._notify_status_transition,
+        )
         self.logger = logger
 
         # Workflow handler for hook evaluation on spawned agent tool calls

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import SessionLineageMutation
 from gobby.storage.session_models import Session
 from gobby.terminal_ownership import (
@@ -35,6 +36,8 @@ class _ManagerState(Protocol):
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
+    def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
+
 
 class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:
@@ -56,6 +59,10 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"
             self._notify_session_change(event, session_id)
+            if current is not None and current.status != status:
+                self._notify_status_transition(
+                    SessionStatusTransition.from_session(updated, transitioned_at=now)
+                )
         return updated
 
     def update_status_from_activity(
@@ -67,6 +74,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         if status not in {"active", "paused"}:
             raise ValueError("Confirmed activity status must be 'active' or 'paused'")
 
+        current = self.get(session_id)
         now = utc_now()
         with self.db.transaction():
             cursor = self.db.execute(
@@ -86,6 +94,10 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
             updated = self.get(session_id)
             if updated is not None:
                 self._notify_session_change("session_updated", session_id)
+                if current is not None and current.status != status:
+                    self._notify_status_transition(
+                        SessionStatusTransition.from_session(updated, transitioned_at=now)
+                    )
             return updated
 
     def activate_web_chat_session(self: _ManagerState, session_id: str) -> Session | None:
@@ -117,6 +129,9 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         updated = self.get(session_id)
         if updated is not None and updated.status == "active":
             self._notify_session_change("session_updated", session_id)
+            self._notify_status_transition(
+                SessionStatusTransition.from_session(updated, transitioned_at=now)
+            )
         return updated
 
     def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
@@ -134,7 +149,12 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         if cursor.rowcount <= 0:
             return None
         self._notify_session_change("session_expired", session_id)
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_status_transition(
+                SessionStatusTransition.from_session(updated, transitioned_at=now)
+            )
+        return updated
 
     def revive_expired_terminal_session(self: _ManagerState, session_id: str) -> Session | None:
         """Reconcile terminal ownership when fresh activity arrives.
@@ -172,6 +192,9 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
                 self._notify_session_change("session_updated", session_id)
+                self._notify_status_transition(
+                    SessionStatusTransition.from_session(updated, transitioned_at=now)
+                )
             return updated
 
         machine_id, socket_identity, pane = identity
@@ -261,6 +284,13 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
         for candidate, desired_status in status_changes:
             event = "session_expired" if desired_status == "expired" else "session_updated"
             self._notify_session_change(event, candidate.id)
+            self._notify_status_transition(
+                SessionStatusTransition.from_session(
+                    candidate,
+                    status=desired_status,
+                    transitioned_at=now,
+                )
+            )
             if desired_status == "expired":
                 logger.info(
                     "Expired superseded terminal session %s; owner is %s",

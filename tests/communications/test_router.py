@@ -39,8 +39,8 @@ async def test_router_matching():
         ),
     ]
 
-    def get_rules(enabled_only=True):
-        rs = [r for r in rules if not enabled_only or r.enabled]
+    def get_rules(enabled: bool | None = None):
+        rs = [r for r in rules if enabled is None or r.enabled is enabled]
         return sorted(rs, key=lambda x: x.priority, reverse=True)
 
     store.list_routing_rules.side_effect = get_rules
@@ -85,8 +85,8 @@ async def test_router_loads_rules_off_event_loop():
         CommsRoutingRule(id="rule-1", name="Rule 1", channel_id="chan-1", event_pattern="*"),
     ]
 
-    def list_routing_rules(enabled_only: bool = True) -> list[CommsRoutingRule]:
-        assert enabled_only is True
+    def list_routing_rules(enabled: bool | None = None) -> list[CommsRoutingRule]:
+        assert enabled is True
         worker_threads.append(threading.get_ident())
         return rules
 

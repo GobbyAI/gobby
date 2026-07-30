@@ -11,6 +11,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
+from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,34 @@ def create_communications_registry(
         description=(
             "Tools for interacting with external communication channels "
             "(e.g., Slack, Discord, Email) - send_message, send_attachment, "
-            "list_channels, get_messages, add_channel, set_channel_project, remove_channel"
+            "list_channels, get_messages, channel management, and event subscriptions"
         ),
     )
+
+    def resolve_subscription_project(
+        project: str | None,
+        *,
+        global_scope: bool,
+    ) -> str | None:
+        if global_scope:
+            if project is not None:
+                raise ValueError("Choose either project scope or global scope")
+            return None
+        if project is not None:
+            if db is None:
+                raise ValueError("Project storage is unavailable")
+            resolved = LocalProjectManager(db).resolve_ref(project)
+            if resolved is None:
+                raise ValueError(f"Project '{project}' not found")
+            return resolved.id
+
+        caller_session_id = get_current_session_id()
+        if caller_session_id is None:
+            raise ValueError("Calling session context is required")
+        project_id = communications_manager.get_session_project_id(caller_session_id)
+        if project_id is None:
+            raise ValueError("Calling session project context is required")
+        return project_id
 
     @registry.tool(
         description=(
@@ -295,6 +321,137 @@ def create_communications_registry(
             }
         except Exception as e:
             logger.exception("Communications tool error")
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        description=(
+            "Create an event subscription. Defaults to the calling session's project; "
+            "set global_scope=true for explicit global routing."
+        )
+    )
+    def create_event_subscription(
+        name: str,
+        channel: str,
+        event_pattern: str,
+        project: str | None = None,
+        global_scope: bool = False,
+        session_id: str | None = None,
+        priority: int = 0,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        """Create a validated event subscription."""
+        try:
+            project_id = resolve_subscription_project(project, global_scope=global_scope)
+            rule = communications_manager.create_event_subscription(
+                name=name,
+                channel=channel,
+                event_pattern=event_pattern,
+                project_id=project_id,
+                global_scope=global_scope,
+                session_id=session_id,
+                priority=priority,
+                enabled=enabled,
+            )
+            return {
+                "success": True,
+                "subscription": communications_manager.event_subscription_to_dict(rule),
+            }
+        except (LookupError, ValueError) as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(description="List event subscriptions with exact administrative filters.")
+    def list_event_subscriptions(
+        channel: str | None = None,
+        project: str | None = None,
+        global_scope: bool | None = None,
+        enabled: bool | None = None,
+        event_pattern: str | None = None,
+    ) -> dict[str, Any]:
+        """List event subscriptions, including disabled entries by default."""
+        try:
+            project_id = None
+            if project is not None:
+                project_id = resolve_subscription_project(project, global_scope=False)
+            rules = communications_manager.list_event_subscriptions(
+                channel=channel,
+                project_id=project_id,
+                global_scope=global_scope,
+                enabled=enabled,
+                event_pattern=event_pattern,
+            )
+            return {
+                "success": True,
+                "subscriptions": [
+                    communications_manager.event_subscription_to_dict(rule) for rule in rules
+                ],
+            }
+        except (LookupError, ValueError) as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(description="Get one event subscription by ID.")
+    def get_event_subscription(subscription_id: str) -> dict[str, Any]:
+        """Get an event subscription."""
+        try:
+            rule = communications_manager.get_event_subscription(subscription_id)
+            return {
+                "success": True,
+                "subscription": communications_manager.event_subscription_to_dict(rule),
+            }
+        except (LookupError, ValueError) as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(description="Partially update an event subscription by ID.")
+    def update_event_subscription(
+        subscription_id: str,
+        name: str | None = None,
+        channel: str | None = None,
+        event_pattern: str | None = None,
+        project: str | None = None,
+        global_scope: bool | None = None,
+        session_id: str | None = None,
+        clear_session: bool = False,
+        priority: int | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        """Partially update an event subscription."""
+        try:
+            changes: dict[str, Any] = {}
+            for key, value in (
+                ("name", name),
+                ("channel", channel),
+                ("event_pattern", event_pattern),
+                ("priority", priority),
+                ("enabled", enabled),
+            ):
+                if value is not None:
+                    changes[key] = value
+            if project is not None:
+                changes["project_id"] = resolve_subscription_project(
+                    project,
+                    global_scope=False,
+                )
+                changes["global_scope"] = False
+            elif global_scope is True:
+                changes["global_scope"] = True
+            if session_id is not None or clear_session:
+                changes["session_id"] = session_id
+            if not changes:
+                raise ValueError("No updates specified")
+            rule = communications_manager.update_event_subscription(subscription_id, **changes)
+            return {
+                "success": True,
+                "subscription": communications_manager.event_subscription_to_dict(rule),
+            }
+        except (LookupError, ValueError) as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(description="Delete an event subscription by ID.")
+    def delete_event_subscription(subscription_id: str) -> dict[str, Any]:
+        """Delete an event subscription."""
+        try:
+            communications_manager.delete_event_subscription(subscription_id)
+            return {"success": True, "deleted": subscription_id}
+        except (LookupError, ValueError) as e:
             return {"success": False, "error": str(e)}
 
     @registry.tool(

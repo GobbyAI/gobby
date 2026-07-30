@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.storage.hub.protocol import HubDatabase
 
-from ._bootstrap import SessionChangeCallback, TitleChangeCallback, _SessionBootstrapMixin
+from ._bootstrap import (
+    SessionChangeCallback,
+    SessionStatusTransitionCallback,
+    TitleChangeCallback,
+    _SessionBootstrapMixin,
+)
 from ._bulk_update import _BulkUpdateMixin
 from ._constants import get_logger
 from ._crud import _SessionCRUDMixin
@@ -98,6 +103,7 @@ class SessionManager(
         self._config = config
         self._title_listeners: list[TitleChangeCallback] = []
         self._session_change_listeners: list[SessionChangeCallback] = []
+        self._status_transition_listeners: list[SessionStatusTransitionCallback] = []
         self._session_mapping: dict[SessionMappingKey, str] = {}
         self._session_mapping_timestamps: dict[SessionMappingKey, float] = {}
         self._session_mapping_lock = threading.Lock()

@@ -13,7 +13,6 @@ from ._constants import (
     ensure_system_session,
     logger,
 )
-from ._manager import SessionManager
 
 __all__ = [
     "SessionManager",
@@ -27,3 +26,12 @@ __all__ = [
     "ensure_system_session",
     "logger",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load the manager lazily so lifecycle helpers can import package constants."""
+    if name != "SessionManager":
+        raise AttributeError(name)
+    from ._manager import SessionManager
+
+    return SessionManager

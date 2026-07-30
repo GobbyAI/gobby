@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import SessionSeqMutation
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
@@ -29,6 +30,8 @@ class _ManagerState(Protocol):
     def get(self, session_id: str) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+    def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
     def _run_title_change_side_effects(self, updated: Session, title: str) -> None: ...
 
@@ -244,6 +247,13 @@ class _BulkUpdateMixin:
                 mutation_applied = title_mutation is not None and title_mutation.applied
                 if values or incoming_terminal_context or mutation_applied:
                     self._notify_session_change("session_updated", conflicting.id)
+                if status is not None and conflicting.status != updated.status:
+                    self._notify_status_transition(
+                        SessionStatusTransition.from_session(
+                            updated,
+                            transitioned_at=updated_at,
+                        )
+                    )
                 if title_mutation is not None and title_mutation.title_changed:
                     self._run_title_change_side_effects(updated, updated.title or "")
             return updated
@@ -253,6 +263,10 @@ class _BulkUpdateMixin:
             mutation_applied = title_mutation is not None and title_mutation.applied
             if values or incoming_terminal_context or mutation_applied:
                 self._notify_session_change(event, session_id)
+            if status is not None and current is not None and current.status != updated.status:
+                self._notify_status_transition(
+                    SessionStatusTransition.from_session(updated, transitioned_at=updated_at)
+                )
             if title_mutation is not None and title_mutation.title_changed:
                 self._run_title_change_side_effects(updated, updated.title or "")
         return updated

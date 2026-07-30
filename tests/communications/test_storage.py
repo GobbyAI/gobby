@@ -298,11 +298,12 @@ def test_create_message_deduplicates_channel_platform_message_id(
 
 
 def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
-    """Test full CRUD lifecycle for routing rules."""
-    # Create channel
+    """Test full CRUD lifecycle and exact administrative filters for routing rules."""
+    project_id = "00000000-0000-0000-0000-000000000000"
+    channel_id = "cccccccc-1111-4ccc-8ccc-cccccccc0005"
     comms_store.create_channel(
         ChannelConfig(
-            id="cccccccc-1111-4ccc-8ccc-cccccccc0005",
+            id=channel_id,
             channel_type="test",
             name="Rule",
             enabled=True,
@@ -312,40 +313,73 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
         )
     )
 
-    # Create
     rule = CommsRoutingRule(
-        id="",
+        id="dddddddd-1111-4ddd-8ddd-dddddddd0001",
         name="Test Rule",
-        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0005",
-        event_pattern="*",
+        channel_id=channel_id,
+        event_pattern="task.*",
+        project_id=project_id,
         priority=10,
         enabled=True,
-        config_json={"action": "reply"},
+        config_json={},
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_routing_rule(rule)
-    assert str(uuid.UUID(saved.id)) == saved.id
-    assert saved.project_id == "00000000-0000-0000-0000-000000000000"
+    assert saved.id == rule.id
+    assert saved.project_id == project_id
 
-    # Read
+    comms_store.create_routing_rule(
+        CommsRoutingRule(
+            id="dddddddd-1111-4ddd-8ddd-dddddddd0002",
+            name="Disabled Rule",
+            channel_id=channel_id,
+            event_pattern="session.agent.paused",
+            project_id=project_id,
+            priority=20,
+            enabled=False,
+            config_json={},
+            created_at="2024-01-01T00:00:01Z",
+            updated_at="2024-01-01T00:00:01Z",
+        )
+    )
+    comms_store.create_routing_rule(
+        CommsRoutingRule(
+            id="dddddddd-1111-4ddd-8ddd-dddddddd0003",
+            name="Global Rule",
+            channel_id=channel_id,
+            event_pattern="*",
+            project_id=None,
+            priority=0,
+            enabled=True,
+            config_json={},
+            created_at="2024-01-01T00:00:02Z",
+            updated_at="2024-01-01T00:00:02Z",
+        )
+    )
+
     fetched = comms_store.get_routing_rule(saved.id)
     assert fetched is not None
     assert fetched.name == "Test Rule"
     assert fetched.priority == 10
 
-    # List
-    rules = comms_store.list_routing_rules(
-        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0005", enabled_only=True
+    assert len(comms_store.list_routing_rules()) == 3
+    assert len(comms_store.list_routing_rules(channel_id=channel_id)) == 3
+    assert len(comms_store.list_routing_rules(project_id=project_id)) == 2
+    assert len(comms_store.list_routing_rules(global_scope=True)) == 1
+    assert len(comms_store.list_routing_rules(global_scope=False)) == 2
+    assert len(comms_store.list_routing_rules(enabled=True)) == 2
+    assert len(comms_store.list_routing_rules(enabled=False)) == 1
+    assert len(comms_store.list_routing_rules(event_pattern="task.*")) == 1
+    assert (
+        len(
+            comms_store.list_routing_rules(
+                channel_id="00000000-0000-0000-0000-0000000000ff"
+            )
+        )
+        == 0
     )
-    assert len(rules) == 1
 
-    rules_empty = comms_store.list_routing_rules(
-        enabled_only=False, channel_id="00000000-0000-0000-0000-0000000000ff"
-    )
-    assert len(rules_empty) == 0
-
-    # Update
     saved.priority = 20
     saved.enabled = False
     comms_store.update_routing_rule(saved)
@@ -355,9 +389,5 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     assert updated.priority == 20
     assert not updated.enabled
 
-    # List enabled should be empty
-    assert len(comms_store.list_routing_rules(enabled_only=True)) == 0
-
-    # Delete
     comms_store.delete_routing_rule(saved.id)
     assert comms_store.get_routing_rule(saved.id) is None

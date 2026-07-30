@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,17 @@ from gobby.communications.telegram_access import (
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
 from gobby.utils.datetime import utc_now
+
+
+class EventSubscriptionNotFoundError(LookupError):
+    """Raised when an event subscription does not exist."""
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -459,6 +471,210 @@ class CommunicationsManager:
     def update_identity_session(self, identity_id: str, session_id: str | None) -> None:
         """Link or unlink an identity to a session."""
         self._store.update_identity_session(identity_id, session_id)
+
+    def _resolve_subscription_channel(self, channel: str) -> ChannelConfig:
+        channel_ref = channel.strip()
+        if not channel_ref:
+            raise ValueError("Channel is required")
+        resolved = self._store.get_channel(channel_ref)
+        if resolved is None:
+            resolved = self._store.get_channel_by_name(channel_ref)
+        if resolved is None:
+            raise ValueError(f"Channel '{channel_ref}' not found")
+        return resolved
+
+    def _validate_subscription_scope(
+        self,
+        *,
+        project_id: str | None,
+        global_scope: bool,
+        session_id: str | None,
+    ) -> str | None:
+        if global_scope:
+            if project_id is not None:
+                raise ValueError("Choose either project scope or global scope")
+            if session_id is not None:
+                raise ValueError("Global subscriptions cannot be session-scoped")
+            return None
+
+        if project_id is None or not project_id.strip():
+            raise ValueError("Project scope or explicit global scope is required")
+        if session_id is not None:
+            session = self._session_store.get(session_id)
+            if session is None:
+                raise ValueError(f"Session '{session_id}' not found")
+            if session.project_id != project_id:
+                raise ValueError("Session does not belong to the selected project")
+        return project_id
+
+    def get_session_project_id(self, session_id: str) -> str | None:
+        """Return the project for a session visible to communications."""
+        session = self._session_store.get(session_id)
+        return session.project_id if session is not None else None
+
+    def create_event_subscription(
+        self,
+        *,
+        name: str,
+        channel: str,
+        event_pattern: str,
+        project_id: str | None,
+        global_scope: bool,
+        session_id: str | None = None,
+        priority: int = 0,
+        enabled: bool = True,
+    ) -> CommsRoutingRule:
+        """Create a validated event subscription."""
+        normalized_name = name.strip()
+        normalized_pattern = event_pattern.strip()
+        if not normalized_name:
+            raise ValueError("Subscription name is required")
+        if not normalized_pattern:
+            raise ValueError("Event pattern is required")
+
+        resolved_channel = self._resolve_subscription_channel(channel)
+        resolved_project_id = self._validate_subscription_scope(
+            project_id=project_id,
+            global_scope=global_scope,
+            session_id=session_id,
+        )
+        now = utc_now()
+        rule = CommsRoutingRule(
+            id=str(uuid.uuid4()),
+            name=normalized_name,
+            channel_id=resolved_channel.id,
+            event_pattern=normalized_pattern,
+            project_id=resolved_project_id,
+            session_id=session_id,
+            priority=priority,
+            enabled=enabled,
+            config_json={},
+            created_at=now,
+            updated_at=now,
+        )
+        result = self._store.create_routing_rule(rule)
+        self._router.invalidate_cache()
+        return result
+
+    def get_event_subscription(self, subscription_id: str) -> CommsRoutingRule:
+        """Get an event subscription by ID."""
+        rule = self._store.get_routing_rule(subscription_id)
+        if rule is None:
+            raise EventSubscriptionNotFoundError(
+                f"Event subscription '{subscription_id}' not found"
+            )
+        return rule
+
+    def list_event_subscriptions(
+        self,
+        *,
+        channel: str | None = None,
+        project_id: str | None = None,
+        global_scope: bool | None = None,
+        enabled: bool | None = None,
+        event_pattern: str | None = None,
+    ) -> list[CommsRoutingRule]:
+        """List event subscriptions, including disabled entries by default."""
+        if global_scope is True and project_id is not None:
+            raise ValueError("Choose either project scope or global scope")
+        channel_id = None
+        if channel is not None:
+            channel_id = self._resolve_subscription_channel(channel).id
+        return self._store.list_routing_rules(
+            channel_id=channel_id,
+            project_id=project_id,
+            global_scope=global_scope,
+            enabled=enabled,
+            event_pattern=event_pattern,
+        )
+
+    def update_event_subscription(
+        self,
+        subscription_id: str,
+        *,
+        name: str | None = None,
+        channel: str | None = None,
+        event_pattern: str | None = None,
+        project_id: str | None = None,
+        global_scope: bool | None = None,
+        session_id: str | None | _Unset = _UNSET,
+        priority: int | None = None,
+        enabled: bool | None = None,
+    ) -> CommsRoutingRule:
+        """Partially update an event subscription."""
+        current = self.get_event_subscription(subscription_id)
+        if name is not None:
+            normalized_name = name.strip()
+            if not normalized_name:
+                raise ValueError("Subscription name is required")
+            current.name = normalized_name
+        if event_pattern is not None:
+            normalized_pattern = event_pattern.strip()
+            if not normalized_pattern:
+                raise ValueError("Event pattern is required")
+            current.event_pattern = normalized_pattern
+        if channel is not None:
+            current.channel_id = self._resolve_subscription_channel(channel).id
+
+        next_session_id = current.session_id if isinstance(session_id, _Unset) else session_id
+        next_project_id = current.project_id
+        if global_scope is True:
+            if project_id is not None:
+                raise ValueError("Choose either project scope or global scope")
+            next_project_id = None
+        elif project_id is not None:
+            next_project_id = project_id
+        elif global_scope is False:
+            raise ValueError("Project ID is required for project scope")
+        current.project_id = self._validate_subscription_scope(
+            project_id=next_project_id,
+            global_scope=next_project_id is None,
+            session_id=next_session_id,
+        )
+        current.session_id = next_session_id
+        if priority is not None:
+            current.priority = priority
+        if enabled is not None:
+            current.enabled = enabled
+        current.updated_at = utc_now()
+        current.config_json = dict(current.config_json)
+        result = self._store.update_routing_rule(current)
+        self._router.invalidate_cache()
+        return result
+
+    def delete_event_subscription(self, subscription_id: str) -> None:
+        """Delete an event subscription by ID."""
+        self.get_event_subscription(subscription_id)
+        self._store.delete_routing_rule(subscription_id)
+        self._router.invalidate_cache()
+
+    def event_subscription_to_dict(self, rule: CommsRoutingRule) -> dict[str, Any]:
+        """Serialize the public event-subscription contract."""
+        if rule.channel_id is None:
+            raise ValueError("Event subscription has no channel")
+        channel = self._store.get_channel(rule.channel_id)
+        if channel is None:
+            raise ValueError(f"Channel '{rule.channel_id}' not found")
+
+        def serialize_timestamp(value: object) -> str | None:
+            return value.isoformat() if hasattr(value, "isoformat") else None
+
+        return {
+            "id": rule.id,
+            "name": rule.name,
+            "channel_id": channel.id,
+            "channel_name": channel.name,
+            "scope": {
+                "kind": "global" if rule.project_id is None else "project",
+                "project_id": rule.project_id,
+            },
+            "event_pattern": rule.event_pattern,
+            "session_id": rule.session_id,
+            "priority": rule.priority,
+            "enabled": rule.enabled,
+            "created_at": serialize_timestamp(rule.created_at),
+            "updated_at": serialize_timestamp(rule.updated_at),
+        }
 
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
         """Create a routing rule and invalidate the router cache."""
