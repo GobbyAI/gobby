@@ -99,7 +99,11 @@ async def test_webhook_issue_is_created_once_and_then_updated(
         github_repo="owner/repo",
         validation_criteria=validation_criteria,
     )
-    assert task_manager.reconcile_task_state.call_args.kwargs["labels"] == ["local", "bug"]
+    task_manager.update_task.assert_called_once_with(
+        "task-1",
+        labels=["local", "bug"],
+    )
+    assert "labels" not in task_manager.reconcile_task_state.call_args.kwargs
 
 
 @pytest.mark.asyncio

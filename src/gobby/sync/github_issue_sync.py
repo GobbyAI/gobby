@@ -133,14 +133,20 @@ class GitHubIssueSyncService:
             local_updated = parse_stored_datetime(existing.get("updated_at"))
             if local_updated and remote_updated and local_updated > remote_updated:
                 return {"action": "skipped_local_newer", "task_id": existing["id"]}
-            existing_labels = existing.get("labels") or []
+            existing_labels = list(existing.get("labels") or [])
             updates["labels"] = list(dict.fromkeys([*existing_labels, *updates["labels"]]))
+            metadata_updates: dict[str, Any] = {}
+            if updates["labels"] != existing_labels:
+                metadata_updates["labels"] = updates["labels"]
             if existing.get("validation_criteria") != validation_criteria:
+                metadata_updates["validation_criteria"] = validation_criteria
+            if metadata_updates:
                 await asyncio.to_thread(
                     self.task_manager.update_task,
                     existing["id"],
-                    validation_criteria=validation_criteria,
+                    **metadata_updates,
                 )
+            updates.pop("labels")
             task = await asyncio.to_thread(
                 self.task_manager.reconcile_task_state,
                 existing["id"],
