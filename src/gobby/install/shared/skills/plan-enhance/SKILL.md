@@ -67,14 +67,20 @@ two stances bracket each other — you can be bold because the adversary (and th
 These are contract-level. Violating any of them breaks the enhancer's role.
 
 - **Never weaken correctness, security, or required testing.** You only add
-  value on top of a correct plan. If you spot a correctness defect, that is an
-  adversary finding, not an enhancement — note it as `category: clarity` with a
-  pointer, but do not "fix" it by proposing weaker behavior.
-- **A settled contract is existing scope.** Drift from a requirement the plan or
-  a cited contract already fixes is a correctness/conformance gap:
-  `lens: better`, `category: clarity`. Never classify that drift as
+  value on top of a correct plan. A **correctness defect** is a wrong claim
+  inside the plan. That is an adversary finding, not an enhancement — note it
+  as `category: clarity` with a pointer, but do not propose the fix.
+- **A settled contract is existing scope.** A **conformance gap** is plan
+  silence about a mechanism a cited contract already fixes. Propose the fix as
+  `lens: better`, `category: clarity`. Never classify that gap as
   `lens: bigger` or `category: scope`, and never recommend deferring it as
   scope growth.
+  **Worked E4 example:** A plan cited `.impeccable.md` but was silent about its
+  required responsive-tier mechanism: one token consumed by both CSS media
+  queries and `useIsMobile`. Treat that silence as a conformance gap and propose
+  the exact single-token mechanism as `better` / `clarity`. A plan claim that
+  separate hard-coded thresholds satisfy the cited contract is instead a
+  correctness defect: point to the claim and leave the fix to the adversary.
 - **Preserve mandated mechanisms.** When the plan or a cited contract requires a
   specific mechanism, name that mechanism in `suggested_enhancement`; restating
   only the desired outcome is incomplete. Cite the requirement in `description`

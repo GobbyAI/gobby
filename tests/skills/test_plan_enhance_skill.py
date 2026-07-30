@@ -102,15 +102,26 @@ class TestPlanEnhanceContent:
         for category in ("scope", "testability", "reuse", "sequencing", "clarity"):
             assert category in body, f"Category enum missing: {category}"
 
-    def test_contract_conformance_is_better_and_never_scope(self, body: str) -> None:
-        lowered = body.lower()
-        assert "a settled contract is existing scope" in lowered
-        assert "correctness/conformance gap" in lowered
-        assert "`lens: better`, `category: clarity`" in lowered
-        assert "never classify that drift as" in lowered
-        assert "`lens: bigger` or `category: scope`" in lowered
+    def test_skill_distinguishes_correctness_defects_from_conformance_gaps(self, body: str) -> None:
+        normalized = " ".join(body.lower().split())
+        assert "a settled contract is existing scope" in normalized
+        assert "a **correctness defect** is a wrong claim inside the plan" in normalized
+        assert "but do not propose the fix" in normalized
+        assert (
+            "a **conformance gap** is plan silence about a mechanism a cited contract" in normalized
+        )
+        assert "propose the fix as" in normalized
+        assert "`lens: better`, `category: clarity`" in normalized
+        assert "never classify that gap as" in normalized
+        assert "`lens: bigger` or `category: scope`" in normalized
 
-    def test_mandated_mechanism_survives_suggestion(self, body: str) -> None:
+    def test_skill_includes_worked_e4_conformance_example(self, body: str) -> None:
+        normalized = " ".join(body.lower().split())
+        assert "**worked e4 example:**" in normalized
+        assert "one token consumed by both css media queries and `useismobile`" in normalized
+        assert "separate hard-coded thresholds satisfy the cited contract" in normalized
+
+    def test_skill_instructs_suggestions_to_preserve_mandated_mechanisms(self, body: str) -> None:
         lowered = body.lower()
         normalized = " ".join(lowered.split())
         assert "preserve mandated mechanisms" in lowered
