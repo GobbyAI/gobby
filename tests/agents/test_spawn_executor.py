@@ -4,9 +4,13 @@ import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.agents.session import ChildSessionManager
 
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
@@ -570,7 +574,9 @@ class TestExecuteSpawn:
             assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="gobby-sess-123"' in command
             assert 'mcp_servers.gobby.env.GOBBY_PROJECT_ID="proj"' in command
             assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-abc123def456"' in command
-            assert 'mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="scoped-token"' in command
+            # The capability is forwarded by name; its value never enters argv.
+            assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in command
+            assert not any("scoped-token" in argument for argument in command)
             assert not any("GOBBY_PARENT_SESSION_ID" in argument for argument in command)
             assert "--full-auto" not in command
 
@@ -1694,3 +1700,68 @@ def test_codex_mcp_overrides_omit_tmpdir_without_sandbox() -> None:
     overrides = _codex_mcp_config_overrides("/repo", None)
 
     assert not any(entry.startswith("mcp_servers.gobby.env.TMPDIR") for entry in overrides)
+
+
+def test_capability_token_never_in_argv_or_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The capability value stays in process env; argv and metadata carry only its name."""
+    import json
+
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+
+    token_value = "gobby-agent-v1.payload.signature"
+    identity_env = {
+        "GOBBY_SESSION_ID": "child-session-uuid",
+        "GOBBY_PROJECT_ID": "project-uuid",
+        "GOBBY_AGENT_RUN_ID": "run-uuid",
+        "GOBBY_AGENT_API_TOKEN": token_value,
+    }
+
+    overrides = _codex_mcp_config_overrides("/repo", None, managed_identity_env=identity_env)
+
+    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in overrides
+    assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="child-session-uuid"' in overrides
+    assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-uuid"' in overrides
+    assert not any(token_value in override for override in overrides)
+
+    db = object()
+    session_manager = SimpleNamespace(_storage=SimpleNamespace(db=db))
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="codex",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        agent_run_id="run-uuid",
+        session_manager=cast("ChildSessionManager", session_manager),
+        resume_metadata_json={"provider": "codex"},
+    )
+    persisted: list[dict[str, object]] = []
+
+    class FakeAgentRunManager:
+        def __init__(self, database: object) -> None:
+            self.database = database
+
+        def update_resume_metadata(self, agent_run_id: str, metadata: dict[str, object]) -> None:
+            persisted.append(metadata)
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", FakeAgentRunManager)
+
+    _record_resume_launch_details(
+        request,
+        agent_run_id="run-uuid",
+        config_overrides=[
+            *overrides,
+            # A legacy-style literal token override must never be persisted.
+            f"mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN={json.dumps(token_value)}",
+        ],
+    )
+
+    (metadata,) = persisted
+    persisted_overrides = metadata["config_overrides"]
+    assert isinstance(persisted_overrides, list)
+    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in persisted_overrides
+    assert token_value not in json.dumps(metadata)

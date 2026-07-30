@@ -16,7 +16,10 @@ from gobby.agents.constants import (
     GOBBY_PROJECT_ID,
     GOBBY_SESSION_ID,
 )
-from gobby.agents.resume_metadata import merge_resume_metadata_env
+from gobby.agents.resume_metadata import (
+    filter_resume_config_overrides,
+    merge_resume_metadata_env,
+)
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import (
@@ -63,8 +66,11 @@ _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS = (
     GOBBY_SESSION_ID,
     GOBBY_PROJECT_ID,
     GOBBY_AGENT_RUN_ID,
-    GOBBY_AGENT_API_TOKEN,
 )
+# Secrets are forwarded by name through Codex's mcp_servers.<id>.env_vars
+# whitelist: the value stays in the provider process environment and never
+# appears in argv or persisted config overrides.
+_CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS = (GOBBY_AGENT_API_TOKEN,)
 
 
 def _validate_codex_gobby_tool_allowlist() -> None:
@@ -143,7 +149,7 @@ def _record_resume_launch_details(
         env,
     )
     metadata["env"] = final_env
-    metadata["config_overrides"] = list(config_overrides or [])
+    metadata["config_overrides"] = filter_resume_config_overrides(config_overrides)
     if mcp_path is not None:
         metadata["mcp_path"] = mcp_path
     if strict_mcp is not None:
@@ -275,6 +281,13 @@ def _codex_mcp_config_overrides(
         for variable_name in _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS:
             if value := managed_identity_env.get(variable_name):
                 overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
+        forwarded_secrets = [
+            variable_name
+            for variable_name in _CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS
+            if managed_identity_env.get(variable_name)
+        ]
+        if forwarded_secrets:
+            overrides.append(f"mcp_servers.gobby.env_vars={json.dumps(forwarded_secrets)}")
     # Dotted -c overrides replace enough of the spawned server table that Codex
     # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
     # tools required by worker contracts so unattended builds do not stop on MCP

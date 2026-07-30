@@ -23,6 +23,7 @@ def _run_hook_body(
     *,
     jq_available: bool,
     agent_token: str | None = None,
+    strict_unset: bool = False,
 ) -> list[str]:
     home = work_dir / "home"
     gobby_home = work_dir / "gobby-home"
@@ -66,8 +67,9 @@ def _run_hook_body(
                 "GOBBY_SESSION_ID": "session-123",
             }
         )
+    prelude = "set -u\n" if strict_unset else ""
     result = subprocess.run(
-        ["/bin/bash", "-c", f"{_CODE_INDEX_REINDEX_BODY}\nwait"],
+        ["/bin/bash", "-c", f"{prelude}{_CODE_INDEX_REINDEX_BODY}\nwait"],
         capture_output=True,
         check=False,
         env=env,
@@ -110,3 +112,24 @@ def test_hook_body_prefers_scoped_agent_token_and_identity(tmp_path: Path) -> No
     assert "X-Gobby-Agent-Run-Id: run-123" in args
     assert "X-Gobby-Project-Id: project-123" in args
     assert "X-Gobby-Session-Id: session-123" in args
+
+
+def test_hook_body_survives_set_u_without_agent_identity(tmp_path: Path) -> None:
+    """Chained user hooks run under set -u; unset GOBBY_* vars and empty
+    header arrays (bash 3.2 treats them as unbound) must not abort."""
+    args = _run_hook_body(
+        tmp_path / "with-token",
+        "operator-token",
+        jq_available=True,
+        strict_unset=True,
+    )
+    anonymous_args = _run_hook_body(
+        tmp_path / "anonymous",
+        None,
+        jq_available=True,
+        strict_unset=True,
+    )
+
+    assert "Authorization: Bearer operator-token" in args
+    assert all(not arg.startswith("X-Gobby-") for arg in args)
+    assert all(not arg.startswith("Authorization:") for arg in anonymous_args)

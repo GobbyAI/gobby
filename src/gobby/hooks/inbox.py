@@ -27,7 +27,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
-from gobby.utils.local_token import daemon_auth_headers, read_local_api_token
+from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
@@ -151,7 +151,13 @@ async def _post_envelope(
         if isinstance(headers, dict)
         else {}
     )
-    request_headers.update(daemon_auth_headers())
+    # Inbox replay runs inside the daemon and drains envelopes for every
+    # session, so it must authenticate as the operator. An inherited
+    # GOBBY_AGENT_API_TOKEN (daemon_auth_headers prefers it) would scope the
+    # replay to one run's capability and 401 other sessions' envelopes.
+    operator_token = read_local_api_token()
+    if operator_token is not None:
+        request_headers["Authorization"] = f"Bearer {operator_token}"
     if envelope_id:
         request_headers[ENVELOPE_ID_HEADER] = envelope_id
 

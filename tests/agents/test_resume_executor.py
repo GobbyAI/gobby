@@ -352,6 +352,39 @@ async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
     assert 'model="moonshotai/kimi-k3"' in launch_updates["config_overrides"]
 
 
+@pytest.mark.asyncio
+async def test_resume_never_replays_stored_secret_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-allowlisted stored overrides are dropped; the capability is re-minted."""
+    legacy_token_override = 'mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="stale-capability"'
+    metadata = _resume_metadata()
+    metadata["config_overrides"] = [
+        legacy_token_override,
+        'mcp_servers.gobby.command="uv"',
+    ]
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    build_cli = MagicMock(return_value=(["codex", "resume"], {}))
+    monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    overrides = build_cli.call_args.kwargs["config_overrides"]
+    assert 'mcp_servers.gobby.command="uv"' in overrides
+    assert legacy_token_override not in overrides
+    assert "stale-capability" not in repr(build_cli.call_args)
+
+
 @pytest.mark.parametrize(
     ("provider", "base_env", "token_env"),
     [

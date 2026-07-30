@@ -142,7 +142,13 @@ async def test_replayed_envelope_without_id_is_quarantined_and_barrier_settles(
 
 
 @pytest.mark.asyncio
-async def test_replay_attaches_token() -> None:
+async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inbox replay authenticates as the operator, never a run capability.
+
+    The replay drains envelopes for every session, so an inherited
+    GOBBY_AGENT_API_TOKEN must not scope it to one run.
+    """
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "scoped-agent-token")
     envelope = _valid_envelope()
     envelope["headers"] = {
         "authorization": "Bearer persisted-stale-token",
@@ -154,8 +160,8 @@ async def test_replay_attaches_token() -> None:
 
     with (
         patch(
-            "gobby.hooks.inbox.daemon_auth_headers",
-            return_value={"Authorization": "Bearer fresh-token"},
+            "gobby.hooks.inbox.read_local_api_token",
+            return_value="fresh-operator-token",
         ),
         patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=client),
     ):
@@ -169,7 +175,7 @@ async def test_replay_attaches_token() -> None:
     headers = client.post.await_args.kwargs["headers"]
     assert headers == {
         "X-Gobby-Project-Id": "project-123",
-        "Authorization": "Bearer fresh-token",
+        "Authorization": "Bearer fresh-operator-token",
     }
 
 

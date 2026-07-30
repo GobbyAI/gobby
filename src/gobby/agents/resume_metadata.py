@@ -12,6 +12,51 @@ from gobby.agents.spawn_cache_policy import SPAWN_CACHE_ENV_VARS
 RESUME_METADATA_VERSION = 1
 _RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
 
+# Positive allowlist of config-override keys persisted for daemon-stop resume.
+# Secret-bearing overrides are never persisted: resume re-mints the agent
+# capability from the operator token instead of replaying a stored one.
+_RESUME_CONFIG_OVERRIDE_KEYS = frozenset(
+    {
+        "mcp_servers.gobby.command",
+        "mcp_servers.gobby.args",
+        "mcp_servers.gobby.startup_timeout_sec",
+        "mcp_servers.gobby.tool_timeout_sec",
+        "mcp_servers.gobby.env_vars",
+        "mcp_servers.gobby.env.TMPDIR",
+        "mcp_servers.gobby.env.GOBBY_SESSION_ID",
+        "mcp_servers.gobby.env.GOBBY_PROJECT_ID",
+        "mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID",
+        "sandbox_mode",
+        "model",
+        "model_provider",
+        "shell_environment_policy.exclude",
+        "features.shell_snapshot",
+    }
+)
+_RESUME_CONFIG_OVERRIDE_KEY_PREFIXES = (
+    # Per-tool approval table re-seeded for the Gobby MCP proxy.
+    "mcp_servers.gobby.tools.",
+    # Named generation-endpoint provider config; secret-free by construction
+    # (codex_endpoint_config_overrides stores the API-key env *name* only).
+    "model_providers.",
+)
+
+
+def filter_resume_config_overrides(overrides: Any) -> list[str]:
+    """Keep only allowlisted non-secret config overrides for persistence."""
+    kept: list[str] = []
+    if not isinstance(overrides, list | tuple):
+        return kept
+    for override in overrides:
+        if not isinstance(override, str):
+            continue
+        key = override.partition("=")[0].strip()
+        if key in _RESUME_CONFIG_OVERRIDE_KEYS or key.startswith(
+            _RESUME_CONFIG_OVERRIDE_KEY_PREFIXES
+        ):
+            kept.append(override)
+    return kept
+
 
 def json_safe(value: Any) -> Any:
     """Return a JSON-serializable copy, stringifying unknown leaf values."""

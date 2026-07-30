@@ -17,7 +17,10 @@ from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
     notify_parent_of_recovery,
 )
-from gobby.agents.resume_metadata import merge_resume_metadata_env
+from gobby.agents.resume_metadata import (
+    filter_resume_config_overrides,
+    merge_resume_metadata_env,
+)
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawners.command_builder import build_cli_command
@@ -293,7 +296,10 @@ async def resume_agent_run(
     config_overrides = list(
         dict.fromkeys(
             [
-                *_str_list(resume_metadata.get("config_overrides")),
+                # Replay only allowlisted non-secret overrides; the fresh
+                # capability token comes from spawn_context.env_vars, minted
+                # for this resume, never from a stored override.
+                *filter_resume_config_overrides(_str_list(resume_metadata.get("config_overrides"))),
                 *endpoint_config_overrides,
             ]
         )
