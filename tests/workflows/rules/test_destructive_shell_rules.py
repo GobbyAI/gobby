@@ -386,6 +386,17 @@ class TestNoDestructiveGitInteractive:
             "git stash branch recovery",
             "git stash drop",
             "git stash clear",
+            "git -C /Users/josh/Projects/gobby stash drop stash@{0}",
+            "git -C . stash pop",
+            "git --git-dir=/repo/.git stash",
+            "git --git-dir /repo/.git stash push",
+            "git --work-tree=/repo stash clear",
+            "git -c core.pager=cat stash drop",
+            "git --no-pager -C /repo stash pop",
+            "git -C /repo reset --hard",
+            "git --work-tree /repo clean -fd",
+            "git -c user.name=x checkout .",
+            "git -C /repo branch -D feature",
         ],
     )
     def test_blocks_destructive_git(self, command) -> None:
@@ -402,6 +413,11 @@ class TestNoDestructiveGitInteractive:
             "git stash show -p stash@{0}",
             "git checkout feature-branch",
             "git reset --soft HEAD~1",
+            "git -C /Users/josh/Projects/gobby stash list",
+            "git -C /repo stash show -p stash@{0}",
+            "git -C /repo status",
+            "git -C /repo reset --soft HEAD~1",
+            "git --git-dir=/repo/.git stash list",
         ],
     )
     def test_allows_safe_git(self, command) -> None:
