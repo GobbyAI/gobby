@@ -529,6 +529,14 @@ class MemoryConfig(BaseModel):
             "(graph_edge_decay). Set to 0 to disable edge decay."
         ),
     )
+    graph_related_expansion_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "End-to-end deadline in seconds for related-memory graph expansion during "
+            "search. Changes take effect after daemon restart."
+        ),
+    )
     cluster_recall_expansion: bool = Field(
         default=False,
         description=(

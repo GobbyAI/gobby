@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -450,3 +451,67 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     assert attention.reason == "approval"
     assert attention.payload["kind"] == "approval"
     tmux.send_keys.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = _attention_manager(temp_db)
+    session = SimpleNamespace(
+        id="interactive-session",
+        status="active",
+        source="claude",
+        terminal_context={"tmux_pane": "%42"},
+    )
+    session_manager = MagicMock()
+    session_manager.db = temp_db
+    session_manager.list.return_value = [session]
+    tmux = MagicMock()
+    tmux.capture_pane = AsyncMock(
+        return_value="Permission required: press Enter to approve this command"
+    )
+    monitor = TmuxPaneMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        session_end_callback=MagicMock(),
+        session_manager=session_manager,
+        attention_manager=manager,
+        prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
+        tmux_manager_factory=lambda _context: tmux,
+    )
+    await monitor._check_attention_panes(active_runs=[])
+    before_timeout = manager.get(f"session:{session.id}")
+    assert before_timeout is not None
+
+    tmux.capture_pane.reset_mock()
+    tmux.capture_pane.side_effect = TimeoutError("tmux command timed out")
+    caplog.clear()
+    logger_name = "gobby.agents.tmux.pane_monitor"
+    with caplog.at_level(logging.DEBUG, logger=logger_name):
+        await monitor._check_attention_panes(active_runs=[])
+
+    after_timeout = manager.get(f"session:{session.id}")
+    assert after_timeout is not None
+    assert after_timeout.attention_id == before_timeout.attention_id
+    assert after_timeout.fingerprint == before_timeout.fingerprint
+    assert after_timeout.state == "blocked"
+    tmux.capture_pane.assert_awaited_once_with("%42", lines=15)
+    records = [record for record in caplog.records if record.name == logger_name]
+    assert not [record for record in records if record.levelno >= logging.WARNING]
+    timeout_record = next(
+        record for record in records if record.getMessage().endswith("pane capture timed out")
+    )
+    assert timeout_record.exc_info is None
+    assert timeout_record.__dict__["pane_id"] == "%42"
+    assert timeout_record.__dict__["session_id"] == session.id
+    assert timeout_record.__dict__["provider"] == "claude"
+
+    tmux.capture_pane.side_effect = None
+    tmux.capture_pane.return_value = "Working normally"
+    await monitor._check_attention_panes(active_runs=[])
+
+    recovered = manager.get(f"session:{session.id}")
+    assert recovered is not None
+    assert recovered.state is None

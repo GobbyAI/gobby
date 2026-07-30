@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.config.persistence import EmbeddingsConfig, MemoryConfig, QdrantConfig
 from gobby.storage.config_store import config_key_to_secret_name
@@ -105,6 +106,24 @@ def test_cluster_recall_expansion_defaults_off() -> None:
     assert config.cluster_expansion_per_entity == 3
     assert config.cluster_min_cluster_size == 5
     assert config.cluster_min_samples == 2
+
+
+def test_graph_related_expansion_timeout_defaults_to_ten_seconds() -> None:
+    config = MemoryConfig()
+
+    assert config.graph_related_expansion_timeout_seconds == 10.0
+
+
+def test_graph_related_expansion_timeout_accepts_positive_values() -> None:
+    config = MemoryConfig(graph_related_expansion_timeout_seconds=12.5)
+
+    assert config.graph_related_expansion_timeout_seconds == 12.5
+
+
+@pytest.mark.parametrize("value", [0.0, -0.1])
+def test_graph_related_expansion_timeout_rejects_non_positive_values(value: float) -> None:
+    with pytest.raises(ValidationError):
+        MemoryConfig(graph_related_expansion_timeout_seconds=value)
 
 
 def test_cluster_expansion_per_entity_rejects_negative_values() -> None:

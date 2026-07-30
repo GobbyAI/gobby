@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -404,6 +407,61 @@ class TestFindRelatedMemoryIds:
             )
 
         assert result.memory_ids == ["mem-100"]
+
+    async def test_configured_deadline_trips_breaker_and_rate_limits_warning(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        timeout_seconds = 0.001
+
+        async def blocked_query(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            await asyncio.Event().wait()
+            return []
+
+        mock_falkor.query = AsyncMock(side_effect=blocked_query)
+        logger_name = "gobby.memory.services.knowledge_graph.reader"
+
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            for _ in range(3):
+                result = await service.find_related_memory_ids(
+                    entity_keys=[entity_key(PERSONAL_PROJECT_ID, "Python")],
+                    timeout_seconds=timeout_seconds,
+                )
+                assert result.memory_ids == []
+
+            assert mock_falkor.query.await_count == 3
+
+            result = await service.find_related_memory_ids(
+                entity_keys=[entity_key(PERSONAL_PROJECT_ID, "Python")],
+                timeout_seconds=timeout_seconds,
+            )
+            assert result.memory_ids == []
+            assert mock_falkor.query.await_count == 3
+
+            reader = service._reader
+            reader._traversal_disabled_until = 0.0
+            reader._last_traversal_warning_at = time.monotonic() - 61.0
+            result = await service.find_related_memory_ids(
+                entity_keys=[entity_key(PERSONAL_PROJECT_ID, "Python")],
+                timeout_seconds=timeout_seconds,
+            )
+
+        assert result.memory_ids == []
+        assert mock_falkor.query.await_count == 4
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == logger_name and "graph traversal timed out" in record.getMessage()
+        ]
+        assert len(warnings) == 2
+        assert warnings[0].__dict__["effective_timeout_seconds"] == timeout_seconds
+        assert warnings[0].__dict__["consecutive_timeouts"] == 1
+        assert warnings[0].__dict__["cooldown_seconds"] == 60.0
+        assert warnings[0].__dict__["suppressed_warnings"] == 0
+        assert warnings[1].__dict__["consecutive_timeouts"] == 4
+        assert warnings[1].__dict__["suppressed_warnings"] == 2
 
     async def test_clamps_max_hops(
         self,

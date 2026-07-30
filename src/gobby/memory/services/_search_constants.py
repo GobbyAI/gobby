@@ -3,7 +3,6 @@
 DEFAULT_SEARCH_LIMIT = 10
 _USER_SOURCE_BOOST = 1.2
 _GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
-_GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS = 2.0
 # Recall expander (#17104): a memory the vector index missed, surfaced by an entity it
 # mentions that matched the query, enters the similarity axis at its entity-match cosine
 # discounted by this factor. The discount reflects the indirection (entity match, not a

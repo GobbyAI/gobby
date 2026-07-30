@@ -740,6 +740,7 @@ class KnowledgeGraphService:
         limit: int = 20,
         project_id: str | None = None,
         include_global: bool = True,
+        timeout_seconds: float | None = None,
     ) -> RelatedMemoryTraversal:
         """Traverse from entities through relationships to find related memory IDs."""
         return await self._reader.find_related_memory_ids(
@@ -748,6 +749,7 @@ class KnowledgeGraphService:
             limit=limit,
             project_id=project_id,
             include_global=include_global,
+            timeout_seconds=timeout_seconds,
         )
 
     # -----------------------------------------------------------------------

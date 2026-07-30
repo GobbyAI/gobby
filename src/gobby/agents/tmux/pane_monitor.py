@@ -302,6 +302,17 @@ class TmuxPaneMonitor:
             try:
                 tmux = self._tmux_manager_factory(terminal_context)
                 pane_output = await tmux.capture_pane(pane_id, lines=15)
+            except TimeoutError as exc:
+                logger.debug(
+                    "TmuxPaneMonitor: interactive pane capture timed out",
+                    extra={
+                        "pane_id": pane_id,
+                        "session_id": session.id,
+                        "provider": session.source or "",
+                        "error": str(exc),
+                    },
+                )
+                continue
             except Exception:
                 logger.warning(
                     "TmuxPaneMonitor: failed to capture interactive pane %s",

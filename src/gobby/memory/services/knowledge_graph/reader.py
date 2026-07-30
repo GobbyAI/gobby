@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -275,18 +276,27 @@ class KnowledgeGraphReader:
             message = f"{message} {response_body!s}".lower()
         return "query timed out" in message
 
-    def _record_traversal_timeout(self, error: BaseException) -> None:
+    def _record_traversal_timeout(
+        self,
+        error: BaseException,
+        timeout_seconds: float | None,
+    ) -> None:
         now = time.monotonic()
         self._traversal_timeout_count += 1
         if self._traversal_timeout_count >= _TRAVERSAL_TIMEOUT_THRESHOLD:
             self._traversal_disabled_until = now + _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS
-        self._warn_traversal_timeout(error, now)
+        self._warn_traversal_timeout(error, now, timeout_seconds)
 
     def _record_traversal_success(self) -> None:
         self._traversal_timeout_count = 0
         self._traversal_disabled_until = 0.0
 
-    def _warn_traversal_timeout(self, error: BaseException, now: float) -> None:
+    def _warn_traversal_timeout(
+        self,
+        error: BaseException,
+        now: float,
+        timeout_seconds: float | None,
+    ) -> None:
         if now - self._last_traversal_warning_at < _TRAVERSAL_WARNING_INTERVAL_SECONDS:
             self._suppressed_traversal_warnings += 1
             return
@@ -295,12 +305,19 @@ class KnowledgeGraphReader:
         self._suppressed_traversal_warnings = 0
         self._last_traversal_warning_at = now
         logger.warning(
-            "FalkorDB graph traversal query timed out; consecutive_timeouts=%d "
-            "cooldown_seconds=%.0f suppressed_warnings=%d error=%s",
+            "FalkorDB graph traversal timed out; effective_timeout_seconds=%s "
+            "consecutive_timeouts=%d cooldown_seconds=%.0f suppressed_warnings=%d error=%s",
+            timeout_seconds,
             self._traversal_timeout_count,
             _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS,
             suppressed,
             error,
+            extra={
+                "effective_timeout_seconds": timeout_seconds,
+                "consecutive_timeouts": self._traversal_timeout_count,
+                "cooldown_seconds": _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS,
+                "suppressed_warnings": suppressed,
+            },
         )
 
     def _edge_score(self, edge_weight: Any, updated_at: Any) -> float:
@@ -526,9 +543,8 @@ class KnowledgeGraphReader:
             )
         except Exception as e:
             if self._is_query_timeout_error(e):
-                self._record_traversal_timeout(e)
-            else:
-                logger.debug("Cluster recall expansion failed: %s", e)
+                raise
+            logger.debug("Cluster recall expansion failed: %s", e)
             return []
 
         cluster_keys: list[str] = []
@@ -554,6 +570,7 @@ class KnowledgeGraphReader:
         limit: int = 20,
         project_id: str | None = None,
         include_global: bool = True,
+        timeout_seconds: float | None = None,
     ) -> RelatedMemoryTraversal:
         """Traverse from entities through relationships to find related memory IDs."""
         if not entity_keys or limit <= 0:
@@ -567,66 +584,72 @@ class KnowledgeGraphReader:
             return RelatedMemoryTraversal()
 
         try:
-            (
-                related_entity_keys,
-                components_by_entity,
-                admission_score_by_entity,
-            ) = await self._find_related_entity_keys(
-                seed_keys,
-                max_hops,
-                limit,
-                project_id,
-                include_global,
-            )
-            cluster_entity_keys = await self._find_cluster_entity_keys(
-                seed_keys,
-                seed_keys,
-                related_entity_keys,
-                project_id,
-                include_global,
-            )
-            memory_entity_keys = list(dict.fromkeys([*related_entity_keys, *cluster_entity_keys]))
-            if not memory_entity_keys:
-                self._record_traversal_success()
-                return RelatedMemoryTraversal()
+            async with asyncio.timeout(timeout_seconds):
+                (
+                    related_entity_keys,
+                    components_by_entity,
+                    admission_score_by_entity,
+                ) = await self._find_related_entity_keys(
+                    seed_keys,
+                    max_hops,
+                    limit,
+                    project_id,
+                    include_global,
+                )
+                cluster_entity_keys = await self._find_cluster_entity_keys(
+                    seed_keys,
+                    seed_keys,
+                    related_entity_keys,
+                    project_id,
+                    include_global,
+                )
+                memory_entity_keys = list(
+                    dict.fromkeys([*related_entity_keys, *cluster_entity_keys])
+                )
+                if not memory_entity_keys:
+                    self._record_traversal_success()
+                    return RelatedMemoryTraversal()
 
-            rows = await self._falkor.query(
-                "UNWIND $entity_keys AS entity_key "
-                "MATCH (e:_Entity {entity_key: entity_key})"
-                "-[:MENTIONED_IN]->(m:Memory) "
-                "WHERE ((e.project_id = $project_id AND e.is_global = false) "
-                "OR ($include_global AND e.is_global = true)) "
-                "AND ((m.project_id = $project_id AND m.is_global = false) "
-                "OR ($include_global AND m.is_global = true)) "
-                "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
-                "ORDER BY updated_at DESC LIMIT $limit",
-                {
-                    "entity_keys": memory_entity_keys,
-                    "limit": limit,
-                    "project_id": project_id,
-                    "include_global": include_global,
-                },
-            )
-            memory_ids = [r["memory_id"] for r in rows if r.get("memory_id")]
-            component_map = await self._attribute_edge_components(
-                memory_ids=memory_ids,
-                components_by_entity=components_by_entity,
-                admission_score_by_entity=admission_score_by_entity,
-                project_id=project_id,
-                include_global=include_global,
-            )
-            self._record_traversal_success()
-            return RelatedMemoryTraversal(memory_ids=memory_ids, component_map=component_map)
+                rows = await self._falkor.query(
+                    "UNWIND $entity_keys AS entity_key "
+                    "MATCH (e:_Entity {entity_key: entity_key})"
+                    "-[:MENTIONED_IN]->(m:Memory) "
+                    "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                    "OR ($include_global AND e.is_global = true)) "
+                    "AND ((m.project_id = $project_id AND m.is_global = false) "
+                    "OR ($include_global AND m.is_global = true)) "
+                    "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
+                    "ORDER BY updated_at DESC LIMIT $limit",
+                    {
+                        "entity_keys": memory_entity_keys,
+                        "limit": limit,
+                        "project_id": project_id,
+                        "include_global": include_global,
+                    },
+                )
+                memory_ids = [r["memory_id"] for r in rows if r.get("memory_id")]
+                component_map = await self._attribute_edge_components(
+                    memory_ids=memory_ids,
+                    components_by_entity=components_by_entity,
+                    admission_score_by_entity=admission_score_by_entity,
+                    project_id=project_id,
+                    include_global=include_global,
+                )
+                self._record_traversal_success()
+                return RelatedMemoryTraversal(memory_ids=memory_ids, component_map=component_map)
+        except TimeoutError as e:
+            self._record_traversal_timeout(e, timeout_seconds)
+            return RelatedMemoryTraversal()
         except FalkorConnectionError as e:
             if self._is_query_timeout_error(e):
-                self._record_traversal_timeout(e)
+                self._record_traversal_timeout(e, timeout_seconds)
                 return RelatedMemoryTraversal()
             self._record_traversal_success()
             logger.warning("FalkorDB unreachable during graph traversal: %s", e)
             return RelatedMemoryTraversal()
         except Exception as e:
             if self._is_query_timeout_error(e):
-                self._record_traversal_timeout(e)
+                self._record_traversal_timeout(e, timeout_seconds)
                 return RelatedMemoryTraversal()
             self._record_traversal_success()
             logger.warning("Graph traversal failed: %s", e)

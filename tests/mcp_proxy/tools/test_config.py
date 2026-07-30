@@ -1213,3 +1213,30 @@ class TestDeleteConfig:
             assert AI_EMBEDDING_API_KEY_KEY in config_store.list_keys()
             assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-delete-456"
             assert config_state["config"].embeddings.api_key == "sk-delete-456"
+
+
+def test_set_graph_expansion_timeout_persists_and_requires_restart(
+    config_registry: InternalToolRegistry,
+    config_store: ConfigStore,
+    config_state: dict[str, DaemonConfig],
+) -> None:
+    tool = config_registry.get_tool("set_config")
+    assert tool is not None
+    key = "memory.graph_related_expansion_timeout_seconds"
+
+    result = tool(key=key, value=12.5)
+
+    assert result["success"] is True
+    assert result["requires_restart"] is True
+    assert "gobby restart" in result["restart_hint"]
+    assert "related-expansion timeout" in result["restart_hint"]
+    assert config_store.get(key) == 12.5
+    assert config_state["config"].memory.graph_related_expansion_timeout_seconds == 12.5
+
+    unchanged = tool(key=key, value=12.5)
+    assert unchanged["success"] is True
+    assert "requires_restart" not in unchanged
+
+    changed = tool(key=key, value=20.0)
+    assert changed["success"] is True
+    assert changed["requires_restart"] is True

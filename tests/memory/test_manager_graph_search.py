@@ -862,3 +862,53 @@ class TestTemporalDecayIntegration:
         result_ids = [m.id for m in result]
         assert result_ids[0] == "mem-old"
         assert result_ids[1] == "mem-recent"
+
+
+@pytest.mark.asyncio
+async def test_configured_expansion_deadline_preserves_direct_memory_ids() -> None:
+    import asyncio
+
+    timeout_seconds = 0.001
+    manager = _make_manager(
+        falkordb_host="127.0.0.1",
+        llm_service=_mock_llm_service(),
+        vector_store=AsyncMock(),
+        embed_fn=AsyncMock(return_value=[0.1]),
+        config=MemoryConfig(
+            graph_related_expansion_timeout_seconds=timeout_seconds,
+        ),
+    )
+    kg_service = manager._kg_service
+    assert kg_service is not None
+    entity_search = AsyncMock(
+        return_value=[
+            {
+                "entity_key": entity_key(GLOBAL_PROJECT_ID, "Python", is_global=True),
+                "name": "Python",
+                "entity_type": "tool",
+                "labels": [],
+                "score": 0.9,
+                "memory_ids": ["mem-direct"],
+            }
+        ]
+    )
+
+    async def blocked_query(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        await asyncio.Event().wait()
+        return []
+
+    with (
+        patch.object(kg_service, "search_entities_by_vector", new=entity_search),
+        patch.object(
+            kg_service._reader._falkor,
+            "query",
+            new=AsyncMock(side_effect=blocked_query),
+        ),
+    ):
+        result = await manager._search_graph_for_memories(
+            query_embedding=[0.1],
+            limit=10,
+        )
+
+    assert result == ["mem-direct"]
+    assert kg_service._reader._traversal_timeout_count == 1

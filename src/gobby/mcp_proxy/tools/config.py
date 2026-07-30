@@ -49,6 +49,9 @@ _FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 _FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
+_MEMORY_GRAPH_EXPANSION_RESTART_HINT = (
+    "Run `gobby restart` for the new memory graph related-expansion timeout to take effect."
+)
 _UNEXPECTED_CONFIG_ERROR = "Internal config error"
 
 
@@ -87,9 +90,17 @@ def _add_restart_metadata(
     before_config: DaemonConfig,
     after_config: DaemonConfig,
 ) -> None:
+    restart_hints: list[str] = []
     if _falkor_password_value(before_config) != _falkor_password_value(after_config):
+        restart_hints.append(_FALKOR_RESTART_HINT)
+    if (
+        before_config.memory.graph_related_expansion_timeout_seconds
+        != after_config.memory.graph_related_expansion_timeout_seconds
+    ):
+        restart_hints.append(_MEMORY_GRAPH_EXPANSION_RESTART_HINT)
+    if restart_hints:
         result["requires_restart"] = True
-        result["restart_hint"] = _FALKOR_RESTART_HINT
+        result["restart_hint"] = " ".join(restart_hints)
 
 
 def _remove_scalar_parent_keys(flat: dict[str, Any], key: str) -> None:

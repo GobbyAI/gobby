@@ -669,6 +669,18 @@ class TestLoadConfig:
         config = load_config(config_file=str(config_file))
         assert config.daemon_port == 9000
 
+    def test_load_config_uses_stored_graph_expansion_timeout(self, temp_dir: Path) -> None:
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {"memory.graph_related_expansion_timeout_seconds": 12.5}
+
+        config = load_config(
+            config_file=str(temp_dir / "nonexistent.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.memory.graph_related_expansion_timeout_seconds == 12.5
+
     def test_load_config_warns_and_ignores_config_file_parse_failure(
         self,
         temp_dir: Path,

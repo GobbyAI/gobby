@@ -391,6 +391,9 @@ class SearchService:
         return await search_graph_scored(
             kg_service=self._require_kg_service(),
             query_embedding=query_embedding,
+            related_expansion_timeout_seconds=(
+                self._config.graph_related_expansion_timeout_seconds
+            ),
             limit=limit,
             min_score=min_score,
             project_id=project_id,
