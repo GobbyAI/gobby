@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 RESERVED_WORKFLOW_VARIABLES = frozenset(
     {
         "_block_reasons_shown",
-        "_plan_vote_interaction_receipt",
         "_step_workflow_name",
         "consecutive_tool_blocks",
         "listed_servers",

@@ -14,10 +14,6 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    append_request_anchor,
-)
 from gobby.plans.review_telemetry import (
     deterministic_review_message_id,
     enrich_round_result,
@@ -32,14 +28,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import (
     StageReviewSetup,
     coverage_attestation,
     prepare_bound_review,
-)
-from tests.review_coverage_helpers import (
-    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
 )
 from tests.review_telemetry_helpers import (
     bound_review,
@@ -51,11 +43,11 @@ pytestmark = pytest.mark.unit
 
 def _delivered_result(evidence_id: str) -> dict[str, object]:
     return {
-        "verdict": "needs_requirements",
+        "verdict": "inconclusive",
         "evidence_id": evidence_id,
         "reason": {
-            "reason_code": "missing_requirements",
-            "questions": ["Which source is authoritative?"],
+            "reason_code": "source_drift",
+            "paths": ["src/example.py"],
         },
         "convergence_telemetry": delivered_telemetry(),
     }
@@ -360,60 +352,6 @@ async def test_no_terminal_route_bypasses_guard(
             assert notifications == [route_bound.run_id], route
 
 
-def test_taskless_needs_requirements_retries_with_improved_anchor(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-) -> None:
-    manager = LocalAgentRunManager(temp_db)
-    bound = bound_review(temp_db, tmp_path, suffix="-requirements-retry")
-    persist_delivered_round_result(
-        temp_db,
-        run_id=bound.run_id,
-        round_result=_delivered_result(bound.evidence_id),
-    )
-
-    outcome = terminalize_plan_review_run(
-        manager,
-        run_id=bound.run_id,
-        action="complete",
-        tool_calls_count=3,
-        turns_used=2,
-    )
-
-    assert outcome.expired is True
-    evidence_service = PlanReviewEvidenceService(temp_db)
-    expired = evidence_service.get_evidence(bound.evidence_id)
-    assert expired.expired_at is not None
-
-    variables = SessionVariableManager(temp_db)
-    parent_variables = variables.get_variables(bound.parent_session_id)
-    append_request_anchor(
-        parent_variables,
-        content="The authoritative source is the user request.",
-    )
-    variables.merge_variables(
-        bound.parent_session_id,
-        {
-            REQUEST_ANCHOR_VARIABLE: parent_variables[REQUEST_ANCHOR_VARIABLE],
-        },
-    )
-
-    retried = evidence_service.prepare_plan_review_round(
-        project_id=expired.project_id,
-        plan_path=expired.plan_path,
-        round_number=2,
-        session_id=bound.parent_session_id,
-    )
-    retried_evidence = evidence_service.get_evidence(retried.evidence_id)
-    context = cast(dict[str, object], retried_evidence.prior_round_context)
-    bundle = cast(dict[str, object], context["requirements_bundle"])
-    sources = cast(list[dict[str, object]], bundle["sources"])
-    assert json.loads(cast(str, sources[0]["content"])) == [
-        "Review the terminal plan",
-        "The authoritative source is the user request.",
-    ]
-
-
 @pytest.mark.asyncio
 async def test_delivery_mailbox_and_result_are_one_identity(
     temp_db: HubDatabase,
@@ -523,7 +461,7 @@ def test_staged_verdict_terminal_ordering(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
     evidence_id, run_id = prepare_bound_review(stage_review_setup)
     derived = stage_review_setup.evidence.derive_plan_review_manifest(
@@ -658,7 +596,7 @@ def test_verdict_effects_idempotent_across_replay(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
     task = stage_review_setup.manager.get_task(stage_review_setup.task_id)
     reviewer = stage_review_setup.sessions.register(
@@ -769,7 +707,7 @@ async def test_deferred_health_check_respects_evidence_bind(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
 
     async def dead_session(*_args: object, **_kwargs: object) -> tuple[bool, None]:
@@ -826,7 +764,7 @@ async def test_deferred_health_check_persists_bounded_redacted_pane_output(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
     secret = "sk-ABCDEFGHIJKLMNOPQRSTUV"
     pane_output = f"{'x' * 2048}\n{secret}"

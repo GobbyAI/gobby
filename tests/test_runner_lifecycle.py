@@ -2336,7 +2336,7 @@ class TestPipelineEventBroadcasting:
         assert len(run_db.calls) == 1
         dispatch, payload, kwargs = run_db.calls[0]
         assert dispatch is handler
-        assert getattr(payload, "execution_id") == "pe-125"
+        assert getattr(payload, "execution_id", None) == "pe-125"
         assert kwargs == {"db": mock_pipeline_executor.db}
 
 

@@ -63,7 +63,6 @@ def test_evidence_jsonb_columns_round_trip(
     ]
     prior_round_context: dict[str, object] = {
         "prior_evidence_id": "prior-1",
-        "requirements_bundle": {"digest": "abc123"},
     }
     quality_ledger: list[dict[str, object]] = [
         {

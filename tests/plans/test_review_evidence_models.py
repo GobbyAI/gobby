@@ -91,15 +91,6 @@ def test_terminal_branch_union_producer_parity() -> None:
             "convergence_telemetry": delivered_telemetry(),
         },
         {
-            "verdict": "needs_requirements",
-            "evidence_id": evidence_id,
-            "reason": {
-                "reason_code": "missing_requirements",
-                "questions": ["Which service owns the retry deadline?"],
-            },
-            "convergence_telemetry": delivered_telemetry(),
-        },
-        {
             "verdict": "inconclusive",
             "evidence_id": evidence_id,
             "reason": {
@@ -131,10 +122,8 @@ def test_terminal_branch_union_producer_parity() -> None:
     for discriminator in (
         '"verdict":"approved"',
         '"verdict":"needs_review"',
-        '"verdict":"needs_requirements"',
         '"verdict":"inconclusive"',
         '"reason_code":"source_drift"',
-        '"reason_code":"missing_requirements"',
         '"reason_code":"timeout"',
     ):
         assert discriminator in published[0]

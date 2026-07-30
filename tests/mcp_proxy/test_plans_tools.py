@@ -18,13 +18,11 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans import review_evidence_io as snapshot_io
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -250,15 +248,6 @@ async def test_snapshot_pages_to_exhaustion(
         machine_id="test-machine",
         source="codex",
         project_id=project_id,
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "review-evidence-tools-request",
-                "Review the evidence tools plan",
-            )
-        },
     )
     plan_path = _write_plan(tmp_path)
     expected = plan_path.read_text()
@@ -530,15 +519,6 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
         source="codex",
         project_id=project_id,
     )
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "envelope-review-evidence-request",
-                "Review the envelope evidence plan",
-            )
-        },
-    )
     plan_path = _write_plan(tmp_path)
 
     result = await tools.call_tool(
@@ -621,15 +601,6 @@ async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
         machine_id="test-machine",
         source="codex",
         project_id=project_id,
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        explicit_session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "explicit-review-evidence-request",
-                "Review the explicitly bound evidence plan",
-            )
-        },
     )
     plan_path = _write_plan(tmp_path)
 

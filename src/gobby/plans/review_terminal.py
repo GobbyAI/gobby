@@ -15,11 +15,6 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    requirements_bundle_from_context,
-    validate_request_anchor,
-)
 from gobby.plans.review_telemetry import (
     derive_daemon_aggregates,
     enrich_round_result,
@@ -31,7 +26,6 @@ from gobby.storage.agents import AgentRun, AgentRunTerminalReason
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 from gobby.utils.datetime import utc_now
-from gobby.workflows.state_manager import SessionVariableManager
 
 TerminalAction = Literal["complete", "fail", "timeout", "cancel"]
 
@@ -246,15 +240,7 @@ def terminalize_plan_review_run(
         )
 
     verdict = result.get("verdict")
-    retryable_result = verdict == "inconclusive" or (
-        evidence.task_id is None
-        and verdict == "needs_requirements"
-        and _taskless_request_anchor_changed(
-            database,
-            session_id=evidence.session_id,
-            prior_round_context=evidence.prior_round_context,
-        )
-    )
+    retryable_result = verdict == "inconclusive"
     if retryable_result and updated is not None:
         PlanReviewEvidenceService(database).expire_plan_review_evidence(evidence.evidence_id)
         expired = True
@@ -266,48 +252,6 @@ def terminalize_plan_review_run(
         parent_session_id=run.parent_session_id,
         result=result,
         expired=expired,
-    )
-
-
-def _taskless_request_anchor_changed(
-    database: HubDatabase,
-    *,
-    session_id: str | None,
-    prior_round_context: Mapping[str, object] | None,
-) -> bool:
-    if session_id is None:
-        return False
-    try:
-        bundle = requirements_bundle_from_context(prior_round_context)
-    except (ReviewEvidenceError, TypeError, ValueError, RecursionError):
-        return False
-    if bundle is None:
-        return False
-    sources = bundle.get("sources")
-    if not isinstance(sources, list):
-        return False
-    source = next(
-        (
-            item
-            for item in sources
-            if isinstance(item, Mapping) and item.get("source_kind") == "request_anchor"
-        ),
-        None,
-    )
-    if source is None:
-        return False
-    previous_anchor_id = source.get("anchor_id")
-    previous_digest = source.get("anchor_content_sha256")
-    if not isinstance(previous_anchor_id, str) or not isinstance(previous_digest, str):
-        return False
-    variables = SessionVariableManager(database).get_variables(session_id)
-    try:
-        current = validate_request_anchor(variables.get(REQUEST_ANCHOR_VARIABLE))
-    except (ReviewEvidenceError, TypeError, ValueError, RecursionError):
-        return False
-    return (
-        current.get("anchor_id") == previous_anchor_id
-        and current.get("content_sha256") != previous_digest
     )
 
 
@@ -400,7 +344,7 @@ def _commit_staged_verdict(
             "staged round result requires telemetry",
         )
     task_id = evidence.task_id
-    if task_id is None or result.get("verdict") in {"inconclusive", "needs_requirements"}:
+    if task_id is None or result.get("verdict") == "inconclusive":
         return
     findings = result.get("findings")
     coverage_attestation = result.get("coverage_attestation")

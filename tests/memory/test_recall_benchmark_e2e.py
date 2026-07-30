@@ -408,7 +408,9 @@ async def _run_arm(
             search_via_counts.update(result.search_via or "unknown" for result in results)
             ranking_mode_counts.update(result.ranking_mode or "unknown" for result in results)
 
-        mean = lambda xs: sum(xs) / len(xs) if xs else 0.0  # noqa: E731
+        def mean(xs: list[float]) -> float:
+            return sum(xs) / len(xs) if xs else 0.0
+
         return _ArmResult(
             production_recall=mean(production_recalls),
             production_mrr=mean(production_rrs),

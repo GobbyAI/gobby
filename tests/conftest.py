@@ -14,7 +14,7 @@ import pytest
 # Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
 # postgres_db). Tests that don't use them pay no runtime cost; the session
 # fixtures only fire on first request.
-pytest_plugins = ["tests.fixtures.postgres"]
+pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

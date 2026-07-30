@@ -550,7 +550,6 @@ def test_mixed_repair_carry_preparation(
     context = current.prior_round_context
     assert context is not None
     assert context == {
-        "requirements_bundle": context["requirements_bundle"],
         "prior_evidence_id": context["prior_evidence_id"],
         "prior_findings": [
             {
@@ -608,7 +607,6 @@ def test_prior_round_context_structure(
     context = current.prior_round_context
     assert context is not None
     expected = {
-        "requirements_bundle": context["requirements_bundle"],
         "prior_evidence_id": context["prior_evidence_id"],
         "prior_findings": [
             {
@@ -712,7 +710,6 @@ def test_remedy_vocabulary_round_trip(
     canonical_candidate = _validate_candidate(
         candidate,
         expected_sections={"1.1"},
-        requirements_bundle=None,
     )
     finding = _finding("finding-1")
     finding["minimal_repair"] = canonical_candidate["suggested_fix"]
@@ -746,7 +743,6 @@ def test_remedy_vocabulary_round_trip(
             _validate_candidate(
                 {**candidate, forbidden: "wrong"},
                 expected_sections={"1.1"},
-                requirements_bundle=None,
             )
     for forbidden in ("suggested_fix", "deviation_from_minimal_repair"):
         with pytest.raises(ReviewEvidenceError, match="unknown fields"):

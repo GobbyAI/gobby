@@ -155,11 +155,10 @@ def test_registry_constructor_injects_dependencies() -> None:
 async def test_verdict_discriminated_terminal_branches() -> None:
     payloads = [
         _terminal_payload(
-            verdict="needs_requirements",
             reason={
-                "reason_code": "missing_requirements",
-                "questions": ["Which runtime owns the retry deadline?"],
-            },
+                "reason_code": "source_drift",
+                "paths": ["src/gobby/plans/review_evidence.py"],
+            }
         ),
         _terminal_payload(),
         _terminal_payload(

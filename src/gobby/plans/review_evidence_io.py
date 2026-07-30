@@ -28,7 +28,6 @@ from gobby.plans.review_evidence_models import (
     canonical_json_object,
     validate_round_result,
 )
-from gobby.plans.review_requirements import validate_requirements_bundle
 from gobby.plans.semantic_lint import collect_target_inventory
 
 PREAMBLE_SECTION_ID = "__preamble__"
@@ -286,27 +285,6 @@ def serialize_snapshot_envelope(
         for section_id, content in section_fragments
     ]
     context = canonical_json_object(prior_round_context) if prior_round_context is not None else {}
-    raw_requirements = context.get("requirements_bundle")
-    if raw_requirements is not None:
-        context.pop("requirements_bundle")
-        requirements = validate_requirements_bundle(raw_requirements)
-        raw_sources = cast(list[dict[str, object]], requirements.pop("sources"))
-        records.append(
-            _json_snapshot_record(
-                "requirements_bundle",
-                "requirements_bundle",
-                requirements,
-            )
-        )
-        for index, source in enumerate(raw_sources):
-            records.append(
-                _json_snapshot_record(
-                    "requirement_source",
-                    f"requirement_source:{index}:{source['requirement_id']}",
-                    source,
-                )
-            )
-
     raw_inventory = context.get("consumer_site_inventory")
     if isinstance(raw_inventory, Mapping):
         context.pop("consumer_site_inventory")
@@ -481,8 +459,6 @@ def parse_snapshot_envelope(
     plan_chunks: list[bytes] = []
     plan_manifest: list[dict[str, str]] = []
     context: dict[str, object] = {}
-    requirement_sources: list[dict[str, object]] = []
-    requirements_bundle: dict[str, object] | None = None
     quality_ledger: list[dict[str, object]] = []
     for record in records:
         record_type = record.get("record_type")
@@ -527,10 +503,6 @@ def parse_snapshot_envelope(
             content_bytes = canonical_json_bytes(canonical_content)
             if record_type == "prior_round_context":
                 context.update(canonical_content)
-            elif record_type == "requirements_bundle":
-                requirements_bundle = canonical_content
-            elif record_type == "requirement_source":
-                requirement_sources.append(canonical_content)
             elif record_type == "quality_ledger_entry":
                 quality_ledger.append(canonical_content)
             elif record_type == "consumer_inventory":
@@ -559,15 +531,6 @@ def parse_snapshot_envelope(
             "snapshot_bundle_mismatch",
             "snapshot record bundle digest does not match bundle_digest",
         )
-    if requirement_sources and requirements_bundle is None:
-        raise ReviewEvidenceError(
-            "invalid_requirements_bundle",
-            "requirement source records require a requirements bundle record",
-        )
-    if requirements_bundle is not None:
-        requirements_bundle["sources"] = requirement_sources
-        context["requirements_bundle"] = validate_requirements_bundle(requirements_bundle)
-
     snapshot = b"".join(plan_chunks)
     plan_hash = payload.get("plan_hash")
     if not isinstance(plan_hash, str) or _sha256(snapshot) != plan_hash:

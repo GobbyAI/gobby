@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -11,14 +10,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.hooks.events import HookEvent, SessionSource
-from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    append_request_anchor,
-    capture_plan_accept_anchor,
-    capture_request_anchor,
-    is_plan_accept_anchor,
-)
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -51,16 +42,7 @@ _CONVERSATION_HISTORY_RE = re.compile(
     r"<conversation-history(?:\s[^>]*)?>.*?</conversation-history\s*>",
     re.DOTALL | re.IGNORECASE,
 )
-_SYSTEM_REMINDER_RE = re.compile(
-    r"<system-reminder(?:\s[^>]*)?>.*?</system-reminder\s*>",
-    re.DOTALL | re.IGNORECASE,
-)
-
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
-# MULTILINE + search: the command seals when it starts any line of the message,
-# so prose before it ("this is claude, so...") still counts as an accept. A
-# mid-sentence mention never matches — ``^\s*`` cannot cross non-whitespace.
-_PLAN_ACCEPT_RE = re.compile(r"^\s*[$/]gobby\s+plan-accept\s+(\S+)", re.IGNORECASE | re.MULTILINE)
 
 
 def compute_mode_level(chat_mode: str) -> int:
@@ -88,9 +70,6 @@ def resolve_plan_mode(
     data = event.data or {}
     session_type = metadata.get("session_type") or getattr(session, "session_type", None)
     prompt = data.get("prompt")
-    request_content = _clean_request_content(prompt) if isinstance(prompt, str) else None
-    request_anchor_id = _request_anchor_id(data, session_id, request_content)
-    _capture_plan_accept(variables, session_id, request_content, request_anchor_id)
 
     if session_type == "web_chat":
         mode = _normalize_mode(metadata.get("chat_mode"))
@@ -105,8 +84,6 @@ def resolve_plan_mode(
                 mode,
                 reason,
                 persist_plan_mode=True,
-                request_anchor_id=request_anchor_id,
-                request_content=request_content,
             )
         return
 
@@ -120,8 +97,6 @@ def resolve_plan_mode(
             structured_mode,
             "structured hook mode",
             persist_plan_mode=False,
-            request_anchor_id=request_anchor_id,
-            request_content=request_content,
         )
         return
 
@@ -134,8 +109,6 @@ def resolve_plan_mode(
                 codex_mode,
                 "Codex turn_context collaboration mode",
                 persist_plan_mode=False,
-                request_anchor_id=request_anchor_id,
-                request_content=request_content,
             )
             return
 
@@ -147,8 +120,6 @@ def resolve_plan_mode(
             native_mode,
             "provider-native hook state",
             persist_plan_mode=False,
-            request_anchor_id=request_anchor_id,
-            request_content=request_content,
         )
         return
 
@@ -162,15 +133,12 @@ def resolve_plan_mode(
             workflow_mode,
             "workflow variables",
             persist_plan_mode=True,
-            request_anchor_id=request_anchor_id,
-            request_content=request_content,
         )
 
     detect_plan_mode_from_context(
         prompt if isinstance(prompt, str) else None,
         variables,
         session_id,
-        request_anchor_id=request_anchor_id,
     )
 
 
@@ -204,22 +172,13 @@ def reconcile_native_mode(
     mode = _provider_native_mode(data)
     if mode is None:
         return
-    try:
-        _apply_resolved_mode(
-            variables,
-            session_id,
-            mode,
-            "provider-native tool-event state",
-            persist_plan_mode=False,
-            request_anchor_id=_request_anchor_id(data, session_id, None),
-            request_content=None,
-        )
-    except ReviewEvidenceError:
-        logger.debug(
-            "Session %s: native mode %r not applied - plan entry lacks a request anchor",
-            session_id,
-            mode,
-        )
+    _apply_resolved_mode(
+        variables,
+        session_id,
+        mode,
+        "provider-native tool-event state",
+        persist_plan_mode=False,
+    )
 
 
 def _load_session(session_manager: _SessionManager | None, session_id: str) -> _SessionValue | None:
@@ -239,62 +198,6 @@ def _normalize_mode(value: object) -> str | None:
         return None
     key = re.sub(r"[\s_-]+", "", value).lower()
     return _MODE_ALIASES.get(key)
-
-
-def _capture_plan_accept(
-    variables: dict[str, Any],
-    session_id: str,
-    request_content: str | None,
-    request_anchor_id: str,
-) -> None:
-    """Seal a user-typed plan-accept command as the request anchor.
-
-    Only non-spawned sessions may seed this way: a parent could otherwise plant
-    an anchor through a child's spawn prompt, defeating the provenance the
-    anchor exists to attest.
-    """
-    if request_content is None:
-        return
-    match = _PLAN_ACCEPT_RE.search(request_content)
-    if match is None:
-        return
-    if _is_spawned_session(variables):
-        logger.info(
-            "Session %s: ignoring plan-accept command from spawned agent session",
-            session_id,
-        )
-        return
-    target = match.group(1).strip("`'\"")
-    if not target:
-        return
-    capture_plan_accept_anchor(
-        variables,
-        anchor_id=request_anchor_id,
-        content=request_content,
-        target_plan_path=target,
-    )
-
-
-def _is_spawned_session(variables: dict[str, Any]) -> bool:
-    value = variables.get("is_spawned_agent")
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "yes"}
-    return bool(value)
-
-
-def _request_anchor_id(
-    data: dict[str, Any],
-    session_id: str,
-    content: str | None,
-) -> str:
-    for key in ("request_id", "message_id", "turn_id"):
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-    if content is None:
-        return f"{session_id}:persisted"
-    digest = hashlib.sha256(content.encode()).hexdigest()[:16]
-    return f"{session_id}:{digest}"
 
 
 def _provider_native_mode(data: dict[str, Any]) -> str | None:
@@ -320,8 +223,6 @@ def _apply_resolved_mode(
     reason: str,
     *,
     persist_plan_mode: bool,
-    request_anchor_id: str,
-    request_content: str | None,
 ) -> None:
     level = compute_mode_level(mode)
     persist_mode = mode != "plan" or persist_plan_mode
@@ -331,26 +232,13 @@ def _apply_resolved_mode(
     plan_changed = bool(variables.get("plan_mode")) != is_plan
 
     if plan_changed:
-        _set_plan_mode_with_anchor(
-            variables,
-            is_plan=is_plan,
-            request_anchor_id=request_anchor_id,
-            request_content=request_content,
-        )
-    elif is_plan and not is_plan_accept_anchor(variables.get(REQUEST_ANCHOR_VARIABLE)):
-        append_request_anchor(
-            variables,
-            content=request_content or "",
-            anchor_id=request_anchor_id,
-        )
+        _set_plan_mode(variables, is_plan=is_plan)
     if persist_mode:
         variables["chat_mode"] = mode
     if level_changed:
         variables["mode_level"] = level
     if not is_plan and variables.get("plan_skill_loaded"):
         variables["plan_skill_loaded"] = False
-    if not is_plan and not is_plan_accept_anchor(variables.get(REQUEST_ANCHOR_VARIABLE)):
-        variables.pop(REQUEST_ANCHOR_VARIABLE, None)
     if mode_changed or level_changed or plan_changed:
         logger.debug(
             "Session %s: effective mode changed (mode=%s, level=%s, plan_mode=%s, reason=%s)",
@@ -368,19 +256,12 @@ def _apply_resolved_mode(
         )
 
 
-def _set_plan_mode_with_anchor(
+def _set_plan_mode(
     variables: dict[str, Any],
     *,
     is_plan: bool,
-    request_anchor_id: str,
-    request_content: str | None,
 ) -> None:
     if is_plan and not bool(variables.get("plan_mode")):
-        capture_request_anchor(
-            variables,
-            anchor_id=request_anchor_id,
-            content=request_content,
-        )
         variables["plan_memory_write_nudge_fired"] = False
     variables["plan_mode"] = is_plan
 
@@ -429,26 +310,16 @@ def _reverse_jsonl_lines(path: Path, chunk_size: int = 64 * 1024) -> Iterator[by
             yield pending
 
 
-def _clean_request_content(prompt: str) -> str | None:
-    cleaned = _CONVERSATION_HISTORY_RE.sub("", prompt)
-    cleaned = _SYSTEM_REMINDER_RE.sub("", cleaned)
-    return cleaned if cleaned.strip() else None
-
-
 def detect_plan_mode_from_context(
     prompt: str | None,
     variables: dict[str, Any],
     session_id: str,
-    *,
-    request_anchor_id: str | None = None,
 ) -> None:
     """Detect plan mode from system reminders or CLI-specific markers."""
     if not prompt:
         return
 
     cleaned = _CONVERSATION_HISTORY_RE.sub("", prompt)
-    request_content = _clean_request_content(prompt)
-    anchor_id = request_anchor_id or _request_anchor_id({}, session_id, request_content)
 
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
@@ -465,8 +336,6 @@ def detect_plan_mode_from_context(
             chat_mode,
             reason,
             persist_plan_mode=persist_plan_mode,
-            request_anchor_id=anchor_id,
-            request_content=request_content,
         )
 
     plan_mode_indicators = [

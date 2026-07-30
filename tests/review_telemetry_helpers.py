@@ -10,13 +10,11 @@ from types import SimpleNamespace
 from typing import cast
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.plans.review_telemetry import derive_daemon_aggregates, enrich_round_result
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
 
 
 @dataclass(frozen=True)
@@ -89,15 +87,6 @@ def bound_review(
             ]
         ),
         encoding="utf-8",
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        parent.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                f"terminal-review-request{suffix}",
-                "Review the terminal plan",
-            )
-        },
     )
     evidence_service = PlanReviewEvidenceService(temp_db)
     prepared = evidence_service.prepare_plan_review_round(

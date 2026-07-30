@@ -32,25 +32,7 @@ from gobby.plans.review_evidence_preparation import prepare_review_round_context
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
-from gobby.plans.review_requirements import (
-    ANCHOR_TARGET_FIELD,
-    REQUEST_ANCHOR_VARIABLE,
-    assemble_requirements_bundle,
-    is_plan_accept_anchor,
-    plan_accept_anchor_matches,
-    requirements_bundle_from_context,
-)
 from gobby.plans.review_telemetry import validate_convergence_telemetry
-from gobby.plans.vote_artifacts import (
-    COORDINATOR_PROVENANCE,
-    PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE,
-    build_coordinator_receipt,
-    build_plan_vote_artifact,
-    canonical_digest,
-    require_vote_artifact_fold_in,
-    validate_observer_receipt,
-    validate_vote_attempt,
-)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -139,20 +121,6 @@ class PlanReviewEvidenceService:
                 plan_path=relative_path,
                 transaction=transaction,
             )
-            if (
-                active is not None
-                and active.is_interactive
-                and active.vote_artifact is not None
-                and active.round_result is None
-            ):
-                require_vote_artifact_fold_in(active, plan_bytes=resolved.read_bytes())
-                self.store.expire(
-                    transaction=transaction,
-                    evidence_id=active.evidence_id,
-                )
-                snapshot = resolved.read_bytes()
-                checkpoints = parse_checkpoints(snapshot)
-                active = None
             if active is not None and active.is_interactive and active.round_result is not None:
                 self.checkpoints.drain_interactive_intent(
                     transaction=transaction,
@@ -222,22 +190,11 @@ class PlanReviewEvidenceService:
                             sweep_scope=sweep_scope,
                             sweep_scope_digest=sweep_scope_digest,
                         )
-                        requirements_bundle = requirements_bundle_from_context(
-                            active.prior_round_context
-                        ) or self._assemble_requirements_bundle(
-                            project_id=project_id,
-                            project_root=root,
-                            snapshot=active.snapshot,
-                            session_id=session_id,
-                            task_id=task_id,
-                            plan_path=relative_path,
-                        )
                         preparation_context = dict(
                             context.prior_round_context
                             if context is not None
                             else active.prior_round_context or {}
                         )
-                        preparation_context["requirements_bundle"] = requirements_bundle
                         active = self.store.write_preparation_context(
                             transaction=transaction,
                             evidence_id=active.evidence_id,
@@ -282,14 +239,6 @@ class PlanReviewEvidenceService:
                         sweep_scope=sweep_scope,
                         sweep_scope_digest=sweep_scope_digest,
                     )
-                    requirements_bundle = self._assemble_requirements_bundle(
-                        project_id=project_id,
-                        project_root=root,
-                        snapshot=snapshot,
-                        session_id=session_id,
-                        task_id=task_id,
-                        plan_path=relative_path,
-                    )
                     evidence = self.store.insert(
                         transaction=transaction,
                         project_id=project_id,
@@ -306,7 +255,6 @@ class PlanReviewEvidenceService:
                     preparation_context = dict(
                         context.prior_round_context if context is not None else {}
                     )
-                    preparation_context["requirements_bundle"] = requirements_bundle
                     evidence = self.store.write_preparation_context(
                         transaction=transaction,
                         evidence_id=evidence.evidence_id,
@@ -328,125 +276,6 @@ class PlanReviewEvidenceService:
 
     def get_evidence(self, evidence_id: str) -> PlanReviewEvidence:
         return self.store.require(evidence_id)
-
-    def record_observed_vote_artifact(
-        self,
-        *,
-        evidence_id: str,
-        caller_session_id: str,
-        plan_path: str | Path,
-        round_kind: str,
-        round_number: int,
-        interaction_tool: str,
-        interaction_payload: Mapping[str, object],
-        votes: Sequence[Mapping[str, object]],
-        receipt: object,
-    ) -> PlanReviewEvidence:
-        """Validate and consume an observer receipt in the evidence transaction."""
-        evidence = self.get_evidence(evidence_id)
-        _, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
-        mutation = PlanReviewEvidenceMutation(
-            project_id=evidence.project_id,
-            plan_path=evidence.plan_path,
-        )
-        with self.db.transaction_immediate(mutation) as transaction:
-            current = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            validate_vote_attempt(
-                current,
-                caller_session_id=caller_session_id,
-                plan_path=relative_path,
-                round_number=round_number,
-            )
-            artifact = build_plan_vote_artifact(
-                evidence_id=evidence_id,
-                project_id=current.project_id,
-                session_id=caller_session_id,
-                plan_path=relative_path,
-                round_kind=round_kind,
-                round_number=round_number,
-                interaction_tool=interaction_tool,
-                interaction_payload=interaction_payload,
-                votes=votes,
-            )
-            artifact_votes = artifact.get("votes")
-            if not isinstance(artifact_votes, list):  # pragma: no cover
-                raise RuntimeError("canonical vote artifact omitted votes")
-            canonical_receipt = validate_observer_receipt(
-                receipt,
-                evidence_id=evidence_id,
-                round_number=round_number,
-                round_kind=round_kind,
-                content_sha256=current.plan_hash,
-                captured_by=caller_session_id,
-                interaction_tool=interaction_tool,
-                interaction_payload=interaction_payload,
-                votes=[vote for vote in artifact_votes if isinstance(vote, Mapping)],
-            )
-            return self.store.write_vote_artifact(
-                transaction=transaction,
-                evidence_id=evidence_id,
-                artifact=artifact,
-                artifact_digest=canonical_digest(artifact),
-                receipt=canonical_receipt,
-                receipt_digest=canonical_digest(canonical_receipt),
-                consume_session_id=caller_session_id,
-                receipt_variable=PLAN_VOTE_INTERACTION_RECEIPT_VARIABLE,
-            )
-
-    def record_coordinator_decision(
-        self,
-        *,
-        evidence_id: str,
-        caller_session_id: str,
-        round_kind: str,
-        interaction_payload: Mapping[str, object],
-        votes: Sequence[Mapping[str, object]],
-    ) -> PlanReviewEvidence:
-        """Persist a coordinator-authored vote after transport authentication."""
-        evidence = self.get_evidence(evidence_id)
-        mutation = PlanReviewEvidenceMutation(
-            project_id=evidence.project_id,
-            plan_path=evidence.plan_path,
-        )
-        with self.db.transaction_immediate(mutation) as transaction:
-            current = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            validate_vote_attempt(
-                current,
-                caller_session_id=caller_session_id,
-                plan_path=current.plan_path,
-                round_number=current.round_number,
-            )
-            artifact = build_plan_vote_artifact(
-                evidence_id=evidence_id,
-                project_id=current.project_id,
-                session_id=caller_session_id,
-                plan_path=current.plan_path,
-                round_kind=round_kind,
-                round_number=current.round_number,
-                interaction_tool="coordinator_decision",
-                interaction_payload=interaction_payload,
-                votes=votes,
-                provenance=COORDINATOR_PROVENANCE,
-            )
-            artifact_votes = artifact.get("votes")
-            if not isinstance(artifact_votes, list):  # pragma: no cover
-                raise RuntimeError("canonical vote artifact omitted votes")
-            receipt = build_coordinator_receipt(
-                evidence_id=evidence_id,
-                round_number=current.round_number,
-                round_kind=round_kind,
-                content_sha256=current.plan_hash,
-                captured_by=caller_session_id,
-                votes=[vote for vote in artifact_votes if isinstance(vote, Mapping)],
-            )
-            return self.store.write_vote_artifact(
-                transaction=transaction,
-                evidence_id=evidence_id,
-                artifact=artifact,
-                artifact_digest=canonical_digest(artifact),
-                receipt=receipt,
-                receipt_digest=canonical_digest(receipt),
-            )
 
     def snapshot_bytes(self, evidence_id: str) -> bytes:
         return self.get_evidence(evidence_id).snapshot
@@ -791,10 +620,6 @@ class PlanReviewEvidenceService:
         )
         with self.db.transaction_immediate(mutation) as transaction:
             current = self.store.require(evidence_id, transaction=transaction, for_update=True)
-            require_vote_artifact_fold_in(
-                current,
-                plan_bytes=self._evidence_path(current).read_bytes(),
-            )
             return self.checkpoints.finalize_evidence(
                 transaction=transaction,
                 evidence=current,
@@ -838,50 +663,6 @@ class PlanReviewEvidenceService:
 
     def _snapshot_document(self, evidence: PlanReviewEvidence) -> PlanDocument:
         return self.manifests.snapshot_document(evidence)
-
-    def _assemble_requirements_bundle(
-        self,
-        *,
-        project_id: str,
-        project_root: Path,
-        snapshot: bytes,
-        session_id: str | None,
-        task_id: str | None,
-        plan_path: str,
-    ) -> dict[str, object]:
-        if task_id is not None:
-            task = self.tasks.get_task(task_id, project_id)
-            return assemble_requirements_bundle(
-                project_root=project_root,
-                plan_snapshot=snapshot,
-                task_id=task.id,
-                task_fields={
-                    "title": task.title,
-                    "description": task.description,
-                    "validation_criteria": task.validation_criteria,
-                },
-            )
-        if session_id is None:  # pragma: no cover - guarded by attempt binding.
-            raise RuntimeError("taskless review preparation requires a session")
-        variables = self.session_variables.get_variables(session_id)
-        anchor = variables.get(REQUEST_ANCHOR_VARIABLE)
-        if is_plan_accept_anchor(anchor) and isinstance(anchor, Mapping):
-            if not plan_accept_anchor_matches(
-                anchor,
-                project_root=project_root,
-                plan_path=plan_path,
-            ):
-                raise ReviewEvidenceError(
-                    "invalid_request_anchor",
-                    "plan-accept anchor targets "
-                    f"{anchor.get(ANCHOR_TARGET_FIELD)!r}, not {plan_path!r}; "
-                    "run the plan-accept command for this plan to re-seal it",
-                )
-        return assemble_requirements_bundle(
-            project_root=project_root,
-            plan_snapshot=snapshot,
-            request_anchor=anchor if isinstance(anchor, Mapping) else None,
-        )
 
     def _round_result_for_evidence(
         self,

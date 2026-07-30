@@ -100,10 +100,6 @@ class PlanReviewEvidence:
     quality_ledger: list[dict[str, object]] | None
     repair_attestations: list[dict[str, object]] | None
     prior_round_context: dict[str, object] | None
-    vote_artifact: dict[str, object] | None
-    vote_artifact_digest: str | None
-    vote_receipt: dict[str, object] | None
-    vote_receipt_digest: str | None
     created_at: datetime
 
     @classmethod
@@ -157,10 +153,6 @@ class PlanReviewEvidence:
             quality_ledger=_optional_json_object_list(row["quality_ledger"]),
             repair_attestations=_optional_json_object_list(row["repair_attestations"]),
             prior_round_context=_optional_json_object(row["prior_round_context"]),
-            vote_artifact=_optional_json_object(row["vote_artifact"]),
-            vote_artifact_digest=_optional_string(row["vote_artifact_digest"]),
-            vote_receipt=_optional_json_object(row["vote_receipt"]),
-            vote_receipt_digest=_optional_string(row["vote_receipt_digest"]),
             created_at=cast(datetime, row["created_at"]),
         )
 
@@ -195,7 +187,7 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
         )
     payload["convergence_telemetry"] = validate_convergence_telemetry(telemetry)
     verdict = payload.get("verdict")
-    if verdict in {"needs_requirements", "inconclusive"}:
+    if verdict == "inconclusive":
         return _validate_non_attested_result(payload, verdict=str(verdict))
     if verdict not in {"approved", "needs_review"}:
         raise ReviewEvidenceError(
@@ -269,13 +261,6 @@ def _validate_non_attested_result(
             "invalid_round_result",
             f"{verdict} round_result.reason must be an object",
         )
-    if verdict == "needs_requirements":
-        _validate_string_list_reason(
-            reason,
-            reason_code="missing_requirements",
-            field="questions",
-        )
-        return payload
     reason_code = reason.get("reason_code")
     if reason_code == "source_drift":
         _validate_string_list_reason(reason, reason_code="source_drift", field="paths")

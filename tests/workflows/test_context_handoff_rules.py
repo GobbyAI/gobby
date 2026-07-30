@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -568,10 +567,6 @@ class TestNudgeCompactOnContextPressure:
                 "mode_level": 0,
                 "parent_turn_seq": 4,
                 "plan_mode": True,
-                REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                    "spawned-plan-mode",
-                    "continue planning",
-                ),
             },
         )
         turn_start = HookEvent(

@@ -20,16 +20,9 @@ from gobby.plans.review_evidence_io import (
     manifest_key,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    build_request_anchor,
-    requirements_bundle_from_context,
-    validate_source_citation,
-)
 from gobby.plans.review_sweep_scope import SweepScope, derive_sweep_scope
 from gobby.plans.review_telemetry import persist_delivered_round_result
 from gobby.plans.review_terminal import terminalize_plan_review_run
-from gobby.plans.vote_artifacts import canonical_digest
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -40,7 +33,6 @@ from gobby.storage.migrations import _execute_sql_script
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_telemetry_helpers import delivered_telemetry, enriched_telemetry
 
@@ -114,15 +106,6 @@ def review_setup(
             ]
         ),
         encoding="utf-8",
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "review-evidence-request",
-                "Review the evidence plan",
-            )
-        },
     )
     return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
 
@@ -409,6 +392,9 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
     vote_artifact_migration = (
         repo_root / "src/gobby/storage/migrations/350_plan_review_evidence_artifacts.sql"
     ).read_text()
+    drop_vote_artifact_migration = (
+        repo_root / "src/gobby/storage/migrations/351_drop_plan_review_vote_artifacts.sql"
+    ).read_text()
 
     def catalog() -> dict[str, list[tuple[object, ...]]]:
         columns = temp_db.execute(
@@ -471,7 +457,12 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
 
     baseline_catalog = catalog()
     temp_db.execute("DROP TABLE plan_review_evidence")
-    for migration_sql in (migration, quality_ledger_migration, vote_artifact_migration):
+    for migration_sql in (
+        migration,
+        quality_ledger_migration,
+        vote_artifact_migration,
+        drop_vote_artifact_migration,
+    ):
         _execute_sql_script(temp_db, migration_sql)
     assert catalog() == baseline_catalog
 
@@ -806,7 +797,6 @@ def test_two_phase_run_binding(
             "gobby.plans.review_evidence.prepare_review_round_context",
             fail_preparation,
         )
-        scoped.setattr(service, "_assemble_requirements_bundle", fail_preparation)
         scoped.setattr(service.store, "write_preparation_context", fail_preparation)
         with pytest.raises(ReviewEvidenceError) as bound_attempt:
             service.prepare_plan_review_round(
@@ -1059,7 +1049,6 @@ def test_ledger_round_trip_through_finalize(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
-    _seed_vote_artifact(service, prepared.evidence_id)
 
     finalized = service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
@@ -1094,7 +1083,6 @@ def test_ledger_round_trip_through_finalize(
         plan_path,
         service.render_v1_round_checkpoint(round_two.evidence_id, round_two_result),
     )
-    _seed_vote_artifact(service, round_two.evidence_id)
     carried = service.finalize_plan_review_evidence(
         round_two.evidence_id,
         round_two_result,
@@ -1131,7 +1119,6 @@ def test_inventory_unavailable_aborts_preparation(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
-    _seed_vote_artifact(service, prepared.evidence_id)
     service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
     def unavailable(*args: object, **kwargs: object) -> Never:
@@ -1176,40 +1163,6 @@ def _integration_finding() -> dict[str, object]:
     }
 
 
-def _seed_vote_artifact(service: PlanReviewEvidenceService, evidence_id: str) -> None:
-    """Attach a minimal evidence-bound vote artifact so interactive finalize passes its gate."""
-    evidence = service.get_evidence(evidence_id)
-    artifact: dict[str, object] = {
-        "evidence_id": evidence.evidence_id,
-        "project_id": evidence.project_id,
-        "session_id": evidence.session_id,
-        "plan_path": evidence.plan_path,
-        "round_number": evidence.round_number,
-        "votes": [],
-    }
-    receipt: dict[str, object] = {
-        "evidence_id": evidence.evidence_id,
-        "provenance": "test-fixture",
-    }
-    service.db.execute(
-        """
-        UPDATE plan_review_evidence
-        SET vote_artifact = %s::jsonb,
-            vote_artifact_digest = %s,
-            vote_receipt = %s::jsonb,
-            vote_receipt_digest = %s
-        WHERE evidence_id = %s
-        """,
-        (
-            json.dumps(artifact, sort_keys=True, separators=(",", ":")),
-            canonical_digest(artifact),
-            json.dumps(receipt, sort_keys=True, separators=(",", ":")),
-            canonical_digest(receipt),
-            evidence_id,
-        ),
-    )
-
-
 def _finalize_integration_round(
     service: PlanReviewEvidenceService,
     plan_path: Path,
@@ -1217,7 +1170,6 @@ def _finalize_integration_round(
     *,
     findings: list[dict[str, object]],
 ) -> None:
-    _seed_vote_artifact(service, evidence_id)
     result = {
         "verdict": "needs_review",
         "findings": findings,
@@ -1419,43 +1371,6 @@ def test_prior_round_context_atomic_and_source_independent(
     )
 
 
-def test_requirements_bundle_persisted_and_sufficient(
-    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
-) -> None:
-    service, project_id, session_id, plan_path = review_setup
-    prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=1,
-        session_id=session_id,
-    )
-    context = service.get_evidence(prepared.evidence_id).prior_round_context
-    bundle = requirements_bundle_from_context(context)
-    assert bundle is not None
-    sources = bundle["sources"]
-    assert isinstance(sources, list)
-    source = sources[0]
-    assert isinstance(source, dict)
-    citation = {
-        "requirement_id": source["requirement_id"],
-        "content_sha256": source["content_sha256"],
-    }
-    plan_path.unlink()
-
-    restarted_context = (
-        PlanReviewEvidenceService(service.db).get_evidence(prepared.evidence_id).prior_round_context
-    )
-    restarted_bundle = requirements_bundle_from_context(restarted_context)
-    assert restarted_bundle == bundle
-    assert (
-        validate_source_citation(
-            citation,
-            requirements_bundle=restarted_bundle,
-        )
-        == citation
-    )
-
-
 def test_finalize_validates_findings_and_blocks_approval(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
@@ -1479,12 +1394,6 @@ def test_finalize_validates_findings_and_blocks_approval(
         service.finalize_plan_review_evidence(prepared.evidence_id, invalid)
 
     evidence = service.get_evidence(prepared.evidence_id)
-    bundle = requirements_bundle_from_context(evidence.prior_round_context)
-    assert bundle is not None
-    sources = bundle["sources"]
-    assert isinstance(sources, list)
-    source = sources[0]
-    assert isinstance(source, dict)
     blocking = {
         **_integration_finding(),
         "severity": "blocking",
@@ -1495,8 +1404,8 @@ def test_finalize_validates_findings_and_blocks_approval(
             "violated_obligation": "Every consumer must accept the changed contract.",
             "citation": [
                 {
-                    "requirement_id": source["requirement_id"],
-                    "content_sha256": source["content_sha256"],
+                    "path": evidence.plan_path,
+                    "sha256": hashlib.sha256(_plan_path.read_bytes()).hexdigest(),
                 }
             ],
         },
@@ -1547,7 +1456,6 @@ def test_telemetry_persisted_at_finalize(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
-    _seed_vote_artifact(service, prepared.evidence_id)
     service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
     persisted = (
@@ -1670,7 +1578,6 @@ def test_approval_surfaces_carried_ledger(
     )
     assert b'"manifest_entries"' in checkpoint
     ensure_checkpoint(plan_path, checkpoint)
-    _seed_vote_artifact(service, prepared.evidence_id)
 
     finalized = service.finalize_plan_review_evidence(
         prepared.evidence_id,

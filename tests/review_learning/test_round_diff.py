@@ -34,9 +34,6 @@ from tests.review_coverage_helpers import (
 from tests.review_coverage_helpers import (
     round_diff_finding as _finding,
 )
-from tests.review_coverage_helpers import (
-    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
-)
 from tests.review_telemetry_helpers import enriched_telemetry
 
 PLAN_PATH = ".gobby/plans/review.md"
@@ -625,7 +622,7 @@ def test_approval_evidence_finalization(
 
     setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
     evidence_id, run_id = prepare_bound_review(setup)
     derived = setup.evidence.derive_plan_review_manifest(

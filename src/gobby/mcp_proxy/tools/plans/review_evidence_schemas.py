@@ -771,28 +771,6 @@ ROUND_RESULT_SCHEMA = {
         {
             "type": "object",
             "properties": {
-                "verdict": {"const": "needs_requirements"},
-                "evidence_id": _NONEMPTY_STRING,
-                "reason": {
-                    "type": "object",
-                    "properties": {
-                        "reason_code": {"const": "missing_requirements"},
-                        "questions": {
-                            **_STRING_ARRAY,
-                            "minItems": 1,
-                        },
-                    },
-                    "required": ["reason_code", "questions"],
-                    "additionalProperties": False,
-                },
-                "convergence_telemetry": CONVERGENCE_TELEMETRY_SCHEMA,
-            },
-            "required": ["verdict", "evidence_id", "reason", "convergence_telemetry"],
-            "additionalProperties": False,
-        },
-        {
-            "type": "object",
-            "properties": {
                 "verdict": {"const": "inconclusive"},
                 "evidence_id": _NONEMPTY_STRING,
                 "reason": {

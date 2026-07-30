@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -17,7 +16,6 @@ from gobby.plans.review_findings import (
     render_rejection_section,
     validate_plan_review_findings,
 )
-from gobby.plans.review_requirements import assemble_requirements_bundle
 
 
 def _evidence(
@@ -75,47 +73,28 @@ def test_finding_severities_are_four_tier_vocabulary() -> None:
     assert FINDING_SEVERITIES == frozenset({"blocking", "major", "minor", "nit"})
 
 
-def test_failure_trace_accepts_bound_requirement_citation(tmp_path: Path) -> None:
-    bundle = assemble_requirements_bundle(
-        project_root=tmp_path,
-        plan_snapshot=b"# Plan\n",
-        task_id="task-1",
-        task_fields={
-            "title": "Immutable requirement",
-            "description": "Description",
-            "validation_criteria": "Acceptance",
-        },
-    )
-    sources = bundle["sources"]
-    assert isinstance(sources, list)
-    source = sources[0]
-    assert isinstance(source, dict)
+def test_failure_trace_accepts_repository_citation() -> None:
     finding = _finding(severity="blocking")
     trace = _failure_trace()
     trace["citation"] = [
         {
-            "requirement_id": source["requirement_id"],
-            "content_sha256": source["content_sha256"],
+            "path": "src/example.py",
+            "sha256": "a" * 64,
+            "line_start": 1,
+            "line_end": 3,
         }
     ]
     finding["failure_trace"] = trace
 
-    validated = validate_plan_review_findings(
-        [finding],
-        evidence=_evidence({"requirements_bundle": bundle}),
-    )
+    validated = validate_plan_review_findings([finding], evidence=_evidence())
 
     assert validated[0]["failure_trace"] == trace
 
-    tampered = deepcopy(finding)
-    tampered_trace = cast(dict[str, object], tampered["failure_trace"])
-    tampered_citations = cast(list[dict[str, object]], tampered_trace["citation"])
-    tampered_citations[0]["content_sha256"] = "f" * 64
+    malformed = deepcopy(finding)
+    malformed_trace = cast(dict[str, object], malformed["failure_trace"])
+    malformed_trace["citation"] = [{"path": "src/example.py"}]
     with pytest.raises(ReviewEvidenceError):
-        validate_plan_review_findings(
-            [tampered],
-            evidence=_evidence({"requirements_bundle": bundle}),
-        )
+        validate_plan_review_findings([malformed], evidence=_evidence())
 
 
 def test_blocking_requires_failure_trace() -> None:

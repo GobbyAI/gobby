@@ -9,15 +9,12 @@ from typing import cast
 
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.parser import Kind, PlanDocument
+from gobby.plans.review_citations import validate_source_citation
 from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
 from gobby.plans.review_ledger import (
     dismissed_ledger_entries_from_context,
     validate_quality_ledger,
-)
-from gobby.plans.review_requirements import (
-    requirements_bundle_from_context,
-    validate_source_citation,
 )
 from gobby.plans.review_sweeps import validate_record_bundle, validate_sweep_records
 from gobby.plans.semantic_lint import collect_target_inventory
@@ -104,11 +101,9 @@ def validate_review_coverage(
     prior_round_context: Mapping[str, object] | None,
 ) -> dict[str, object]:
     """Validate exhaustive lane output and return a canonical attestation."""
-    requirements_bundle = requirements_bundle_from_context(prior_round_context)
     lanes = _validate_lanes(
         document,
         lane_results,
-        requirements_bundle=requirements_bundle,
     )
     sweep_validation = validate_sweep_records(
         lanes=lanes,
@@ -350,8 +345,6 @@ def validate_coverage_attestation(
 def _validate_lanes(
     document: PlanDocument,
     lane_results: Sequence[object],
-    *,
-    requirements_bundle: Mapping[str, object] | None,
 ) -> list[dict[str, object]]:
     if len(lane_results) != len(REVIEW_LANES):
         raise ReviewEvidenceError(
@@ -391,7 +384,6 @@ def _validate_lanes(
             )
         citations = _citation_list(
             lane.get("source_citations"),
-            requirements_bundle=requirements_bundle,
         )
         candidates_raw = lane.get("candidate_issues")
         if not isinstance(candidates_raw, list):
@@ -404,7 +396,6 @@ def _validate_lanes(
             candidate = _validate_candidate(
                 raw_candidate,
                 expected_sections=expected_sections,
-                requirements_bundle=requirements_bundle,
             )
             candidate_id = str(candidate["candidate_id"])
             if candidate_id in candidate_ids:
@@ -424,7 +415,6 @@ def _validate_candidate(
     raw: object,
     *,
     expected_sections: set[str],
-    requirements_bundle: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if not isinstance(raw, Mapping):
         raise ReviewEvidenceError("invalid_candidate", "candidate issue must be an object")
@@ -482,7 +472,6 @@ def _validate_candidate(
         )
     candidate["source_citations"] = _citation_list(
         candidate.get("source_citations"),
-        requirements_bundle=requirements_bundle,
     )
     candidate["adjacent_sites_checked"] = _string_list(
         candidate.get("adjacent_sites_checked"),
@@ -530,8 +519,6 @@ def _reject_unchanged_dismissal_reopens(
 
 def _citation_list(
     raw: object,
-    *,
-    requirements_bundle: Mapping[str, object] | None,
 ) -> list[dict[str, object]]:
     if not isinstance(raw, list) or not raw:
         raise ReviewEvidenceError(
@@ -543,7 +530,6 @@ def _citation_list(
         citations.append(
             validate_source_citation(
                 item,
-                requirements_bundle=requirements_bundle,
             )
         )
     return citations
@@ -571,18 +557,6 @@ def _rehash_sources(
     claimed_hashes: dict[str, str] = {}
     resolved_paths: dict[str, Path] = {}
     for citation in citations:
-        requirement_id = citation.get("requirement_id")
-        if isinstance(requirement_id, str):
-            relative = f"requirement:{requirement_id}"
-            claimed = str(citation["content_sha256"])
-            prior = claimed_hashes.get(relative)
-            if prior is not None and prior != claimed:
-                raise ReviewEvidenceError(
-                    "requirement_citation_hash_mismatch",
-                    f"conflicting hashes were cited for {relative}",
-                )
-            claimed_hashes[relative] = claimed
-            continue
         relative = str(citation["path"])
         path = Path(relative)
         if path.is_absolute():

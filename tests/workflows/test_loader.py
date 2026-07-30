@@ -132,10 +132,7 @@ async def test_loader_skips_rule_and_variable_rows(
     assert isinstance(workflow, WorkflowDefinition)
     assert isinstance(pipeline, PipelineDefinition)
     assert "Skipping workflow lookup for 'test-rule': row type is 'rule'" in caplog.messages
-    assert (
-        "Skipping workflow lookup for 'test-variable': row type is 'variable'"
-        in caplog.messages
-    )
+    assert "Skipping workflow lookup for 'test-variable': row type is 'variable'" in caplog.messages
 
 
 # ---------------------------------------------------------------------------

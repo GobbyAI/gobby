@@ -13,7 +13,6 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.plans.review_requirements import REQUEST_ANCHOR_VARIABLE, build_request_anchor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -263,7 +262,8 @@ def test_plan_mode_suppresses_turn_start_and_mid_turn_guidance_across_surfaces(
     assert failures == set()
     assert variables["plan_mode"] is True
     assert variables["context_compact_guidance_message"] == ""
-    assert "context_compact_mid_turn_pressure_band" not in variables
+    assert variables["context_compact_mid_turn_pressure_band"] == "none"
+    assert variables["context_compact_guidance_shown_kinds"] == []
 
 
 def test_structured_hook_mode_precedes_provider_state_and_prompt_markers() -> None:
@@ -540,14 +540,12 @@ def test_droid_unknown_permission_value_leaves_resolved_plan_mode_untouched() ->
     assert variables == _stale_plan_variables()
 
 
-def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
-    anchor = build_request_anchor("anchor-1", "Plan this work")
+def test_reconcile_enters_plan_mode() -> None:
     variables: dict[str, Any] = {
         "chat_mode": "normal",
         "mode_level": 1,
         "plan_mode": False,
         "plan_memory_write_nudge_fired": True,
-        REQUEST_ANCHOR_VARIABLE: anchor,
     }
     event = _tool_event(HookEventType.BEFORE_TOOL, data={"permission_mode": "plan"})
 
@@ -556,13 +554,3 @@ def test_reconcile_enters_plan_mode_with_persisted_anchor() -> None:
     assert variables["plan_mode"] is True
     assert variables["mode_level"] == 0
     assert variables["plan_memory_write_nudge_fired"] is False
-    assert variables[REQUEST_ANCHOR_VARIABLE] == anchor
-
-
-def test_reconcile_skips_plan_entry_without_request_anchor() -> None:
-    variables: dict[str, Any] = {"chat_mode": "normal", "mode_level": 1, "plan_mode": False}
-    event = _tool_event(HookEventType.BEFORE_TOOL, data={"permission_mode": "plan"})
-
-    reconcile_native_mode(event, variables, SESSION_ID)
-
-    assert variables == {"chat_mode": "normal", "mode_level": 1, "plan_mode": False}

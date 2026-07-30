@@ -52,9 +52,9 @@ def _detect_search_backend_seams() -> dict[str, bool]:
         "code_index_hub_seam": False,
     }
     try:
-        from gobby.storage.tasks._search import BM25SearchBackend  # noqa: F401
+        from gobby.storage.tasks import _search
 
-        seams["bm25_backend"] = True
+        seams["bm25_backend"] = hasattr(_search, "BM25SearchBackend")
     except ImportError:
         pass
     try:

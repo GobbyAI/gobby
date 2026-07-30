@@ -12,10 +12,6 @@ import pytest
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    build_request_anchor,
-)
 from gobby.plans.review_telemetry import (
     derive_convergence_comparison,
     derive_daemon_aggregates,
@@ -29,15 +25,11 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import (
     StageReviewSetup,
     coverage_attestation,
     prepare_bound_review,
     review_findings,
-)
-from tests.review_coverage_helpers import (
-    stage_review_setup as stage_review_setup_fixture,  # noqa: F401 - pytest fixture
 )
 from tests.review_telemetry_helpers import delivered_telemetry
 
@@ -138,11 +130,11 @@ async def test_merge_precedes_parent_wake() -> None:
         turns_used=3,
     )
     result = {
-        "verdict": "needs_requirements",
+        "verdict": "inconclusive",
         "evidence_id": "evidence-1",
         "reason": {
-            "reason_code": "missing_requirements",
-            "questions": ["Which source is authoritative?"],
+            "reason_code": "source_drift",
+            "paths": ["src/example.py"],
         },
         "convergence_telemetry": delivered_telemetry(),
     }
@@ -196,11 +188,11 @@ def test_delivered_and_enriched_states(
         turns_used=3,
     )
     result = {
-        "verdict": "needs_requirements",
+        "verdict": "inconclusive",
         "evidence_id": "evidence-1",
         "reason": {
-            "reason_code": "missing_requirements",
-            "questions": ["Which source is authoritative?"],
+            "reason_code": "source_drift",
+            "paths": ["src/example.py"],
         },
         "convergence_telemetry": delivered,
     }
@@ -262,15 +254,6 @@ def test_delivered_and_enriched_states(
         ),
         encoding="utf-8",
     )
-    SessionVariableManager(temp_db).merge_variables(
-        parent.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "telemetry-request",
-                "Review telemetry convergence",
-            )
-        },
-    )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(
         project_id=project.id,
@@ -309,7 +292,7 @@ def test_staged_path_carries_telemetry(
 ) -> None:
     stage_review_setup = cast(
         StageReviewSetup,
-        request.getfixturevalue("stage_review_setup_fixture"),
+        request.getfixturevalue("stage_review_setup"),
     )
     evidence_id, run_id = prepare_bound_review(stage_review_setup)
     telemetry = delivered_telemetry()
@@ -422,15 +405,6 @@ def test_producer_contract_survives_delivery(
         "# Producer\n**Plan ID:** producer\n\n## V1 Plan Changelog\n`kind: verification`\n",
         encoding="utf-8",
     )
-    SessionVariableManager(temp_db).merge_variables(
-        parent.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                f"producer-{Path(producer_path).stem}-request",
-                "Review the producer contract",
-            )
-        },
-    )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(
         project_id=project.id,
@@ -446,11 +420,11 @@ def test_producer_contract_survives_delivery(
     )
     service.bind_evidence_run(prepared.evidence_id, run.id)
     delivered_result = {
-        "verdict": "needs_requirements",
+        "verdict": "inconclusive",
         "evidence_id": prepared.evidence_id,
         "reason": {
-            "reason_code": "missing_requirements",
-            "questions": ["Which requirement source is canonical?"],
+            "reason_code": "source_drift",
+            "paths": ["src/example.py"],
         },
         "convergence_telemetry": delivered_telemetry(),
     }
@@ -467,15 +441,8 @@ def test_producer_contract_survives_delivery(
         turns_used=2,
     )
     assert outcome.result is not None
-    ensure_checkpoint(
-        plan_path,
-        service.render_v1_round_checkpoint(prepared.evidence_id, outcome.result),
-    )
-    finalized = service.finalize_plan_review_evidence(
-        prepared.evidence_id,
-        outcome.result,
-    )
-    assert finalized.round_result is not None
-    final_telemetry = finalized.round_result["convergence_telemetry"]
+    assert outcome.expired is True
+    final_telemetry = outcome.result["convergence_telemetry"]
     assert isinstance(final_telemetry, dict)
     assert final_telemetry["state"] == "enriched"
+    assert service.get_evidence(prepared.evidence_id).expired_at is not None

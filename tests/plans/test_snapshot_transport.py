@@ -12,15 +12,9 @@ import pytest
 from gobby.plans import review_evidence_io as snapshot_io
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    assemble_requirements_bundle,
-    build_request_anchor,
-)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
 
 OFFLOAD_THRESHOLD_CHARS = 15_000
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -165,15 +159,6 @@ def test_manifest_cache_hit(
     plan_dir.mkdir(parents=True)
     plan_path = plan_dir / "snapshot-transport.md"
     plan_path.write_bytes(_valid_plan_bytes())
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                "snapshot-manifest-request",
-                "Review the snapshot manifest",
-            )
-        },
-    )
     service = PlanReviewEvidenceService(temp_db)
     prepared = service.prepare_plan_review_round(
         project_id=project.id,
@@ -243,17 +228,11 @@ def test_sidecar_records_paged_and_bounded() -> None:
     # is a moving target, and deleting one used to break this test (#19252).
     snapshot = _valid_plan_bytes(extra=("sidecar page\n" * 15_000))
     large_value = 'immutable sidecar 🧪 "quoted" \\\\ value\n' * 1_200
-    requirements_bundle = assemble_requirements_bundle(
-        project_root=REPO_ROOT,
-        plan_snapshot=snapshot,
-        request_anchor=build_request_anchor("snapshot-sidecar", large_value),
-    )
     inventory: dict[str, object] = {
         "sites": [{"path": "src/example.py", "context": large_value}],
     }
     prior_round_context: dict[str, object] = {
         "prior_evidence_id": "prior-1",
-        "requirements_bundle": requirements_bundle,
         "consumer_site_inventory": inventory,
     }
     quality_ledger: list[dict[str, object]] = [{"ledger_id": "ledger-1", "detail": large_value}]
@@ -275,7 +254,6 @@ def test_sidecar_records_paged_and_bounded() -> None:
     record_types = {cast(str, record["record_type"]) for record in records}
     assert {
         "plan_section",
-        "requirement_source",
         "quality_ledger_entry",
         "consumer_inventory",
         "prior_round_context",

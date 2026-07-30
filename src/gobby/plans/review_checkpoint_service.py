@@ -291,7 +291,7 @@ class ReviewCheckpointService:
             and row.round_number < evidence.round_number
         ]
         prior_ledger = (prior_rows[-1].quality_ledger or []) if prior_rows else []
-        if payload.get("verdict") in {"needs_requirements", "inconclusive"}:
+        if payload.get("verdict") == "inconclusive":
             return validate_quality_ledger(prior_ledger)
         return merge_quality_ledger(
             prior_ledger=prior_ledger,

@@ -133,7 +133,9 @@ async def _evaluate(service: KnowledgeGraphService, corpus: list[MemoryDef]) -> 
                 break
         rrs.append(rr)
 
-    mean = lambda xs: sum(xs) / len(xs) if xs else 0.0  # noqa: E731
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
     return mean(recalls), mean(rrs)
 
 
