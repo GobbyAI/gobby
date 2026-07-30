@@ -258,10 +258,18 @@ fn build_dispatch_envelope(
     if let Some(pid) = project_id {
         headers.insert("X-Gobby-Project-Id".into(), pid.to_string());
     }
-    if let Some(sid) = input_data.get("session_id").and_then(|v| v.as_str())
-        && !sid.is_empty()
-    {
-        headers.insert("X-Gobby-Session-Id".into(), sid.to_string());
+    let session_id = std::env::var("GOBBY_SESSION_ID")
+        .ok()
+        .filter(|sid| !sid.is_empty())
+        .or_else(|| {
+            input_data
+                .get("session_id")
+                .and_then(|value| value.as_str())
+                .filter(|sid| !sid.is_empty())
+                .map(str::to_owned)
+        });
+    if let Some(sid) = session_id {
+        headers.insert("X-Gobby-Session-Id".into(), sid);
     }
     // Managed runs authenticate with a run-bound capability; the daemon
     // requires the matching run id on this context-bearing route.
@@ -413,6 +421,54 @@ mod tests {
                 gobby_core::machine::local_os_name()
             );
             assert!(envelope.input_data.get("machine_id_error").is_none());
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_uses_managed_session_for_header_and_preserves_payload_session() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), "machine-client\n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            temp_env::with_var("GOBBY_SESSION_ID", Some("gobby-session"), || {
+                let cfg = CliConfig::for_cli("codex").expect("supported CLI");
+                let envelope = build_dispatch_envelope(
+                    &cfg,
+                    "SessionStart",
+                    json!({"session_id": "native-session"}),
+                    None,
+                );
+
+                assert_eq!(
+                    envelope.headers.get("X-Gobby-Session-Id"),
+                    Some(&"gobby-session".to_string())
+                );
+                assert_eq!(envelope.input_data["session_id"], "native-session");
+            });
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_uses_payload_session_without_managed_session() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), "machine-client\n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            temp_env::with_var("GOBBY_SESSION_ID", None::<&str>, || {
+                let cfg = CliConfig::for_cli("codex").expect("supported CLI");
+                let envelope = build_dispatch_envelope(
+                    &cfg,
+                    "SessionStart",
+                    json!({"session_id": "native-session"}),
+                    None,
+                );
+
+                assert_eq!(
+                    envelope.headers.get("X-Gobby-Session-Id"),
+                    Some(&"native-session".to_string())
+                );
+                assert_eq!(envelope.input_data["session_id"], "native-session");
+            });
         });
     }
 
