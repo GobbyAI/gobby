@@ -2283,9 +2283,9 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         fake_spawn_agent_impl,
     )
 
-    def prepare_evidence(**kwargs: object) -> tuple[str, None, None, None]:
+    def prepare_evidence(**kwargs: object) -> tuple[str, None, None]:
         evidence_threads.append(threading.get_ident())
-        return str(kwargs["prompt"]), None, None, None
+        return str(kwargs["prompt"]), None, None
 
     monkeypatch.setattr(
         "gobby.dispatch.spawn._prepare_plan_adversary_evidence",

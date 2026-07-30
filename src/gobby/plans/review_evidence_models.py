@@ -97,9 +97,6 @@ class PlanReviewEvidence:
     manifest_state: ManifestState | None
     manifest_result: dict[str, object] | None
     manifest_applied_at: datetime | None
-    quality_ledger: list[dict[str, object]] | None
-    repair_attestations: list[dict[str, object]] | None
-    prior_round_context: dict[str, object] | None
     created_at: datetime
 
     @classmethod
@@ -150,9 +147,6 @@ class PlanReviewEvidence:
             manifest_state=cast(ManifestState | None, row["manifest_state"]),
             manifest_result=_optional_json_object(row["manifest_result"]),
             manifest_applied_at=cast(datetime | None, row["manifest_applied_at"]),
-            quality_ledger=_optional_json_object_list(row["quality_ledger"]),
-            repair_attestations=_optional_json_object_list(row["repair_attestations"]),
-            prior_round_context=_optional_json_object(row["prior_round_context"]),
             created_at=cast(datetime, row["created_at"]),
         )
 
@@ -175,24 +169,13 @@ class PlanReviewEvidence:
 def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
     """Validate and canonicalize the stable round-result envelope."""
     from gobby.plans.review_coverage import validate_coverage_attestation
-    from gobby.plans.review_ledger import validate_candidate_dispositions
-    from gobby.plans.review_telemetry import validate_convergence_telemetry
 
     payload = canonical_json_object(raw)
-    telemetry = payload.get("convergence_telemetry")
-    if not isinstance(telemetry, dict):
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            "round_result.convergence_telemetry must be an object",
-        )
-    payload["convergence_telemetry"] = validate_convergence_telemetry(telemetry)
     verdict = payload.get("verdict")
-    if verdict == "inconclusive":
-        return _validate_non_attested_result(payload, verdict=str(verdict))
     if verdict not in {"approved", "needs_review"}:
         raise ReviewEvidenceError(
             "invalid_round_result",
-            "round_result.verdict is not a supported terminal verdict",
+            "round_result.verdict must be 'approved' or 'needs_review'",
         )
     findings = payload.get("findings")
     if not isinstance(findings, list):
@@ -209,7 +192,6 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
         payload.get("coverage_attestation"),
         verdict=str(verdict),
     )
-    validate_candidate_dispositions(payload)
     if verdict == "approved":
         entries = payload.get("manifest_entries")
         if not isinstance(entries, list) or not entries:
@@ -229,90 +211,6 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
                 "approved round_result requires routing_decisions",
             )
     return payload
-
-
-def _validate_non_attested_result(
-    payload: dict[str, object],
-    *,
-    verdict: str,
-) -> dict[str, object]:
-    if set(payload) != {
-        "verdict",
-        "evidence_id",
-        "reason",
-        "convergence_telemetry",
-    }:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            (
-                f"{verdict} round_result must contain exactly verdict, evidence_id, "
-                "reason, and convergence_telemetry"
-            ),
-        )
-    evidence_id = payload.get("evidence_id")
-    if not isinstance(evidence_id, str) or not evidence_id:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            f"{verdict} round_result requires a non-empty evidence_id",
-        )
-    reason = payload.get("reason")
-    if not isinstance(reason, dict):
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            f"{verdict} round_result.reason must be an object",
-        )
-    reason_code = reason.get("reason_code")
-    if reason_code == "source_drift":
-        _validate_string_list_reason(reason, reason_code="source_drift", field="paths")
-    elif reason_code == "timeout":
-        _validate_timeout_reason(reason)
-    else:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            "inconclusive reason_code must be source_drift or timeout",
-        )
-    return payload
-
-
-def _validate_string_list_reason(
-    reason: dict[str, object],
-    *,
-    reason_code: str,
-    field: str,
-) -> None:
-    if set(reason) != {"reason_code", field} or reason.get("reason_code") != reason_code:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            f"{reason_code} reason must contain exactly reason_code and {field}",
-        )
-    values = reason.get(field)
-    if (
-        not isinstance(values, list)
-        or not values
-        or any(not isinstance(value, str) or not value for value in values)
-    ):
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            f"{reason_code} reason.{field} must be a non-empty string array",
-        )
-
-
-def _validate_timeout_reason(reason: dict[str, object]) -> None:
-    if set(reason) != {"reason_code", "timeout_seconds"}:
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            "timeout reason must contain exactly reason_code and timeout_seconds",
-        )
-    timeout_seconds = reason.get("timeout_seconds")
-    if (
-        not isinstance(timeout_seconds, int | float)
-        or isinstance(timeout_seconds, bool)
-        or timeout_seconds <= 0
-    ):
-        raise ReviewEvidenceError(
-            "invalid_round_result",
-            "timeout reason.timeout_seconds must be a positive number",
-        )
 
 
 def canonical_json_object(raw: Mapping[str, object]) -> dict[str, object]:
@@ -353,18 +251,6 @@ def _optional_json_object(raw: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         raise ReviewEvidenceError("invalid_evidence_row", "JSON column must contain an object")
     return cast(dict[str, object], value)
-
-
-def _optional_json_object_list(raw: object) -> list[dict[str, object]] | None:
-    if raw is None:
-        return None
-    value = _json_value(raw)
-    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-        raise ReviewEvidenceError(
-            "invalid_evidence_row",
-            "JSON column must contain an array of objects",
-        )
-    return cast(list[dict[str, object]], value)
 
 
 def _optional_string(raw: object) -> str | None:

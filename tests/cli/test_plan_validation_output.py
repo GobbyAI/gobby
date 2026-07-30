@@ -15,12 +15,12 @@ def test_raise_plan_validation_failed_emits_warnings_before_click_exception(
         raise_plan_validation_failed(
             {
                 "errors": ["missing acceptance item"],
-                "warnings": ["consumer sweep skipped"],
+        "warnings": ["semantic validation warning"],
             }
         )
 
     captured = capsys.readouterr()
     assert captured.err.splitlines() == [
         "Error: missing acceptance item",
-        "Warning: consumer sweep skipped",
+        "Warning: semantic validation warning",
     ]

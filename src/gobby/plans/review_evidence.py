@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,33 +11,26 @@ from gobby.plans.parser import PlanDocument
 from gobby.plans.review_checkpoint_service import ReviewCheckpointService
 from gobby.plans.review_coverage import (
     review_complexity,
-    validate_approval_condition,
     validate_review_coverage,
 )
 from gobby.plans.review_evidence_io import (
-    DEFAULT_SNAPSHOT_PAGE_BYTES,
     build_section_manifest,
     normalize_plan_path,
-    paginate_snapshot_envelope,
     parse_checkpoints,
     reviewed_section_hashes,
-    serialize_snapshot_envelope,
 )
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     PreparedReviewEvidence,
     ReviewEvidenceError,
 )
-from gobby.plans.review_evidence_preparation import prepare_review_round_context
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
-from gobby.plans.review_telemetry import validate_convergence_telemetry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
     PlanReviewEvidenceMutation,
-    Transaction,
 )
 from gobby.storage.projects import LocalProjectManager
 from gobby.workflows.state_manager import SessionVariableManager
@@ -75,10 +68,6 @@ class PlanReviewEvidenceService:
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
-        prior_finding_resolutions: Sequence[Mapping[str, object]] | None = None,
-        repair_attestations: Sequence[Mapping[str, object]] | None = None,
-        sweep_scope: Mapping[str, object] | None = None,
-        sweep_scope_digest: str | None = None,
     ) -> PreparedReviewEvidence:
         """Capture one immutable round snapshot under a per-plan mutation lock."""
         if round_number <= 0:
@@ -160,51 +149,6 @@ class PlanReviewEvidenceService:
                         task_id=task_id,
                         stage=stage,
                     ):
-                        if active.dispatch_run_id is not None:
-                            raise ReviewEvidenceError(
-                                "review_round_bound",
-                                (
-                                    f"plan review evidence {active.evidence_id} is already "
-                                    f"bound to agent run {active.dispatch_run_id}"
-                                ),
-                                retryable=True,
-                                details={
-                                    "evidence_id": active.evidence_id,
-                                    "run_id": active.dispatch_run_id,
-                                },
-                            )
-                        context = prepare_review_round_context(
-                            db=self.db,
-                            project_id=project_id,
-                            project_root=root,
-                            evidence_rows=self.store.list_for_path(
-                                project_id=project_id,
-                                plan_path=relative_path,
-                                transaction=transaction,
-                            ),
-                            round_number=round_number,
-                            current_sections=active.section_manifest,
-                            current_snapshot=active.snapshot,
-                            prior_finding_resolutions=prior_finding_resolutions,
-                            repair_attestations=repair_attestations,
-                            sweep_scope=sweep_scope,
-                            sweep_scope_digest=sweep_scope_digest,
-                        )
-                        preparation_context = dict(
-                            context.prior_round_context
-                            if context is not None
-                            else active.prior_round_context or {}
-                        )
-                        active = self.store.write_preparation_context(
-                            transaction=transaction,
-                            evidence_id=active.evidence_id,
-                            repair_attestations=(
-                                context.repair_attestations
-                                if context is not None
-                                else active.repair_attestations or []
-                            ),
-                            prior_round_context=preparation_context,
-                        )
                         prepared = active.prepared_result()
                     elif self._attempt_is_dead(active):
                         self.store.expire(
@@ -222,23 +166,6 @@ class PlanReviewEvidenceService:
                 if prepared is None:
                     plan_hash = hashlib.sha256(snapshot).hexdigest()
                     sections = build_section_manifest(snapshot)
-                    context = prepare_review_round_context(
-                        db=self.db,
-                        project_id=project_id,
-                        project_root=root,
-                        evidence_rows=self.store.list_for_path(
-                            project_id=project_id,
-                            plan_path=relative_path,
-                            transaction=transaction,
-                        ),
-                        round_number=round_number,
-                        current_sections=sections,
-                        current_snapshot=snapshot,
-                        prior_finding_resolutions=prior_finding_resolutions,
-                        repair_attestations=repair_attestations,
-                        sweep_scope=sweep_scope,
-                        sweep_scope_digest=sweep_scope_digest,
-                    )
                     evidence = self.store.insert(
                         transaction=transaction,
                         project_id=project_id,
@@ -251,17 +178,6 @@ class PlanReviewEvidenceService:
                         session_id=session_id,
                         task_id=task_id,
                         stage=stage,
-                    )
-                    preparation_context = dict(
-                        context.prior_round_context if context is not None else {}
-                    )
-                    evidence = self.store.write_preparation_context(
-                        transaction=transaction,
-                        evidence_id=evidence.evidence_id,
-                        repair_attestations=(
-                            context.repair_attestations if context is not None else []
-                        ),
-                        prior_round_context=preparation_context,
                     )
                     prepared = evidence.prepared_result()
         if pending_payload:
@@ -290,43 +206,11 @@ class PlanReviewEvidenceService:
             "sections": [section.to_dict() for section in evidence.section_manifest],
             "snapshot": evidence.snapshot,
             "changed_section_ids": changed_sections,
-            "prior_round_context": evidence.prior_round_context,
             "review_complexity": review_complexity(
                 document,
                 changed_section_count=len(changed_sections),
             ),
         }
-
-    def snapshot_page(
-        self,
-        evidence_id: str,
-        *,
-        offset: int = 0,
-        limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
-    ) -> dict[str, object]:
-        evidence = self.get_evidence(evidence_id)
-        if not isinstance(evidence.snapshot, bytes):
-            raise ReviewEvidenceError(
-                "invalid_evidence_row",
-                "stored plan snapshot is not bytes",
-            )
-        document = self._snapshot_document(evidence)
-        changed_sections = self._changed_sections_since_prior_round(evidence)
-        envelope = serialize_snapshot_envelope(
-            evidence_id=evidence.evidence_id,
-            plan_hash=evidence.plan_hash,
-            round_number=evidence.round_number,
-            snapshot=evidence.snapshot,
-            section_manifest=evidence.section_manifest,
-            changed_section_ids=changed_sections,
-            prior_round_context=evidence.prior_round_context,
-            quality_ledger=evidence.quality_ledger or (),
-            review_complexity=review_complexity(
-                document,
-                changed_section_count=len(changed_sections),
-            ),
-        )
-        return paginate_snapshot_envelope(envelope, offset=offset, limit=limit)
 
     def derive_plan_review_manifest(
         self,
@@ -343,11 +227,17 @@ class PlanReviewEvidenceService:
         evidence_id: str,
         lane_results: list[object],
         candidate_dispositions: Mapping[str, object],
-        routing_decisions: Mapping[str, object],
+        shadow_manifest_status: Mapping[str, object],
     ) -> dict[str, object]:
         """Validate all research lanes and return a canonical coverage attestation."""
         evidence = self.get_evidence(evidence_id)
-        routing = dict(routing_decisions)
+        routing_raw = shadow_manifest_status.get("routing_decisions")
+        if not isinstance(routing_raw, Mapping):
+            raise ReviewEvidenceError(
+                "invalid_shadow_manifest",
+                "shadow_manifest_status.routing_decisions must be an object",
+            )
+        routing = dict(routing_raw)
         expected_shadow = self.derive_plan_review_manifest(evidence_id, routing)
         project = self.projects.get(evidence.project_id)
         if project is None or project.repo_path is None:
@@ -362,10 +252,8 @@ class PlanReviewEvidenceService:
             plan_hash=evidence.plan_hash,
             lane_results=lane_results,
             candidate_dispositions=candidate_dispositions,
-            shadow_manifest_status=expected_shadow,
+            shadow_manifest_status=shadow_manifest_status,
             expected_shadow_manifest_status=expected_shadow,
-            prior_round_context=evidence.prior_round_context,
-            plan_bytes=evidence.snapshot,
         )
 
     def verify_plan_unchanged(
@@ -586,18 +474,9 @@ class PlanReviewEvidenceService:
         self,
         evidence_id: str,
         round_result: Mapping[str, object],
-        *,
-        _derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
         payload = self._round_result_for_evidence(evidence_id, round_result)
-        telemetry = payload.get("convergence_telemetry")
-        if not isinstance(telemetry, dict):
-            raise ReviewEvidenceError(
-                "invalid_round_result",
-                "round_result.convergence_telemetry must be an object",
-            )
-        validate_convergence_telemetry(telemetry, required_state="enriched")
         if evidence.round_result is not None and evidence.round_result != payload:
             raise ReviewEvidenceError(
                 "round_result_conflict",
@@ -625,24 +504,7 @@ class PlanReviewEvidenceService:
                 transaction=transaction,
                 evidence=current,
                 payload=payload,
-                derived_quality_ledger=_derived_quality_ledger,
             )
-
-    def derive_quality_ledger_for_evidence(
-        self,
-        evidence_id: str,
-        round_result: Mapping[str, object],
-        *,
-        transaction: Transaction,
-    ) -> list[dict[str, object]]:
-        """Derive the single server-owned ledger before any terminal stage mutation."""
-        evidence = self.get_evidence(evidence_id)
-        payload = self._round_result_for_evidence(evidence_id, round_result)
-        return self.checkpoints.derive_quality_ledger(
-            evidence=evidence,
-            payload=payload,
-            transaction=transaction,
-        )
 
     def apply_plan_review_manifest(
         self,
@@ -674,8 +536,6 @@ class PlanReviewEvidenceService:
             evidence_id,
             round_result,
         )
-        if payload["verdict"] not in {"approved", "needs_review"}:
-            return payload
         evidence = self.get_evidence(evidence_id)
         raw_findings = payload["findings"]
         if not isinstance(raw_findings, list):
@@ -685,11 +545,6 @@ class PlanReviewEvidenceService:
             )
         findings = validate_plan_review_findings(raw_findings, evidence=evidence)
         payload["findings"] = findings
-        if payload["verdict"] == "approved":
-            validate_approval_condition(
-                findings=findings,
-                quality_ledger=evidence.quality_ledger or [],
-            )
         return payload
 
     def _changed_sections_since_prior_round(

@@ -45,26 +45,26 @@ def test_adversary_agents_pin_the_reviewer_model() -> None:
         assert agent["isolation"] == "none"
 
 
-def test_adversary_run_timeout_contract() -> None:
+def test_adversaries_have_no_experiment_timeout_contract() -> None:
     for name in ADVERSARIES:
         agent = _agent(name)
         instructions = " ".join(agent["instructions"].split())
 
-        assert agent["timeout"] == 2700
-        assert "Native lane duration is not enforced by Gobby" in instructions
-        assert "2700-second agent timeout" in instructions
+        assert "timeout" not in agent
+        assert "2700-second agent timeout" not in instructions
 
 
-def test_adversaries_page_and_verify_the_complete_evidence_envelope() -> None:
+def test_adversaries_read_one_complete_evidence_snapshot() -> None:
     for name in ADVERSARIES:
         instructions = " ".join(_agent(name)["instructions"].split())
 
-        assert "start with `offset: 0`" in instructions
-        assert "follow `next_offset` to exhaustion" in instructions
-        assert "concatenate every `content` page" in instructions
-        assert "verify the reconstructed bytes against `snapshot_hash`" in instructions
-        assert "parse all records before lane review begins" in instructions
-        assert "Pass only `routing_decisions` to `validate_plan_review_coverage`" in instructions
+        assert "one complete decoded immutable snapshot" in instructions
+        assert "`get_plan_review_snapshot" in instructions
+        assert "offset: 0" not in instructions
+        assert "next_offset" not in instructions
+        assert "three lane results" in instructions
+        assert "candidate dispositions" in instructions
+        assert "shadow-manifest status" in instructions
 
 
 def test_removed_researcher_is_absent_from_inventory_and_manifest() -> None:
@@ -94,13 +94,6 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
         assert "at most one internal subagent per lane" in normalized
         for lane in LANES:
             assert lane in instructions
-        for threshold in (
-            "8 deliverables",
-            "24 acceptance items",
-            "12 distinct target files",
-            "4 sections changed",
-        ):
-            assert threshold in instructions
         for field in (
             "lane_id",
             "status: completed",
@@ -116,7 +109,6 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
             assert field in instructions
         for fallback in (
             "capacity shortage",
-            "timeout",
             "unavailable internal collaboration",
             "subagent failure",
             "malformed output",
@@ -127,7 +119,7 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
 
 def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
     for name in ADVERSARIES:
-        instructions = _agent(name)["instructions"].lower()
+        instructions = " ".join(_agent(name)["instructions"].split()).lower()
         assert "sole verdict" in instructions
         assert "derive_plan_review_manifest" in instructions
         assert "validate_plan_review_coverage" in instructions
@@ -135,17 +127,11 @@ def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
         assert "candidate" in instructions
         assert "emitted_finding" in instructions
         assert "dismissed" in instructions
-        for field in (
-            "cross_lane_interactions",
-            "adjacent_variant_sweeps",
-            "causal_repair_sweeps",
-            "candidate_dispositions",
-            "record_bundle",
-        ):
-            assert field in instructions
+        assert "lane results" in instructions
+        assert "candidate dispositions" in instructions
+        assert "shadow-manifest status" in instructions
         assert "cross-lane interaction" in instructions
         assert "adjacent-variant" in instructions
-        assert "source drift" in instructions
 
 
 def test_adversaries_remove_gobby_worker_state_and_spawn_hooks() -> None:

@@ -20,8 +20,6 @@ from typing import Any
 
 import psycopg
 
-from gobby.plans.consumer_sweep import ConsumerInventoryError
-
 logger = logging.getLogger(__name__)
 
 # Agent names whose spawn must be gated by plan validation. Centralized so the
@@ -43,20 +41,6 @@ def validate_plan_for_agent_spawn(
             task_manager,
             code_index,
         )
-    except ConsumerInventoryError as exc:
-        message = f"{exc.code}: {exc}"
-        logger.warning(
-            "Refusing %s spawn for task %s: PlanValidationError: %s",
-            agent_name,
-            task_id,
-            message,
-        )
-        return {
-            "success": False,
-            "error": f"PlanValidationError: {message}",
-            "validator_errors": [message],
-            "consumer_sweep_error": exc.to_dict(),
-        }
     except psycopg.Error as exc:
         logger.warning(
             "Skipping plan validation gate for %s spawn on task %s because database "
@@ -93,6 +77,7 @@ def _validate_plan_for_agent_spawn(
         return None
     if not task_id or task_manager is None:
         return None
+    del code_index
 
     artifacts = _safe_get_artifacts(task_manager, task_id)
     if artifacts is None or not artifacts.plan_file_path:
@@ -105,41 +90,11 @@ def _validate_plan_for_agent_spawn(
     if not plan_path.is_absolute():
         plan_path = Path.cwd() / plan_path
 
-    from gobby.plans.consumer_sweep import run_consumer_sweep
-    from gobby.plans.parser import PlanParseError, parse_plan
     from gobby.tasks.expansion._validate import validate_plan_file
 
     result = validate_plan_file(None, plan_path)
-    validator_warnings = list(result.get("warnings", []))
     if result.get("valid"):
-        task = _safe_get_task(task_manager, task_id)
-        project_id = _task_project_id(task)
-        try:
-            plan_doc = parse_plan(plan_path, parse_mode="draft")
-        except (OSError, PlanParseError) as exc:
-            logger.warning(
-                "Skipping consumer sweep for %s spawn on task %s because draft plan parse "
-                "failed for %s: %s",
-                agent_name,
-                task_id,
-                plan_path,
-                exc,
-            )
-            return None
-        sweep = run_consumer_sweep(
-            plan_doc,
-            project_id=project_id,
-            code_index=code_index,
-            include_tests=False,
-        )
-        if sweep.valid:
-            return None
-        result = {
-            "valid": False,
-            "errors": sweep.errors,
-            "warnings": validator_warnings,
-            "consumer_sweep": sweep.to_dict(),
-        }
+        return None
 
     errors = result.get("errors", [])
     warnings = result.get("warnings", [])
@@ -160,8 +115,6 @@ def _validate_plan_for_agent_spawn(
         payload["validator_warnings"] = list(warnings)
     if "semantic_lint" in result:
         payload["semantic_lint"] = result["semantic_lint"]
-    if "consumer_sweep" in result:
-        payload["consumer_sweep"] = result["consumer_sweep"]
     return payload
 
 
@@ -174,24 +127,3 @@ def _safe_get_artifacts(task_manager: Any, task_id: str) -> Any | None:
     except Exception as exc:
         logger.debug("Failed to load task artifacts for %s: %s", task_id, exc)
         return None
-
-
-def _safe_get_task(task_manager: Any, task_id: str) -> Any | None:
-    getter = getattr(task_manager, "get_task", None)
-    if getter is None:
-        return None
-    try:
-        return getter(task_id)
-    except Exception as exc:
-        logger.debug("Failed to load task %s for plan validation gate: %s", task_id, exc)
-        return None
-
-
-def _task_project_id(task: Any | None) -> str | None:
-    if task is None:
-        return None
-    if isinstance(task, dict):
-        value = task.get("project_id")
-    else:
-        value = getattr(task, "project_id", None)
-    return str(value) if value else None

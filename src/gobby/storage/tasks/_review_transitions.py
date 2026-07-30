@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import (
@@ -14,7 +13,6 @@ from gobby.plans.review_findings import (
     render_rejection_section,
     validate_plan_review_findings,
 )
-from gobby.plans.review_telemetry import persist_delivered_round_result
 from gobby.storage.hub.protocol import (
     HubDatabase,
     StageReviewApprovalMutation,
@@ -44,7 +42,6 @@ def submit_for_review(
     *,
     review_notes: str | None = None,
     by_session_id: str | None = None,
-    repair_submission: Mapping[str, object] | None = None,
     dispatch_run_id: str | None = None,
 ) -> Task:
     """Submit a stage for review and release ownership."""
@@ -60,7 +57,6 @@ def submit_for_review(
         stage_name,
         by_session_id=by_session_id,
         notes=review_notes,
-        repair_submission=repair_submission,
         dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET
@@ -87,7 +83,6 @@ def approve_review(
     manifest_entries: list[dict[str, object]] | None = None,
     routing_decisions: dict[str, object] | None = None,
     coverage_attestation: dict[str, object] | None = None,
-    convergence_telemetry: dict[str, object] | None = None,
     evidence_id: str | None = None,
     by_session_id: str | None = None,
     dispatch_run_id: str | None = None,
@@ -111,7 +106,6 @@ def approve_review(
             manifest_entries=manifest_entries,
             routing_decisions=routing_decisions,
             coverage_attestation=coverage_attestation,
-            convergence_telemetry=convergence_telemetry,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
@@ -147,7 +141,6 @@ def _approve_plan_review(
     manifest_entries: list[dict[str, object]] | None,
     routing_decisions: dict[str, object] | None,
     coverage_attestation: dict[str, object] | None,
-    convergence_telemetry: dict[str, object] | None,
     evidence_id: str | None,
     by_session_id: str | None,
     dispatch_run_id: str | None,
@@ -182,11 +175,6 @@ def _approve_plan_review(
             "missing_coverage_attestation",
             "planning-stage approval requires coverage_attestation",
         )
-    if convergence_telemetry is None:
-        raise ReviewEvidenceError(
-            "missing_convergence_telemetry",
-            "planning-stage approval requires convergence_telemetry",
-        )
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     if not artifacts.plan_file_path:
         raise ReviewEvidenceError(
@@ -210,22 +198,14 @@ def _approve_plan_review(
         manifest_entries=manifest_entries,
         routing_decisions=routing_decisions,
         coverage_attestation=coverage_attestation,
-        convergence_telemetry=convergence_telemetry,
     )
-    if convergence_telemetry.get("state") == "delivered":
-        persist_delivered_round_result(
-            db,
-            run_id=dispatch_run_id or "",
-            round_result=round_result,
-        )
-        return get_task(db, task.id)
     replay = _recorded_approval_replay(
         db,
         task.id,
         evidence=evidence,
         round_result=round_result,
     )
-    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)) as transaction:
+    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)):
         if replay is None:
             service.apply_plan_review_manifest(
                 evidence_id,
@@ -258,16 +238,10 @@ def _approve_plan_review(
                         "manifest_apply_incomplete",
                         "approval manifest must be durably applied before the approval commit",
                     )
-                quality_ledger = service.derive_quality_ledger_for_evidence(
-                    evidence_id,
-                    round_result,
-                    transaction=transaction,
-                )
-                service.finalize_plan_review_evidence(
-                    evidence_id,
-                    round_result,
-                    _derived_quality_ledger=quality_ledger,
-                )
+        service.finalize_plan_review_evidence(
+            evidence_id,
+            round_result,
+        )
 
         stages = _stage_states(db)
         current_stage = stages.get(task.id, stage_name)
@@ -301,9 +275,7 @@ def _recorded_approval_replay(
 ) -> Task | None:
     if evidence.finalized_at is None:
         return None
-    approval_result = dict(evidence.approval_result or {})
-    delivered_ledger = approval_result.pop("quality_ledger", None) or []
-    if approval_result != round_result or delivered_ledger != (evidence.quality_ledger or []):
+    if evidence.approval_result != round_result:
         raise ReviewEvidenceError(
             "approval_result_conflict",
             "approval retry conflicts with the durable approval result",
@@ -320,7 +292,6 @@ def reject_review(
     round_number: int | None = None,
     findings: list[dict[str, object]] | None = None,
     coverage_attestation: dict[str, object] | None = None,
-    convergence_telemetry: dict[str, object] | None = None,
     evidence_id: str | None = None,
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
@@ -350,7 +321,6 @@ def reject_review(
             round_number=normalized_round,
             findings=findings,
             coverage_attestation=coverage_attestation,
-            convergence_telemetry=convergence_telemetry,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
@@ -408,7 +378,6 @@ def _reject_review_with_findings(
     round_number: int | None,
     findings: list[dict[str, object]],
     coverage_attestation: dict[str, object] | None,
-    convergence_telemetry: dict[str, object] | None,
     evidence_id: str | None,
     by_session_id: str | None,
     dispatch_run_id: str | None,
@@ -432,11 +401,6 @@ def _reject_review_with_findings(
         raise ReviewEvidenceError(
             "missing_coverage_attestation",
             "structured findings require coverage_attestation",
-        )
-    if convergence_telemetry is None:
-        raise ReviewEvidenceError(
-            "missing_convergence_telemetry",
-            "structured findings require convergence_telemetry",
         )
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     if not artifacts.plan_file_path:
@@ -463,15 +427,7 @@ def _reject_review_with_findings(
     round_result = build_rejected_round_result(
         findings=validated_findings,
         coverage_attestation=coverage_attestation,
-        convergence_telemetry=convergence_telemetry,
     )
-    if convergence_telemetry.get("state") == "delivered":
-        persist_delivered_round_result(
-            db,
-            run_id=dispatch_run_id or "",
-            round_result=round_result,
-        )
-        return get_task(db, task.id)
     replay = _recorded_rejection_replay(
         db,
         task.id,

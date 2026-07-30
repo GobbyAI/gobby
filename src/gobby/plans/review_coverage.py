@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -10,25 +12,15 @@ from typing import cast
 from gobby.plans.digests import canonical_json_sha256
 from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.review_citations import validate_source_citation
-from gobby.plans.review_evidence_io import build_section_manifest
 from gobby.plans.review_evidence_models import ReviewEvidenceError, canonical_json_object
-from gobby.plans.review_ledger import (
-    dismissed_ledger_entries_from_context,
-    validate_quality_ledger,
-)
-from gobby.plans.review_sweeps import validate_record_bundle, validate_sweep_records
 from gobby.plans.semantic_lint import collect_target_inventory
-from gobby.utils.hashing import is_sha256
 
 REVIEW_LANES = (
     "requirements_traceability",
     "repository_blast_radius",
     "runtime_invariants",
 )
-_COMPLEX_DELIVERABLES = 8
-_COMPLEX_ACCEPTANCE_ITEMS = 24
-_COMPLEX_TARGET_FILES = 12
-_COMPLEX_CHANGED_SECTIONS = 4
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def review_complexity(
@@ -49,43 +41,23 @@ def review_complexity(
         "changed_sections": changed_section_count,
     }
     complex_review = (
-        counts["deliverables"] >= _COMPLEX_DELIVERABLES
-        or counts["acceptance_items"] >= _COMPLEX_ACCEPTANCE_ITEMS
-        or counts["target_files"] >= _COMPLEX_TARGET_FILES
-        or counts["changed_sections"] >= _COMPLEX_CHANGED_SECTIONS
+        counts["deliverables"] >= 8
+        or counts["acceptance_items"] >= 24
+        or counts["target_files"] >= 12
+        or counts["changed_sections"] >= 4
     )
     return {
         "mode": "parallel" if complex_review else "sequential",
         "counts": counts,
         "thresholds": {
-            "deliverables": _COMPLEX_DELIVERABLES,
-            "acceptance_items": _COMPLEX_ACCEPTANCE_ITEMS,
-            "target_files": _COMPLEX_TARGET_FILES,
-            "changed_sections": _COMPLEX_CHANGED_SECTIONS,
+            "deliverables": 8,
+            "acceptance_items": 24,
+            "target_files": 12,
+            "changed_sections": 4,
         },
         "lanes": list(REVIEW_LANES),
         "max_workers": 3 if complex_review else 0,
     }
-
-
-def validate_approval_condition(
-    *,
-    findings: Sequence[Mapping[str, object]],
-    quality_ledger: Sequence[Mapping[str, object]],
-) -> list[dict[str, object]]:
-    """Require zero blocking findings while preserving non-gating ledger entries."""
-    blocking_ids = [
-        str(finding.get("finding_id", f"finding-{index}"))
-        for index, finding in enumerate(findings)
-        if finding.get("severity") == "blocking"
-    ]
-    if blocking_ids:
-        raise ReviewEvidenceError(
-            "blocking_findings_remaining",
-            "approval requires zero blocking findings",
-            details={"finding_ids": blocking_ids},
-        )
-    return validate_quality_ledger(quality_ledger)
 
 
 def validate_review_coverage(
@@ -98,24 +70,10 @@ def validate_review_coverage(
     candidate_dispositions: Mapping[str, object],
     shadow_manifest_status: Mapping[str, object],
     expected_shadow_manifest_status: Mapping[str, object],
-    prior_round_context: Mapping[str, object] | None,
-    plan_bytes: bytes | None = None,
 ) -> dict[str, object]:
-    """Validate exhaustive lane output and return a canonical attestation.
-
-    plan_bytes carries the reviewed plan content when document.source_path is
-    not re-readable (snapshot documents are parsed from a temp dir that is
-    deleted before validation runs).
-    """
-    lanes = _validate_lanes(
-        document,
-        lane_results,
-    )
-    sweep_validation = validate_sweep_records(
-        lanes=lanes,
-        raw=candidate_dispositions,
-        prior_round_context=prior_round_context,
-    )
+    """Validate exhaustive lane output and return a canonical attestation."""
+    lanes = _validate_lanes(document, lane_results)
+    disposition_counts = _validate_dispositions(lanes, candidate_dispositions)
     canonical_shadow = canonical_json_object(shadow_manifest_status)
     expected_shadow = canonical_json_object(expected_shadow_manifest_status)
     if canonical_shadow != expected_shadow:
@@ -130,17 +88,6 @@ def validate_review_coverage(
         for candidate in candidates:
             citations.extend(cast(list[dict[str, object]], candidate["source_citations"]))
     source_hashes = _rehash_sources(project_root, citations)
-    current_section_hashes = {
-        section.section_id: section.section_hash
-        for section in build_section_manifest(
-            plan_bytes if plan_bytes is not None else document.source_path.read_bytes()
-        )
-    }
-    _reject_unchanged_dismissal_reopens(
-        dispositions=sweep_validation.dispositions,
-        prior_round_context=prior_round_context,
-        current_section_hashes=current_section_hashes,
-    )
     source_digest = _source_digest(plan_hash, source_hashes)
     shadow_summary: dict[str, object] = {"status": expected_shadow["status"]}
     if expected_shadow["status"] == "valid":
@@ -160,13 +107,14 @@ def validate_review_coverage(
             for lane in lanes
         ],
         "source_digest": source_digest,
-        "disposition_counts": sweep_validation.disposition_counts,
-        "cross_lane_interaction_complete": sweep_validation.cross_lane_interaction_complete,
-        "adjacent_variant_complete": sweep_validation.adjacent_variant_complete,
-        "record_bundle": sweep_validation.record_bundle,
+        "disposition_counts": disposition_counts,
+        "cross_lane_interaction_complete": True,
+        "adjacent_variant_complete": True,
         "shadow_manifest_status": shadow_summary,
     }
-    attestation["attestation_digest"] = canonical_json_sha256(attestation)
+    attestation["attestation_digest"] = hashlib.sha256(
+        json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     return attestation
 
 
@@ -190,26 +138,15 @@ def validate_coverage_attestation(
         "disposition_counts",
         "cross_lane_interaction_complete",
         "adjacent_variant_complete",
-        "record_bundle",
         "shadow_manifest_status",
         "attestation_digest",
     }
-    if "record_bundle" not in attestation:
-        raise ReviewEvidenceError(
-            "invalid_coverage_attestation",
-            "coverage attestation requires record_bundle",
-        )
     if set(attestation) != expected_keys or attestation.get("version") != 1:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
             "coverage attestation does not match the canonical version-1 schema",
         )
-    _required_string(
-        attestation,
-        "evidence_id",
-        "coverage attestation",
-        error_code="invalid_coverage_attestation",
-    )
+    _required_string(attestation, "evidence_id", "coverage attestation")
     lanes = attestation.get("lanes")
     if not isinstance(lanes, list) or len(lanes) != len(REVIEW_LANES):
         raise ReviewEvidenceError(
@@ -250,7 +187,7 @@ def validate_coverage_attestation(
             "invalid_coverage_attestation",
             "coverage attestation lanes are missing, duplicated, or out of order",
         )
-    if not is_sha256(attestation.get("source_digest")):
+    if not _SHA256_RE.fullmatch(str(attestation.get("source_digest", ""))):
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
             "coverage attestation source_digest must be SHA-256",
@@ -282,7 +219,7 @@ def validate_coverage_attestation(
                 "invalid_coverage_attestation",
                 "valid shadow manifest status has non-canonical fields",
             )
-        if not is_sha256(shadow.get("manifest_digest")):
+        if not _SHA256_RE.fullmatch(str(shadow.get("manifest_digest", ""))):
             raise ReviewEvidenceError(
                 "invalid_coverage_attestation",
                 "valid shadow manifest status requires a SHA-256 manifest_digest",
@@ -330,17 +267,12 @@ def validate_coverage_attestation(
     if counts["total"] != sum(int(lane["candidate_count"]) for lane in lanes):
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
-            "coverage attestation disposition_counts differ from lane candidate counts",
+            "coverage attestation candidate and disposition counts differ",
         )
-    record_bundle, bundle_counts = validate_record_bundle(attestation.get("record_bundle"))
-    if counts != bundle_counts:
-        raise ReviewEvidenceError(
-            "invalid_coverage_attestation",
-            "coverage attestation disposition_counts disagree with record_bundle",
-        )
-    attestation["record_bundle"] = record_bundle
     digest = attestation.pop("attestation_digest", None)
-    expected_digest = canonical_json_sha256(attestation)
+    expected_digest = hashlib.sha256(
+        json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     if digest != expected_digest:
         raise ReviewEvidenceError(
             "invalid_coverage_attestation",
@@ -368,12 +300,7 @@ def _validate_lanes(
         if not isinstance(raw_lane, Mapping):
             raise ReviewEvidenceError("invalid_lane_results", "lane result must be an object")
         lane = canonical_json_object(raw_lane)
-        lane_id = _required_string(
-            lane,
-            "lane_id",
-            "lane result",
-            error_code="invalid_lane_results",
-        )
+        lane_id = _required_string(lane, "lane_id", "lane result")
         if lane_id not in REVIEW_LANES or lane_id in by_id:
             raise ReviewEvidenceError(
                 "invalid_lane_results",
@@ -390,9 +317,7 @@ def _validate_lanes(
                 "invalid_section_ids",
                 f"review lane {lane_id} did not cover every deliverable section",
             )
-        citations = _citation_list(
-            lane.get("source_citations"),
-        )
+        citations = _citation_list(lane.get("source_citations"))
         candidates_raw = lane.get("candidate_issues")
         if not isinstance(candidates_raw, list):
             raise ReviewEvidenceError(
@@ -442,24 +367,9 @@ def _validate_candidate(
             "invalid_candidate",
             f"candidate issue has unknown fields: {', '.join(unknown)}",
         )
-    _required_string(
-        candidate,
-        "candidate_id",
-        "candidate issue",
-        error_code="invalid_candidate",
-    )
-    _required_string(
-        candidate,
-        "violated_invariant",
-        "candidate issue",
-        error_code="invalid_candidate",
-    )
-    _required_string(
-        candidate,
-        "suggested_fix",
-        "candidate issue",
-        error_code="invalid_candidate",
-    )
+    _required_string(candidate, "candidate_id", "candidate issue")
+    _required_string(candidate, "violated_invariant", "candidate issue")
+    _required_string(candidate, "suggested_fix", "candidate issue")
     section_ids = _string_list(candidate.get("section_ids"), "section_ids")
     if (
         not section_ids
@@ -478,56 +388,90 @@ def _validate_candidate(
             "invalid_candidate",
             "candidate confidence must be between 0 and 1",
         )
-    candidate["source_citations"] = _citation_list(
-        candidate.get("source_citations"),
-    )
+    candidate["source_citations"] = _citation_list(candidate.get("source_citations"))
     candidate["adjacent_sites_checked"] = _string_list(
         candidate.get("adjacent_sites_checked"),
         "adjacent_sites_checked",
     )
-    candidate["section_ids"] = section_ids
     return candidate
 
 
-def _reject_unchanged_dismissal_reopens(
-    *,
-    dispositions: Sequence[Mapping[str, object]],
-    prior_round_context: Mapping[str, object] | None,
-    current_section_hashes: Mapping[str, str],
-) -> None:
-    prior_dismissals = dismissed_ledger_entries_from_context(prior_round_context)
-    for disposition in dispositions:
-        if disposition.get("disposition") != "emitted_finding":
-            continue
-        source_sections = cast(list[str], disposition["source_section_ids"])
-        for dismissal in prior_dismissals:
-            if (
-                dismissal["check_key"] != disposition["check_key"]
-                or dismissal["source_section_ids"] != source_sections
-                or dismissal["source_hash"] != disposition["source_hash"]
-            ):
-                continue
-            stored_hashes = cast(dict[str, str], dismissal["section_hashes_at_entry"])
-            section_hash_changed = any(
-                current_section_hashes.get(section_id) != section_hash
-                for section_id, section_hash in stored_hashes.items()
+def _validate_dispositions(
+    lanes: Sequence[Mapping[str, object]],
+    raw: Mapping[str, object],
+) -> dict[str, int]:
+    payload = canonical_json_object(raw)
+    if payload.get("cross_lane_interaction_complete") is not True:
+        raise ReviewEvidenceError(
+            "incomplete_dispositions",
+            "cross-lane interaction pass must be complete",
+        )
+    if payload.get("adjacent_variant_complete") is not True:
+        raise ReviewEvidenceError(
+            "incomplete_dispositions",
+            "class-wide adjacent-variant sweep must be complete",
+        )
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise ReviewEvidenceError(
+            "invalid_dispositions",
+            "candidate_dispositions.items must be an array",
+        )
+    candidate_ids: set[str] = set()
+    for lane in lanes:
+        candidates = lane.get("candidate_issues")
+        if not isinstance(candidates, list):
+            raise ReviewEvidenceError(
+                "invalid_lane_results",
+                "validated lane candidate_issues must be an array",
             )
-            if dismissal["reopenable"] != section_hash_changed:
+        candidate_ids.update(str(candidate["candidate_id"]) for candidate in candidates)
+    seen: set[str] = set()
+    finding_ids: set[str] = set()
+    emitted = 0
+    dismissed = 0
+    for raw_item in items:
+        if not isinstance(raw_item, Mapping):
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition must be an object",
+            )
+        item = canonical_json_object(raw_item)
+        candidate_id = _required_string(item, "candidate_id", "candidate disposition")
+        if candidate_id not in candidate_ids or candidate_id in seen:
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                f"unknown or duplicate candidate disposition: {candidate_id}",
+            )
+        seen.add(candidate_id)
+        _required_string(item, "reason", "candidate disposition")
+        disposition = item.get("disposition")
+        if disposition == "emitted_finding":
+            finding_id = _required_string(item, "finding_id", "emitted candidate disposition")
+            if finding_id in finding_ids:
                 raise ReviewEvidenceError(
-                    "invalid_dismissal_context",
-                    "dismissal reopenable marker differs from the bound section hashes",
+                    "duplicate_finding",
+                    f"finding_id is duplicated: {finding_id}",
                 )
-            if not section_hash_changed:
-                raise ReviewEvidenceError(
-                    "unchanged_dismissal_reopened",
-                    "candidate reopens a prior dismissal without a source or section hash change",
-                    details={"ledger_entry_id": dismissal["ledger_entry_id"]},
-                )
+            finding_ids.add(finding_id)
+            emitted += 1
+        elif disposition == "dismissed":
+            dismissed += 1
+        else:
+            raise ReviewEvidenceError(
+                "invalid_dispositions",
+                "candidate disposition must be emitted_finding or dismissed",
+            )
+    if seen != candidate_ids:
+        missing = sorted(candidate_ids - seen)
+        raise ReviewEvidenceError(
+            "undisposed_candidates",
+            "every candidate requires a disposition: " + ", ".join(missing),
+        )
+    return {"total": len(candidate_ids), "emitted_findings": emitted, "dismissed": dismissed}
 
 
-def _citation_list(
-    raw: object,
-) -> list[dict[str, object]]:
+def _citation_list(raw: object) -> list[dict[str, object]]:
     if not isinstance(raw, list) or not raw:
         raise ReviewEvidenceError(
             "invalid_source_citation",
@@ -535,11 +479,7 @@ def _citation_list(
         )
     citations: list[dict[str, object]] = []
     for item in raw:
-        citations.append(
-            validate_source_citation(
-                item,
-            )
-        )
+        citations.append(validate_source_citation(item))
     return citations
 
 
@@ -547,21 +487,7 @@ def _rehash_sources(
     project_root: Path,
     citations: Sequence[Mapping[str, object]],
 ) -> dict[str, str]:
-    try:
-        root = project_root.resolve(strict=True)
-    except FileNotFoundError:
-        raise ReviewEvidenceError(
-            "source_drift",
-            f"project root is missing: {project_root}",
-            retryable=True,
-            details={"paths": [str(project_root)]},
-        ) from None
-    except OSError as error:
-        raise ReviewEvidenceError(
-            "source_io_error",
-            f"project root could not be resolved: {project_root}",
-            details={"paths": [str(project_root)], "io_error": str(error)},
-        ) from error
+    root = project_root.resolve(strict=True)
     claimed_hashes: dict[str, str] = {}
     resolved_paths: dict[str, Path] = {}
     for citation in citations:
@@ -575,19 +501,13 @@ def _rehash_sources(
         try:
             resolved = (root / path).resolve(strict=True)
             resolved.relative_to(root)
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             raise ReviewEvidenceError(
                 "source_drift",
                 f"cited source is missing: {relative}",
                 retryable=True,
                 details={"paths": [relative]},
             ) from None
-        except OSError as error:
-            raise ReviewEvidenceError(
-                "source_io_error",
-                f"cited source could not be resolved: {relative}",
-                details={"paths": [relative], "io_error": str(error)},
-            ) from error
         except ValueError:
             raise ReviewEvidenceError(
                 "invalid_source_path",
@@ -611,8 +531,8 @@ def _rehash_sources(
         resolved_paths[relative] = resolved
     changed = [
         relative
-        for relative, resolved in resolved_paths.items()
-        if hashlib.sha256(resolved.read_bytes()).hexdigest() != claimed_hashes[relative]
+        for relative, claimed in claimed_hashes.items()
+        if hashlib.sha256(resolved_paths[relative].read_bytes()).hexdigest() != claimed
     ]
     if changed:
         raise ReviewEvidenceError(
@@ -625,21 +545,14 @@ def _rehash_sources(
 
 
 def _source_digest(plan_hash: str, source_hashes: Mapping[str, str]) -> str:
-    payload = {"plan_hash": plan_hash, "sources": source_hashes}
-    return canonical_json_sha256(payload)
+    return canonical_json_sha256({"plan_hash": plan_hash, "sources": source_hashes})
 
 
-def _required_string(
-    payload: Mapping[str, object],
-    key: str,
-    owner: str,
-    *,
-    error_code: str,
-) -> str:
+def _required_string(payload: Mapping[str, object], key: str, owner: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ReviewEvidenceError(
-            error_code,
+            f"invalid_{owner.replace(' ', '_')}",
             f"{owner}.{key} must be a non-empty string",
         )
     return value

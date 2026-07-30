@@ -103,7 +103,7 @@ class TestManifestEmissionOnApproval:
 
 
 class TestTerminalCleanupOwnership:
-    def test_staged_verdict_proceeds_directly_to_terminal_cleanup(
+    def test_staged_verdict_proceeds_directly_to_normal_agent_completion(
         self,
         agent: AgentDefinitionBody,
     ) -> None:
@@ -118,8 +118,10 @@ class TestTerminalCleanupOwnership:
         )
         assert "gobby-agents:send_message" not in (review.allowed_mcp_tools or [])
         review_prompt = review.status_message or ""
-        assert "terminal cleanup owns enrichment, finalization, stage commit" in (review_prompt)
-        assert "Do not send_message or wait for lesson" in review_prompt
+        assert "approve_review" in review_prompt
+        assert "reject_review" in review_prompt
+        assert "Proceed directly to" in review_prompt
+        assert "end_agent_run" in review_prompt
 
 
 class TestCoordinatorOwnedWrites:

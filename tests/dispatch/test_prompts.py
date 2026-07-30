@@ -217,7 +217,6 @@ def test_plan_review_evidence_uses_stage_native_snapshot_handle() -> None:
 
     assert rendered.startswith("review this plan\n")
     assert "`get_plan_review_snapshot`" in rendered
-    assert "`offset: 0`" in rendered
-    assert "`limit: 8000`" in rendered
+    assert "complete decoded snapshot" in rendered
     assert '{"evidence_id":"evidence-1","round_number":2}' in rendered
     assert "<plan-review-snapshot-" not in rendered

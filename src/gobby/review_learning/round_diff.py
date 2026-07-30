@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -13,17 +12,11 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_findings import validate_plan_review_findings
-from gobby.plans.review_ledger import validate_quality_ledger
 
-logger = logging.getLogger(__name__)
-
-PlanLessonType = Literal["reviewer-miss", "fixer-induced-defect", "no-fix-policy"]
-PlanLessonDecision = Literal["confirmed", "no-fix-policy"]
-PlanLessonSource = Literal["finding", "quality_ledger"]
+PlanLessonType = Literal["reviewer-miss", "fixer-induced-defect"]
 _CLASS_ORDER: dict[PlanLessonType, int] = {
     "reviewer-miss": 0,
     "fixer-induced-defect": 1,
-    "no-fix-policy": 2,
 }
 
 
@@ -37,8 +30,6 @@ class PlanReviewLessonCandidate:
     finding: dict[str, object]
     proof: dict[str, object]
     metric: int
-    decision: PlanLessonDecision = "confirmed"
-    source: PlanLessonSource = "finding"
 
 
 def classify_plan_review_rounds(
@@ -72,58 +63,6 @@ def classify_plan_review_rounds(
             )
             if fixer is not None:
                 candidates.append(fixer)
-    candidates.extend(_no_fix_policy_candidates(lineage[-1]))
-    return candidates
-
-
-def _no_fix_policy_candidates(row: PlanReviewEvidence) -> list[PlanReviewLessonCandidate]:
-    candidates: list[PlanReviewLessonCandidate] = []
-    for entry in validate_quality_ledger(row.quality_ledger or []):
-        rounds_carried = entry["rounds_carried"]
-        if (
-            entry["kind"] != "finding"
-            or entry["stale"] is not False
-            or not isinstance(rounds_carried, int)
-            or rounds_carried < 3
-        ):
-            continue
-        ledger_entry_id = str(entry["ledger_entry_id"])
-        finding = {
-            key: value
-            for key, value in entry.items()
-            if key
-            in {
-                "check_key",
-                "category",
-                "severity",
-                "location",
-                "description",
-                "minimal_repair",
-                "repair_scope",
-                "new_deliverable_justification",
-                "prevention",
-                "principle",
-                "root_cause",
-            }
-        }
-        finding["finding_id"] = ledger_entry_id
-        finding["section_id"] = cast(list[str], entry["source_section_ids"])[0]
-        candidates.append(
-            PlanReviewLessonCandidate(
-                lesson_type="no-fix-policy",
-                evidence_id=row.evidence_id,
-                round_number=row.round_number,
-                finding=finding,
-                proof={
-                    "source": "quality_ledger",
-                    "ledger_entry_id": ledger_entry_id,
-                    "rounds_carried": rounds_carried,
-                },
-                metric=rounds_carried,
-                decision="no-fix-policy",
-                source="quality_ledger",
-            )
-        )
     return candidates
 
 
@@ -142,22 +81,15 @@ def select_plan_review_candidates(
         for lesson_type in _CLASS_ORDER
         if any(candidate.lesson_type == lesson_type for candidate in ranked)
     ]
-    selected_indices: list[int] = []
+    selected: list[PlanReviewLessonCandidate] = []
     for lesson_type in present[:capped_limit]:
-        selected_indices.append(
-            next(
-                index
-                for index, candidate in enumerate(ranked)
-                if candidate.lesson_type == lesson_type
-            )
+        selected.append(
+            next(candidate for candidate in ranked if candidate.lesson_type == lesson_type)
         )
-    selected = [ranked[index] for index in selected_indices]
     if len(selected) == capped_limit:
         return selected
-    selected_index_set = set(selected_indices)
-    selected.extend(
-        candidate for index, candidate in enumerate(ranked) if index not in selected_index_set
-    )
+    selected_ids = {id(candidate) for candidate in selected}
+    selected.extend(candidate for candidate in ranked if id(candidate) not in selected_ids)
     return selected[:capped_limit]
 
 
@@ -195,29 +127,12 @@ def _validated_findings(
         payload = validate_round_result(row.round_result)
         raw_findings = payload["findings"]
         if not isinstance(raw_findings, list):
-            error = TypeError("round_result.findings must be an array")
-            logger.debug(
-                "Skipping invalid findings for evidence %s: %s",
-                row.evidence_id,
-                error,
-            )
             return None
         mappings = [finding for finding in raw_findings if isinstance(finding, dict)]
         if len(mappings) != len(raw_findings):
-            error = TypeError("round_result.findings entries must be objects")
-            logger.debug(
-                "Skipping invalid findings for evidence %s: %s",
-                row.evidence_id,
-                error,
-            )
             return None
         return validate_plan_review_findings(mappings, evidence=row)
-    except (ReviewEvidenceError, TypeError, ValueError) as error:
-        logger.debug(
-            "Skipping invalid findings for evidence %s: %s",
-            row.evidence_id,
-            error,
-        )
+    except (ReviewEvidenceError, TypeError, ValueError):
         return None
 
 

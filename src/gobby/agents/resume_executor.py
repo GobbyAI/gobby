@@ -37,7 +37,6 @@ from gobby.ai.codex_endpoint import (
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
 from gobby.config.tmux import TmuxConfig
-from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 
@@ -597,14 +596,7 @@ async def _park_unlaunched_successor(
             exc_info=True,
         )
     try:
-        review_outcome = terminalize_plan_review_run(
-            runner.run_storage,
-            run_id=successor_run_id,
-            action="cancel",
-            terminal_reason="daemon_stop",
-        )
-        if not review_outcome.handled:
-            runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
+        runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
     except Exception:
         logger.warning(
             "Failed to park unlaunched successor %s",

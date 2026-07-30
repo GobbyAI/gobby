@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError, SectionHash
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -30,14 +30,6 @@ class PlanReviewEvidenceStore:
         row = executor.execute(
             f"SELECT * FROM plan_review_evidence WHERE evidence_id = %s{suffix}",  # nosec B608
             (evidence_id,),
-        ).fetchone()
-        return PlanReviewEvidence.from_row(row) if row is not None else None
-
-    def get_by_dispatch_run(self, run_id: str) -> PlanReviewEvidence | None:
-        """Return the evidence row bound to one dispatched reviewer run."""
-        row = self.db.execute(
-            "SELECT * FROM plan_review_evidence WHERE dispatch_run_id = %s",
-            (run_id,),
         ).fetchone()
         return PlanReviewEvidence.from_row(row) if row is not None else None
 
@@ -129,6 +121,27 @@ class PlanReviewEvidenceStore:
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]
 
+    def list_for_task_stage(
+        self,
+        *,
+        task_id: str,
+        stage: str,
+    ) -> list[PlanReviewEvidence]:
+        """Return finalized evidence rows that form one stage-native lineage."""
+        rows = self.db.execute(
+            """
+            SELECT *
+            FROM plan_review_evidence
+            WHERE task_id = %s
+              AND stage = %s
+              AND finalized_at IS NOT NULL
+              AND expired_at IS NULL
+            ORDER BY round_number, created_at, evidence_id
+            """,
+            (task_id, stage),
+        ).fetchall()
+        return [PlanReviewEvidence.from_row(row) for row in rows]
+
     def list_recent(
         self,
         *,
@@ -158,27 +171,6 @@ class PlanReviewEvidenceStore:
             LIMIT %s
             """,  # Conditions contain only fixed SQL fragments. # nosec B608
             tuple(parameters),
-        ).fetchall()
-        return [PlanReviewEvidence.from_row(row) for row in rows]
-
-    def list_for_task_stage(
-        self,
-        *,
-        task_id: str,
-        stage: str,
-    ) -> list[PlanReviewEvidence]:
-        """Return finalized evidence rows that form one stage-native lineage."""
-        rows = self.db.execute(
-            """
-            SELECT *
-            FROM plan_review_evidence
-            WHERE task_id = %s
-              AND stage = %s
-              AND finalized_at IS NOT NULL
-              AND expired_at IS NULL
-            ORDER BY round_number, created_at, evidence_id
-            """,
-            (task_id, stage),
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]
 
@@ -270,15 +262,9 @@ class PlanReviewEvidenceStore:
         transaction: Transaction,
         evidence_id: str,
         round_result: Mapping[str, object],
-        approval_result: Mapping[str, object] | None,
+        approval: bool,
     ) -> PlanReviewEvidence:
         payload = json.dumps(round_result, sort_keys=True, separators=(",", ":"))
-        approval_payload = (
-            json.dumps(approval_result, sort_keys=True, separators=(",", ":"))
-            if approval_result is not None
-            else None
-        )
-        approval = approval_result is not None
         row = transaction.execute(
             """
             UPDATE plan_review_evidence
@@ -293,15 +279,7 @@ class PlanReviewEvidenceStore:
               AND (round_result IS NULL OR round_result = %s::jsonb)
             RETURNING *
             """,
-            (
-                payload,
-                approval,
-                approval_payload,
-                approval,
-                approval,
-                evidence_id,
-                payload,
-            ),
+            (payload, approval, payload, approval, approval, evidence_id, payload),
         ).fetchone()
         if row is not None:
             return PlanReviewEvidence.from_row(row)
@@ -314,93 +292,6 @@ class PlanReviewEvidenceStore:
                 f"round result conflicts with durable evidence intent: {evidence_id}",
             )
         return current
-
-    def write_preparation_context(
-        self,
-        *,
-        transaction: Transaction,
-        evidence_id: str,
-        repair_attestations: Sequence[Mapping[str, object]],
-        prior_round_context: Mapping[str, object],
-    ) -> PlanReviewEvidence:
-        attestations = [dict(attestation) for attestation in repair_attestations]
-        context = dict(prior_round_context)
-        encoded_attestations = json.dumps(
-            attestations,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        encoded_context = json.dumps(context, sort_keys=True, separators=(",", ":"))
-        row = transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET repair_attestations = %s::jsonb,
-                prior_round_context = %s::jsonb
-            WHERE evidence_id = %s
-              AND finalized_at IS NULL
-              AND expired_at IS NULL
-              AND (
-                  (repair_attestations IS NULL AND prior_round_context IS NULL)
-                  OR (
-                      repair_attestations = %s::jsonb
-                      AND prior_round_context = %s::jsonb
-                  )
-              )
-            RETURNING *
-            """,
-            (
-                encoded_attestations,
-                encoded_context,
-                evidence_id,
-                encoded_attestations,
-                encoded_context,
-            ),
-        ).fetchone()
-        if row is not None:
-            return PlanReviewEvidence.from_row(row)
-        current = self.require(evidence_id, transaction=transaction, for_update=True)
-        if current.finalized_at is not None or current.expired_at is not None:
-            raise ReviewEvidenceError(
-                "preparation_context_closed",
-                f"preparation context cannot be written to closed evidence: {evidence_id}",
-            )
-        if current.repair_attestations == attestations and current.prior_round_context == context:
-            return current
-        raise ReviewEvidenceError(
-            "preparation_context_conflict",
-            f"preparation context conflicts with durable evidence intent: {evidence_id}",
-        )
-
-    def write_quality_ledger(
-        self,
-        *,
-        transaction: Transaction,
-        evidence_id: str,
-        quality_ledger: Sequence[Mapping[str, object]],
-    ) -> PlanReviewEvidence:
-        ledger = [dict(entry) for entry in quality_ledger]
-        encoded = json.dumps(ledger, sort_keys=True, separators=(",", ":"))
-        row = transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET quality_ledger = %s::jsonb
-            WHERE evidence_id = %s
-              AND finalized_at IS NULL
-              AND expired_at IS NULL
-              AND (quality_ledger IS NULL OR quality_ledger = %s::jsonb)
-            RETURNING *
-            """,
-            (encoded, evidence_id, encoded),
-        ).fetchone()
-        if row is not None:
-            return PlanReviewEvidence.from_row(row)
-        current = self.require(evidence_id, transaction=transaction, for_update=True)
-        if current.quality_ledger == ledger:
-            return current
-        raise ReviewEvidenceError(
-            "quality_ledger_conflict",
-            f"quality ledger conflicts with durable evidence intent: {evidence_id}",
-        )
 
     def pending_interactive_mints(
         self,

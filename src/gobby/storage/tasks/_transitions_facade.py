@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -279,7 +279,6 @@ class TaskTransitionsMixin:
         review_notes: str | None = None,
         *,
         by_session_id: str | None = None,
-        repair_submission: Mapping[str, object] | None = None,
         dispatch_run_id: str | None = None,
     ) -> Task:
         """Submit a stage for review and release ownership."""
@@ -289,7 +288,6 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             review_notes=review_notes,
             by_session_id=by_session_id,
-            repair_submission=repair_submission,
             dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
@@ -306,7 +304,6 @@ class TaskTransitionsMixin:
         manifest_entries: list[dict[str, object]] | None = None,
         routing_decisions: dict[str, object] | None = None,
         coverage_attestation: dict[str, object] | None = None,
-        convergence_telemetry: dict[str, object] | None = None,
         evidence_id: str | None = None,
         by_session_id: str | None = None,
         dispatch_run_id: str | None = None,
@@ -322,7 +319,6 @@ class TaskTransitionsMixin:
             manifest_entries=manifest_entries,
             routing_decisions=routing_decisions,
             coverage_attestation=coverage_attestation,
-            convergence_telemetry=convergence_telemetry,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
@@ -338,7 +334,6 @@ class TaskTransitionsMixin:
         round_number: int | None = None,
         findings: list[dict[str, object]] | None = None,
         coverage_attestation: dict[str, object] | None = None,
-        convergence_telemetry: dict[str, object] | None = None,
         evidence_id: str | None = None,
         *,
         by_session_id: str | None = None,
@@ -353,7 +348,6 @@ class TaskTransitionsMixin:
             round_number=round_number,
             findings=findings,
             coverage_attestation=coverage_attestation,
-            convergence_telemetry=convergence_telemetry,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,

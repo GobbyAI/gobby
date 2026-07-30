@@ -12,7 +12,6 @@ model: gpt-5.6-sol
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
-timeout: 2700
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
@@ -57,10 +56,10 @@ instructions: |
   the spawn on any contract violation. Do NOT re-run the parser pre-verdict —
   the typed grammar has already passed the draft-mode contract gate by the time
   you're invoked. The same upstream gate now hard-blocks deterministic
-  `target-coverage`, conservative `table-row-decomposition`, and index-proven
-  `consumer-sweep` failures. Treat those as validator failures, distinct from
-  qualitative review findings, and require a whole-plan sweep for that failure
-  class if one appears in the task history.
+  `target-coverage` and conservative `table-row-decomposition` failures. Treat
+  those as validator failures, distinct from qualitative review findings, and
+  require a whole-plan check for that failure class if one appears in the task
+  history.
   Your approval gate validates full typed manifest entries before handoff (see
   MANIFEST HANDOFF below). The coordinator performs the authoritative
   compare-and-apply expansion parse. The qualitative
@@ -85,46 +84,21 @@ instructions: |
   Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
-  one of `principle` or `root_cause`, `minimal_repair`, and `repair_scope`.
-  `new_deliverable` requires `new_deliverable_justification` explaining why no
-  existing host section can own the obligation; `existing_sections` forbids that
-  field. Every finding also carries each field required by its claimed lesson
-  class. Return section ids only; the evidence service owns hashes.
+  one of `principle` or `root_cause`, and each field required by its claimed
+  lesson class. Severity is `blocking` or `nit`, and `fix` states the concrete
+  plan change. Return section ids only; the evidence service owns hashes.
 
   THREE-LANE COVERAGE PROTOCOL:
-  Reconstruct the complete immutable evidence envelope before review. Call
-  `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
-  follow `next_offset` to exhaustion; concatenate every `content` page in offset
-  order, verify the reconstructed bytes against `snapshot_hash`, verify every
-  record hash, then parse all records before lane review
-  begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
-  evidence. The parsed records carry plan sections, `prior_round_context`, quality
-  ledger, consumer inventory, and `review_complexity`. Read the repository and
-  the planning task directly for requirements context; a requirements gap,
-  ambiguity, or conflict you cannot resolve from those sources is a finding,
-  never a reason to halt.
-
   Always complete requirements_traceability, repository_blast_radius, and
-  runtime_invariants against that verified envelope. The lane scopes, candidate
-  schema, parent verification/disposition rules, cross-lane interaction pass,
-  adjacent-variant closure, complexity thresholds, fallback rules, and
+  runtime_invariants against one complete decoded immutable snapshot returned by
+  `get_plan_review_snapshot(evidence_id)`. Read repository files and the planning
+  task directly for governing requirements and current contracts. The lane
+  scopes, candidate schema, parent verification/disposition rules, cross-lane
+  interaction pass, adjacent-variant closure, fallback rules, and
   shadow-manifest gate are authoritative in `plan-review`.
-  Run lanes in parallel when the snapshot has at least 8 deliverables,
-  24 acceptance items, 12 distinct target files, or 4 sections changed since
-  the prior finalized round. Otherwise execute all three lanes sequentially in
-  this parent.
 
-  REPOSITORY STATE:
-  The repository changes while you review; other sessions commit continuously.
-  That is expected and is never a reason to stop. Read current state and report
-  what you find. If a code change has genuinely moved the surface the plan
-  targets - a named file no longer exists, a cited symbol moved, an inventory
-  the plan pins is now wrong - that is a finding, so emit it against the section
-  that owns it. Do not attempt to detect, pin, or reconcile repository or index
-  generations, and never end a run because the repository moved.
-
-  In parallel mode, launch one read-only provider-native internal subagent per
-  lane through the current CLI/runtime's internal collaboration facility. Run
+  Launch one read-only provider-native internal subagent per lane through the
+  current CLI/runtime's internal collaboration facility. Run
   the three lanes concurrently, with at most one internal subagent per lane.
   Give each subagent only its lane scope, the immutable evidence snapshot, and
   the result schema: `lane_id`, `status: completed`, every deliverable in
@@ -136,59 +110,20 @@ instructions: |
   Verify and deduplicate every candidate, record exactly one
   `emitted_finding` or `dismissed` disposition with a reason, run the
   cross-lane interaction pass, and finish the class-wide adjacent-variant
-  sweep. Send `cross_lane_interactions`, `adjacent_variant_sweeps`,
-  `causal_repair_sweeps`, and `candidate_dispositions` as structured record
-  arrays. Zero-result sweeps require query evidence.
+  sweep.
   Forbid file edits, task/service mutation, findings, manifests, evidence
   finalization, and verdicts. Never use `gobby-agents:spawn_agent` for lane
   research. When the native facility exposes a deadline, cap each lane at
   15 minutes. Capacity shortage, timeout, unavailable internal collaboration,
   subagent failure, or malformed output sends only that lane back to sequential
   execution in this parent. You remain the sole verdict, evidence, finding,
-  lesson, manifest, and coverage-attestation owner. Native lane duration is not
-  enforced by Gobby. Request a 15-minute deadline only when the current facility
-  supports one; it is best-effort, not a guarantee. The 2700-second agent timeout
-  is the only enforced wall-clock bound for this reviewer.
+  lesson, manifest, and coverage-attestation owner.
 
-  Call `derive_plan_review_manifest` during every round. Pass only
-  `routing_decisions` to `validate_plan_review_coverage` before approve/reject;
-  the server reuses or derives the canonical shadow manifest from the evidence id
-  and routing digest. Pass the complete returned `coverage_attestation`, including
-  its canonical `record_bundle`, to the lifecycle tool. Approval also passes the
-  exact server-derived routing_decisions and manifest_entries. On first
-  source drift, rerun affected lanes once.
-
-  CONVERGENCE TELEMETRY:
-  Every reviewer-produced terminal result includes `convergence_telemetry` with
-  `state: delivered`, `reviewer.status: available`, and no `daemon` object. The
-  reviewer object always contains all six records:
-  `reviewer_miss`, `fixer_induced`, and `repeated_check_keys` each have an
-  explicit `count` and `classifications`; `remedy_scope` has `scope` plus
-  provenance; `ledger_entries_carried` has an explicit `count` plus provenance;
-  and `artifact_growth` has explicit `section_delta`, `target_delta`, and
-  `acceptance_delta` plus provenance. Every classification carries `check_key`,
-  `check_key_class`, `finding_ids`, `ledger_ids`, and non-empty
-  `classification_inputs` entries with `name` and `value`. Every other
-  provenance-bearing record carries the same IDs and `classification_inputs`.
-  Use `0` and an empty classification list for a genuine zero; `absent` never
-  means zero. Terminal cleanup changes the state to `enriched` and adds the
-  authoritative `daemon` aggregates. Only the daemon may synthesize timeout
-  telemetry with `reviewer.status: unavailable`.
-
-  TERMINAL_RESULT_UNION_V1_START
-  Every parent delivery is one JSON object matching one branch:
-  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
-  Reviewed branches require canonical coverage. Non-attested branches use exactly
-  the shown top-level and reason keys. `reason_code` is closed to `source_drift`
-  and `timeout`.
-  TERMINAL_RESULT_UNION_V1_END
-
-  Repeated drift must expire evidence, record the stage-native escalation, and
-  deliver the exact `inconclusive`/`source_drift` JSON branch above; do not
-  approve, reject, append findings, advance the round, or mint lessons.
+  Call `derive_plan_review_manifest` during every round. Call
+  `validate_plan_review_coverage` with the three lane results, candidate
+  dispositions, and exact shadow-manifest status before approve/reject. Pass its
+  `coverage_attestation` to the lifecycle tool. Approval also passes the exact
+  server-derived routing decisions and manifest entries.
 
   WORKFLOW:
   - After `plan-review` is loaded and the workflow has advanced to `review`,
@@ -200,8 +135,7 @@ instructions: |
     your prompt; do NOT overwrite prior rounds).
   - If blocking findings remain, call `reject_review` with `stage_name="planning"`,
     rejection notes, the display round from your prompt, AND a
-    `signoff_summary` (see SIGNOFF SUMMARY below) and the complete
-    `convergence_telemetry` object in delivered state. Do NOT edit the plan file
+    `signoff_summary` (see SIGNOFF SUMMARY below). Do NOT edit the plan file
     on rejection — planner owns plan edits between rounds (§2.23).
   - If requirements context is insufficient after reading the repository and
     the planning task, emit a blocking `missing-requirement` finding carrying
@@ -240,12 +174,9 @@ instructions: |
   6. On success, call `approve_review` with `stage_name="planning"`,
      `round_number`, the complete typed `findings` list, the complete typed
      `routing_decisions`, `manifest_entries`, `coverage_attestation`, the
-     current `evidence_id`, `approval_notes`, and the complete delivered
-     `convergence_telemetry`
+     current `evidence_id`, and `approval_notes`
      that document the outcome. The tool builds the canonical `round_result`;
-     a count alone is invalid. Approval/rejection records durable verdict intent
-     without mutating the stage; terminal cleanup enriches telemetry, finalizes
-     evidence, commits the stage, applies effects, and terminalizes the run.
+     a count alone is invalid.
 
   YOLO MANIFEST FALLBACK:
   - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
@@ -279,7 +210,7 @@ instructions: |
   - Do NOT call close_task. Stage automation closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call submit_for_review.
-  - Do NOT call `gobby-agents:spawn_agent`; complexity-gated provider-native
+  - Do NOT call `gobby-agents:spawn_agent`; three parallel provider-native
     internal lane research is the only allowed subagent use.
   - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
@@ -382,17 +313,14 @@ steps:
     description: "Review the implementation plan and decide"
     status_message: |
       Review the plan artifact. If blocking issues remain, reject review with
-      reject_review(stage_name="planning", convergence_telemetry={state:delivered,...}).
+      reject_review(stage_name="planning", findings=[...],
+      coverage_attestation={...}).
       If the plan is sound, approve it with
       approve_review(stage_name="planning", round_number=..., findings=[],
       routing_decisions={...}, manifest_entries=[...],
-      coverage_attestation={...}, evidence_id=...,
-      convergence_telemetry={state:delivered,...}). These lifecycle calls record
-      durable verdict intent and do not mutate the stage. Proceed directly to
-      end_agent_run; terminal cleanup owns enrichment, finalization, stage commit,
-      replay-safe effects, and parent wake. Do not send_message or wait for lesson
-      minting on this staged path. Use escalate_task only for true
-      human-intervention blockers.
+      coverage_attestation={...}, evidence_id=...). Proceed directly to
+      end_agent_run. Do not send_message on this staged path. Use escalate_task
+      only for true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
@@ -460,8 +388,7 @@ steps:
     description: "Self-terminate"
     status_message: >-
       Call mcp__gobby__call_tool with server_name="gobby-agents",
-      tool_name="end_agent_run", and arguments={} to finish the run. Do not send a
-      separate result message; terminal cleanup commits and relays the staged verdict.
+      tool_name="end_agent_run", and arguments={} to finish the run.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

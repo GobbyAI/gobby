@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents import terminal_delivery
 from gobby.agents.terminal_cleanup import TerminalResourceCleaner
-from gobby.plans.review_terminal import terminalize_plan_review_run
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -261,18 +260,6 @@ class AgentCleanupHandler:
         async def _complete_run() -> AgentRun | None:
             nonlocal transitioned_here
             tool_calls_count, turns_used = await self._completion_stats_for_run(current)
-            review_outcome = await self._run_db(
-                terminalize_plan_review_run,
-                self._agent_run_manager,
-                db=self._db,
-                run_id=run_id,
-                action="complete",
-                tool_calls_count=tool_calls_count,
-                turns_used=turns_used,
-            )
-            if review_outcome.handled:
-                transitioned_here = review_outcome.run is not None
-                return cast("AgentRun | None", review_outcome.run)
             completed = cast(
                 "AgentRun | None",
                 await self._run_db(
@@ -354,17 +341,6 @@ class AgentCleanupHandler:
 
         async def _cancel_run() -> AgentRun | None:
             nonlocal transitioned_here
-            review_outcome = await self._run_db(
-                terminalize_plan_review_run,
-                self._agent_run_manager,
-                db=self._db,
-                run_id=run_id,
-                action="cancel",
-                terminal_reason=terminal_reason,
-            )
-            if review_outcome.handled:
-                transitioned_here = review_outcome.run is not None
-                return cast("AgentRun | None", review_outcome.run)
             cancelled = cast(
                 "AgentRun | None",
                 await self._run_db(
@@ -513,23 +489,7 @@ class AgentCleanupHandler:
 
         if run.status in ("pending", "running"):
             tool_calls_count, turns_used = await self._completion_stats_for_run(run)
-            review_outcome = await self._run_db(
-                terminalize_plan_review_run,
-                self._agent_run_manager,
-                db=self._db,
-                run_id=run.id,
-                action="complete" if is_success else ("timeout" if is_timeout else "fail"),
-                error=None if is_success else terminal_payload,
-                timeout_seconds=run.timeout_seconds,
-                tool_calls_count=tool_calls_count,
-                turns_used=turns_used,
-            )
-            if review_outcome.handled:
-                updated = review_outcome.run
-                if updated is not None:
-                    terminal_run = updated
-                    transitioned = True
-            elif is_success:
+            if is_success:
                 updated = await self._run_db(
                     self._agent_run_manager.complete,
                     run.id,
@@ -574,20 +534,16 @@ class AgentCleanupHandler:
                     )
 
         if transitioned:
-            terminal_success = terminal_run.status == "success"
-            if not terminal_success:
+            if not is_success:
                 await self._task_recovery.recover_task_from_terminal_agent(
                     terminal_run, outcome="failed"
                 )
 
-            if terminal_success:
+            if is_success:
                 notification_result = {"status": "completed"}
             else:
-                notification_result = {
-                    "status": terminal_run.status,
-                    "error": terminal_run.error or terminal_payload,
-                }
-            notification_message = f"Agent {run.id} {'completed' if terminal_success else 'failed'}"
+                notification_result = {"status": "error", "error": terminal_payload}
+            notification_message = f"Agent {run.id} {'completed' if is_success else 'failed'}"
         else:
             current = await self._run_db(self._agent_run_manager.get, run.id)
             logger.debug(

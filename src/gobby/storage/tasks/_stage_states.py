@@ -5,11 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from gobby.plans.review_repair import (
-    REPAIR_SUBMISSION_ARTIFACT_KEY,
-    consumed_repair_submission,
-    encode_repair_submission,
-)
 from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -182,72 +177,18 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         notes: str | None = None,
-        repair_submission: Mapping[str, object] | None = None,
         dispatch_run_id: str | None = None,
         preheld_mutex_run_id: str | None = None,
     ) -> StageState:
-        artifact_updates = (
-            {REPAIR_SUBMISSION_ARTIFACT_KEY: encode_repair_submission(repair_submission)}
-            if repair_submission is not None
-            else None
-        )
         return self._transition(
             task_id,
             stage_name,
             "submit_for_review",
             by_session_id=by_session_id,
             notes=notes,
-            artifact_updates=artifact_updates,
             dispatch_run_id=dispatch_run_id,
             preheld_mutex_run_id=preheld_mutex_run_id,
         )
-
-    def consume_plan_review_submission(
-        self,
-        task_id: str,
-        stage_name: str,
-        *,
-        raw_submission: str,
-        evidence_id: str,
-    ) -> StageState:
-        """Persist an idempotent receipt after evidence preparation consumes a payload."""
-        receipt = consumed_repair_submission(raw_submission, evidence_id=evidence_id)
-        with self.db.transaction() as transaction:
-            row = transaction.execute(
-                """
-                UPDATE task_stage_states
-                   SET artifact_refs = jsonb_set(
-                           COALESCE(artifact_refs, '{}'::jsonb),
-                           ARRAY[%s],
-                           to_jsonb(%s::text),
-                           true
-                       ),
-                       updated_at = NOW()
-                 WHERE task_id = %s
-                   AND stage_name = %s
-                   AND artifact_refs ->> %s = %s
-                RETURNING *
-                """,
-                (
-                    REPAIR_SUBMISSION_ARTIFACT_KEY,
-                    receipt,
-                    task_id,
-                    stage_name,
-                    REPAIR_SUBMISSION_ARTIFACT_KEY,
-                    raw_submission,
-                ),
-            ).fetchone()
-        if row is not None:
-            return self._state_from_row(row)
-        current = self.get(task_id, stage_name)
-        current_submission = (
-            (current.artifact_refs or {}).get(REPAIR_SUBMISSION_ARTIFACT_KEY)
-            if current is not None
-            else None
-        )
-        if current is not None and current_submission == receipt:
-            return current
-        raise ValueError("plan review repair submission changed before consumption")
 
     def approve_review(
         self,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -11,8 +10,6 @@ from typing import Any, cast
 import click
 import psycopg
 
-from gobby.code_index.storage import CodeIndexStorage
-from gobby.plans.consumer_sweep import ConsumerInventoryError, run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.plans.review_evidence_io import normalize_plan_path
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
@@ -30,12 +27,6 @@ from ._plan_validation_output import emit_plan_validation_messages, raise_plan_v
 from .utils import resolve_project_ref
 
 _ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
-
-
-@dataclass(frozen=True)
-class _CliCodeIndexContext:
-    storage: CodeIndexStorage
-
 
 @click.group("plans")
 def plans() -> None:
@@ -130,26 +121,18 @@ def register_plan_command(
     type=click.Choice(["standard", "expansion"]),
     default="standard",
     show_default=True,
-    help="Validation mode. expansion always includes test consumers.",
-)
-@click.option(
-    "--include-tests",
-    is_flag=True,
-    help="Include test files in standard-mode consumer-sweep target coverage.",
+    help="Validation mode.",
 )
 def validate_plan_command(
     plan_file: Path,
     project_ref: str | None,
     mode: str,
-    include_tests: bool,
 ) -> None:
-    """Validate a plan file, including semantic and consumer-sweep lint."""
-    include_test_consumers = mode == "expansion" or include_tests
-
+    """Validate a plan file."""
     result = _validate_plan_for_cli(
         plan_file,
         project_ref,
-        include_tests=include_test_consumers,
+        mode=mode,
     )
     if not result["valid"]:
         raise_plan_validation_failed(result)
@@ -165,15 +148,6 @@ def validate_plan_command(
         click.echo("  No phase metadata available")
     for phase_num, title in phase_items:
         click.echo(f"  {phase_num}: {title}")
-
-    sweep = result.get("consumer_sweep")
-    if isinstance(sweep, dict):
-        if sweep.get("skipped"):
-            reason = sweep.get("skip_reason") or "not available"
-            click.echo(f"Consumer sweep: skipped ({reason})")
-        else:
-            click.echo("Consumer sweep: passed")
-
 
 @plans.command("archive")
 @click.argument("plan_id")
@@ -349,54 +323,11 @@ def _validate_plan_for_cli(
     plan_file: Path,
     project_ref: str | None,
     *,
-    include_tests: bool,
+    mode: str,
 ) -> dict[str, Any]:
     plan_path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
-    result = validate_plan_file(None, plan_path)
-    if not result.get("valid"):
-        return result
-
-    project_id = resolve_project_ref(project_ref)
-    try:
-        plan_doc = parse_plan(plan_path, parse_mode="draft")
-    except (OSError, PlanParseError) as exc:
-        return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
-
-    db: HubDatabase | None = None
-    code_index: _CliCodeIndexContext | None = None
-    if project_id:
-        db = _open_db()
-        code_index = _CliCodeIndexContext(CodeIndexStorage(db))
-
-    try:
-        sweep = run_consumer_sweep(
-            plan_doc,
-            project_id=project_id,
-            code_index=code_index,
-            include_tests=include_tests,
-        )
-    except ConsumerInventoryError as exc:
-        return {
-            **result,
-            "valid": False,
-            "errors": [
-                *result.get("errors", []),
-                f"Consumer sweep failed [{exc.code}]: {exc}",
-            ],
-            "consumer_sweep_error": exc.to_dict(),
-        }
-    except (OSError, psycopg.Error, ValueError) as exc:
-        return {
-            **result,
-            "valid": False,
-            "errors": [*result.get("errors", []), f"Consumer sweep failed: {exc}"],
-        }
-
-    result["consumer_sweep"] = sweep.to_dict()
-    if not sweep.valid:
-        result["valid"] = False
-        result["errors"] = [*result.get("errors", []), *sweep.errors]
-    return result
+    del project_ref, mode
+    return validate_plan_file(None, plan_path)
 
 
 def _project_id(project: str | None, *, required: bool = False) -> str | None:

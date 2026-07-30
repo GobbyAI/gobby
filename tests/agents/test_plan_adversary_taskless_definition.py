@@ -114,11 +114,13 @@ def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
     )
 
 
-def test_taskless_adversary_routes_durable_facts_to_project_memory() -> None:
+def test_taskless_adversary_returns_exact_result_for_coordinator_persistence() -> None:
     agent = _agent()
     review_step = next(step for step in agent["steps"] if step["name"] == "review")
 
-    assert "gobby-memory:create_memory" in review_step["allowed_mcp_tools"]
+    assert "gobby-memory:create_memory" not in review_step["allowed_mcp_tools"]
+    assert "gobby-agents:send_message" in review_step["allowed_mcp_tools"]
+    assert "gobby-agents:end_agent_run" in review_step["allowed_mcp_tools"]
     status_message = review_step["status_message"]
-    assert "project-scoped" in status_message
-    assert 'memory_type="fact", is_global=false' in status_message
+    assert "Send that exact JSON with send_message" in status_message
+    assert "then call end_agent_run" in status_message

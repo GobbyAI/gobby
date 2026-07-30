@@ -23,7 +23,6 @@ from weakref import WeakValueDictionary
 
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.hooks.session_types import HookSessionManager
-from gobby.plans.review_terminal import terminalize_plan_review_run
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.storage.agents import TerminalAction
 
@@ -434,17 +433,6 @@ class SessionCoordinator:
             return updated_run
 
         def terminalize(_action: TerminalAction, payload: str | None) -> Any | None:
-            review_outcome = terminalize_plan_review_run(
-                manager,
-                db=manager.db,
-                run_id=run_id,
-                action="complete" if _action == "complete" else "fail",
-                error=payload or reason,
-                tool_calls_count=tool_calls_count,
-                turns_used=turns_used,
-            )
-            if review_outcome.handled:
-                return review_outcome.run
             if _action == "complete":
                 return manager.complete(
                     run_id=run_id,
@@ -460,18 +448,7 @@ class SessionCoordinator:
 
         tmux_session_name = agent_run.tmux_session_name
         if not isinstance(tmux_session_name, str) or not tmux_session_name:
-            review_outcome = terminalize_plan_review_run(
-                manager,
-                db=manager.db,
-                run_id=run_id,
-                action="complete" if action == "complete" else "fail",
-                error=reason,
-                tool_calls_count=tool_calls_count,
-                turns_used=turns_used,
-            )
-            if review_outcome.handled:
-                updated = review_outcome.run
-            elif action == "complete":
+            if action == "complete":
                 updated = manager.complete(
                     run_id=run_id,
                     result=result_prefix or None,

@@ -121,13 +121,8 @@ def _checkpoint_plan(round_result: str) -> bytes:
     ).encode()
 
 
-def test_parse_checkpoints_accepts_round_result_without_convergence_telemetry() -> None:
-    """Durable checkpoints predate later required round_result fields.
-
-    `convergence_telemetry` became mandatory after these records were written.
-    Re-validating history here would permanently block preparation of any plan
-    that already carries rounds.
-    """
+def test_parse_checkpoints_accepts_baseline_round_result() -> None:
+    """Checkpoint parsing preserves the stored round payload verbatim."""
     plan = _checkpoint_plan('{"verdict":"needs_review","findings":[]}')
 
     checkpoints = parse_checkpoints(plan)

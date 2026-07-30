@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,12 +10,9 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.plans import _root_ref_from_file, plans
-from gobby.plans.review_evidence_models import PlanReviewEvidence, SectionHash
-from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -45,134 +41,6 @@ class _NonClosingDb:
 
     def close(self) -> None:
         pass
-
-
-class _FakeCodeIndexStorage:
-    def get_project_stats(self, project_id: str) -> object | None:
-        return object() if project_id == "project-1" else None
-
-    def search_symbols_by_name(
-        self,
-        query: str,
-        project_id: str,
-        kind: str | None = None,
-        file_path: str | None = None,
-        limit: int = 50,
-    ) -> tuple[_Symbol, ...]:
-        del kind, file_path, limit
-        if project_id != "project-1" or query != "app.service.do_work":
-            return ()
-        return (
-            _Symbol(
-                id="sym-do-work",
-                name="do_work",
-                qualified_name="app.service.do_work",
-                file_path="src/service.py",
-            ),
-        )
-
-    def find_direct_callers(
-        self,
-        project_id: str,
-        symbol_ids: tuple[str, ...],
-        callee_names: tuple[str, ...],
-    ) -> list[dict[str, Any]]:
-        del callee_names
-        if project_id == "project-1" and symbol_ids == ("sym-do-work",):
-            return [{"file_path": "src/api.py"}, {"file_path": "tests/test_api.py"}]
-        return []
-
-
-def _seed_review_evidence(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-) -> tuple[str, Path, Path, list[PlanReviewEvidence]]:
-    project = LocalProjectManager(temp_db).create(
-        name="review-evidence-cli",
-        repo_path=str(tmp_path),
-    )
-    session = SessionManager(temp_db).register(
-        external_id="review-evidence-cli",
-        machine_id="test-machine",
-        source="codex",
-        project_id=project.id,
-    )
-    plan_dir = tmp_path / ".gobby" / "plans"
-    plan_dir.mkdir(parents=True)
-    first_plan = plan_dir / "first.md"
-    second_plan = plan_dir / "second.md"
-    first_plan.write_text("# First\n", encoding="utf-8")
-    second_plan.write_text("# Second\n", encoding="utf-8")
-
-    store = PlanReviewEvidenceStore(temp_db)
-    sections = (SectionHash(section_id="1.1", section_hash="section-hash"),)
-    with temp_db.transaction() as transaction:
-        first = store.insert(
-            transaction=transaction,
-            project_id=project.id,
-            plan_path=".gobby/plans/first.md",
-            plan_hash="first-hash",
-            sections=sections,
-            snapshot=b"first",
-            round_number=1,
-            lease_seconds=300,
-            session_id=session.id,
-            task_id=None,
-            stage=None,
-        )
-        finalized = store.insert(
-            transaction=transaction,
-            project_id=project.id,
-            plan_path=".gobby/plans/temporary.md",
-            plan_hash="finalized-hash",
-            sections=sections,
-            snapshot=b"finalized",
-            round_number=2,
-            lease_seconds=300,
-            session_id=session.id,
-            task_id=None,
-            stage=None,
-        )
-        transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET plan_path = '.gobby/plans/first.md',
-                finalized_at = TIMESTAMPTZ '2026-07-28 12:00:00+00',
-                created_at = TIMESTAMPTZ '2026-07-28 12:00:00+00'
-            WHERE evidence_id = %s
-            """,
-            (finalized.evidence_id,),
-        )
-        second = store.insert(
-            transaction=transaction,
-            project_id=project.id,
-            plan_path=".gobby/plans/second.md",
-            plan_hash="second-hash",
-            sections=sections,
-            snapshot=b"second",
-            round_number=3,
-            lease_seconds=300,
-            session_id=session.id,
-            task_id=None,
-            stage=None,
-        )
-        transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET created_at = TIMESTAMPTZ '2026-07-29 12:00:00+00'
-            WHERE evidence_id = %s
-            """,
-            (second.evidence_id,),
-        )
-        transaction.execute(
-            """
-            UPDATE plan_review_evidence
-            SET created_at = TIMESTAMPTZ '2026-07-27 12:00:00+00'
-            WHERE evidence_id = %s
-            """,
-            (first.evidence_id,),
-        )
-    return project.id, first_plan, second_plan, [second, finalized, first]
 
 
 def _write_contract_plan(tmp_path: Path, *, target_line: str = "Target: `docs/demo.md`") -> Path:
@@ -285,34 +153,6 @@ def _create_project(temp_db: HubDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name=f"plans-{root.name}", repo_path=str(root)).id
 
 
-def _write_consumer_plan(
-    tmp_path: Path,
-    *,
-    target_line: str = "Target: `src/service.py`",
-) -> Path:
-    path = tmp_path / "consumer.md"
-    path.write_text(
-        f"""> **Plan ID:** cli-consumer-plan
-
-# CLI Consumer Plan
-
-## P1: Work
-`kind: framing`
-
-### 1.1 Rename Service [category: code]
-`kind: deliverable`
-
-{target_line}
-
-Rename the service implementation.
-
-**Acceptance:**
-- 1.1.1 - Service file changes. file: `src/service.py`.
-- 1.1.2 - Service symbol changes. symbol: `app.service.do_work`.
-""",
-        encoding="utf-8",
-    )
-    return path
 
 
 def test_register_command_writes_plan_row(
@@ -323,7 +163,7 @@ def test_register_command_writes_plan_row(
         project_id=project_id,
         title="Plan root",
         category="planning",
-        validation_criteria="The registered plan row references this planning root.",
+        validation_criteria="The registered plan remains linked to this root task.",
     )
     root_task_ref = f"#{root_task.seq_num}"
     plan = _write_register_plan(tmp_path, root_task_ref=root_task_ref)
@@ -422,7 +262,7 @@ def test_root_ref_from_file_only_strips_matching_quote_pairs(tmp_path: Path) -> 
     assert _root_ref_from_file(plan) == expected
 
 
-def test_validate_command_runs_semantic_lint_and_skips_consumer_without_project(
+def test_validate_command_runs_semantic_lint_without_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = _write_contract_plan(tmp_path)
@@ -432,7 +272,7 @@ def test_validate_command_runs_semantic_lint_and_skips_consumer_without_project(
 
     assert result.exit_code == 0
     assert "Plan:" in result.output
-    assert "Consumer sweep: skipped (missing project_id)" in result.output
+    assert "Phases: 1" in result.output
 
 
 def test_validate_command_returns_semantic_lint_errors(tmp_path: Path) -> None:
@@ -453,205 +293,3 @@ def test_validate_command_reports_missing_plan_id_warning(tmp_path: Path) -> Non
     assert "Error: implementation plans must declare a real **Plan ID:**" in result.output
     assert "Warning: implementation plans must declare a real **Plan ID:**" in result.output
     assert "covers:unknown:*" in result.output
-
-
-def test_validate_command_runs_consumer_sweep(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    plan = _write_consumer_plan(tmp_path)
-    storage = _FakeCodeIndexStorage()
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
-
-    result = CliRunner().invoke(
-        plans,
-        ["validate", str(plan), "--project", "gobby", "--include-tests"],
-    )
-
-    assert result.exit_code != 0
-    assert "consumer-sweep" in result.output
-    assert "src/api.py" in result.output
-    assert "tests/test_api.py" in result.output
-
-
-def test_validate_command_expansion_mode_includes_test_consumers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    plan = _write_consumer_plan(tmp_path)
-    storage = _FakeCodeIndexStorage()
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
-
-    result = CliRunner().invoke(
-        plans,
-        ["validate", str(plan), "--project", "gobby", "--mode", "expansion"],
-    )
-
-    assert result.exit_code != 0
-    assert "consumer-sweep" in result.output
-    assert "tests/test_api.py" in result.output
-
-
-def test_validate_command_excludes_test_consumers_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    plan = _write_consumer_plan(
-        tmp_path,
-        target_line="Targets:\n- `src/service.py`\n- `src/api.py`",
-    )
-    storage = _FakeCodeIndexStorage()
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
-
-    result = CliRunner().invoke(plans, ["validate", str(plan), "--project", "gobby"])
-
-    assert result.exit_code == 0
-    assert "Consumer sweep: passed" in result.output
-    assert "tests/test_api.py" not in result.output
-
-
-def test_validate_command_handles_missing_phase_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    plan = _write_contract_plan(tmp_path)
-    monkeypatch.setattr(
-        plans_module,
-        "_validate_plan_for_cli",
-        lambda *_args, **_kwargs: {
-            "valid": True,
-            "path": str(plan),
-            "consumer_sweep": {"valid": True, "skipped": True, "skip_reason": "missing project_id"},
-        },
-    )
-
-    result = CliRunner().invoke(plans, ["validate", str(plan)])
-
-    assert result.exit_code == 0
-    assert "Phases: 0" in result.output
-    assert "No phase metadata available" in result.output
-
-
-def test_validate_cli_reports_consumer_sweep_failures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    plan = _write_contract_plan(tmp_path)
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: _FakeCodeIndexStorage())
-    monkeypatch.setattr(
-        plans_module,
-        "run_consumer_sweep",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("index unavailable")),
-    )
-
-    result = plans_module._validate_plan_for_cli(plan, "gobby", include_tests=False)
-
-    assert result["valid"] is False
-    assert result["errors"] == ["Consumer sweep failed: index unavailable"]
-
-
-def test_review_evidence_command_lists_filters_and_emits_json(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_id, first_plan, _second_plan, expected = _seed_review_evidence(temp_db, tmp_path)
-    monkeypatch.setattr(
-        plans_module,
-        "resolve_project_ref",
-        lambda *_args, **_kwargs: project_id,
-    )
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
-
-    listed = CliRunner().invoke(plans, ["review-evidence"])
-
-    assert listed.exit_code == 0
-    assert "Evidence" in listed.output
-    positions = [listed.output.index(row.evidence_id[:8]) for row in expected]
-    assert positions == sorted(positions)
-
-    filtered = CliRunner().invoke(
-        plans,
-        ["review-evidence", "--plan", str(first_plan), "--open"],
-    )
-
-    assert filtered.exit_code == 0
-    assert expected[2].evidence_id[:8] in filtered.output
-    assert expected[1].evidence_id[:8] not in filtered.output
-    assert expected[0].evidence_id[:8] not in filtered.output
-
-    json_result = CliRunner().invoke(plans, ["review-evidence", "--json"])
-
-    assert json_result.exit_code == 0
-    payload = json.loads(json_result.output)
-    rows = payload["evidence"]
-    assert [row["evidence_id"] for row in rows] == [row.evidence_id for row in expected]
-    assert rows[0]["created_at"] == "2026-07-29T12:00:00+00:00"
-    assert rows[1]["state"] == "finalized"
-    assert rows[2]["state"] == "live"
-    assert all(row["binding_kind"] == "session" for row in rows)
-    assert all(len(row["session_id"]) == 36 for row in rows)
-
-
-def test_review_evidence_command_limits_and_empty_output(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_id, _first_plan, _second_plan, expected = _seed_review_evidence(temp_db, tmp_path)
-    empty_plan = tmp_path / ".gobby" / "plans" / "empty.md"
-    empty_plan.write_text("# Empty\n", encoding="utf-8")
-    monkeypatch.setattr(
-        plans_module,
-        "resolve_project_ref",
-        lambda *_args, **_kwargs: project_id,
-    )
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
-
-    limited = CliRunner().invoke(plans, ["review-evidence", "--limit", "1", "--json"])
-
-    assert limited.exit_code == 0
-    assert json.loads(limited.output)["evidence"][0]["evidence_id"] == expected[0].evidence_id
-
-    empty = CliRunner().invoke(
-        plans,
-        ["review-evidence", "--plan", str(empty_plan)],
-    )
-
-    assert empty.exit_code == 0
-    assert empty.output == "No plan review evidence found.\n"
-
-    invalid = CliRunner().invoke(plans, ["review-evidence", "--limit", "501"])
-
-    assert invalid.exit_code == 2
-    assert "501 is not in the range 1<=x<=500" in invalid.output
-
-
-def test_review_evidence_command_uses_default_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    class _CaptureStore:
-        def __init__(self, _db: object) -> None:
-            pass
-
-        def list_recent(self, **kwargs: object) -> list[PlanReviewEvidence]:
-            captured.update(kwargs)
-            return []
-
-    monkeypatch.setattr(
-        plans_module,
-        "resolve_project_ref",
-        lambda *_args, **_kwargs: "project-1",
-    )
-    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
-    monkeypatch.setattr(plans_module, "PlanReviewEvidenceStore", _CaptureStore)
-
-    result = CliRunner().invoke(plans, ["review-evidence"])
-
-    assert result.exit_code == 0
-    assert captured["limit"] == 50

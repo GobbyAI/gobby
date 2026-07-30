@@ -264,7 +264,7 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
         assert removed not in assignments
 
 
-def test_postgres_migrations_preserve_known_contiguous_post_baseline_prefix() -> None:
+def test_postgres_migrations_preserve_known_post_baseline_sequence() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     # The 0.5.0 pre-release flatten folded every migration (295-305) into the
@@ -301,12 +301,54 @@ def test_postgres_migrations_preserve_known_contiguous_post_baseline_prefix() ->
         "334_verification_receipts.sql",
         "335_memories_dream_due_version.sql",
         "336_model_metadata_rename.sql",
+        "337_verification_receipts_default.sql",
+        "338_plan_review_evidence.sql",
+        "339_expired_plan_review_round_retry.sql",
+        "340_tool_results.sql",
+        "341_digest_owned_session_titles.sql",
+        "342_task_validation_epoch.sql",
+        "343_verification_receipt_worktree_attribution.sql",
+        "344_transcript_close_checklist.sql",
+        "346_cron_display_name.sql",
+        "348_memory_dream_admission.sql",
+        "349_task_claim_fk_restrict.sql",
+        "352_external_issue_outbound_cursor.sql",
+        "353_plan_review_experiment_purge.sql",
     ]
     migration_names = _tracked_migration_names(migrations_dir)
 
     assert migration_names[: len(known_prefix)] == known_prefix
     versions = [int(name.split("_", 1)[0]) for name in migration_names]
-    assert versions == list(range(306, 306 + len(versions)))
+    known_versions = [int(name.split("_", 1)[0]) for name in known_prefix]
+    assert versions[: len(known_versions)] == known_versions
+    future_versions = versions[len(known_versions) :]
+    assert future_versions == list(range(354, 354 + len(future_versions)))
+
+
+def test_plan_review_experiment_purge_migration_and_baseline_contract() -> None:
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+    migration = (migrations_dir / "353_plan_review_experiment_purge.sql").read_text()
+    baseline_table = _table_definition(_baseline_text(), "plan_review_evidence")
+    removed_columns = (
+        "quality_ledger",
+        "repair_attestations",
+        "prior_round_context",
+        "vote_artifact",
+        "vote_artifact_digest",
+        "vote_receipt",
+        "vote_receipt_digest",
+    )
+
+    normalized_migration = _normalize_sql_whitespace(migration)
+    assert (
+        "UPDATE plan_review_evidence SET expired_at = NOW() "
+        "WHERE finalized_at IS NULL AND expired_at IS NULL;"
+    ) in normalized_migration
+    for column in removed_columns:
+        assert f"DROP COLUMN IF EXISTS {column}" in migration
+        assert column not in baseline_table
+    for version in (345, 347, 350, 351):
+        assert not list(migrations_dir.glob(f"{version}_*.sql"))
 
 
 def test_memory_dream_due_version_schema_contract() -> None:

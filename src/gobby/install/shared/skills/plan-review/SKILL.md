@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.2.0"
+version: "1.3.0"
 category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
@@ -78,11 +78,10 @@ the planner gate missed — or one the parser cannot detect mechanically
 from the table.
 
 The planner-side gate and `gobby plans validate` also run deterministic semantic
-lint. `target-coverage`, conservative `table-row-decomposition`, and
-index-proven `consumer-sweep` failures are mechanical validator failures, not
-qualitative review findings. If one appears in your prompt or task history,
-require the planner to sweep the whole plan for that same failure class before
-resubmission.
+lint. `target-coverage` and conservative `table-row-decomposition` failures are
+mechanical validator failures, not qualitative review findings. If one appears
+in your prompt or task history, require the planner to check the whole plan for
+that same failure class before resubmission.
 
 The canonical heading regex and full contract grammar live in the `plan-draft`
 skill (the contract's authoring surface) and `docs/contracts/plan-coverage.md`
@@ -335,38 +334,18 @@ snapshot:
 3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
    sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
-The repository changes underneath a review. Other sessions commit while lanes
-run, and the code index updates incrementally on every commit. That is expected
-and is never a reason to stop.
+Call `get_plan_review_snapshot(evidence_id)` once. It returns one complete,
+decoded, immutable snapshot containing the plan sections and review metadata.
+Do not reread the plan file during the round.
 
-Lanes read current repository state and report what they find. A code change
-that has genuinely moved the surface a plan targets — a named file that no
-longer exists, a cited symbol that moved, a pinned inventory that is now wrong —
-is a finding, emitted against the section that owns it. No lane detects, pins,
-or reconciles repository or index generations, and no run ends because the
-repository moved.
-
-Reconstruct the complete immutable evidence envelope before review. Call
-`get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
-follow `next_offset` to exhaustion; concatenate every `content` page in offset
-order, verify the reconstructed bytes against `snapshot_hash`, verify every
-record hash, then parse all records before lane review
-begins. Reject a missing, duplicated, reordered, or mismatched page locally.
-The parsed envelope supplies deterministic complexity counts, plan sections,
-`prior_round_context`, quality ledger, and consumer
-inventory. Run lanes in parallel when the snapshot has at least 8 deliverables,
-24 acceptance items, 12 distinct target files, or 4 sections changed since the
-prior finalized round. Otherwise run the same lanes sequentially in the parent.
-Parallel fanout is
-limited to one read-only provider-native internal subagent per lane, launched
-through the current CLI/runtime's internal collaboration facility. Run all
-three concurrently. Give each subagent only its lane scope, the immutable
-evidence snapshot, and the result schema below. Forbid file edits, task/service
-mutation, findings, manifests, evidence finalization, and verdicts. Never use
-`gobby-agents:spawn_agent` for lane research. When the native facility exposes
-a deadline, cap each lane at 15 minutes. Capacity shortage, timeout,
-unavailable internal collaboration, subagent failure, or malformed output
-moves only that lane to sequential parent review.
+Run the three lanes concurrently as read-only provider-native internal
+subagents through the current CLI/runtime's collaboration facility. Give each
+lane only its scope, the immutable snapshot, direct read access to repository
+and task context, and the candidate schema below. Forbid file edits,
+task/service mutation, findings, manifests, evidence finalization, and
+verdicts. Never use `gobby-agents:spawn_agent` for lane research. Capacity
+shortage, subagent failure, or malformed output moves only that lane to
+sequential parent review; the round still completes.
 
 Internal subagents return candidates; the parent adversary is the sole evidence,
 finding, manifest, coverage-attestation, and verdict owner.
@@ -378,45 +357,20 @@ adjacent sites checked, confidence, and citations. The parent must:
 1. Verify and deduplicate every candidate.
 2. Record exactly one `emitted_finding` or `dismissed` entry in
    `candidate_dispositions`, with a reason.
-3. Complete the cross-lane interaction pass by recording each required
-   candidate pair in `cross_lane_interactions`, with participating candidate
-   ids, affected sections, the interaction checked, and its disposition.
-4. Record one `adjacent_variant_sweeps` entry per candidate/check key with the
-   seed candidate, query evidence, sites checked, and resulting candidate ids.
-5. Record `causal_repair_sweeps` for every repaired prior finding in
-   `prior_round_context`, including the changed sections/contracts, consumer
-   site ids, query evidence for zero-result sweeps, and disposition.
-6. Inspect `required_scope_delta` and `inventory_churn` from
-   `prior_round_context`. Treat stale sweeps or uncovered required consumers as
-   findings and dismiss unrelated inventory churn with evidence.
+3. Perform a cross-lane interaction pass.
+4. Complete a class-wide adjacent-variant sweep.
 
 Call `derive_plan_review_manifest` during every round, including rejection.
-Pass only `routing_decisions` to `validate_plan_review_coverage` with the three
-lanes and all four structured record arrays; the server reuses or derives the
-canonical shadow manifest from the evidence id and routing digest. The
-returned `coverage_attestation` is mandatory in `round_result`; it contains
-the canonical `record_bundle`, exactly three completed lanes, source digest,
-server-derived disposition counts, server-derived cross-lane and
-adjacent-variant completion, and shadow-manifest status. Copy the returned
-attestation whole so its validated records remain digest-bound to the result.
+Then call `validate_plan_review_coverage` with the three lane results, all
+candidate dispositions, and the exact shadow-manifest status returned by
+derivation. The returned `coverage_attestation` is mandatory in
+`round_result`; it contains exactly three completed lanes, the source digest,
+disposition counts, cross-lane and adjacent-variant completion, and
+shadow-manifest status.
 
-TERMINAL_RESULT_UNION_V1_START
-Every parent delivery is one JSON object matching one branch:
-`{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-`{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-`{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
-Reviewed branches require canonical coverage. Non-attested branches use exactly
-the shown top-level and reason keys. `reason_code` is closed to `source_drift`
-and `timeout`.
-TERMINAL_RESULT_UNION_V1_END
-
-If cited source hashes drift, rerun only affected lanes once during the same
-review run. Repeated drift yields the exact `inconclusive`/`source_drift`
-branch above. Interactive
-coordination expires evidence and retries the same display round without a
-changelog checkpoint or lesson mint. Stage-native review expires evidence and
-escalates with `needs_human:unstable_review_source:<paths>`.
+Every terminal result is one JSON object with `verdict: approved` or
+`verdict: needs_review`, plus `findings` and `coverage_attestation`. Approved
+results also include the exact `manifest_entries` and `routing_decisions`.
 
 ---
 
@@ -463,63 +417,19 @@ any differing payload, revalidates freshness, and performs the only manifest
 write. Rejection returns typed findings plus shadow-manifest diagnostics. The
 coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 
-### Convergence telemetry contract
-
-Every reviewer-produced terminal branch (`approved`, `needs_review`, or
-`source_drift`) includes
-`convergence_telemetry` with `state: delivered` and `reviewer.status:
-available`. The reviewer emits only reviewer-owned facts; it never invents the
-`daemon` object. Terminal cleanup adds that authoritative object and changes
-the state to `enriched`. Only the daemon may synthesize the timeout branch with
-`reviewer.status: unavailable`.
-
-The available reviewer object contains exactly:
-
-- `reviewer_miss`: `count` plus `classifications`
-- `fixer_induced`: `count` plus `classifications`
-- `repeated_check_keys`: `count` plus `classifications`
-- `remedy_scope`: `scope` plus provenance
-- `ledger_entries_carried`: `count` plus provenance
-- `artifact_growth`: `section_delta`, `target_delta`, `acceptance_delta`, plus
-  provenance
-
-Every classification carries `check_key`, `check_key_class`, `finding_ids`,
-`ledger_ids`, and non-empty `classification_inputs` entries with `name` and
-`value`. Every other provenance-bearing record carries `finding_ids`,
-`ledger_ids`, and `classification_inputs`. Counts and deltas are explicit:
-genuine zero uses `0` (and an empty classification list where applicable);
-an absent field never means zero. Emit all six records on every
-reviewer-produced verdict, even when their counts and deltas are zero.
-
----
-
 ## Escalation Policy
 
-Findings use this normative severity matrix:
+Findings carry one severity:
 
-| Severity | Decision boundary | Required disposition |
-| --- | --- | --- |
-| blocking | Demonstrated violation of a required obligation, backed by the complete failure trace. | Repair before approval. |
-| major | Material non-gating quality or operability risk. | Record an explicit quality-ledger decision. |
-| minor | Localized hardening with bounded effect. | Carry in the quality ledger until resolved or explicitly accepted. |
-| nit | Cosmetic issue with no behavioral effect. | Carry in the quality ledger; it never blocks approval. |
-
-Boundary examples are table-driven:
-
-| Candidate | Boundary fact | Severity |
-| --- | --- | --- |
-| A required rollback path leaves a durable partial write and includes the reproducible trace. | Required obligation is demonstrably violated. | blocking |
-| Retry behavior works, but operator-visible diagnosis is materially incomplete. | Operability risk is material and non-gating. | major |
-| One validated example omits an adjacent bounded hardening case. | Effect is localized and bounded. | minor |
-| Heading punctuation differs from house style. | Effect is cosmetic. | nit |
+- `blocking` — plan expansion must wait for a repair.
+- `nit` — useful non-blocking guidance.
 
 Escalate **only when context is insufficient or a true human-intervention blocker exists**.
 For routine revision rounds, return a non-approval verdict instead:
 
 - If ≥1 `blocking` finding after the second pass → return
   `verdict: needs_review` with formatted findings.
-- If only `major`, `minor`, or `nit` findings remain → record them in the
-  server-derived quality ledger and return `verdict: approved`.
+- If only `nit` findings remain → return `verdict: approved`.
 - If zero findings after the second pass → approve cleanly.
 
 Non-blocking nits never trigger escalation on their own.
@@ -553,7 +463,7 @@ Each finding is one typed attestation with these fields:
   evidence manifest.
 - **check_key** — stable review check identity. Reuse keys returned by
   `list_check_keys`.
-- **severity** — `blocking`, `major`, `minor`, or `nit`.
+- **severity** — `blocking` or `nit`.
 - **category** — one of:
 - `missing-requirement`
 - `bad-sequencing`
@@ -567,19 +477,7 @@ Each finding is one typed attestation with these fields:
 - **prevention** — concrete checklist action that would catch recurrence.
 - **location** — human-readable phase/task reference.
 - **description** — one short paragraph; what is wrong or missing.
-- **minimal_repair** — the smallest change that removes the demonstrated failure.
-- **repair_scope** — `existing_sections` when the repair belongs in the finding's
-  `section_id` or `participating_section_ids`; `new_deliverable` only when no
-  existing section can own the obligation.
-- **new_deliverable_justification** — required only for `new_deliverable`; explain
-  why no existing host section can own the obligation. Omit this field for
-  `existing_sections`.
-- **failure_trace** — required for `blocking` findings and optional but
-all-or-nothing for other severities. It contains non-empty `preconditions`,
-`action`, `wrong_outcome`, and `violated_obligation` strings plus a non-empty
-`citation` list. Each citation is repository evidence: a repository-relative
-`path` plus lowercase `sha256`, optionally with positive `line_start` /
-`line_end`.
+- **fix** — one short paragraph; what the drafter should add or change.
 
 When claiming `reviewer-miss`, add non-empty
 `participating_section_ids` containing every section that participates in the
@@ -612,18 +510,7 @@ root_cause: The task specified only the successful acquisition path.
 prevention: Check success, contention, timeout, and dependency-failure paths.
 location: Phase 2 / § 2.4
 description: The lock-held and timeout branches are unspecified.
-minimal_repair: Add retry, bail-out, and caller-visible failure behavior.
-repair_scope: existing_sections
-failure_trace:
-  preconditions: The lock is already held by another worker.
-  action: The planned operation attempts to acquire the lock.
-  wrong_outcome: The plan specifies neither a bounded retry nor a caller-visible failure.
-  violated_obligation: Every reachable lock outcome needs an explicit policy.
-  citation:
-  - path: src/gobby/worker.py
-    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-    line_start: 40
-    line_end: 58
+fix: Add retry, bail-out, and caller-visible failure behavior.
 ```
 ````
 
@@ -631,17 +518,10 @@ failure_trace:
 
 ## Halt Conditions
 
-`inconclusive` is the only halt. Emit the `source_drift` branch when the
-reconstructed snapshot fails integrity verification or cited source hashes
-keep drifting after the single in-run lane rerun; only the daemon synthesizes
-the `timeout` branch. Nothing else halts the review:
-
-- A missing or empty plan artifact, or a plan with no canonical `## P<N>`
-  phase sections, is a blocking `gobby-format` finding against the plan root.
-- Requirements context you cannot resolve by reading the repository and Gobby
-  tasks directly is a blocking `missing-requirement` finding carrying the
-  specific questions the plan must answer. Return `needs_review`; never stall
-  the round waiting for answers.
+Preparation rejects a missing, empty, or structurally invalid plan before the
+adversary runs. Requirements context that remains unresolved after direct
+repository and task inspection becomes a blocking `missing-requirement`
+finding carrying the specific questions the plan must answer.
 
 Do **not** approve a plan you do not understand. When in doubt, emit blocking
 findings with your specific unanswered questions rather than manufacturing

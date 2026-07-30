@@ -15,7 +15,6 @@ from gobby.agents.terminal_delivery import (
 from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload as reset_terminal_delivery_offload,
 )
-from gobby.plans.review_terminal import terminalize_plan_review_run
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -38,28 +37,11 @@ async def complete_and_notify_agent_run(
             with runner.run_storage.db.bounded_transaction():
                 return runner.get_run(run_id)
 
-        current_run = await run_terminal_delivery_offload(read_terminal_run)
-        review_outcome = (
-            await run_terminal_delivery_offload(
-                terminalize_plan_review_run,
-                runner.run_storage,
-                db=runner.run_storage.db,
-                run_id=run_id,
-                action="complete",
-                tool_calls_count=getattr(current_run, "tool_calls_count", 0),
-                turns_used=getattr(current_run, "turns_used", 0),
-            )
-            if current_run is not None
-            else None
+        completed = await run_terminal_delivery_offload(
+            runner.complete_run,
+            run_id,
+            result=completion_result,
         )
-        if review_outcome is not None and review_outcome.handled:
-            completed = review_outcome.run is not None
-        else:
-            completed = await run_terminal_delivery_offload(
-                runner.complete_run,
-                run_id,
-                result=completion_result,
-            )
 
         current = await run_terminal_delivery_offload(read_terminal_run)
         if current is None or current.status not in {"success", "error", "timeout", "cancelled"}:

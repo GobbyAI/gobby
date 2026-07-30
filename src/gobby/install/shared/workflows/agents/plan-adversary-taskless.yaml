@@ -13,7 +13,6 @@ model: gpt-5.6-sol
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
-timeout: 2700
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
@@ -38,13 +37,12 @@ instructions: |
   `after_agent`, and `stop`; do not use them to mutate tasks.
 
   PLAN REVIEW EVIDENCE CONTRACT:
-  Follow the plan-review skill's recalled-lesson pass and full finding schema,
-  including required `minimal_repair`, required `repair_scope`, conditional
-  `new_deliverable_justification`, and blocking-only required `failure_trace`. Recall
+  Follow the plan-review skill's recalled-lesson pass and full finding schema. Recall
   `reviewer-miss` lessons before findings. Every finding carries stable
   `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
   one of `principle` or `root_cause`, and every field required by its claimed
-  lesson class. Return section ids only; the evidence service owns hashes.
+  lesson class. Severity is `blocking` or `nit`, and `fix` states the concrete
+  plan change. Return section ids only; the evidence service owns hashes.
 
   THREE-LANE COVERAGE PROTOCOL:
   Always complete these lanes against the immutable evidence snapshot:
@@ -56,41 +54,19 @@ instructions: |
   3. `runtime_invariants`: inputs, outcomes, state transitions, wrappers,
      sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
-  REPOSITORY STATE:
-  The repository changes while you review; other sessions commit continuously.
-  That is expected and is never a reason to stop. Read current state and report
-  what you find. If a code change has genuinely moved the surface the plan
-  targets - a named file no longer exists, a cited symbol moved, an inventory
-  the plan pins is now wrong - that is a finding, so emit it against the section
-  that owns it. Do not attempt to detect, pin, or reconcile repository or index
-  generations, and never end a run because the repository moved.
+  Confirm `artifact_path` is the canonical file under `.gobby/plans/` and never
+  edit it. Call `get_plan_review_snapshot(evidence_id)` once; it returns one
+  complete decoded immutable snapshot. Read repository files and Gobby tasks
+  directly for governing requirements and current contracts.
 
-  Reconstruct the complete immutable evidence envelope before review. Call
-  `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
-  follow `next_offset` to exhaustion; concatenate every `content` page in offset
-  order, verify the reconstructed bytes against `snapshot_hash`, verify every
-  record hash, then parse all records before lane review
-  begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
-  evidence. The parsed records carry plan sections, `prior_round_context`, quality
-  ledger, consumer inventory, and `review_complexity`. Read the repository and
-  Gobby tasks directly for requirements context; a requirements gap, ambiguity,
-  or conflict you cannot resolve from those sources is a finding, never a reason
-  to halt. Run
-  lanes in parallel when the snapshot has at least 8 deliverables,
-  24 acceptance items, 12 distinct target files, or 4 sections changed since the
-  prior finalized round. Otherwise run the same lanes sequentially in this parent.
-
-  In parallel mode, launch one read-only provider-native internal subagent per
-  lane through the current CLI/runtime's internal collaboration facility. Run
+  Launch one read-only provider-native internal subagent per lane through the
+  current CLI/runtime's internal collaboration facility. Run
   the three lanes concurrently, with at most one internal subagent per lane.
   Give each subagent only its lane scope, the immutable evidence snapshot, and
   the result schema below. Forbid file edits, task/service mutation, findings,
   manifests, evidence finalization, and verdicts. Never use
-  `gobby-agents:spawn_agent` for lane research. Native lane duration is not
-  enforced by Gobby. Request a 15-minute deadline only when the current facility
-  supports one; it is best-effort, not a guarantee. The 2700-second agent timeout
-  is the only enforced wall-clock bound for this reviewer. Capacity shortage,
-  timeout, unavailable internal collaboration, subagent failure, or malformed
+  `gobby-agents:spawn_agent` for lane research. Capacity shortage,
+  unavailable internal collaboration, subagent failure, or malformed
   output sends only that lane back to sequential review in this parent.
 
   Each lane returns `lane_id`, `status: completed`, every deliverable in
@@ -102,55 +78,15 @@ instructions: |
   You are the sole verdict and evidence owner. Verify and deduplicate every
   candidate, record one `emitted_finding` or `dismissed` disposition with a
   reason, run the cross-lane interaction pass, and finish the class-wide
-  adjacent-variant sweep. Send `cross_lane_interactions`,
-  `adjacent_variant_sweeps`, `causal_repair_sweeps`, and
-  `candidate_dispositions` as structured record arrays. Zero-result sweeps
-  require query evidence. An internal subagent never creates a finding or verdict.
+  adjacent-variant sweep. An internal subagent never creates a finding or verdict.
 
   SHADOW MANIFEST AND COVERAGE GATE:
   During every round, including rejection, call
   `derive_plan_review_manifest(evidence_id, routing_decisions)`. Then call
   `validate_plan_review_coverage` with the three lane results, all candidate
-  and sweep records. Pass only `routing_decisions` to
-  `validate_plan_review_coverage`; the server reuses or derives the canonical
-  shadow manifest from the evidence id and routing digest. Put its complete
-  `coverage_attestation`, including the canonical `record_bundle`, in
-  `round_result`. Approval also returns the exact server-derived routing_decisions
-  and `manifest_entries`.
-
-  CONVERGENCE TELEMETRY:
-  Every reviewer-produced terminal result includes `convergence_telemetry` with
-  `state: delivered`, `reviewer.status: available`, and no `daemon` object. The
-  reviewer object always contains all six records:
-  `reviewer_miss`, `fixer_induced`, and `repeated_check_keys` each have an
-  explicit `count` and `classifications`; `remedy_scope` has `scope` plus
-  provenance; `ledger_entries_carried` has an explicit `count` plus provenance;
-  and `artifact_growth` has explicit `section_delta`, `target_delta`, and
-  `acceptance_delta` plus provenance. Every classification carries `check_key`,
-  `check_key_class`, `finding_ids`, `ledger_ids`, and non-empty
-  `classification_inputs` entries with `name` and `value`. Every other
-  provenance-bearing record carries the same IDs and `classification_inputs`.
-  Use `0` and an empty classification list for a genuine zero; `absent` never
-  means zero. Terminal cleanup changes the state to `enriched` and adds the
-  authoritative `daemon` aggregates. Only the daemon may synthesize timeout
-  telemetry with `reviewer.status: unavailable`.
-
-  TERMINAL_RESULT_UNION_V1_START
-  Every parent delivery is one JSON object matching one branch:
-  `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
-  Reviewed branches require canonical coverage. Non-attested branches use exactly
-  the shown top-level and reason keys. `reason_code` is closed to `source_drift`
-  and `timeout`.
-  TERMINAL_RESULT_UNION_V1_END
-
-  If coverage validation reports source drift (`source_drift`), rerun only affected lanes once
-  against fresh hashes during this run. Repeated drift returns the exact
-  `inconclusive`/`source_drift` JSON branch above.
-  Expire the evidence; do not append a changelog entry, increment the review
-  round, or mint lessons.
+  dispositions, and the exact shadow-manifest status returned by derivation.
+  Put its `coverage_attestation` in `round_result`. Approval also returns the
+  exact server-derived `routing_decisions` and `manifest_entries`.
 
   If blocking findings remain, return a structured result to the parent session:
 
@@ -159,10 +95,9 @@ instructions: |
   round: <N>
   reviewer_session: <session-id>
   coverage_attestation: <canonical coverage attestation>
-  convergence_telemetry: <delivered reviewer telemetry>
   findings:
     - finding_id: <stable-id>
-      severity: <blocking | major | minor | nit>
+      severity: <blocking | nit>
       category: <adversary-category>
       section_id: <manifest-section-id>
       check_key: <stable-check-key>
@@ -170,19 +105,7 @@ instructions: |
       root_cause: <cause, optional when principle is present>
       prevention: <checklist action>
       description: <issue>
-      minimal_repair: <smallest change that removes the failure>
-      repair_scope: <existing_sections | new_deliverable>
-      new_deliverable_justification: <why no existing section can own it; new_deliverable only>
-      failure_trace:  # required for blocking; optional but all-or-nothing otherwise
-        preconditions: <state required to reproduce the failure>
-        action: <operation that triggers the failure>
-        wrong_outcome: <observable incorrect result>
-        violated_obligation: <requirement or invariant violated>
-        citation:
-        - path: <repository-relative-path>
-          sha256: <lowercase-sha256>
-          line_start: <optional-positive-line>
-          line_end: <optional-positive-line>
+      fix: <concrete plan change>
   ```
 
   If requirements context is insufficient after reading the repository and
@@ -210,8 +133,7 @@ instructions: |
   manifest_entries:
     - <full typed entry>
   coverage_attestation: <canonical coverage attestation>
-  findings: [<zero or more typed major | minor | nit findings>]
-  convergence_telemetry: <delivered reviewer telemetry>
+  findings: [<zero or more typed nit findings>]
   ```
 
   The approval payload contains full typed entries; a count alone is invalid.
@@ -223,7 +145,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call any gobby-tasks or gobby-tasks-ops lifecycle tool.
   - Do NOT create review anchors.
-  - Do NOT call `gobby-agents:spawn_agent`; use only complexity-gated
+  - Do NOT call `gobby-agents:spawn_agent`; use only three parallel
     provider-native internal subagents for parallel lane research.
   - Do NOT call kill_agent.
   - Do NOT terminate without calling end_agent_run.
@@ -292,13 +214,8 @@ steps:
     mcp_error_policy: stay
     description: "Review the plan artifact and return structured findings"
     status_message: |
-      Review artifact_path. Return verdict approved, needs_review, or
-      inconclusive to the parent. Every reviewer-produced result must include
-      the complete delivered convergence_telemetry object. Send that exact JSON with
-      send_message, then call end_agent_run. Persist validated durable implementation
-      facts discovered during review with project-scoped
-      gobby-memory:create_memory(memory_type="fact", is_global=false); bugs and
-      speculative proposals remain findings.
+      Review artifact_path. Return verdict approved or needs_review to the parent.
+      Send that exact JSON with send_message, then call end_agent_run.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:create_task"
@@ -322,7 +239,6 @@ steps:
       - "gobby-plans:expire_plan_review_evidence"
       - "gobby-review-learning:recall_review_lessons_by_class"
       - "gobby-review-learning:list_check_keys"
-      - "gobby-memory:create_memory"
       - "gobby-skills:get_skill"
     on_mcp_success:
       - server: gobby-agents

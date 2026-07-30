@@ -4,36 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 import psycopg
 
-from gobby.agents.code_index import (
-    IndexInventoryError,
-)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.plans.review_evidence_schemas import (
-    CANDIDATE_DISPOSITIONS_SCHEMA,
-    LANE_RESULTS_SCHEMA,
-    LESSON_MINT_DETAIL_SCHEMA,
-    PRIOR_FINDING_RESOLUTIONS_SCHEMA,
-    REPAIR_ATTESTATIONS_SCHEMA,
-    ROUND_RESULT_SCHEMA,
-    ROUTING_DECISIONS_SCHEMA,
-    SWEEP_SCOPE_SCHEMA,
-)
 from gobby.plans.review_evidence import PlanReviewEvidenceService
-from gobby.plans.review_evidence_io import (
-    DEFAULT_SNAPSHOT_PAGE_BYTES,
-    MAX_SNAPSHOT_PAGE_BYTES,
-    normalize_plan_path,
-)
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_evidence_preparation import derive_settled_sweep_inputs
-from gobby.plans.review_sweep_scope import SweepScope
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import get_current_session_id
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
@@ -41,39 +19,6 @@ _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "task_id": {"type": "string"},
     "stage": {"type": "string"},
 }
-
-
-def _derive_settled_sweep_scope(
-    *,
-    db: HubDatabase,
-    project_id: str,
-    project_root: Path,
-    prior_evidence_id: str,
-    plan_path: str,
-    repair_finding_ids: list[str],
-) -> SweepScope:
-    service = PlanReviewEvidenceService(db)
-    prior_evidence = service.get_evidence(prior_evidence_id)
-    if prior_evidence.project_id != project_id:
-        raise ReviewEvidenceError(
-            "sweep_scope_project_mismatch",
-            "prior evidence belongs to a different project",
-        )
-    if prior_evidence.finalized_at is None or prior_evidence.round_result is None:
-        raise ReviewEvidenceError(
-            "sweep_scope_prior_unfinalized",
-            "sweep scope requires finalized prior evidence",
-        )
-    resolved_plan_path = normalize_plan_path(project_root, plan_path)
-    _inventory, scope = derive_settled_sweep_inputs(
-        db=db,
-        project_id=project_id,
-        project_root=project_root,
-        prior_evidence=prior_evidence,
-        current_snapshot=resolved_plan_path.read_bytes(),
-        repair_finding_ids=repair_finding_ids,
-    )
-    return scope
 
 
 def register_review_evidence_tools(
@@ -84,61 +29,6 @@ def register_review_evidence_tools(
 ) -> None:
     """Register the trusted evidence producer and its lifecycle operations."""
     service = PlanReviewEvidenceService(db)
-    projects = LocalProjectManager(db)
-
-    def derive_plan_review_sweep_scope(
-        prior_evidence_id: str,
-        plan_path: str,
-        repair_finding_ids: list[str],
-        project: str | None = None,
-    ) -> dict[str, object]:
-        try:
-            project_id = resolve_project_id(project)
-            record = projects.get(project_id)
-            if record is None or record.repo_path is None:
-                raise IndexInventoryError(
-                    "inventory_unavailable",
-                    f"project has no local repository: {project_id}",
-                )
-            scope = _derive_settled_sweep_scope(
-                db=db,
-                project_id=project_id,
-                project_root=Path(record.repo_path),
-                prior_evidence_id=prior_evidence_id,
-                plan_path=plan_path,
-                repair_finding_ids=repair_finding_ids,
-            )
-        except IndexInventoryError as exc:
-            return exc.to_dict()
-        except (ReviewEvidenceError, OSError, RuntimeError, ValueError) as exc:
-            return _error_payload(exc, "sweep_scope_unavailable")
-        return {
-            "ok": True,
-            "sweep_scope": scope.to_dict(),
-            "sweep_scope_digest": scope.digest,
-        }
-
-    registry.register(
-        name="derive_plan_review_sweep_scope",
-        description=(
-            "Derive the settled read-only sweep graph and canonical digest before attestation."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "prior_evidence_id": {"type": "string"},
-                "plan_path": {"type": "string"},
-                "repair_finding_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "uniqueItems": True,
-                },
-                "project": {"type": "string"},
-            },
-            "required": ["prior_evidence_id", "plan_path", "repair_finding_ids"],
-        },
-        func=derive_plan_review_sweep_scope,
-    )
 
     async def prepare_plan_review_round(
         plan_path: str,
@@ -147,28 +37,19 @@ def register_review_evidence_tools(
         session_id: str | None = None,
         task_id: str | None = None,
         stage: str | None = None,
-        prior_finding_resolutions: list[dict[str, object]] | None = None,
-        repair_attestations: list[dict[str, object]] | None = None,
-        sweep_scope: dict[str, object] | None = None,
-        sweep_scope_digest: str | None = None,
     ) -> dict[str, object]:
-        """Bind staged reviews to task/stage, otherwise use the interactive session."""
-        review_session_id = session_id
-        if task_id is None and stage is None:
-            review_session_id = session_id or get_current_session_id()
         try:
+            bound_session_id = session_id
+            if task_id is None and bound_session_id is None:
+                bound_session_id = get_current_session_id()
             prepared = await asyncio.to_thread(
                 service.prepare_plan_review_round,
                 project_id=resolve_project_id(project),
                 plan_path=plan_path,
                 round_number=round_number,
-                session_id=review_session_id,
+                session_id=bound_session_id,
                 task_id=task_id,
                 stage=stage,
-                prior_finding_resolutions=prior_finding_resolutions,
-                repair_attestations=repair_attestations,
-                sweep_scope=sweep_scope,
-                sweep_scope_digest=sweep_scope_digest,
             )
         except (ReviewEvidenceError, ValueError, OSError) as exc:
             return _error_payload(exc, "prepare_plan_review_round_failed")
@@ -176,11 +57,7 @@ def register_review_evidence_tools(
 
     registry.register(
         name="prepare_plan_review_round",
-        description=(
-            "Capture immutable, server-hashed evidence for one plan review round. "
-            "Example: round 2 carries [{prior_finding_id: F1, decision: repair}] "
-            "with its repair attestation."
-        ),
+        description="Capture immutable, server-hashed evidence for one plan review round.",
         input_schema={
             "type": "object",
             "properties": {
@@ -188,51 +65,36 @@ def register_review_evidence_tools(
                 "round_number": {"type": "integer", "minimum": 1},
                 "project": {"type": "string"},
                 **_BINDING_PROPERTIES,
-                "prior_finding_resolutions": PRIOR_FINDING_RESOLUTIONS_SCHEMA,
-                "repair_attestations": REPAIR_ATTESTATIONS_SCHEMA,
-                "sweep_scope": SWEEP_SCOPE_SCHEMA,
-                "sweep_scope_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
             "required": ["plan_path", "round_number"],
-            "additionalProperties": False,
         },
         func=prepare_plan_review_round,
     )
 
-    def get_plan_review_snapshot(
-        evidence_id: str,
-        offset: int = 0,
-        limit: int = DEFAULT_SNAPSHOT_PAGE_BYTES,
-    ) -> dict[str, object]:
+    def get_plan_review_snapshot(evidence_id: str) -> dict[str, object]:
         try:
+            payload = service.snapshot_payload(evidence_id)
+            snapshot = payload.pop("snapshot")
+            if not isinstance(snapshot, bytes):
+                raise ReviewEvidenceError(
+                    "invalid_evidence_row",
+                    "stored plan snapshot is not bytes",
+                )
             return {
                 "ok": True,
-                **service.snapshot_page(
-                    evidence_id,
-                    offset=offset,
-                    limit=limit,
-                ),
+                **payload,
+                "snapshot": snapshot.decode("utf-8"),
             }
-        except (ReviewEvidenceError, OSError, ValueError) as exc:
+        except (ReviewEvidenceError, UnicodeDecodeError) as exc:
             return _error_payload(exc, "get_plan_review_snapshot_failed")
 
     registry.register(
         name="get_plan_review_snapshot",
-        description="Page the canonical immutable plan-review evidence envelope.",
+        description="Return the immutable UTF-8 snapshot reviewed by the adversary.",
         input_schema={
             "type": "object",
-            "properties": {
-                "evidence_id": {"type": "string"},
-                "offset": {"type": "integer", "minimum": 0, "default": 0},
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": MAX_SNAPSHOT_PAGE_BYTES,
-                    "default": DEFAULT_SNAPSHOT_PAGE_BYTES,
-                },
-            },
+            "properties": {"evidence_id": {"type": "string"}},
             "required": ["evidence_id"],
-            "additionalProperties": False,
         },
         func=get_plan_review_snapshot,
     )
@@ -330,18 +192,14 @@ def register_review_evidence_tools(
 
     registry.register(
         name="derive_plan_review_manifest",
-        description=(
-            "Read-only canonical shadow-manifest derivation for a review snapshot. "
-            "Example: {routing_decisions: {5.3: {category: code, tdd: true}}}."
-        ),
+        description="Read-only canonical shadow-manifest derivation for a review snapshot.",
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "routing_decisions": ROUTING_DECISIONS_SCHEMA,
+                "routing_decisions": {"type": "object"},
             },
             "required": ["evidence_id", "routing_decisions"],
-            "additionalProperties": False,
         },
         func=derive_plan_review_manifest,
     )
@@ -350,14 +208,14 @@ def register_review_evidence_tools(
         evidence_id: str,
         lane_results: list[object],
         candidate_dispositions: Mapping[str, object],
-        routing_decisions: Mapping[str, object],
+        shadow_manifest_status: Mapping[str, object],
     ) -> dict[str, object]:
         try:
             attestation = service.validate_plan_review_coverage(
                 evidence_id,
                 lane_results,
                 candidate_dispositions,
-                routing_decisions,
+                shadow_manifest_status,
             )
         except ReviewEvidenceError as exc:
             return exc.to_dict()
@@ -365,26 +223,24 @@ def register_review_evidence_tools(
 
     registry.register(
         name="validate_plan_review_coverage",
-        description=(
-            "Read-only validation of review lanes, structured sweep records, "
-            "dispositions, and source hashes. Example: three completed lanes plus "
-            "a disposition bundle and per-deliverable routing decisions."
-        ),
+        description="Read-only validation of all review lanes, dispositions, and source hashes.",
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "lane_results": LANE_RESULTS_SCHEMA,
-                "candidate_dispositions": CANDIDATE_DISPOSITIONS_SCHEMA,
-                "routing_decisions": ROUTING_DECISIONS_SCHEMA,
+                "lane_results": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+                "candidate_dispositions": {"type": "object"},
+                "shadow_manifest_status": {"type": "object"},
             },
             "required": [
                 "evidence_id",
                 "lane_results",
                 "candidate_dispositions",
-                "routing_decisions",
+                "shadow_manifest_status",
             ],
-            "additionalProperties": False,
         },
         func=validate_plan_review_coverage,
     )
@@ -408,21 +264,16 @@ def register_review_evidence_tools(
 
     registry.register(
         name="apply_plan_review_manifest",
-        description=(
-            "Compare and atomically apply an approved, server-validated M1 manifest. "
-            "Example: apply {verdict: approved, findings: [], routing_decisions: {...}, "
-            "manifest_entries: [...], coverage_attestation: {...}}."
-        ),
+        description="Compare and atomically apply an approved, server-validated M1 manifest.",
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
                 "plan_path": {"type": "string"},
                 "run_id": {"type": "string"},
-                "round_result": ROUND_RESULT_SCHEMA,
+                "round_result": {"type": "object"},
             },
             "required": ["evidence_id", "plan_path", "run_id", "round_result"],
-            "additionalProperties": False,
         },
         func=apply_plan_review_manifest,
     )
@@ -443,18 +294,14 @@ def register_review_evidence_tools(
 
     registry.register(
         name="render_v1_round_checkpoint",
-        description=(
-            "Render the canonical interactive V1 reconciliation checkpoint. "
-            "Example: render an approved round_result, or omit it after manifest application."
-        ),
+        description="Render the canonical interactive V1 reconciliation checkpoint.",
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "round_result": ROUND_RESULT_SCHEMA,
+                "round_result": {"type": "object"},
             },
             "required": ["evidence_id"],
-            "additionalProperties": False,
         },
         func=render_v1_round_checkpoint,
     )
@@ -476,19 +323,14 @@ def register_review_evidence_tools(
 
     registry.register(
         name="finalize_plan_review_evidence",
-        description=(
-            "Atomically finalize evidence with its canonical durable round result. "
-            "Example: finalize {verdict: needs_review, findings: [...], "
-            "coverage_attestation: {...}}."
-        ),
+        description="Atomically finalize evidence with its canonical durable round result.",
         input_schema={
             "type": "object",
             "properties": {
                 "evidence_id": {"type": "string"},
-                "round_result": ROUND_RESULT_SCHEMA,
+                "round_result": {"type": "object"},
             },
             "required": ["evidence_id", "round_result"],
-            "additionalProperties": False,
         },
         func=finalize_plan_review_evidence,
     )
@@ -515,10 +357,7 @@ def register_review_evidence_tools(
 
     registry.register(
         name="checkpoint_plan_review_lesson_mint",
-        description=(
-            "Checkpoint the terminal lesson-mint result for an interactive approval. "
-            "Example: {status: minted, detail: {minted_lesson_ids: [lesson-1], detail: null}}."
-        ),
+        description="Checkpoint the terminal lesson-mint result for an interactive approval.",
         input_schema={
             "type": "object",
             "properties": {
@@ -527,10 +366,9 @@ def register_review_evidence_tools(
                     "type": "string",
                     "enum": ["minted", "failed", "none"],
                 },
-                "detail": LESSON_MINT_DETAIL_SCHEMA,
+                "detail": {"type": "object"},
             },
             "required": ["evidence_id", "status", "detail"],
-            "additionalProperties": False,
         },
         func=checkpoint_plan_review_lesson_mint,
     )

@@ -11,7 +11,6 @@ import psycopg
 
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.plans.review_terminal import AgentRunTerminalStorage, terminalize_plan_review_run
 from gobby.sessions.session_wiki_file import redact_session_markdown
 
 logger = logging.getLogger(__name__)
@@ -25,8 +24,18 @@ _health_check_tasks: set[asyncio.Task[None]] = set()
 _health_check_handles: set[asyncio.TimerHandle] = set()
 
 
-class _RunStorageForHealth(AgentRunTerminalStorage, Protocol):
-    pass
+class _RunStorageForHealth(Protocol):
+    db: Any
+
+    def get(self, run_id: str) -> Any | None: ...
+
+    def fail(
+        self,
+        run_id: str,
+        error: str,
+        tool_calls_count: int = 0,
+        turns_used: int = 0,
+    ) -> Any | None: ...
 
 
 class _RunnerWithRunStorage(Protocol):
@@ -140,20 +149,7 @@ async def _deferred_tmux_health_check(
                 error = f"{error}\nPane output:\n{_bounded_redacted_pane_output(pane_output)}"
             logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)
             try:
-                review_outcome = terminalize_plan_review_run(
-                    runner.run_storage,
-                    run_id=run_id,
-                    action="fail",
-                    error=error,
-                )
-                failed = (
-                    review_outcome.run
-                    if review_outcome.handled
-                    else runner.run_storage.fail(
-                        run_id,
-                        error=error,
-                    )
-                )
+                failed = runner.run_storage.fail(run_id, error=error)
                 if failed is not None:
                     from gobby.agents.terminal_delivery import (
                         deliver_existing_terminal_run,

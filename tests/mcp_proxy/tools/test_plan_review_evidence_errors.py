@@ -43,19 +43,11 @@ def _registry(service: MagicMock) -> InternalToolRegistry:
             },
         ),
         (
-            OSError("snapshot unavailable"),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
             {
                 "ok": False,
                 "error": "get_plan_review_snapshot_failed",
-                "message": "snapshot unavailable",
-            },
-        ),
-        (
-            ValueError("invalid page"),
-            {
-                "ok": False,
-                "error": "get_plan_review_snapshot_failed",
-                "message": "invalid page",
+                "message": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
             },
         ),
     ],
@@ -65,7 +57,7 @@ def test_snapshot_expected_failures_return_structured_error(
     expected: dict[str, object],
 ) -> None:
     service = MagicMock()
-    service.snapshot_page.side_effect = error
+    service.snapshot_payload.side_effect = error
 
     tool = _registry(service).get_tool("get_plan_review_snapshot")
     assert tool is not None

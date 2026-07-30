@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 
-from gobby.plans.review_citations import validate_source_citation
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
     ReviewEvidenceError,
@@ -13,8 +11,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_object,
 )
 
-FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "nit"})
-FINDING_REPAIR_SCOPES = frozenset({"existing_sections", "new_deliverable"})
+FINDING_SEVERITIES = frozenset({"blocking", "nit"})
 FINDING_CATEGORIES = frozenset(
     {
         "missing-requirement",
@@ -26,7 +23,6 @@ FINDING_CATEGORIES = frozenset(
         "gobby-format",
     }
 )
-CHECK_KEY_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
 _REQUIRED_STRING_FIELDS = (
     "finding_id",
     "section_id",
@@ -35,44 +31,16 @@ _REQUIRED_STRING_FIELDS = (
     "category",
     "location",
     "description",
-    "minimal_repair",
-    "repair_scope",
+    "fix",
     "prevention",
 )
-_OPTIONAL_STRING_FIELDS = (
-    "principle",
-    "root_cause",
-    "causal_finding_id",
-    "new_deliverable_justification",
-)
-_LEDGER_REQUIRED_STRING_FIELDS = (
-    "category",
-    "severity",
-    "location",
-    "description",
-    "minimal_repair",
-    "repair_scope",
-    "prevention",
-)
-_LEDGER_OPTIONAL_STRING_FIELDS = (
-    "principle",
-    "root_cause",
-    "new_deliverable_justification",
-)
+_OPTIONAL_STRING_FIELDS = ("principle", "root_cause", "causal_finding_id")
 _SECTION_SET_FIELDS = ("participating_section_ids", "causal_section_ids")
-_FAILURE_TRACE_STRING_FIELDS = (
-    "preconditions",
-    "action",
-    "wrong_outcome",
-    "violated_obligation",
-)
-_FAILURE_TRACE_FIELDS = (*_FAILURE_TRACE_STRING_FIELDS, "citation")
 _ALLOWED_FIELDS = frozenset(
     {
         *_REQUIRED_STRING_FIELDS,
         *_OPTIONAL_STRING_FIELDS,
         *_SECTION_SET_FIELDS,
-        "failure_trace",
         "introduced_in_round",
     }
 )
@@ -124,23 +92,12 @@ def render_rejection_section(
                 "",
                 str(finding["description"]),
                 "",
-                f"**Minimal repair:** {finding['minimal_repair']}",
+                f"**Fix:** {finding['fix']}",
                 "",
-                f"**Repair scope:** {finding['repair_scope']}",
+                f"**Prevention:** {finding['prevention']}",
                 "",
             ]
         )
-        if "new_deliverable_justification" in finding:
-            lines.extend(
-                [
-                    (
-                        "**New deliverable justification:** "
-                        f"{finding['new_deliverable_justification']}"
-                    ),
-                    "",
-                ]
-            )
-        lines.extend([f"**Prevention:** {finding['prevention']}", ""])
     envelope = {
         "evidence_id": evidence.evidence_id,
         "findings": list(findings),
@@ -157,36 +114,6 @@ def render_rejection_section(
     return "\n".join(lines)
 
 
-def finding_ledger_details(
-    raw: Mapping[str, object],
-    *,
-    owner: str,
-) -> dict[str, object]:
-    """Validate and select the finding fields persisted in the quality ledger."""
-    details: dict[str, object] = {}
-    for field in _LEDGER_REQUIRED_STRING_FIELDS:
-        _require_nonempty_string(raw, field, prefix=owner)
-        details[field] = raw[field]
-    for field in _LEDGER_OPTIONAL_STRING_FIELDS:
-        if field in raw:
-            _require_nonempty_string(raw, field, prefix=owner)
-            details[field] = raw[field]
-    scope = details["repair_scope"]
-    if scope not in FINDING_REPAIR_SCOPES:
-        vocabulary = ", ".join(sorted(FINDING_REPAIR_SCOPES))
-        raise _invalid(f"{owner}.repair_scope must be one of: {vocabulary}")
-    has_justification = "new_deliverable_justification" in details
-    if scope == "new_deliverable" and not has_justification:
-        raise _invalid(
-            f"{owner}.new_deliverable_justification is required for new_deliverable repairs"
-        )
-    if scope == "existing_sections" and has_justification:
-        raise _invalid(
-            f"{owner}.new_deliverable_justification is forbidden for existing_sections repairs"
-        )
-    return details
-
-
 def _validate_finding(
     raw: dict[str, object],
     *,
@@ -197,46 +124,19 @@ def _validate_finding(
     unknown = sorted(set(raw) - _ALLOWED_FIELDS)
     if unknown:
         raise _invalid(f"{prefix} has unknown fields: {', '.join(unknown)}")
-    for field in _REQUIRED_STRING_FIELDS[:5]:
+    for field in _REQUIRED_STRING_FIELDS:
         _require_nonempty_string(raw, field, prefix=prefix)
     for field in _OPTIONAL_STRING_FIELDS:
         if field in raw:
             _require_nonempty_string(raw, field, prefix=prefix)
-    finding_ledger_details(raw, owner=prefix)
-    for field in ("description", "minimal_repair", "prevention"):
-        value = str(raw[field])
-        if (
-            "```" in value
-            or "~~~" in value
-            or any(line.lstrip().startswith("#") for line in value.splitlines())
-        ):
-            raise _invalid(f"{prefix}.{field} contains unsafe Markdown structure")
     if raw["severity"] not in FINDING_SEVERITIES:
-        vocabulary = ", ".join(sorted(FINDING_SEVERITIES))
-        raise _invalid(f"{prefix}.severity must be one of: {vocabulary}")
+        raise _invalid(f"{prefix}.severity must be 'blocking' or 'nit'")
     if raw["category"] not in FINDING_CATEGORIES:
         raise _invalid(f"{prefix}.category is not a supported adversary category")
-    if raw["repair_scope"] not in FINDING_REPAIR_SCOPES:
-        vocabulary = ", ".join(sorted(FINDING_REPAIR_SCOPES))
-        raise _invalid(f"{prefix}.repair_scope must be one of: {vocabulary}")
-    if CHECK_KEY_RE.fullmatch(str(raw["check_key"])) is None:
-        raise _invalid(f"{prefix}.check_key is invalid")
     if raw["section_id"] not in section_ids:
         raise _invalid(f"{prefix}.section_id is absent from the evidence manifest")
     if not raw.get("principle") and not raw.get("root_cause"):
         raise _invalid(f"{prefix} requires principle or root_cause")
-
-    if raw["severity"] == "blocking" and "failure_trace" not in raw:
-        fields = ", ".join(_FAILURE_TRACE_FIELDS)
-        raise _invalid(
-            f"{prefix}.failure_trace is required for blocking findings; "
-            f"missing sub-fields: {fields}"
-        )
-    if "failure_trace" in raw:
-        raw["failure_trace"] = _validate_failure_trace(
-            raw["failure_trace"],
-            prefix=f"{prefix}.failure_trace",
-        )
 
     for field in _SECTION_SET_FIELDS:
         if field in raw:
@@ -256,48 +156,6 @@ def _validate_finding(
         if not isinstance(introduced, int) or isinstance(introduced, bool) or introduced < 1:
             raise _invalid(f"{prefix}.introduced_in_round must be a positive integer")
     return raw
-
-
-def _validate_failure_trace(
-    raw: object,
-    *,
-    prefix: str,
-) -> dict[str, object]:
-    if not isinstance(raw, Mapping):
-        raise _invalid(f"{prefix} must be an object")
-    trace = dict(raw)
-    unknown = sorted(set(trace) - set(_FAILURE_TRACE_FIELDS))
-    if unknown:
-        raise _invalid(f"{prefix} has unknown fields: {', '.join(unknown)}")
-    missing = [field for field in _FAILURE_TRACE_FIELDS if field not in trace]
-    if missing:
-        raise _invalid(f"{prefix}.{missing[0]} is required")
-    for field in _FAILURE_TRACE_STRING_FIELDS:
-        _require_nonempty_string(trace, field, prefix=prefix)
-    trace["citation"] = _validate_citation_list(
-        trace["citation"],
-        prefix=f"{prefix}.citation",
-    )
-    return trace
-
-
-def _validate_citation_list(
-    raw: object,
-    *,
-    prefix: str,
-) -> list[dict[str, object]]:
-    if not isinstance(raw, list) or not raw:
-        raise _invalid(f"{prefix} must be a non-empty array")
-    citations: list[dict[str, object]] = []
-    for index, item in enumerate(raw):
-        item_prefix = f"{prefix}[{index}]"
-        citations.append(
-            validate_source_citation(
-                item,
-                owner=item_prefix,
-            )
-        )
-    return citations
 
 
 def _validate_section_set(

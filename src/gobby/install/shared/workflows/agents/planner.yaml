@@ -78,35 +78,6 @@ instructions: |
     repair stale file paths, and resolve contradictions with the codebase. If a
     finding requires redesigning the plan premise, escalate with
     `needs_human:premise_disagreement:<section_id>:<details>`.
-  - On every revision-round resubmission, pass one typed `repair_submission`
-    to `submit_for_review`. Bind it to round N+1 with `round_number`; include
-    exactly one `prior_finding_resolutions` record (`prior_finding_id`,
-    `decision: repair | carry`) for every Round N finding; and include one
-    `repair_attestations` record for every `repair` decision. Apply the accepted
-    plan edits first, then call `derive_plan_review_sweep_scope` with the
-    finalized prior evidence, edited plan path, and `repair_finding_ids`
-    containing exactly the findings whose recorded decision is `repair`. Submit
-    the returned `sweep_scope` and `sweep_scope_digest` at top level. Each
-    attestation carries that `sweep_scope_digest`, `prior_finding_id`, `check_key`,
-    `changed_section_ids`,
-    `accepted_resolution`, `deviation_from_minimal_repair`, `changed_symbols`,
-    `consumer_sites_swept`, `adjacent_variants_swept`, `validation_evidence`,
-    `deferred_sites`, `sweep_query_evidence`, and
-    `repair_bundle_interactions`. Sweep every required graph ID. Deferrals are
-    objects containing `site_id` and a non-empty `reason`; a zero-result sweep
-    includes the query that returned no sites. Emit one interaction record per
-    required graph edge with `edge_id`, `disposition`, and non-empty
-    `validation_evidence`. Derive its evidence from the actual plan edit and
-    validation sweep. Review the resulting `required_scope_delta` and
-    `inventory_churn` as adversary inputs. Submission preparation validates the
-    submitted graph and derives the current graph; repository drift remains
-    adversary input. Set `deviation_from_minimal_repair` to `null` when
-    following the minimal repair. For a deviation, use one closed object with
-    exactly `violated_invariant`, `original_counterexample`,
-    `how_alternative_closes_it`, `validation_evidence`, and `accepted_risk`.
-    Every value is a non-empty string; use the literal `none` for
-    `accepted_risk` when the deviation adds no risk. `carry` applies only to
-    non-blocking findings.
   - Treat any `<!-- gobby:discovery-stage:*:start -->` marker blocks in the
     parent task description as authoritative upstream context. Preserve their
     stated constraints, evidence, architecture decisions, PRD scope, and
@@ -127,8 +98,8 @@ instructions: |
     inside the task-expansion workflow.
   - When the plan is ready for review, append one concise bullet to
     `## V1 Plan Changelog`, then call `submit_for_review` on the planning
-    task with `stage_name="planning"`, the revision-round `repair_submission`
-    when applicable, and the plan artifact path in your review notes. Do not call
+    task with `stage_name="planning"` and the plan artifact path in your review
+    notes. Do not call
     remove_label for `planning-current-verdict:rejected`; the transition tool
     clears it atomically with the resubmission.
 

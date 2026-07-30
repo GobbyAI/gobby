@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -12,7 +12,6 @@ from gobby.plans.review_evidence_io import (
     parse_checkpoints,
     render_checkpoint,
     render_manifest_plan,
-    reviewed_section_hashes,
 )
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -20,7 +19,6 @@ from gobby.plans.review_evidence_models import (
     validate_round_result,
 )
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
-from gobby.plans.review_ledger import merge_quality_ledger, validate_quality_ledger
 from gobby.storage.hub.protocol import HubDatabase, PlanReviewEvidenceMutation, Transaction
 
 
@@ -243,62 +241,13 @@ class ReviewCheckpointService:
         transaction: Transaction,
         evidence: PlanReviewEvidence,
         payload: Mapping[str, object],
-        derived_quality_ledger: Sequence[Mapping[str, object]] | None = None,
     ) -> PlanReviewEvidence:
-        """Persist one validated result and its single server-derived ledger."""
-        quality_ledger = (
-            validate_quality_ledger(derived_quality_ledger)
-            if derived_quality_ledger is not None
-            else self.derive_quality_ledger(
-                transaction=transaction,
-                evidence=evidence,
-                payload=payload,
-            )
-        )
-        self.store.write_quality_ledger(
-            transaction=transaction,
-            evidence_id=evidence.evidence_id,
-            quality_ledger=quality_ledger,
-        )
-        approval_result: dict[str, object] | None = None
-        if payload["verdict"] == "approved":
-            approval_result = {**payload, "quality_ledger": quality_ledger}
+        """Persist one validated round result."""
         return self.store.finalize(
             transaction=transaction,
             evidence_id=evidence.evidence_id,
             round_result=payload,
-            approval_result=approval_result,
-        )
-
-    def derive_quality_ledger(
-        self,
-        *,
-        transaction: Transaction,
-        evidence: PlanReviewEvidence,
-        payload: Mapping[str, object],
-    ) -> list[dict[str, object]]:
-        """Derive the carry-forward ledger from locked finalized evidence."""
-        prior_rows = [
-            row
-            for row in self.store.list_for_path(
-                project_id=evidence.project_id,
-                plan_path=evidence.plan_path,
-                transaction=transaction,
-                for_update=True,
-            )
-            if row.finalized_at is not None
-            and row.expired_at is None
-            and row.round_number < evidence.round_number
-        ]
-        prior_ledger = (prior_rows[-1].quality_ledger or []) if prior_rows else []
-        if payload.get("verdict") == "inconclusive":
-            return validate_quality_ledger(prior_ledger)
-        return merge_quality_ledger(
-            prior_ledger=prior_ledger,
-            round_number=evidence.round_number,
-            current_section_hashes=reviewed_section_hashes(evidence.section_manifest),
-            round_result=payload,
-            prior_round_context=evidence.prior_round_context,
+            approval=payload["verdict"] == "approved",
         )
 
     @staticmethod
@@ -307,12 +256,8 @@ class ReviewCheckpointService:
         round_result: Mapping[str, object],
     ) -> dict[str, object]:
         payload = validate_round_result(round_result)
-        verdict = payload["verdict"]
-        if verdict in {"approved", "needs_review"}:
-            coverage = payload["coverage_attestation"]
-            result_evidence_id = coverage.get("evidence_id") if isinstance(coverage, dict) else None
-        else:
-            result_evidence_id = payload.get("evidence_id")
+        coverage = payload["coverage_attestation"]
+        result_evidence_id = coverage.get("evidence_id") if isinstance(coverage, dict) else None
         if result_evidence_id != evidence_id:
             raise ReviewEvidenceError(
                 "coverage_evidence_mismatch",
