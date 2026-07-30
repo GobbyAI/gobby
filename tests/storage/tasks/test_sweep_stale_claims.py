@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
 
 from gobby.sessions.compact_continuation import mark_compact_self_continuation_pending
+from gobby.sessions.compact_markers import (
+    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    COMPACT_SELF_CONTINUE_VARIABLE,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
@@ -140,7 +144,27 @@ def test_sweep_keeps_task_claimed_by_live_session(
     assert task.id not in candidate_ids
 
 
-def test_sweep_reclaims_expired_orphan_handoff_despite_pending_compact_marker(
+def _backdate_compact_marker(temp_db: HubDatabase, session_id: str, seconds: int) -> None:
+    stale = datetime.now(UTC) - timedelta(seconds=seconds)
+    temp_db.execute(
+        """
+        UPDATE session_variables
+           SET variables = jsonb_set(
+               variables,
+               %s::text[],
+               to_jsonb(%s::text)
+           )
+         WHERE session_id = %s
+        """,
+        (
+            [COMPACT_SELF_CONTINUE_VARIABLE, "created_at"],
+            stale.isoformat(),
+            session_id,
+        ),
+    )
+
+
+def test_sweep_preserves_claim_while_compact_marker_is_fresh(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
@@ -149,6 +173,28 @@ def test_sweep_reclaims_expired_orphan_handoff_despite_pending_compact_marker(
     _make_session(temp_db, sample_project, session_id, "handoff_ready")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
     assert mark_compact_self_continuation_pending(temp_db, session_id)
+    # Lifecycle status can be transiently stale before SessionStart consumes the
+    # marker; a fresh marker means the owner is resuming and keeps its claim.
+    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
+
+    with caplog.at_level(logging.INFO, logger="gobby.storage.tasks._automation"):
+        reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 0
+    assert _claim(temp_db, task.id) == session_id
+    assert caplog.messages == []
+
+
+def test_sweep_reclaims_claim_once_compact_marker_is_stale(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "handoff_ready")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    assert mark_compact_self_continuation_pending(temp_db, session_id)
+    _backdate_compact_marker(temp_db, session_id, COMPACT_SELF_CONTINUE_FRESH_SECONDS + 60)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
 
     with caplog.at_level(logging.INFO, logger="gobby.storage.tasks._automation"):

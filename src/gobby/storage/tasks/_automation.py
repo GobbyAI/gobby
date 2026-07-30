@@ -1,8 +1,13 @@
 """Task automation candidate and stale-claim helpers."""
 
 import logging
+from datetime import timedelta
 from typing import Any
 
+from gobby.sessions.compact_markers import (
+    COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    COMPACT_SELF_CONTINUE_VARIABLE,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
@@ -119,8 +124,19 @@ def release_task_claim(
         "tasks.labels",
         "live-session",
     )
+    compact_cutoff = now - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS)
     params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
+    params.extend(
+        (
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            compact_cutoff.isoformat(),
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            now.isoformat(),
+        )
+    )
 
     with db.transaction() as conn:
         cursor = conn.execute(
@@ -138,6 +154,23 @@ def release_task_claim(
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
                       AND s.status IN ('active', 'paused', 'handoff_ready')
+               )
+               AND NOT EXISTS (
+                   -- A fresh compact-continue marker means the owner is
+                   -- mid-compaction and will resume; its lifecycle status can be
+                   -- transiently stale, so marker age (not claim age) decides
+                   -- eligibility here.
+                   SELECT 1
+                     FROM session_variables sv
+                    WHERE sv.session_id = tasks.claimed_by_session_id
+                      AND jsonb_typeof(
+                          sv.variables -> %s
+                      ) = 'object'
+                      AND jsonb_typeof(
+                          sv.variables -> %s -> 'created_at'
+                      ) = 'string'
+                      AND sv.variables -> %s ->> 'created_at' >= %s
+                      AND sv.variables -> %s ->> 'created_at' <= %s
                )
             """,
             tuple(params),
