@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,60 @@ def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 def loader(db: HubDatabase) -> WorkflowLoader:
     """Create a WorkflowLoader backed by the test database."""
     return WorkflowLoader(db=db)
+
+
+@pytest.mark.asyncio
+async def test_loader_skips_rule_and_variable_rows(
+    loader: WorkflowLoader,
+    def_manager: LocalWorkflowDefinitionManager,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    for row_type in ("rule", "variable"):
+        name = f"test-{row_type}"
+        def_manager.create(
+            name=name,
+            definition_json=json.dumps({"event": "before_tool"}),
+            workflow_type=row_type,
+        )
+
+    def_manager.create(
+        name="test-workflow",
+        definition_json=json.dumps(
+            {
+                "name": "test-workflow",
+                "version": "1.0.0",
+                "steps": [{"name": "work", "allowed_tools": "all"}],
+            }
+        ),
+        workflow_type="workflow",
+    )
+    def_manager.create(
+        name="test-pipeline",
+        definition_json=json.dumps(
+            {
+                "name": "test-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "build", "exec": "make build"}],
+            }
+        ),
+        workflow_type="pipeline",
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.workflows.loader"):
+        rule = await loader.load_workflow("test-rule")
+        variable = await loader.load_workflow("test-variable")
+        workflow = await loader.load_workflow("test-workflow")
+        pipeline = await loader.load_workflow("test-pipeline")
+
+    assert rule is None
+    assert variable is None
+    assert isinstance(workflow, WorkflowDefinition)
+    assert isinstance(pipeline, PipelineDefinition)
+    assert "Skipping workflow lookup for 'test-rule': row type is 'rule'" in caplog.messages
+    assert (
+        "Skipping workflow lookup for 'test-variable': row type is 'variable'"
+        in caplog.messages
+    )
 
 
 # ---------------------------------------------------------------------------

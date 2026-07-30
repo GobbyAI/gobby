@@ -142,7 +142,12 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         row = mgr.get_by_name(name, project_id=project_id)
         if row is None:
             return None
-        if row.workflow_type == "agent":
+        if row.workflow_type in {"agent", "rule", "variable"}:
+            logger.debug(
+                "Skipping workflow lookup for '%s': row type is '%s'",
+                name,
+                row.workflow_type,
+            )
             return None
         if project_id is not None and row.project_id is not None:
             bundled_row = mgr.get_by_name(name, project_id=None)
