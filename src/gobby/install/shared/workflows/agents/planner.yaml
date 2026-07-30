@@ -117,9 +117,9 @@ instructions: |
     deliverable for mentioned paths missing from target inventory. If one
     consumer file is missing, use code-index usages/blast-radius for the
     changed symbol/file and add every direct consumer file the deliverable owns.
-  - If the requirements are still insufficient, do not guess. Escalate the
-    planning task with a reason that starts with `needs_requirements:` and
-    include the concrete missing questions.
+  - If the requirements are still insufficient after reading the parent task
+    and repository directly, do not guess. Escalate the planning task with the
+    concrete missing questions as the reason.
   - Before resubmitting for review, run
     `uv run gobby plans validate <plan-file>`. Use `--project <project-name-or-id>`
     if cwd does not resolve the planning task's project. Do not use
@@ -211,9 +211,9 @@ steps:
     mcp_error_policy: stay
     description: "Draft or revise the implementation plan"
     status_message: |
-      Draft or revise the requested plan artifact. If requirements are insufficient,
-      escalate the planning task with a `needs_requirements:` reason. Otherwise
-      submit the planning task for adversarial review with
+      Draft or revise the requested plan artifact. If requirements are
+      insufficient, escalate the planning task with the concrete missing
+      questions. Otherwise submit the planning task for adversarial review with
       submit_for_review(stage_name="planning").
     allowed_tools: "all"
     blocked_mcp_tools:

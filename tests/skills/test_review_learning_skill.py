@@ -12,10 +12,6 @@ import yaml
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.plans.review_requirements import (
-    REQUEST_ANCHOR_VARIABLE,
-    build_request_anchor,
-)
 from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from gobby.skills.loader import SkillLoader
@@ -24,7 +20,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.state_manager import SessionVariableManager
 from tests.review_coverage_helpers import coverage_attestation
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 from tests.review_telemetry_helpers import enriched_telemetry
@@ -134,15 +129,6 @@ def _review_setup(
             ]
         ),
         encoding="utf-8",
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            REQUEST_ANCHOR_VARIABLE: build_request_anchor(
-                f"{stem}-request",
-                "Review the learning plan",
-            )
-        },
     )
     return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
 
@@ -255,7 +241,7 @@ def test_plan_skill_documents_parallel_review_contract() -> None:
     body = _skill_body(PLAN_SKILL)
     for phrase in (
         "Do not pass provider or model",
-        "immutable `requirements_bundle`",
+        "reads the repository and Gobby tasks directly",
         "changed_section_ids",
         "review_complexity",
         "provider-native internal research results, timeouts, and sequential lane",

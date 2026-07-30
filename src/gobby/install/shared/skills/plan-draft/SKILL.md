@@ -1,7 +1,7 @@
 ---
 name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
-version: "1.0.0"
+version: "1.1.0"
 category: methodology
 internal: true
 triggers: plan drafting, plan format, plan specification
@@ -141,29 +141,6 @@ drift §2.23 fixes. Leave the manifest to the adversary.
 
 See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the schema and
 the adversary-writes-on-approval contract.
-
-### Canonical Requirement Documents
-
-When the user explicitly designates a repository document as a canonical
-requirement source, preserve or emit this line inside `## Constraints`, outside
-fenced code:
-
-```text
-requirement-source: docs/repository-relative-path.md
-```
-
-Each marker names exactly one repository-relative path, which must exist. `..`
-and absolute paths are rejected. Preserve existing valid markers.
-
-A marker earns its place only when the designated document predates the plan
-and someone other than the plan's author wrote it — a contract, spec, or
-standard the plan must satisfy. Never designate a document authored for this
-plan: the reviewer would check the plan against its author's own restatement of
-it, which adds no independent signal and launders the plan's assumptions into
-sealed evidence. The plan artifact is the canonical record of the plan itself.
-
-If the user designates no canonical repository document, emit no marker;
-ordinary links and document mentions are supporting context only.
 
 ### Table-Row Decomposition
 
@@ -623,8 +600,9 @@ payload. Never reconstruct, normalize, or reformat the fence.
 Apply surgical fixes: missing acceptance items, ambiguous wording, stale file
 paths, missing dependency annotations, and contradictions with the codebase.
 Do not redesign the plan in response to adversary findings. When a finding
-requires rejecting the premise or re-engineering a section, return a
-`needs_requirements:<section_id>:<details>` note to the coordinator.
+requires rejecting the premise or re-engineering a section, return a note to
+the coordinator naming the section id and the specific premise conflict
+instead of folding a redesign into a revision.
 
 After a revision, update `## V1 Plan Changelog` with resolution notes for the
 round, rerun plan validation, and hand the artifact back to the coordinator for

@@ -11,8 +11,8 @@ These tests lock in:
   - that step only allows get_skill on gobby-skills,
   - the transition out of the step gates on a skill_loaded variable,
   - the inline instructions point explicitly at the plan-draft skill,
-  - the escalation-prefix contract with the stage-native planning flow is
-    preserved (needs_requirements: prefix).
+  - the insufficient-requirements escalation contract with the stage-native
+    planning flow is preserved (escalate with the concrete missing questions).
 """
 
 from pathlib import Path
@@ -103,11 +103,14 @@ class TestPlannerInstructionsPreserveContracts:
         assert "Computer Use tools" in instructions
         assert "After `plan-draft` is loaded" in instructions
 
-    def test_needs_requirements_escalation_preserved(self, agent: AgentDefinitionBody) -> None:
-        """Contract with the stage-native planning flow: when context is
-        insufficient, escalate with this exact prefix."""
+    def test_insufficient_requirements_escalation_preserved(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        """Contract with the stage-native planning flow: when requirements are
+        insufficient, escalate with the concrete missing questions."""
         instructions = agent.instructions or ""
-        assert "needs_requirements:" in instructions
+        assert "concrete missing questions" in instructions
+        assert "needs_requirements" not in instructions
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""

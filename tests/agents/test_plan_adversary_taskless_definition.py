@@ -41,7 +41,10 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
     agent = _agent()
     steps = {step["name"]: step for step in agent["steps"]}
 
-    assert steps["load_skill"]["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    assert steps["load_skill"]["allowed_mcp_tools"] == [
+        "gobby-skills:get_skill",
+        "gobby-plans:get_plan_review_snapshot",
+    ]
     status = steps["load_skill"]["status_message"]
     assert "plan-review" in status
     assert any(
@@ -95,8 +98,8 @@ def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
     """Regression for #15100.
 
     The plan-review methodology requires the adversary to `send_message` its
-    structured verdict + findings back to the parent on `verdict: needs_review`
-    or `verdict: needs_requirements`. Because `allowed_mcp_tools` is a
+    structured verdict + findings back to the parent on `verdict: needs_review`.
+    Because `allowed_mcp_tools` is a
     whitelist, omitting `gobby-agents:send_message` implicitly blocks the
     call and the parent never sees rejection-round findings (observed via
     run-5231d2f026de which completed `success` after 57 turns without

@@ -66,7 +66,7 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.5.0"' in body
+    assert 'version: "3.6.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -247,7 +247,7 @@ def test_review_history_uses_v1_changelog_verification_entries(body: str) -> Non
     for field in (
         "reviewer_run",
         "reviewer_session",
-        "verdict: approved | needs_review | needs_requirements",
+        "verdict: approved | needs_review",
         "findings",
         "resolution_notes",
     ):
@@ -293,13 +293,9 @@ def test_enhancement_presentation_contract(body: str) -> None:
     assert "quote the current plan sections" in presentation
     assert "individual accept/decline vote for each suggestion" in presentation
     assert "per-item exploration before recording its vote" in presentation
-    assert "interaction payload" in presentation
-    assert "full item text inside that payload" in presentation
-    assert "native interaction payload itself" in presentation
-    assert "gobby-plans:record_plan_vote_artifact" in presentation
-    assert "`round_kind: enhancement`" in presentation
-    assert "unique vote id and explicit decision for every suggestion" in presentation
-    assert "Do not edit the plan until the artifact is accepted" in presentation
+    assert "the coordinator judges each suggestion itself" in presentation
+    assert "records every vote with its rationale" in presentation
+    assert "Do not edit the plan before the votes are decided" in presentation
     assert "Apply accepted `proposed_edit_text` exactly" in presentation
     assert "`kind: deferred`" in presentation
     assert "follow-up task" in presentation
@@ -323,13 +319,9 @@ def test_adversary_presentation_contract(body: str) -> None:
     assert "quote the current plan sections" in presentation
     assert "individual accept/decline vote for each finding" in presentation
     assert "per-item exploration before recording its vote" in presentation
-    assert "interaction payload" in presentation
-    assert "full item text inside that payload" in presentation
-    assert "native interaction payload itself" in presentation
-    assert "gobby-plans:record_plan_vote_artifact" in presentation
-    assert "`round_kind: adversary`" in presentation
-    assert "unique vote id and explicit decision for every finding" in presentation
-    assert "Do not revise the plan until the artifact is accepted" in presentation
+    assert "the coordinator judges each finding itself" in presentation
+    assert "records every vote with its rationale" in presentation
+    assert "Do not revise the plan before the votes are decided" in presentation
     assert "Apply accepted `proposed_edit_text` exactly" in presentation
     assert "`kind: deferred`" in presentation
     assert "follow-up task" in presentation

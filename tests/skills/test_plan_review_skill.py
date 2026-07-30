@@ -25,11 +25,13 @@ SKILL_PATH = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
 PLAN_SKILL_PATH = Path("src/gobby/install/shared/skills/plan/SKILL.md")
 
 
-def test_unattended_round_uses_coordinator_decision() -> None:
+def test_unattended_round_coordinator_judges_findings() -> None:
     body = PLAN_SKILL_PATH.read_text(encoding="utf-8")
 
+    normalized = " ".join(body.split())
     assert "unattended" in body.lower()
-    assert "gobby-plans:coordinator_decision" in body
+    assert "the coordinator judges each finding itself" in normalized
+    assert "records every vote with its rationale" in normalized
 
 
 class TestPlanReviewFrontmatter:
@@ -130,10 +132,12 @@ class TestPlanReviewContent:
         assert "round_number" in body
         assert "## V1 Plan Changelog" in body
 
-    def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
-        """Insufficient-context halt uses the same prefix the autonomous
-        planner uses (matching contract)."""
-        assert "needs_requirements:" in body
+    def test_inconclusive_is_the_only_halt(self, body: str) -> None:
+        """Insufficient requirements context is a blocking finding, never a
+        halt; the sole halt verdict is `inconclusive`."""
+        assert "`inconclusive` is the only halt" in body
+        assert "missing-requirement" in body
+        assert "needs_requirements" not in body
 
     def test_autonomous_exit_uses_end_agent_run_without_session_id(self, body: str) -> None:
         assert "end_agent_run" in body

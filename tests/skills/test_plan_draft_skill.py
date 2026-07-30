@@ -125,9 +125,8 @@ class TestPlanDraftContent:
         for check in required_checks:
             assert check in body, f"Verification checklist missing: {check}"
 
-    def test_canonical_requirement_marker_contract(self, body: str) -> None:
-        normalized = " ".join(body.split())
-        assert "requirement-source: docs/repository-relative-path.md" in body
-        assert "inside `## Constraints`" in normalized
-        assert "Preserve existing valid markers" in normalized
-        assert "emit no marker" in normalized
+    def test_no_requirement_source_marker_machinery(self, body: str) -> None:
+        """The sealed requirements-bundle machinery is gone; the skill must
+        not resurrect `requirement-source:` markers."""
+        assert "requirement-source" not in body
+        assert "needs_requirements" not in body

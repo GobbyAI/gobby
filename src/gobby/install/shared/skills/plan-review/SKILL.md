@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.1.0"
+version: "1.2.0"
 category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
@@ -166,7 +166,9 @@ Conversely, do not stop early because you found "enough." Finish the walk.
 The drafter already knows what they wrote. You add value by surfacing what they
 **did not** write:
 
-- Requirements from the immutable bundle that the plan never addresses.
+- Requirements from the plan's governing context — repository documents,
+  Gobby tasks, the plan's own Overview and Constraints — that the body never
+  addresses.
 - Edge cases or failure paths the plan never handles.
 - Steps that assume a precondition the plan never establishes.
 - Tests or observability the plan silently omits.
@@ -207,16 +209,19 @@ handles — do not list "the plan correctly handles X" findings.
 
 ## Traceability
 
-Cross-reference the plan against the immutable `requirements_bundle` reconstructed
-from the paged evidence snapshot.
+Cross-reference the plan against its governing requirements context, read
+directly from the repository and Gobby tasks.
 
-- **Source of truth:** every bundle source, identified by its stable
-  `requirement_id` and verified `content_sha256`. Never read a live parent task,
-  current request, or worktree copy of a marked requirements document as a
-  canonical review input.
-- For every bundled requirement, find the plan item(s) that address it.
+- **Sources of truth:** the plan artifact's own `## Overview` and
+  `## Constraints`, every repository document the plan cites (design contracts,
+  `docs/contracts/*`, `.impeccable.md`, and similar), and — when the round is
+  bound to a task — the parent task's fields via `gobby-tasks:get_task`. You
+  have free read access to all of them; use it. A requirements gap, ambiguity,
+  or conflict you cannot resolve from those sources is a finding, never a
+  reason to halt.
+- For every governing requirement, find the plan item(s) that address it.
 Requirements with **no matching task** are `missing-requirement` findings.
-- For every `### N.N` task in the plan, name the bundle `requirement_id` it satisfies.
+- For every `### N.N` task in the plan, name the requirement it satisfies.
 Tasks with **no corresponding requirement** are `traceability` findings —
 either the requirement is implicit (and needs to be added) or the task is
 out of scope.
@@ -345,10 +350,10 @@ Reconstruct the complete immutable evidence envelope before review. Call
 `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
 follow `next_offset` to exhaustion; concatenate every `content` page in offset
 order, verify the reconstructed bytes against `snapshot_hash`, verify every
-record hash and `bundle_digest`, then parse all records before lane review
+record hash, then parse all records before lane review
 begins. Reject a missing, duplicated, reordered, or mismatched page locally.
 The parsed envelope supplies deterministic complexity counts, plan sections,
-`prior_round_context`, quality ledger, requirement sources, and consumer
+`prior_round_context`, quality ledger, and consumer
 inventory. Run lanes in parallel when the snapshot has at least 8 deliverables,
 24 acceptance items, 12 distinct target files, or 4 sections changed since the
 prior finalized round. Otherwise run the same lanes sequentially in the parent.
@@ -399,12 +404,11 @@ TERMINAL_RESULT_UNION_V1_START
 Every parent delivery is one JSON object matching one branch:
 `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-`{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
 `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
 Reviewed branches require canonical coverage. Non-attested branches use exactly
-the shown top-level and reason keys. `reason_code` is closed to
-`missing_requirements`, `source_drift`, and `timeout`.
+the shown top-level and reason keys. `reason_code` is closed to `source_drift`
+and `timeout`.
 TERMINAL_RESULT_UNION_V1_END
 
 If cited source hashes drift, rerun only affected lanes once during the same
@@ -461,8 +465,8 @@ coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 
 ### Convergence telemetry contract
 
-Every reviewer-produced terminal branch (`approved`, `needs_review`,
-`needs_requirements`, or `source_drift`) includes
+Every reviewer-produced terminal branch (`approved`, `needs_review`, or
+`source_drift`) includes
 `convergence_telemetry` with `state: delivered` and `reviewer.status:
 available`. The reviewer emits only reviewer-owned facts; it never invents the
 `daemon` object. Terminal cleanup adds that authoritative object and changes
@@ -573,10 +577,9 @@ Each finding is one typed attestation with these fields:
 - **failure_trace** — required for `blocking` findings and optional but
 all-or-nothing for other severities. It contains non-empty `preconditions`,
 `action`, `wrong_outcome`, and `violated_obligation` strings plus a non-empty
-`citation` list. Each citation matches exactly one branch: repository evidence
-uses repository-relative `path` plus lowercase `sha256`; immutable requirement
-evidence uses bundle `requirement_id` plus `content_sha256`. Either branch may
-include positive `line_start` / `line_end`.
+`citation` list. Each citation is repository evidence: a repository-relative
+`path` plus lowercase `sha256`, optionally with positive `line_start` /
+`line_end`.
 
 When claiming `reviewer-miss`, add non-empty
 `participating_section_ids` containing every section that participates in the
@@ -628,20 +631,21 @@ failure_trace:
 
 ## Halt Conditions
 
-Stop and **escalate with `needs_requirements: <concrete missing questions>`**
-when:
+`inconclusive` is the only halt. Emit the `source_drift` branch when the
+reconstructed snapshot fails integrity verification or cited source hashes
+keep drifting after the single in-run lane rerun; only the daemon synthesizes
+the `timeout` branch. Nothing else halts the review:
 
-- The plan artifact file is missing or empty.
-- The plan has no canonical `## P<N>` phase sections.
-- The immutable requirements bundle does not give you enough context to judge
-whether the plan is correct — write the specific
-  questions you cannot answer and escalate.
+- A missing or empty plan artifact, or a plan with no canonical `## P<N>`
+  phase sections, is a blocking `gobby-format` finding against the plan root.
+- Requirements context you cannot resolve by reading the repository and Gobby
+  tasks directly is a blocking `missing-requirement` finding carrying the
+  specific questions the plan must answer. Return `needs_review`; never stall
+  the round waiting for answers.
 
-The `needs_requirements:` escalation contract matches the one `planner.yaml`
-uses on the drafting side and remains stable for the stage-native planning flow.
-
-Do **not** approve a plan you do not understand. When in doubt, escalate with
-specific questions rather than manufacturing findings or rubber-stamping.
+Do **not** approve a plan you do not understand. When in doubt, emit blocking
+findings with your specific unanswered questions rather than manufacturing
+findings or rubber-stamping.
 
 ## Autonomous Exit
 

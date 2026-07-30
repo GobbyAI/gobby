@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "3.5.0"
+version: "3.6.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -98,12 +98,12 @@ which runs after enhancement approval and before the adversary gate.
 
 1. Use the confirmed Decision Record as the requirements, constraints, risks,
    and success-criteria source. It is drafting input held in this conversation;
-   never persist it as a separate requirements document and never designate one
-   with a `requirement-source:` marker. Everything it settles belongs in the
-   plan artifact itself, which is the canonical record — its `## Overview` and
-   `## Constraints` carry intent and limits, and its acceptance items carry what
-   done means. A sibling requirements file authored alongside the plan supplies
-   the reviewer no signal the plan does not already carry, and it drifts.
+   never persist it as a separate requirements document. Everything it settles
+   belongs in the plan artifact itself, which is the canonical record — its
+   `## Overview` and `## Constraints` carry intent and limits, and its
+   acceptance items carry what done means. A sibling requirements file authored
+   alongside the plan supplies the reviewer no signal the plan does not already
+   carry, and it drifts.
 2. Draft `.gobby/plans/<slug>.md` using the Plan-Coverage Contract from
    `plan-draft`.
 3. Run plan verification locally:
@@ -137,30 +137,16 @@ variables.
       suggested enhancement, and metadata. When a suggestion modifies existing
       text, quote the current plan sections it touches. Collect an individual
       accept/decline vote for each suggestion, and allow per-item exploration
-before recording its vote. In attended rounds, first set
-`_plan_vote_interaction_context` to the prepared `evidence_id`,
-`round_number`, `round_kind: enhancement`, and pre-fold-in
-`content_sha256`; then put the complete presentation and vote prompt in the
-native interaction payload itself, with the full item text inside that
-payload. After the interaction returns, call
-`gobby-plans:record_plan_vote_artifact`. In unattended rounds, skip the
-native interaction and call `gobby-plans:coordinator_decision`; this route
-requires the operator-authenticated coordinator session and rejects agent
-capability tokens. Both calls carry the prepared `evidence_id` and
-`round_kind: enhancement`.
-Its `interaction_payload.items` must carry every suggestion id, full
-presented text, stable `target_section_id`, and exact proposed edit text; its
-`votes` must carry a unique vote id and explicit decision for every suggestion.
-The tool rejects
-free-text-only presentation, blanket decisions, missing votes, and proposed
-text omitted from the presented item. Do not edit the plan until the
-artifact is accepted. Apply accepted `proposed_edit_text` exactly; any
-amended wording requires a newly prepared round and artifact. The next round
-preparation transaction validates every accepted edit in its recorded target
-section before advancing. If the user declines an item with deferral, record a typed
-      `kind: deferred` plan section that points to its follow-up task (section
-      2.3 is the worked example). The human is the scope gate
-      (present-and-stop): you present, the user decides what ships.
+      before recording its vote. In attended rounds, the user votes. In
+      unattended rounds, the coordinator judges each suggestion itself and
+      records every vote with its rationale in the round's `## V1 Plan
+      Changelog` entry. Do not edit the plan before the votes are decided.
+      Apply accepted `proposed_edit_text` exactly; wording you amend is your
+      own plan edit, not the suggestion's, and stands on the coordinator's
+      judgment like any other revision. If the user declines an item with
+      deferral, record a typed `kind: deferred` plan section that points to its
+      follow-up task (section 2.3 is the worked example). The human is the
+      scope gate (present-and-stop): you present, the user decides what ships.
    4. Apply only the **accepted** suggestions to the plan artifact, re-run
       `uv run gobby plans validate <plan-file>`, and append a `## V1 Plan
       Changelog` entry with `kind: enhancement`.
@@ -178,13 +164,9 @@ prepared snapshot/evidence, `artifact_path`,
 variables. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.
 Evidence preparation is the single indexing site for the round.
-The plan-mode entry observer owns the initiating-request anchor. Never create,
-replace, or synthesize that anchor in this skill. Preparation fails closed when
-taskless entry has neither exact request content nor a valid persisted anchor.
-The immutable `requirements_bundle` in the prepared evidence is the reviewer's
-only requirements context; do not send a live or reconstructed requirements
-payload alongside it. Shape that bundle through its designated inputs, never by
-editing it — see **Requirements Sources**.
+The adversary reads the repository and Gobby tasks directly for requirements
+context; a requirements gap, ambiguity, or conflict it uncovers is a finding,
+never grounds to halt the review.
 Do not run a separate pre-spawn `gcode index`; preparation already brackets the
 one index run it needs. Repository churn during a round is expected and is not
 tracked — see the repository-state section in `plan-review`.
@@ -255,29 +237,15 @@ effort, risk, and a one-line gist. Present each finding's full text verbatim,
 including its description, finding detail, and metadata. When a finding
 modifies existing text, quote the current plan sections it touches. Collect
 an individual accept/decline vote for each finding, and allow per-item
-exploration before recording its vote. In attended rounds, first set
-`_plan_vote_interaction_context` to the prepared `evidence_id`,
-`round_number`, `round_kind: adversary`, and pre-fold-in `content_sha256`;
-then put the complete presentation and vote prompt in the native interaction
-payload itself, with the full item text inside that payload. After the
-interaction returns, call `gobby-plans:record_plan_vote_artifact`. In
-unattended rounds, skip the native interaction and invoke
-`gobby-plans:coordinator_decision`; this route requires the
-operator-authenticated coordinator session and rejects agent capability
-tokens. Both calls carry the prepared `evidence_id` and
-`round_kind: adversary`.
-Its `interaction_payload.items` must carry every finding id, full presented
-text, stable `target_section_id`, and exact proposed edit text; its `votes`
-must carry a unique vote id and explicit decision for every finding. The tool rejects free-text-only
-presentation, blanket decisions, missing votes, and proposed text omitted
-from the presented item. Do not revise the plan until the artifact is
-accepted. Apply accepted `proposed_edit_text` exactly; any amended wording
-requires a newly prepared round and artifact. Then append the
+exploration before recording its vote. In attended rounds, the user votes.
+In unattended rounds, the coordinator judges each finding itself and records
+every vote with its rationale in the round's `## V1 Plan Changelog` entry.
+Do not revise the plan before the votes are decided. Apply accepted
+`proposed_edit_text` exactly; wording you amend is your own repair, and the
+next round reviews it like any other plan edit. Then append the
 `## V1 Plan Changelog` entry, persist the exact fence returned by
 `render_v1_round_checkpoint`, and call `finalize_plan_review_evidence` with
-that same result. Finalization validates every accepted edit under
-whitespace-normalized block matching inside its recorded target section in
-the same transaction.
+that same result.
 If the user declines an item with deferral, record a typed
    `kind: deferred` plan section that points to its follow-up task (section 2.3
    is the worked example).
@@ -300,42 +268,6 @@ explicitly approves the handoff:
 ```bash
 uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
 ```
-
-## Requirements Sources
-
-`prepare_plan_review_round` assembles the bundle server-side and seals it: every
-source carries its own hash, the set carries a `bundle_digest`, and the snapshot
-carries a `snapshot_hash` the reviewer verifies. There is no requirements
-parameter on preparation, so the bundle is never edited — only its inputs are
-chosen, and there are three source kinds:
-
-- `task_field` — used when the round is bound to a task. Full depth does not
-  create planning or review-anchor tasks, so this path does not apply here.
-- `request_anchor` — the plan-mode entry observer's record of the initiating
-  request, used for taskless entry. It is exactly one message, captured
-  verbatim. Never create, replace, or synthesize it: the anchor attests what the
-  user actually said, and rewriting it makes sealed evidence assert something
-  false.
-- `repository_document` — every path the plan designates with a
-  `requirement-source:` marker in `## Constraints`. Always loaded, alongside
-  whichever of the two above applies.
-
-None of the three is yours to author. `repository_document` is the only one you
-influence at all, and only by preserving a marker the user designated; see
-`plan-draft`'s "Canonical Requirement Documents" for when that is warranted.
-Authoring a document so it can be designated defeats the purpose — a bundle
-source carries evidentiary weight only when the plan's author did not write it.
-The plan artifact stands as the canonical record of the plan's own intent.
-
-A taskless round's anchor is one message and may be a thin one, since the
-observer captures whichever message flipped the session into plan mode. Report
-that to the user when the bundle looks thin; do not paper over it by
-manufacturing a source.
-
-Inspect the bundle before spawning. `get_plan_review_snapshot` returns the
-prepared envelope, and preparation binds no run until `bind_evidence_run`, so
-checking the `requirement_source` records costs nothing and a bad bundle costs a
-full reviewer run.
 
 ## Interactive Review Evidence Protocol
 
@@ -448,7 +380,7 @@ Every adversarial round appends a `kind: verification` entry to
 
 - reviewer_run: <run-id>
 - reviewer_session: <session-id>
-- verdict: approved | needs_review | needs_requirements
+- verdict: approved | needs_review
 - findings:
 - <finding id/severity/summary>
 - resolution_notes: <what changed or why no change was needed>

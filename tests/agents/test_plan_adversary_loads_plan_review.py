@@ -13,9 +13,9 @@ These tests lock in:
   - transition out gates on skill_loaded,
   - instructions explicitly direct the agent to plan-review,
   - terminate-step exit wiring uses end_agent_run,
-  - review rejection plus `needs_requirements:` survive the trim so the
-    interactive planner's branching (Step 7.6) matches the autonomous state
-    machine's.
+  - review rejection plus the blocking `missing-requirement` finding path
+    survive the trim so the interactive planner's branching (Step 7.6) matches
+    the autonomous state machine's.
 """
 
 from pathlib import Path
@@ -61,10 +61,15 @@ class TestAdversarySkillLoading:
         assert "GitHub/app connector" in load_step.status_message
         assert "Computer Use tools" in load_step.status_message
 
-    def test_load_skill_only_permits_get_skill(self, agent: AgentDefinitionBody) -> None:
+    def test_load_skill_only_permits_get_skill_and_snapshot_read(
+        self, agent: AgentDefinitionBody
+    ) -> None:
         load_step = find_step(agent.steps or [], "load_skill")
         assert load_step is not None
-        assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
+        assert load_step.allowed_mcp_tools == [
+            "gobby-skills:get_skill",
+            "gobby-plans:get_plan_review_snapshot",
+        ]
 
     def test_load_skill_sets_skill_loaded_variable(self, agent: AgentDefinitionBody) -> None:
         # on_mcp_success entries are dicts in the parsed YAML shape, not typed
@@ -177,11 +182,12 @@ class TestAdversaryInstructionsPreserveContracts:
     def test_review_rejection_and_requirements_contracts_preserved(
         self, agent: AgentDefinitionBody
     ) -> None:
-        """Revision rounds should use review rejection; insufficient-context
-        halts should use `needs_requirements:`."""
+        """Revision rounds should use review rejection; insufficient
+        requirements context becomes a blocking finding, never a halt."""
         instructions = agent.instructions or ""
         assert "reject_review" in instructions
-        assert "needs_requirements:" in instructions
+        assert "missing-requirement" in instructions
+        assert "needs_requirements" not in instructions
 
     def test_plan_identity_precondition_blocks_unknown_covers(
         self, agent: AgentDefinitionBody

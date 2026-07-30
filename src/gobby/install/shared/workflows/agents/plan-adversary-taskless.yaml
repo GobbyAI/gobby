@@ -69,13 +69,13 @@ instructions: |
   `get_plan_review_snapshot` with the evidence id, start with `offset: 0`, and
   follow `next_offset` to exhaustion; concatenate every `content` page in offset
   order, verify the reconstructed bytes against `snapshot_hash`, verify every
-  record hash and `bundle_digest`, then parse all records before lane review
+  record hash, then parse all records before lane review
   begins. Treat any missing, duplicated, reordered, or mismatched page as invalid
   evidence. The parsed records carry plan sections, `prior_round_context`, quality
-  ledger, the immutable requirements bundle and its requirement sources, consumer
-  inventory, and `review_complexity`. Treat bundle `requirement_id` values and
-  their verified content as the only canonical requirements; never substitute the
-  live initiating request or worktree documents. Run
+  ledger, consumer inventory, and `review_complexity`. Read the repository and
+  Gobby tasks directly for requirements context; a requirements gap, ambiguity,
+  or conflict you cannot resolve from those sources is a finding, never a reason
+  to halt. Run
   lanes in parallel when the snapshot has at least 8 deliverables,
   24 acceptance items, 12 distinct target files, or 4 sections changed since the
   prior finalized round. Otherwise run the same lanes sequentially in this parent.
@@ -96,8 +96,7 @@ instructions: |
   Each lane returns `lane_id`, `status: completed`, every deliverable in
   `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
   Every candidate has `candidate_id`, `section_ids`, `violated_invariant`,
-  citations using exactly one branch (repository `path`/`sha256` or bundle
-  `requirement_id`/`content_sha256`, with optional lines), `suggested_fix`,
+  citations as repository `path`/`sha256` with optional lines, `suggested_fix`,
   `adjacent_sites_checked`, and confidence from 0 through 1.
 
   You are the sole verdict and evidence owner. Verify and deduplicate every
@@ -140,12 +139,11 @@ instructions: |
   Every parent delivery is one JSON object matching one branch:
   `{"verdict":"approved","findings":[...],"coverage_attestation":{...},"manifest_entries":[...],"routing_decisions":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"needs_review","findings":[...],"coverage_attestation":{...},"convergence_telemetry":<delivered-reviewer-telemetry>}`
-  `{"verdict":"needs_requirements","evidence_id":"<id>","reason":{"reason_code":"missing_requirements","questions":["<specific question>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"source_drift","paths":["<repository-relative path>"]},"convergence_telemetry":<delivered-reviewer-telemetry>}`
   `{"verdict":"inconclusive","evidence_id":"<id>","reason":{"reason_code":"timeout","timeout_seconds":2700},"convergence_telemetry":<enriched-daemon-unavailable-telemetry>}`
   Reviewed branches require canonical coverage. Non-attested branches use exactly
-  the shown top-level and reason keys. `reason_code` is closed to
-  `missing_requirements`, `source_drift`, and `timeout`.
+  the shown top-level and reason keys. `reason_code` is closed to `source_drift`
+  and `timeout`.
   TERMINAL_RESULT_UNION_V1_END
 
   If coverage validation reports source drift (`source_drift`), rerun only affected lanes once
@@ -185,15 +183,11 @@ instructions: |
           sha256: <lowercase-sha256>
           line_start: <optional-positive-line>
           line_end: <optional-positive-line>
-        # Or cite an immutable requirement:
-        # - requirement_id: <bundle-requirement-id>
-        #   content_sha256: <bundle-content-sha256>
-        #   line_start: <optional-positive-line>
-        #   line_end: <optional-positive-line>
   ```
 
-  If requirements are insufficient, use the exact
-  `needs_requirements`/`missing_requirements` JSON branch above.
+  If requirements context is insufficient after reading the repository and
+  Gobby tasks directly, emit a blocking `missing-requirement` finding carrying
+  the specific unanswered questions and return `needs_review`.
 
   PLAN IDENTITY PRECONDITION: before any manifest handoff or approval, verify the
   plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
@@ -299,7 +293,7 @@ steps:
     description: "Review the plan artifact and return structured findings"
     status_message: |
       Review artifact_path. Return verdict approved, needs_review, or
-      needs_requirements to the parent. Every reviewer-produced result must include
+      inconclusive to the parent. Every reviewer-produced result must include
       the complete delivered convergence_telemetry object. Send that exact JSON with
       send_message, then call end_agent_run. Persist validated durable implementation
       facts discovered during review with project-scoped
@@ -320,6 +314,8 @@ steps:
     allowed_mcp_tools:
       - "gobby-agents:end_agent_run"
       - "gobby-agents:send_message"
+      - "gobby-tasks:get_task"
+      - "gobby-tasks:list_tasks"
       - "gobby-plans:get_plan_review_snapshot"
       - "gobby-plans:derive_plan_review_manifest"
       - "gobby-plans:validate_plan_review_coverage"
