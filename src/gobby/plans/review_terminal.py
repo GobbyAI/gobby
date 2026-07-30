@@ -247,7 +247,8 @@ def terminalize_plan_review_run(
 
     verdict = result.get("verdict")
     retryable_result = verdict == "inconclusive" or (
-        evidence.task_id is None and verdict == "needs_requirements"
+        evidence.task_id is None
+        and verdict == "needs_requirements"
         and _taskless_request_anchor_changed(
             database,
             session_id=evidence.session_id,

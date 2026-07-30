@@ -29,6 +29,7 @@ from gobby.plans.review_requirements import (
 from gobby.plans.review_sweep_scope import SweepScope, derive_sweep_scope
 from gobby.plans.review_telemetry import persist_delivered_round_result
 from gobby.plans.review_terminal import terminalize_plan_review_run
+from gobby.plans.vote_artifacts import canonical_digest
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -405,6 +406,9 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
     quality_ledger_migration = (
         repo_root / "src/gobby/storage/migrations/345_plan_review_quality_ledger.sql"
     ).read_text()
+    vote_artifact_migration = (
+        repo_root / "src/gobby/storage/migrations/350_plan_review_evidence_artifacts.sql"
+    ).read_text()
 
     def catalog() -> dict[str, list[tuple[object, ...]]]:
         columns = temp_db.execute(
@@ -467,7 +471,7 @@ def test_schema_migration_baseline_parity(temp_db: HubDatabase) -> None:
 
     baseline_catalog = catalog()
     temp_db.execute("DROP TABLE plan_review_evidence")
-    for migration_sql in (migration, quality_ledger_migration):
+    for migration_sql in (migration, quality_ledger_migration, vote_artifact_migration):
         _execute_sql_script(temp_db, migration_sql)
     assert catalog() == baseline_catalog
 
@@ -1055,6 +1059,7 @@ def test_ledger_round_trip_through_finalize(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
+    _seed_vote_artifact(service, prepared.evidence_id)
 
     finalized = service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
@@ -1089,6 +1094,7 @@ def test_ledger_round_trip_through_finalize(
         plan_path,
         service.render_v1_round_checkpoint(round_two.evidence_id, round_two_result),
     )
+    _seed_vote_artifact(service, round_two.evidence_id)
     carried = service.finalize_plan_review_evidence(
         round_two.evidence_id,
         round_two_result,
@@ -1125,6 +1131,7 @@ def test_inventory_unavailable_aborts_preparation(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
+    _seed_vote_artifact(service, prepared.evidence_id)
     service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
     def unavailable(*args: object, **kwargs: object) -> Never:
@@ -1169,6 +1176,40 @@ def _integration_finding() -> dict[str, object]:
     }
 
 
+def _seed_vote_artifact(service: PlanReviewEvidenceService, evidence_id: str) -> None:
+    """Attach a minimal evidence-bound vote artifact so interactive finalize passes its gate."""
+    evidence = service.get_evidence(evidence_id)
+    artifact: dict[str, object] = {
+        "evidence_id": evidence.evidence_id,
+        "project_id": evidence.project_id,
+        "session_id": evidence.session_id,
+        "plan_path": evidence.plan_path,
+        "round_number": evidence.round_number,
+        "votes": [],
+    }
+    receipt: dict[str, object] = {
+        "evidence_id": evidence.evidence_id,
+        "provenance": "test-fixture",
+    }
+    service.db.execute(
+        """
+        UPDATE plan_review_evidence
+        SET vote_artifact = %s::jsonb,
+            vote_artifact_digest = %s,
+            vote_receipt = %s::jsonb,
+            vote_receipt_digest = %s
+        WHERE evidence_id = %s
+        """,
+        (
+            json.dumps(artifact, sort_keys=True, separators=(",", ":")),
+            canonical_digest(artifact),
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")),
+            canonical_digest(receipt),
+            evidence_id,
+        ),
+    )
+
+
 def _finalize_integration_round(
     service: PlanReviewEvidenceService,
     plan_path: Path,
@@ -1176,6 +1217,7 @@ def _finalize_integration_round(
     *,
     findings: list[dict[str, object]],
 ) -> None:
+    _seed_vote_artifact(service, evidence_id)
     result = {
         "verdict": "needs_review",
         "findings": findings,
@@ -1505,6 +1547,7 @@ def test_telemetry_persisted_at_finalize(
         plan_path,
         service.render_v1_round_checkpoint(prepared.evidence_id, result),
     )
+    _seed_vote_artifact(service, prepared.evidence_id)
     service.finalize_plan_review_evidence(prepared.evidence_id, result)
 
     persisted = (
@@ -1627,6 +1670,7 @@ def test_approval_surfaces_carried_ledger(
     )
     assert b'"manifest_entries"' in checkpoint
     ensure_checkpoint(plan_path, checkpoint)
+    _seed_vote_artifact(service, prepared.evidence_id)
 
     finalized = service.finalize_plan_review_evidence(
         prepared.evidence_id,
