@@ -44,7 +44,6 @@ class ReasonFormat(StrEnum):
     """Provider-specific reason shaping applied at the adapter boundary."""
 
     PASSTHROUGH = "passthrough"
-    CLAUDE_PRE_TOOL_COMPACT = "claude_pre_tool_compact"
 
 
 RESPONSE_FIELD_NAMES: frozenset[str] = frozenset(
@@ -166,17 +165,12 @@ def _claude_capabilities() -> ProviderCapabilities:
         elif contract.decision_style.value == ProviderDecisionStyle.ELICITATION_RESULT:
             extra_fields.extend(["elicitation_action", "elicitation_content"])
 
-        reason_format = (
-            ReasonFormat.CLAUDE_PRE_TOOL_COMPACT
-            if contract.native_name == "pre-tool-use"
-            else ReasonFormat.PASSTHROUGH
-        )
         events[contract.native_name] = HookCapability(
             hook_name=contract.native_name,
             event_type=contract.event_type,
             decision_style=ProviderDecisionStyle(contract.decision_style.value),
             context_channel=context_channel,
-            reason_format=reason_format,
+            reason_format=ReasonFormat.PASSTHROUGH,
             supported_response_fields=_response_fields(
                 *extra_fields,
                 context_channel=context_channel,

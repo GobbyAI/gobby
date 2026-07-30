@@ -22,6 +22,10 @@ rules:
           Run `git add <files>` then `git commit -m "[{{ project.name }}-#N] description"` —
           uncommitted changes must be committed before a status change.
           Gobby auto-detects the commit; pass commit_sha to close_task() if needed.
+          If the reported dirt is foreign-attributed after its owning session committed or
+          abandoned the work, ask that owner to call
+          `release_task_paths(task_id="#N", paths=["path/to/file"])` on gobby-tasks.
+          Only the owning session can release attribution, and dirty paths are refused.
 
   require-commit-before-status:
     description: "Block status transitions when no commit is linked to the task"

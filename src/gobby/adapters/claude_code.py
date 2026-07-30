@@ -16,7 +16,7 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
-from gobby.adapters.capabilities import ContextChannel, ReasonFormat, get_provider_capabilities
+from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.claude_contract import (
     CLAUDE_EVENT_MAP,
     CLAUDE_HOOK_EVENT_NAME_MAP,
@@ -24,11 +24,7 @@ from gobby.adapters.claude_contract import (
     ClaudeHookContract,
     get_claude_contract,
 )
-from gobby.adapters.degradation import (
-    AdapterDegradationKind,
-    record_adapter_degradation,
-    record_unsupported_response_fields,
-)
+from gobby.adapters.degradation import record_unsupported_response_fields
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
@@ -36,13 +32,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_RULE_BLOCK_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]\s*(.*)$", re.DOTALL)
-_AGGREGATED_RULE_NAME_RE = re.compile(r"^aggregated:(\d+)-gates$")
-_AGGREGATED_GATE_LINE_RE = re.compile(r"^\s*(\d+)\.\s+\[([^\]]+)\]\s*(.*)$")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
 _ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
-_DENY_REASON_MAX_CHARS = 300
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
@@ -57,16 +49,6 @@ DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
 )
 
 
-def _first_sentence(text: str) -> str:
-    if not text:
-        return ""
-    for delimiter in (". ", "! ", "? "):
-        if delimiter in text:
-            head, _sep, _tail = text.partition(delimiter)
-            return f"{head.strip()}{delimiter.strip()}"
-    return text.strip()
-
-
 def is_action_first_reason(reason: str) -> bool:
     """Return whether a block reason opens with executable recovery guidance."""
     return (
@@ -74,74 +56,6 @@ def is_action_first_reason(reason: str) -> bool:
         or _GET_SKILL_RE.match(reason) is not None
         or _COMMAND_CALL_RE.match(reason) is not None
     )
-
-
-def _compact_claude_pre_tool_deny_reason(reason: str) -> str:
-    """Return a compact one-line Claude PreToolUse denial reason for rule blocks."""
-    match = _RULE_BLOCK_REASON_RE.match(reason.strip())
-    if not match:
-        return reason
-
-    rule_name = match.group(1)
-    body = match.group(2).strip()
-    if _AGGREGATED_RULE_NAME_RE.match(rule_name):
-        return _compact_aggregated_claude_pre_tool_deny_reason(rule_name, body)
-
-    return _compact_single_claude_pre_tool_deny_reason(rule_name, body)
-
-
-def _compact_aggregated_claude_pre_tool_deny_reason(rule_name: str, body: str) -> str:
-    lines: list[str] = []
-    for line in body.splitlines():
-        gate_match = _AGGREGATED_GATE_LINE_RE.match(line)
-        if not gate_match:
-            continue
-        gate_number = gate_match.group(1)
-        gate_rule = gate_match.group(2)
-        gate_body = gate_match.group(3).strip()
-        compact_gate = _compact_single_claude_pre_tool_deny_reason(
-            gate_rule, gate_body
-        ).removeprefix("Gobby ")
-        lines.append(f"{gate_number}. {compact_gate}")
-
-    if not lines:
-        return _compact_single_claude_pre_tool_deny_reason(rule_name, body)
-    return f"Gobby [{rule_name}]:\n" + "\n".join(lines)
-
-
-def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> str:
-    if not body:
-        return f"Gobby blocked [{rule_name}]."
-
-    body = " ".join(line.strip() for line in body.splitlines() if line.strip())
-    body = re.sub(r"\s+", " ", body).strip()
-
-    if is_action_first_reason(body):
-        original_action = _first_sentence(body)
-        remainder = body[len(original_action) :].strip()
-        short_reason = _first_sentence(remainder) if remainder else ""
-        prefix = f"Gobby [{rule_name}]: "
-        action_budget = _DENY_REASON_MAX_CHARS - len(prefix)
-        action = original_action
-        if len(action) > action_budget:
-            action = f"{action[: action_budget - 1]}…"
-        action_message = f"{prefix}{action}"
-        if not short_reason or len(action_message) >= _DENY_REASON_MAX_CHARS:
-            return action_message
-
-        reason_budget = _DENY_REASON_MAX_CHARS - len(action_message) - len(" ()")
-        if reason_budget <= 0:
-            return action_message
-        if len(short_reason) > reason_budget:
-            short_reason = f"{short_reason[: reason_budget - 1]}…"
-        return f"{action_message} ({short_reason})"
-
-    short_reason = _first_sentence(body)
-    prefix = f"Gobby blocked [{rule_name}]: "
-    reason_budget = _DENY_REASON_MAX_CHARS - len(prefix)
-    if len(short_reason) > reason_budget:
-        short_reason = f"{short_reason[: reason_budget - 1]}…"
-    return f"{prefix}{short_reason}"
 
 
 class ClaudeCodeAdapter(BaseAdapter):
@@ -407,28 +321,7 @@ class ClaudeCodeAdapter(BaseAdapter):
                 if permission_decision:
                     hook_output["permissionDecision"] = permission_decision
                     if normalized_reason:
-                        permission_reason = normalized_reason
-                        if (
-                            is_denied
-                            and capability
-                            and capability.reason_format is ReasonFormat.CLAUDE_PRE_TOOL_COMPACT
-                        ):
-                            compacted_reason = _compact_claude_pre_tool_deny_reason(
-                                normalized_reason
-                            )
-                            if compacted_reason != normalized_reason:
-                                record_adapter_degradation(
-                                    provider=self.source,
-                                    hook_type=hook_type,
-                                    kind=AdapterDegradationKind.REASON_COMPACTED,
-                                    response_field="reason",
-                                    destination_channel=(
-                                        "hookSpecificOutput.permissionDecisionReason"
-                                    ),
-                                    event_logger=event_logger,
-                                )
-                            permission_reason = compacted_reason
-                        hook_output["permissionDecisionReason"] = permission_reason
+                        hook_output["permissionDecisionReason"] = normalized_reason
                 if response.modified_input is not None and permission_decision != "deny":
                     hook_output["updatedInput"] = response.modified_input
         elif decision_style == ClaudeDecisionStyle.PERMISSION_REQUEST:

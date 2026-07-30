@@ -89,6 +89,12 @@ Closing a leaf task is an ordered checklist:
 | 3 | A clean category-appropriate validation command in a task session transcript | Docs, planning, research, manual, or no-edit close |
 | 4 | One bounded criteria review | Organizational parent |
 
+When a completion gate reports foreign-attributed dirt after its owning session
+committed or abandoned the work, ask that owner to call
+`release_task_paths(task_id="#N", paths=["path/to/file"])` on `gobby-tasks`.
+Only the owning session can release attribution, and the tool refuses paths with
+uncommitted content.
+
 The close tool derives validation evidence from the claiming and closing session
 transcripts. A later task-attributed file edit makes earlier validation stale;
 commits preserve it. Shell validation must produce a definitive exit code, so

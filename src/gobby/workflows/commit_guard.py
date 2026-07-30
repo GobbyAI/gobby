@@ -252,7 +252,7 @@ def _git_paths(project_path: str, *args: str) -> set[str]:
 
 
 def _format_ref(seq_num: object, fallback_id: str) -> str:
-    return f"#{seq_num}" if isinstance(seq_num, int) else fallback_id[:8]
+    return f"#{seq_num}" if isinstance(seq_num, int) else fallback_id
 
 
 def _format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:

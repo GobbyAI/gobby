@@ -652,8 +652,8 @@ class SessionVariableManager:
                     if normalized is not None and normalized not in released:
                         released.append(normalized)
                     continue
-                if isinstance(value, str) and value not in remaining:
-                    remaining.append(value)
+                if normalized is not None and normalized not in remaining:
+                    remaining.append(normalized)
 
             if not released:
                 return (released, remaining), False

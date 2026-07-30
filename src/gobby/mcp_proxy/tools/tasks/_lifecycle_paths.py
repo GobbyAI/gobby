@@ -1,5 +1,8 @@
 """Owner-controlled task path attribution release."""
 
+import os
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -10,6 +13,35 @@ from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.task_claim_state import normalize_task_edited_path
+
+
+def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
+    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
+        ["git", "--literal-pathspecs", "status", "--porcelain", "-z", "--", *paths],
+        cwd=Path(repo_path),
+        check=False,
+        capture_output=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        stderr = os.fsdecode(result.stderr).strip()
+        raise RuntimeError(f"git status failed: {stderr}")
+
+    dirty: set[str] = set()
+    records = iter(result.stdout.split(b"\0"))
+    for record in records:
+        if len(record) < 4:
+            continue
+        status = record[:2]
+        path = normalize_task_edited_path(os.fsdecode(record[3:]))
+        if path is not None:
+            dirty.add(path)
+        if b"R" in status or b"C" in status:
+            original = normalize_task_edited_path(os.fsdecode(next(records, b"")))
+            if original is not None:
+                dirty.add(original)
+
+    return [path for path in paths if path in dirty]
 
 
 def register_release_task_paths(
@@ -32,7 +64,7 @@ def register_release_task_paths(
         except TaskNotFoundError as exc:
             return task_error(str(exc), TaskToolErrorCode.TASK_NOT_FOUND)
         except ValueError as exc:
-            return {"error": str(exc)}
+            return task_error(str(exc), TaskToolErrorCode.TASK_NOT_FOUND)
 
         task = ctx.task_manager.get_task(resolved_task_id)
         if task is None:
@@ -49,26 +81,57 @@ def register_release_task_paths(
         try:
             session_id = ctx.resolve_session_id(session_ref)
         except ValueError as exc:
-            return {"error": f"Cannot resolve session '{session_ref}': {exc}"}
+            return task_error(
+                f"Cannot resolve session '{session_ref}': {exc}",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         owner_session_id = get_claimed_session_id(task)
         if owner_session_id != session_id:
-            return {
-                "error": "Only the task's owning session can release attributed paths",
-                "task_id": resolved_task_id,
-                "owner_session_id": owner_session_id,
-                "session_id": session_id,
-            }
+            return task_error(
+                "Only the task's owning session can release attributed paths",
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                task_id=resolved_task_id,
+                owner_session_id=owner_session_id,
+                session_id=session_id,
+            )
 
         normalized_paths: list[str] = []
         for value in paths:
             path = normalize_task_edited_path(value)
             if path is None:
-                return {"error": f"Invalid repository-relative path: {value!r}"}
+                return task_error(
+                    f"Invalid repository-relative path: {value!r}",
+                    TaskToolErrorCode.TASK_INVALID_STATUS,
+                )
             if path not in normalized_paths:
                 normalized_paths.append(path)
         if not normalized_paths:
-            return {"error": "paths must contain at least one repository-relative path"}
+            return task_error(
+                "paths must contain at least one repository-relative path",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+
+        artifacts = ctx.task_manager.artifacts.get_artifacts(resolved_task_id)
+        repo_path = artifacts.worktree_path or ctx.get_project_repo_path(task.project_id)
+        if repo_path is None:
+            return task_error(
+                "Cannot verify task paths because the project has no repository path",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+        try:
+            dirty_paths = _dirty_repo_paths(repo_path, normalized_paths)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return task_error(
+                f"Cannot verify task paths: {exc}",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+        if dirty_paths:
+            return task_error(
+                "Cannot release paths with uncommitted content",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+                dirty_paths=dirty_paths,
+            )
 
         released, remaining = ctx.session_var_manager.release_task_edited_files(
             session_id,

@@ -10,12 +10,15 @@ from pathlib import Path
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.commit_guard import _format_ref
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -25,6 +28,12 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-cross-session-foreign-staged-commit"
+
+
+def test_format_ref_preserves_full_uuid_fallback() -> None:
+    task_id = "12345678-1234-5678-9abc-123456789abc"
+
+    assert _format_ref(None, task_id) == task_id
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -308,6 +317,43 @@ async def test_owner_path_release_breaks_commit_and_close_cycle(
     )
     assert commit_response.decision == "allow"
     assert close_response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_release_refuses_dirty_paths(guard_harness: GuardHarness) -> None:
+    dirty_paths = [":(glob)literal.py", "literal[abc]*.py"]
+    for path in dirty_paths:
+        (guard_harness.repo / path).write_text("uncommitted\n", encoding="utf-8")
+
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {"task_edited_files": {guard_harness.foreign_task.id: dirty_paths}},
+    )
+    registry = create_task_registry(LocalTaskManager(guard_harness.db))
+
+    with session_context_for_test(guard_harness.foreign_session.id):
+        result = await registry.call(
+            "release_task_paths",
+            {
+                "task_id": guard_harness.foreign_task.id,
+                "paths": dirty_paths,
+            },
+        )
+
+    assert result == {
+        "success": False,
+        "status": "error",
+        "error": "Cannot release paths with uncommitted content",
+        "error_code": "TASK_INVALID_STATUS",
+        "dirty_paths": dirty_paths,
+    }
+    assert (
+        variables.get_variables(guard_harness.foreign_session.id)["task_edited_files"][
+            guard_harness.foreign_task.id
+        ]
+        == dirty_paths
+    )
 
 
 @pytest.mark.asyncio

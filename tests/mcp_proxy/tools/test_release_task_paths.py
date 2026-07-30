@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -18,8 +21,15 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribution(
     temp_db: HubDatabase,
+    tmp_path: Path,
 ) -> None:
-    project = LocalProjectManager(temp_db).create("release-task-paths-test")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    project = LocalProjectManager(temp_db).create(
+        "release-task-paths-test",
+        repo_path=str(repo),
+    )
     sessions = SessionManager(temp_db)
     owner = sessions.register(
         external_id="release-owner",
@@ -60,11 +70,32 @@ async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribut
             {"task_id": task.id, "paths": ["src/committed.py"]},
         )
 
-    assert rejected["error"] == "Only the task's owning session can release attributed paths"
+    assert rejected == {
+        "success": False,
+        "status": "error",
+        "error": "Only the task's owning session can release attributed paths",
+        "error_code": "TASK_CLAIM_CONFLICT",
+        "task_id": task.id,
+        "owner_session_id": owner.id,
+        "session_id": foreign.id,
+    }
     assert variables.get_variables(owner.id)["task_edited_files"][task.id] == [
         "src/committed.py",
         "src/in-flight.py",
     ]
+
+    with session_context_for_test(owner.id):
+        invalid = await registry.call(
+            "release_task_paths",
+            {"task_id": task.id, "paths": ["../outside.py"]},
+        )
+
+    assert invalid == {
+        "success": False,
+        "status": "error",
+        "error": "Invalid repository-relative path: '../outside.py'",
+        "error_code": "TASK_INVALID_STATUS",
+    }
 
     with session_context_for_test(owner.id):
         released = await registry.call(

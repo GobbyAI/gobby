@@ -836,9 +836,9 @@ def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) ->
     mgr.merge_variables(
         S1,
         {
-            "session_edited_files": ["./src/released.py", "src/remaining.py"],
+            "session_edited_files": ["./src/released.py", "./src/remaining.py"],
             "task_edited_files": {
-                "task-1": ["./src/released.py", "src/remaining.py"],
+                "task-1": ["./src/released.py", "./src/remaining.py"],
                 "task-2": ["src/other.py"],
             },
         },
@@ -853,7 +853,7 @@ def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) ->
     assert released == ["src/released.py"]
     assert remaining == ["src/remaining.py"]
     variables = mgr.get_variables(S1)
-    assert variables["session_edited_files"] == ["./src/released.py", "src/remaining.py"]
+    assert variables["session_edited_files"] == ["./src/released.py", "./src/remaining.py"]
     assert variables["task_edited_files"] == {
         "task-1": ["src/remaining.py"],
         "task-2": ["src/other.py"],

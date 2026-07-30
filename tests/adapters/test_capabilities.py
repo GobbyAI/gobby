@@ -73,7 +73,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
 
     assert claude_pre_tool is not None
     assert claude_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
-    assert claude_pre_tool.reason_format is ReasonFormat.CLAUDE_PRE_TOOL_COMPACT
+    assert claude_pre_tool.reason_format is ReasonFormat.PASSTHROUGH
 
     assert codex_pre_tool is not None
     assert codex_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
@@ -191,7 +191,7 @@ def test_unknown_hook_response_fields_are_dropped_with_telemetry(
     } in calls
 
 
-def test_claude_reason_compaction_records_degradation(
+def test_claude_reason_passthrough_records_no_degradation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _capture_degradations(monkeypatch)
@@ -206,11 +206,8 @@ def test_claude_reason_compaction_records_degradation(
     )
 
     permission_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
-    assert permission_reason.startswith("Gobby [require-code-index-skill]:")
-    assert 'get_skill(name="code-index")' in permission_reason
-    assert "mcp__gobby__call_tool" in permission_reason
-    assert permission_reason != reason
-    assert any(call["kind"] == "reason_compacted" for call in calls)
+    assert permission_reason == reason
+    assert calls == []
 
 
 def test_qwen_tool_block_preserves_native_recoverable_reason(
