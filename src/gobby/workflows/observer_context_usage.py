@@ -108,6 +108,8 @@ def detect_mid_turn_context_compact_guidance(
     variables["context_compact_guidance_message"] = ""
 
     if _is_plan_mode(variables):
+        variables["context_compact_mid_turn_pressure_band"] = "none"
+        variables["context_compact_guidance_shown_kinds"] = []
         return
 
     session = _load_session(session_manager, session_id)

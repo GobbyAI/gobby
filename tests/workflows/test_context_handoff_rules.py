@@ -25,7 +25,10 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.observer_context_usage import detect_context_compact_guidance
+from gobby.workflows.observer_context_usage import (
+    detect_context_compact_guidance,
+    detect_mid_turn_context_compact_guidance,
+)
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -600,8 +603,8 @@ class TestNudgeCompactOnContextPressure:
         assert "Context pressure" not in (response.context or "")
         variables = variable_manager.get_variables(SESSION_ID)
         assert variables["context_compact_guidance_message"] == ""
-        assert "context_compact_mid_turn_pressure_band" not in variables
-        assert "context_compact_guidance_shown_kinds" not in variables
+        assert variables["context_compact_mid_turn_pressure_band"] == "none"
+        assert variables["context_compact_guidance_shown_kinds"] == []
 
     def test_soft_nudge_at_forty_percent(self) -> None:
         variables = {"parent_turn_seq": 4, "chat_mode": "normal"}
@@ -814,3 +817,23 @@ class TestAutoCompactAfterTaskClose:
             if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
         ]
         assert second_compact_calls == []
+
+
+def test_plan_mode_resets_pressure_band() -> None:
+    variables: dict[str, Any] = {"chat_mode": "normal"}
+    session_manager = _SessionManagerWithContextRatio(0.9)
+
+    detect_mid_turn_context_compact_guidance(variables, "session-1", session_manager)
+    assert variables["context_compact_guidance_kind"] == "strong"
+
+    variables["chat_mode"] = "plan"
+    detect_mid_turn_context_compact_guidance(variables, "session-1", session_manager)
+
+    assert variables["context_compact_mid_turn_pressure_band"] == "none"
+    assert variables["context_compact_guidance_shown_kinds"] == []
+
+    variables["chat_mode"] = "normal"
+    detect_mid_turn_context_compact_guidance(variables, "session-1", session_manager)
+
+    assert variables["context_compact_guidance_kind"] == "strong"
+    assert "Context pressure is 90%" in variables["context_compact_guidance_message"]
