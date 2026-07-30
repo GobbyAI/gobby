@@ -783,13 +783,22 @@ class TestTmuxSessionManager:
         assert args[args.index("select-pane") + 4] == "##99 Fix ##title"
 
     @pytest.mark.asyncio
-    async def test_rename_window_missing_pane_logs_debug(
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "can't find pane: %53",
+            "can't find window: %53",
+            "no such window: %53",
+        ],
+    )
+    async def test_rename_window_missing_target_logs_debug(
         self,
         caplog: pytest.LogCaptureFixture,
+        message: str,
     ) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "can't find pane: %53")
+            mock_run.return_value = (1, "", message)
 
             with caplog.at_level("DEBUG", logger="gobby.agents.tmux.session_manager"):
                 assert await mgr.rename_window("%53", "Title") is False
@@ -801,12 +810,12 @@ class TestTmuxSessionManager:
     async def test_rename_window_failure(self, caplog: pytest.LogCaptureFixture) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "no such window")
+            mock_run.return_value = (1, "", "ambiguous target")
 
             with caplog.at_level("WARNING", logger="gobby.agents.tmux.session_manager"):
                 assert await mgr.rename_window("%99", "Title") is False
 
-        assert "Failed to rename tmux window for '%99': no such window" in caplog.text
+        assert "Failed to rename tmux window for '%99': ambiguous target" in caplog.text
 
     @pytest.mark.asyncio
     async def test_send_keys(self) -> None:

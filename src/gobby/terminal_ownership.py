@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -157,14 +158,32 @@ def _recorded_create_time(session: object) -> float | None:
         return None
 
 
-def foreground_process_group(tty: str) -> int:
-    """Return the foreground process group for a terminal device."""
-    flags = os.O_RDONLY | getattr(os, "O_NOCTTY", 0)
-    fd = os.open(tty, flags)
+def foreground_process_group(
+    pid: int,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> int:
+    """Return the terminal foreground process group reported for *pid*."""
+    result = runner(
+        ["ps", "-o", "tpgid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        timeout=2.0,
+        check=False,
+    )
+    output = result.stdout.strip()
+    error = result.stderr.strip()
+    if result.returncode != 0:
+        if not output and (not error or "no such process" in error.lower()):
+            raise ProcessLookupError(pid)
+        raise OSError(error or f"ps exited with status {result.returncode}")
+    fields = output.split()
+    if len(fields) != 1:
+        raise OSError(f"unexpected ps tpgid output: {output!r}")
     try:
-        return os.tcgetpgrp(fd)
-    finally:
-        os.close(fd)
+        return int(fields[0])
+    except ValueError as exc:
+        raise OSError(f"unexpected ps tpgid output: {output!r}") from exc
 
 
 def inspect_foreground_ownership(
@@ -172,18 +191,12 @@ def inspect_foreground_ownership(
     *,
     process_factory: Callable[[int], _ProcessLike] = psutil.Process,
     process_group_factory: Callable[[int], int] = os.getpgid,
-    foreground_group_factory: Callable[[str], int] = foreground_process_group,
+    foreground_group_factory: Callable[[int], int] = foreground_process_group,
 ) -> ForegroundOwnershipInspection:
     """Validate the recorded CLI process and its foreground terminal ownership."""
     pid = _normalized_parent_pid(session)
     expected_create_time = _recorded_create_time(session)
-    terminal_context = getattr(session, "terminal_context", None)
-    tty = (
-        _non_empty_text(terminal_context.get("tty"))
-        if isinstance(terminal_context, Mapping)
-        else None
-    )
-    if pid is None or expected_create_time is None or tty is None:
+    if pid is None or expected_create_time is None:
         return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
     try:
         process = process_factory(pid)
@@ -196,8 +209,10 @@ def inspect_foreground_ownership(
         return ForegroundOwnershipInspection(OwnershipState.INDETERMINATE)
 
     try:
-        foreground_group = foreground_group_factory(tty)
-    except OSError:
+        foreground_group = foreground_group_factory(pid)
+    except ProcessLookupError:
+        return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
+    except (TypeError, ValueError, subprocess.SubprocessError, PermissionError, OSError):
         return ForegroundOwnershipInspection(OwnershipState.INDETERMINATE)
     if foreground_group <= 0 or process_group != foreground_group:
         return ForegroundOwnershipInspection(OwnershipState.OWNERLESS)
@@ -230,7 +245,7 @@ def resolve_pane_ownership(
     requested_session_id: str | None = None,
     process_factory: Callable[[int], _ProcessLike] = psutil.Process,
     process_group_factory: Callable[[int], int] = os.getpgid,
-    foreground_group_factory: Callable[[str], int] = foreground_process_group,
+    foreground_group_factory: Callable[[int], int] = foreground_process_group,
 ) -> PaneOwnershipDecision:
     """Select the foreground-process-backed owner of one physical tmux pane."""
     requested = _non_empty_text(requested_session_id)

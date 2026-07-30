@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import psutil
 import pytest
@@ -9,6 +11,7 @@ import pytest
 from gobby.terminal_ownership import (
     OwnershipState,
     PaneOwnershipDecision,
+    foreground_process_group,
     inspect_foreground_ownership,
     resolve_pane_ownership,
 )
@@ -54,13 +57,14 @@ def _session(
     machine_id: str = "machine",
     pane: str = "%1",
     socket_name: str = "gobby",
+    tty: str | None = "/dev/ttys001",
 ) -> SimpleNamespace:
     terminal_context: dict[str, object] = {
         "parent_pid": pid,
         "parent_create_time": create_time if create_time is not None else float(pid),
         "tmux_pane": pane,
         "tmux_socket_name": socket_name,
-        "tty": "/dev/ttys001",
+        "tty": tty,
     }
     return SimpleNamespace(
         id=session_id,
@@ -84,7 +88,7 @@ def _resolve(
         requested_session_id=requested_session_id,
         process_factory=processes,
         process_group_factory=process_groups.__getitem__,
-        foreground_group_factory=lambda _tty: foreground_group,
+        foreground_group_factory=lambda _pid: foreground_group,
     )
 
 
@@ -97,6 +101,15 @@ def test_foreground_provider_process_owns_pane(source: str) -> None:
     assert decision.owner_session_id == source
     assert decision.state is OwnershipState.OWNED
     assert decision.reason == "validated_foreground_process"
+
+
+def test_live_session_without_tty_owns_pane() -> None:
+    session = _session("codex", 10, tty=None)
+
+    decision = _resolve([session], _ProcessFactory(_FakeProcess(10, 10.0)), {10: 100})
+
+    assert decision.owner_session_id == "codex"
+    assert decision.state is OwnershipState.OWNED
 
 
 def test_handoff_ready_is_eligible_foreground_owner() -> None:
@@ -205,23 +218,88 @@ def test_process_probe_failure_is_indeterminate() -> None:
         session,
         process_factory=_ProcessFactory(_FakeProcess(10, 10.0)),
         process_group_factory=denied,
-        foreground_group_factory=lambda _tty: 100,
+        foreground_group_factory=lambda _pid: 100,
     )
 
     assert inspection.state is OwnershipState.INDETERMINATE
 
 
-def test_terminal_probe_failure_is_indeterminate() -> None:
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        OSError("ps failed"),
+        PermissionError("operation not permitted"),
+        subprocess.TimeoutExpired(cmd="ps", timeout=2.0),
+    ],
+)
+def test_terminal_probe_failure_is_indeterminate(probe_error: BaseException) -> None:
     session = _session("probe-error", 10)
 
-    def failed_probe(_tty: str) -> int:
-        raise OSError("tcgetpgrp failed")
+    def failed_probe(_pid: int) -> int:
+        raise probe_error
 
     inspection = inspect_foreground_ownership(
         session,
         process_factory=_ProcessFactory(_FakeProcess(10, 10.0)),
         process_group_factory=lambda _pid: 100,
         foreground_group_factory=failed_probe,
+    )
+
+    assert inspection.state is OwnershipState.INDETERMINATE
+
+
+def test_process_disappearance_during_terminal_probe_is_ownerless() -> None:
+    session = _session("disappeared", 10)
+
+    def disappeared(_pid: int) -> int:
+        raise ProcessLookupError
+
+    inspection = inspect_foreground_ownership(
+        session,
+        process_factory=_ProcessFactory(_FakeProcess(10, 10.0)),
+        process_group_factory=lambda _pid: 100,
+        foreground_group_factory=disappeared,
+    )
+
+    assert inspection.state is OwnershipState.OWNERLESS
+
+
+def test_foreground_process_group_reads_tpgid_with_ps() -> None:
+    result = subprocess.CompletedProcess(
+        args=["ps"],
+        returncode=0,
+        stdout="  100\n",
+        stderr="",
+    )
+    runner = Mock(return_value=result)
+
+    assert foreground_process_group(42, runner=runner) == 100
+    runner.assert_called_once_with(
+        ["ps", "-o", "tpgid=", "-p", "42"],
+        capture_output=True,
+        text=True,
+        timeout=2.0,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("output", ["", "not-a-pgid", "100\n101\n"])
+def test_malformed_ps_output_is_indeterminate(output: str) -> None:
+    session = _session("malformed", 10)
+    runner = Mock(
+        return_value=subprocess.CompletedProcess(
+            args=["ps"],
+            returncode=0,
+            stdout=output,
+            stderr="",
+        )
+    )
+
+    inspection = inspect_foreground_ownership(
+        session,
+        process_factory=_ProcessFactory(_FakeProcess(10, 10.0)),
+        process_group_factory=lambda _pid: 100,
+        foreground_group_factory=lambda pid: foreground_process_group(pid, runner=runner),
     )
 
     assert inspection.state is OwnershipState.INDETERMINATE

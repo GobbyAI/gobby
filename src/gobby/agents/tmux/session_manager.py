@@ -34,6 +34,8 @@ _MISSING_TARGET_ERRORS = (
     *_MISSING_SESSION_ERRORS,
     "can't find pane",
     "no such pane",
+    "can't find window",
+    "no such window",
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
 TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
