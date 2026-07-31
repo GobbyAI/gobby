@@ -81,18 +81,54 @@ def test_refresh_and_reload_reuse_unchanged_fingerprint() -> None:
     assert database.fetchall.call_count == 3
 
 
-def test_bundled_manifests_cover_supported_providers() -> None:
+def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None:
     manifests_path = get_bundled_detection_manifests_path()
-    providers = {"claude", "codex", "gemini", "qwen", "droid"}
+    providers = {"agy", "claude", "codex", "droid", "grok", "qwen"}
+    required_rule_ids = {
+        "trust_prompt",
+        "loop_prompt",
+        "approval_prompt",
+        "pane_provider_error",
+        "provider_error",
+        "context_full",
+        "stop_hook_blocked",
+        "active_work",
+        "queued_continuation",
+        "queued_message",
+        "status_bar",
+        "idle_prompt",
+        "stalled_input",
+        "source_shaped",
+    }
 
     loaded = {
         path.stem: compile_manifest(path.read_text(encoding="utf-8"))
         for path in manifests_path.glob("*.toml")
     }
 
-    assert providers <= loaded.keys()
+    assert loaded.keys() == providers
     assert all(loaded[provider].manifest.id == provider for provider in providers)
     assert all(loaded[provider].issues == () for provider in providers)
+    assert all(
+        {rule.id for rule in loaded[provider].manifest.rules} == required_rule_ids
+        for provider in providers
+    )
+
+
+def test_grok_bundled_manifest_matches_recorded_approval_menu() -> None:
+    manifests_path = get_bundled_detection_manifests_path()
+    compiled = compile_manifest((manifests_path / "grok.toml").read_text(encoding="utf-8"))
+    pane = """\
+1 (●) Yes, and don't ask again for anything (always-approve mode)
+3 (○) Yes, proceed
+4 (○) No, reject (type to add feedback)
+"""
+
+    evaluation = compiled.match_rule("approval_prompt", pane)
+
+    assert evaluation.match is not None
+    assert evaluation.match.state == "blocked"
+    assert evaluation.match.reason == "approval"
 
 
 def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
