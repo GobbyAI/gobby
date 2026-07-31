@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import uuid
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -86,14 +88,19 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
         assert txn is hub
         assert discovered is migration
 
-    def record_applied_version(self: Any, txn: _PostgresMigrationHub, version: int) -> None:
+    def record_applied_version(
+        self: Any,
+        txn: _PostgresMigrationHub,
+        discovered: Migration,
+    ) -> None:
         assert txn is hub
-        hub.applied.append(version)
+        hub.applied.append(discovered.version)
 
     runner._ensure_schema_migrations_table = MethodType(ensure_schema_migrations_table, runner)
     runner._read_applied_versions = MethodType(read_applied_versions, runner)
     runner._discover_migrations = MethodType(discover_migrations, runner)
     runner._is_non_transactional = MethodType(lambda self, item: False, runner)
+    runner._is_destructive = MethodType(lambda self, item: False, runner)
     runner._run_migration = MethodType(run_migration, runner)
     runner._record_applied_version = MethodType(record_applied_version, runner)
 
@@ -109,6 +116,403 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
     assert record.levelname == "INFO"
     assert record.__dict__["migration_version"] == 295
     assert record.__dict__["migration_name"] == "add_needed_column"
+
+
+def test_default_apply_halts_before_destructive_migration_after_safe_prefix(
+    tmp_path: Path,
+) -> None:
+    module = _migration_module()
+    hub = _PostgresMigrationHub()
+    runner = module.MigrationRunner(hub)
+    safe_path = tmp_path / "354_bookkeeping.sql"
+    safe_path.write_text("SELECT 354;\n", encoding="utf-8")
+    destructive_path = tmp_path / "355_drop_legacy.sql"
+    destructive_path.write_text(
+        "-- gobby:destructive\nDROP TABLE legacy_data;\n",
+        encoding="utf-8",
+    )
+    migrations = [
+        Migration(version=354, name="bookkeeping", path=safe_path),
+        Migration(version=355, name="drop_legacy", path=destructive_path),
+    ]
+    executed: list[int] = []
+
+    runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+    runner._read_applied_versions = MethodType(lambda self: {353}, runner)
+    runner._discover_migrations = MethodType(lambda self: migrations, runner)
+    runner._is_non_transactional = MethodType(lambda self, item: False, runner)
+    runner._run_migration = MethodType(
+        lambda self, txn, migration: executed.append(migration.version),
+        runner,
+    )
+    runner._record_applied_version = MethodType(
+        lambda self, txn, migration: hub.applied.append(migration.version),
+        runner,
+    )
+
+    with pytest.raises(
+        MigrationUnsupportedError,
+        match=r"gobby schema apply --destructive",
+    ):
+        runner.apply_pending()
+
+    assert executed == [354]
+    assert hub.applied == [354]
+
+
+def test_fresh_schema_apply_may_cross_destructive_marker(tmp_path: Path) -> None:
+    module = _migration_module()
+    hub = _PostgresMigrationHub()
+    runner = module.MigrationRunner(hub)
+    migration_path = tmp_path / "355_drop_legacy.sql"
+    migration_path.write_text(
+        "-- gobby:destructive\nDROP TABLE legacy_data;\n",
+        encoding="utf-8",
+    )
+    migration = Migration(version=355, name="drop_legacy", path=migration_path)
+    executed: list[int] = []
+
+    runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+    runner._read_applied_versions = MethodType(lambda self: {354}, runner)
+    runner._discover_migrations = MethodType(lambda self: [migration], runner)
+    runner._is_non_transactional = MethodType(lambda self, item: False, runner)
+    runner._run_migration = MethodType(
+        lambda self, txn, discovered: executed.append(discovered.version),
+        runner,
+    )
+    runner._record_applied_version = MethodType(
+        lambda self, txn, discovered: hub.applied.append(discovered.version),
+        runner,
+    )
+
+    runner.apply_pending(fresh_schema=True)
+
+    assert executed == [355]
+    assert hub.applied == [355]
+
+
+def test_apply_pending_rejects_gap_in_bookkeeping_chain(tmp_path: Path) -> None:
+    module = _migration_module()
+    hub = _PostgresMigrationHub()
+    runner = module.MigrationRunner(hub)
+    migration_path = tmp_path / "356_skipped_slot.sql"
+    migration_path.write_text("SELECT 356;\n", encoding="utf-8")
+    migration = Migration(version=356, name="skipped_slot", path=migration_path)
+
+    runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+    runner._read_applied_versions = MethodType(lambda self: {354}, runner)
+    runner._discover_migrations = MethodType(lambda self: [migration], runner)
+
+    with pytest.raises(MigrationUnsupportedError, match=r"missing migration v355"):
+        runner.apply_pending()
+
+
+def test_bookkeeping_records_filename_and_checksum_from_version_354(
+    tmp_path: Path,
+) -> None:
+    module = _migration_module()
+    runner = module.MigrationRunner(_PostgresMigrationHub())
+    migration_path = tmp_path / "354_migration_bookkeeping.sql"
+    payload = "SELECT 354;\n"
+    migration_path.write_text(payload, encoding="utf-8")
+    migration = Migration(
+        version=354,
+        name="migration_bookkeeping",
+        path=migration_path,
+    )
+    recorded: list[tuple[str, tuple[Any, ...]]] = []
+
+    class Recorder:
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
+            recorded.append((sql, params))
+            return _Result()
+
+    runner._record_applied_version(Recorder(), migration)
+
+    assert recorded == [
+        (
+            """
+            INSERT INTO schema_migrations(version, filename, checksum, applied_at)
+            VALUES (%s, %s, %s, NOW())
+            """,
+            (
+                354,
+                "354_migration_bookkeeping.sql",
+                hashlib.sha256(payload.encode()).hexdigest(),
+            ),
+        )
+    ]
+
+
+class _BatchState:
+    def __init__(self) -> None:
+        self.applied: dict[int, tuple[str | None, str | None]] = {
+            354: (
+                "354_migration_bookkeeping.sql",
+                "a" * 64,
+            )
+        }
+        self.migration_plan: list[dict[str, str]] = []
+        self.intent: dict[str, object] = {"campaign": "schema-apply"}
+        self.epoch_open = True
+        self.locked = False
+        self.lock_acquisitions = 0
+        self.unlocks = 0
+        self.closed = 0
+        self.mutations: list[int] = []
+        self.epoch_id = str(uuid.uuid4())
+        self.batch_id = str(uuid.uuid4())
+        self.manifest_sha256 = "b" * 64
+
+
+class _BatchTransaction:
+    def __init__(self, state: _BatchState) -> None:
+        self._state = state
+        self._applied = dict(state.applied)
+        self._migration_plan = list(state.migration_plan)
+        self._intent = dict(state.intent)
+        self._mutations = list(state.mutations)
+
+    def commit(self) -> None:
+        self._state.applied = self._applied
+        self._state.migration_plan = self._migration_plan
+        self._state.intent = self._intent
+        self._state.mutations = self._mutations
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
+        normalized = " ".join(sql.split())
+        normalized = normalized.removeprefix("-- gobby:destructive ")
+        if normalized.startswith("CREATE TABLE IF NOT EXISTS schema_migrations"):
+            return _Result()
+        if normalized == "SELECT version FROM schema_migrations":
+            return _Result([{"version": version} for version in sorted(self._applied)])
+        if "FROM destructive_batches AS batch" in normalized:
+            return _Result(
+                [
+                    {
+                        "id": self._state.batch_id,
+                        "maintenance_epoch_id": self._state.epoch_id,
+                        "campaign": "schema-apply",
+                        "status": "pending",
+                        "backup_manifest_sha256": self._state.manifest_sha256,
+                        "migration_plan": self._migration_plan,
+                        "intent": self._intent,
+                        "released_at": None if self._state.epoch_open else "released",
+                        "opened_by": "hub-maintenance:schema-apply",
+                    }
+                ]
+            )
+        if normalized.startswith("SELECT MAX(version) AS version FROM schema_migrations"):
+            return _Result([{"version": max(self._applied)}])
+        if normalized.startswith("UPDATE destructive_batches"):
+            self._migration_plan = json.loads(params[0])
+            self._intent["backup_starting_head"] = params[1]
+            return _Result()
+        if (
+            "SELECT version, filename, checksum FROM schema_migrations" in normalized
+            and "version = ANY" in normalized
+        ):
+            versions = set(params[0])
+            return _Result(
+                [
+                    {
+                        "version": version,
+                        "filename": receipt[0],
+                        "checksum": receipt[1],
+                    }
+                    for version, receipt in sorted(self._applied.items())
+                    if version in versions
+                ]
+            )
+        if (
+            "SELECT version, filename, checksum FROM schema_migrations" in normalized
+            and "version = %s" in normalized
+        ):
+            version = int(params[0])
+            receipt = self._applied.get(version)
+            return _Result(
+                []
+                if receipt is None
+                else [
+                    {
+                        "version": version,
+                        "filename": receipt[0],
+                        "checksum": receipt[1],
+                    }
+                ]
+            )
+        if "INSERT INTO schema_migrations(version, filename, checksum" in normalized:
+            self._applied[int(params[0])] = (str(params[1]), str(params[2]))
+            return _Result()
+        if normalized.startswith("SELECT ") and normalized.removeprefix("SELECT ").isdigit():
+            self._mutations.append(int(normalized.removeprefix("SELECT ")))
+            return _Result()
+        raise AssertionError(f"unexpected batch query: {normalized}")
+
+
+class _BatchHub:
+    dialect = "postgres"
+
+    def __init__(self, state: _BatchState) -> None:
+        self.state = state
+
+    @contextmanager
+    def transaction(self) -> Iterator[_BatchTransaction]:
+        transaction = _BatchTransaction(self.state)
+        try:
+            yield transaction
+        except BaseException:
+            raise
+        else:
+            transaction.commit()
+
+
+class _BatchLockConnection:
+    def __init__(self, state: _BatchState) -> None:
+        self._state = state
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
+        if "pg_advisory_lock" in sql and "unlock" not in sql:
+            assert not self._state.locked
+            self._state.locked = True
+            self._state.lock_acquisitions += 1
+            return _Result()
+        if "pg_advisory_unlock" in sql:
+            assert self._state.locked
+            self._state.locked = False
+            self._state.unlocks += 1
+            return _Result()
+        raise AssertionError(f"unexpected lock query: {sql}")
+
+    def close(self) -> None:
+        self._state.closed += 1
+
+
+def _destructive_runner_fixture(
+    tmp_path: Path,
+) -> tuple[Any, _BatchState, list[Migration], Any]:
+    module = _migration_module()
+    state = _BatchState()
+    migrations: list[Migration] = []
+    for version, directive in ((355, "-- gobby:destructive\n"), (356, "")):
+        path = tmp_path / f"{version}_migration_{version}.sql"
+        path.write_text(f"{directive}SELECT {version};\n", encoding="utf-8")
+        migrations.append(Migration(version=version, name=f"migration_{version}", path=path))
+    context = module.DestructiveMigrationContext(
+        epoch_id=state.epoch_id,
+        batch_id=state.batch_id,
+        manifest_sha256=state.manifest_sha256,
+        backup_starting_head=354,
+    )
+    return module, state, migrations, context
+
+
+def _new_destructive_runner(
+    module: Any,
+    state: _BatchState,
+    migrations: list[Migration],
+) -> Any:
+    runner = module.MigrationRunner(
+        _BatchHub(state),
+        autocommit_connection=lambda: _BatchLockConnection(state),
+    )
+    runner._discover_migrations = MethodType(lambda self: migrations, runner)
+    return runner
+
+
+def test_destructive_batch_resumes_from_committed_database_receipt(
+    tmp_path: Path,
+) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    first = _new_destructive_runner(module, state, migrations)
+    apply_locked = first._apply_transactional_locked
+
+    def crash_after_first_commit(self: Any, migration: Migration) -> None:
+        apply_locked(migration)
+        if migration.version == 355:
+            raise RuntimeError("simulated process crash after database commit")
+
+    first._apply_transactional_locked = MethodType(crash_after_first_commit, first)
+    with pytest.raises(RuntimeError, match="after database commit"):
+        first.apply_destructive(context)
+
+    assert sorted(state.applied) == [354, 355]
+    assert state.mutations == [355]
+    assert [item["version"] for item in state.migration_plan] == ["355", "356"]
+
+    resumed = _new_destructive_runner(module, state, migrations)
+    resumed.apply_destructive(context)
+
+    assert sorted(state.applied) == [354, 355, 356]
+    assert state.mutations == [355, 356]
+    assert state.lock_acquisitions == 2
+    assert state.unlocks == 2
+    assert state.closed == 2
+
+
+def test_destructive_batch_rejects_nonprefix_database_receipts(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.migration_plan = [
+        {
+            "version": str(migration.version),
+            "filename": migration.path.name,
+            "checksum": hashlib.sha256(migration.path.read_bytes()).hexdigest(),
+        }
+        for migration in migrations
+    ]
+    state.intent["backup_starting_head"] = 354
+    state.applied[356] = (
+        migrations[1].path.name,
+        hashlib.sha256(migrations[1].path.read_bytes()).hexdigest(),
+    )
+
+    with pytest.raises(MigrationUnsupportedError, match="exact prefix"):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+
+def test_destructive_batch_rejects_different_bytes_for_same_version(
+    tmp_path: Path,
+) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.migration_plan = [
+        {
+            "version": "355",
+            "filename": migrations[0].path.name,
+            "checksum": "c" * 64,
+        },
+        {
+            "version": "356",
+            "filename": migrations[1].path.name,
+            "checksum": hashlib.sha256(migrations[1].path.read_bytes()).hexdigest(),
+        },
+    ]
+    state.intent["backup_starting_head"] = 354
+
+    with pytest.raises(MigrationUnsupportedError, match="different local migration bytes"):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+
+def test_destructive_batch_requires_open_maintenance_epoch(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.epoch_open = False
+
+    with pytest.raises(MigrationUnsupportedError, match="maintenance epoch is not open"):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+
+def test_destructive_batch_requires_exact_prebatch_head(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    context = module.DestructiveMigrationContext(
+        epoch_id=context.epoch_id,
+        batch_id=context.batch_id,
+        manifest_sha256=context.manifest_sha256,
+        backup_starting_head=353,
+    )
+
+    with pytest.raises(
+        MigrationUnsupportedError, match="Backup starting head 353.*current head 354"
+    ):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
 
 
 class _ConcurrentMigrationTransaction:
@@ -172,6 +576,7 @@ def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() ->
         runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
         runner._discover_migrations = MethodType(lambda self: [migration], runner)
         runner._is_non_transactional = MethodType(lambda self, item: False, runner)
+        runner._is_destructive = MethodType(lambda self, item: False, runner)
 
         def run_migration(
             self: Any, txn: _ConcurrentMigrationTransaction, discovered: Migration
@@ -300,7 +705,8 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
     actual = [(migration.version, migration.name) for migration in discovered]
 
     assert actual[: len(known_prefix)] == known_prefix
-    assert [version for version, _ in actual] == list(range(306, 306 + len(actual)))
+    future_versions = [version for version, _ in actual if version >= 354]
+    assert future_versions == list(range(354, 354 + len(future_versions)))
 
 
 class _AutocommitMigrationState:
@@ -389,7 +795,7 @@ def test_non_transactional_migration_retries_after_unrecorded_index_creation(
 
     first = make_runner()
 
-    def fail_record_once(self: Any, txn: Any, version: int) -> None:
+    def fail_record_once(self: Any, txn: Any, migration: Migration) -> None:
         raise RuntimeError("simulated crash after index creation")
 
     first._record_applied_version = MethodType(fail_record_once, first)

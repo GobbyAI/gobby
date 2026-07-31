@@ -29,7 +29,9 @@ tests/storage/test_migration_contract.py):
 
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
+import json
 import logging
 import re
 from collections.abc import Callable, Iterator
@@ -44,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BASELINE_VERSION",
+    "DestructiveMigrationContext",
     "Migration",
     "MigrationRunner",
     "MigrationUnsupportedError",
@@ -83,7 +86,19 @@ class Migration:
     path: Traversable
 
 
+@dataclass(frozen=True)
+class DestructiveMigrationContext:
+    """Verified backup and maintenance-epoch facts for one gated batch."""
+
+    epoch_id: str
+    batch_id: str
+    manifest_sha256: str
+    backup_starting_head: int
+
+
 _NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
+_DESTRUCTIVE_DIRECTIVE = "-- gobby:destructive"
+_BOOKKEEPING_VERSION = 354
 _MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
 _SQL_IDENTIFIER_PATTERN = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
 _CONCURRENT_INDEX_RE = re.compile(
@@ -119,12 +134,20 @@ class MigrationRunner:
         self._hub = hub
         self._autocommit_connection = autocommit_connection
 
-    def apply_pending(self) -> None:
+    def apply_pending(self, *, fresh_schema: bool = False) -> None:
         self._ensure_schema_migrations_table()
         applied = self._read_applied_versions()
-        for migration in self._discover_migrations():
+        migrations = self._discover_migrations()
+        pending = [migration for migration in migrations if migration.version not in applied]
+        self._validate_contiguous_chain(applied, pending)
+        for migration in pending:
             if migration.version in applied:
                 continue
+            if self._is_destructive(migration) and not fresh_schema:
+                raise MigrationUnsupportedError(
+                    f"Migration {migration.path.name} is destructive and was not applied. "
+                    "Run `gobby schema apply --destructive` inside an open maintenance epoch."
+                )
             if self._is_non_transactional(migration):
                 self._apply_non_transactional(migration)
                 applied.add(migration.version)
@@ -146,8 +169,239 @@ class MigrationRunner:
                     },
                 )
                 self._run_migration(txn, migration)
-                self._record_applied_version(txn, migration.version)
+                self._record_applied_version(txn, migration)
             applied.add(migration.version)
+
+    def apply_destructive(self, context: DestructiveMigrationContext) -> None:
+        """Apply or resume one hub-attested destructive migration batch."""
+        if self._autocommit_connection is None:
+            raise MigrationUnsupportedError(
+                "Destructive migration apply requires a session advisory-lock connection."
+            )
+        self._ensure_schema_migrations_table()
+        migrations = self._discover_migrations()
+        applied = self._read_applied_versions()
+        pending = [migration for migration in migrations if migration.version not in applied]
+
+        with closing(self._autocommit_connection()) as lock_connection:
+            lock_connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
+            try:
+                plan = self._load_or_create_batch_plan(
+                    context,
+                    migrations,
+                    pending,
+                    applied,
+                )
+                receipts = self._read_batch_progress(context, plan)
+                for migration in self._remaining_batch_migrations(
+                    migrations,
+                    plan,
+                    receipts,
+                ):
+                    if self._is_non_transactional(migration):
+                        raise MigrationUnsupportedError(
+                            f"Destructive batch migration {migration.path.name} is "
+                            "non-transactional; atomic checksum bookkeeping is required."
+                        )
+                    self._apply_transactional_locked(migration)
+            finally:
+                lock_connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+
+    def _load_or_create_batch_plan(
+        self,
+        context: DestructiveMigrationContext,
+        migrations: list[Migration],
+        pending: list[Migration],
+        applied: set[int],
+    ) -> list[dict[str, str]]:
+        with self._hub.transaction() as txn:
+            row = txn.execute(
+                """
+                SELECT
+                    batch.id,
+                    batch.maintenance_epoch_id,
+                    batch.campaign,
+                    batch.status,
+                    batch.backup_manifest_sha256,
+                    batch.migration_plan,
+                    batch.intent,
+                    epoch.released_at,
+                    epoch.opened_by
+                FROM destructive_batches AS batch
+                JOIN maintenance_epochs AS epoch
+                  ON epoch.id = batch.maintenance_epoch_id
+                WHERE batch.id = %s
+                  AND batch.maintenance_epoch_id = %s
+                FOR UPDATE OF batch
+                """,
+                (context.batch_id, context.epoch_id),
+            ).fetchone()
+            self._validate_batch_authority(row, context)
+            assert row is not None
+
+            stored_plan = _json_object_list(_row_value(row, "migration_plan", 5))
+            intent = _json_object(_row_value(row, "intent", 6))
+            if stored_plan:
+                starting_head = intent.get("backup_starting_head")
+                if starting_head != context.backup_starting_head:
+                    raise MigrationUnsupportedError(
+                        "Destructive batch backup starting head differs from its immutable intent."
+                    )
+                self._validate_local_batch_plan(stored_plan, migrations)
+                return stored_plan
+
+            self._validate_contiguous_chain(applied, pending)
+            current_head = self._read_schema_head(txn)
+            if current_head != context.backup_starting_head:
+                raise MigrationUnsupportedError(
+                    f"Backup starting head {context.backup_starting_head} does not match "
+                    f"current head {current_head}."
+                )
+            plan = [_migration_plan_item(migration) for migration in pending]
+            txn.execute(
+                """
+                UPDATE destructive_batches
+                SET migration_plan = %s::jsonb,
+                    intent = intent || jsonb_build_object('backup_starting_head', %s),
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (json.dumps(plan, sort_keys=True), context.backup_starting_head, context.batch_id),
+            )
+            return plan
+
+    @staticmethod
+    def _validate_batch_authority(
+        row: Any,
+        context: DestructiveMigrationContext,
+    ) -> None:
+        if row is None:
+            raise MigrationUnsupportedError(
+                "Destructive batch does not belong to the requested maintenance epoch."
+            )
+        if _row_value(row, "released_at", 7) is not None:
+            raise MigrationUnsupportedError("The maintenance epoch is not open.")
+        if _row_value(row, "opened_by", 8) != "hub-maintenance:schema-apply":
+            raise MigrationUnsupportedError(
+                "The maintenance epoch is not owned by `hub-maintenance:schema-apply`."
+            )
+        if _row_value(row, "campaign", 2) != "schema-apply":
+            raise MigrationUnsupportedError("The destructive batch campaign is not schema-apply.")
+        if _row_value(row, "status", 3) != "pending":
+            raise MigrationUnsupportedError("The destructive batch is not pending.")
+        if _row_value(row, "backup_manifest_sha256", 4) != context.manifest_sha256:
+            raise MigrationUnsupportedError(
+                "The backup manifest digest does not match the destructive batch."
+            )
+
+    @staticmethod
+    def _validate_local_batch_plan(
+        stored_plan: list[dict[str, str]],
+        migrations: list[Migration],
+    ) -> None:
+        local_by_version = {migration.version: migration for migration in migrations}
+        try:
+            local_plan = [
+                _migration_plan_item(local_by_version[int(item["version"])]) for item in stored_plan
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MigrationUnsupportedError(
+                "Destructive batch references a migration missing from this runner."
+            ) from exc
+        if local_plan != stored_plan:
+            raise MigrationUnsupportedError(
+                "Destructive batch has different local migration bytes for the same version."
+            )
+
+    def _read_batch_progress(
+        self,
+        context: DestructiveMigrationContext,
+        plan: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        versions = [int(item["version"]) for item in plan]
+        with self._hub.transaction() as txn:
+            rows = (
+                txn.execute(
+                    """
+                    SELECT version, filename, checksum
+                    FROM schema_migrations
+                    WHERE version = ANY(%s)
+                    ORDER BY version
+                    """,
+                    (versions,),
+                ).fetchall()
+                if versions
+                else []
+            )
+            receipts = [
+                {
+                    "version": str(_row_value(row, "version", 0)),
+                    "filename": str(_row_value(row, "filename", 1)),
+                    "checksum": str(_row_value(row, "checksum", 2)),
+                }
+                for row in rows
+            ]
+            if receipts != plan[: len(receipts)]:
+                raise MigrationUnsupportedError(
+                    "Applied migration receipts are not an exact prefix of the destructive batch."
+                )
+            expected_head = (
+                context.backup_starting_head if not receipts else int(receipts[-1]["version"])
+            )
+            current_head = self._read_schema_head(txn)
+            if current_head != expected_head:
+                raise MigrationUnsupportedError(
+                    "Applied migration receipts are not an exact prefix of the destructive batch: "
+                    f"expected head {expected_head}, found {current_head}."
+                )
+            return receipts
+
+    @staticmethod
+    def _remaining_batch_migrations(
+        migrations: list[Migration],
+        plan: list[dict[str, str]],
+        receipts: list[dict[str, str]],
+    ) -> list[Migration]:
+        by_version = {migration.version: migration for migration in migrations}
+        return [by_version[int(item["version"])] for item in plan[len(receipts) :]]
+
+    def _apply_transactional_locked(self, migration: Migration) -> None:
+        with self._hub.transaction() as txn:
+            row = txn.execute(
+                """
+                SELECT version, filename, checksum
+                FROM schema_migrations
+                WHERE version = %s
+                """,
+                (migration.version,),
+            ).fetchone()
+            if row is not None:
+                receipt = {
+                    "version": str(_row_value(row, "version", 0)),
+                    "filename": str(_row_value(row, "filename", 1)),
+                    "checksum": str(_row_value(row, "checksum", 2)),
+                }
+                if receipt != _migration_plan_item(migration):
+                    raise MigrationUnsupportedError(
+                        f"Migration v{migration.version} is recorded with different bytes."
+                    )
+                return
+            logger.info(
+                "Applying gated PostgreSQL migration",
+                extra={
+                    "migration_name": migration.name,
+                    "migration_version": migration.version,
+                },
+            )
+            self._run_migration(txn, migration)
+            self._record_applied_version(txn, migration)
+
+    @staticmethod
+    def _read_schema_head(txn: _TransactionLike) -> int:
+        row = txn.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+        if row is None or _row_value(row, "version") is None:
+            raise MigrationUnsupportedError("schema_migrations has no applied head.")
+        return int(_row_value(row, "version"))
 
     def _apply_non_transactional(self, migration: Migration) -> None:
         if self._autocommit_connection is None:
@@ -172,7 +426,7 @@ class MigrationRunner:
                 )
                 self._repair_invalid_concurrent_indexes(connection, migration)
                 self._run_migration(connection, migration)
-                self._record_applied_version(connection, migration.version)
+                self._record_applied_version(connection, migration)
             finally:
                 connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
 
@@ -249,17 +503,88 @@ class MigrationRunner:
 
     @staticmethod
     def _is_non_transactional(migration: Migration) -> bool:
-        first_line = migration.path.read_text().splitlines()[0].strip()
-        return first_line == _NON_TRANSACTIONAL_DIRECTIVE
+        return _has_directive(migration, _NON_TRANSACTIONAL_DIRECTIVE)
+
+    @staticmethod
+    def _is_destructive(migration: Migration) -> bool:
+        return _has_directive(migration, _DESTRUCTIVE_DIRECTIVE)
+
+    @staticmethod
+    def _validate_contiguous_chain(
+        applied: set[int],
+        pending: list[Migration],
+    ) -> None:
+        applied_chain = [version for version in applied if version >= _BOOKKEEPING_VERSION]
+        expected = max(applied_chain, default=_BOOKKEEPING_VERSION - 1) + 1
+        for migration in pending:
+            if migration.version < _BOOKKEEPING_VERSION:
+                continue
+            if migration.version != expected:
+                raise MigrationUnsupportedError(
+                    f"Migration chain is not contiguous: missing migration v{expected} "
+                    f"before {migration.path.name}."
+                )
+            expected += 1
 
     def _run_migration(self, txn: _TransactionLike, migration: Migration) -> None:
         _execute_sql_script(txn, migration.path.read_text())
 
-    def _record_applied_version(self, txn: _TransactionLike, version: int) -> None:
+    def _record_applied_version(
+        self,
+        txn: _TransactionLike,
+        migration: Migration,
+    ) -> None:
+        if migration.version >= _BOOKKEEPING_VERSION:
+            txn.execute(
+                """
+            INSERT INTO schema_migrations(version, filename, checksum, applied_at)
+            VALUES (%s, %s, %s, NOW())
+            """,
+                (
+                    migration.version,
+                    migration.path.name,
+                    _migration_checksum(migration),
+                ),
+            )
+            return
         txn.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (%s, NOW())",
-            (version,),
+            (migration.version,),
         )
+
+
+def _has_directive(migration: Migration, directive: str) -> bool:
+    return directive in {
+        line.strip()
+        for line in migration.path.read_text().splitlines()
+        if line.lstrip().startswith("-- gobby:")
+    }
+
+
+def _migration_checksum(migration: Migration) -> str:
+    return hashlib.sha256(migration.path.read_bytes()).hexdigest()
+
+
+def _migration_plan_item(migration: Migration) -> dict[str, str]:
+    return {
+        "version": str(migration.version),
+        "filename": migration.path.name,
+        "checksum": _migration_checksum(migration),
+    }
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise MigrationUnsupportedError("Destructive batch intent is not a JSON object.")
+    return parsed
+
+
+def _json_object_list(value: Any) -> list[dict[str, str]]:
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise MigrationUnsupportedError("Destructive batch migration plan is not a JSON array.")
+    return [{str(key): str(item_value) for key, item_value in item.items()} for item in parsed]
 
 
 def _split_statements_respecting_dollar_quotes(sql: str) -> Iterator[str]:

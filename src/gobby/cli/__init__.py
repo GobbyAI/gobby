@@ -37,6 +37,7 @@ from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
 from .runtime import CliRuntime
+from .schema import schema
 from .secrets import secrets
 from .service import service
 from .sessions import sessions
@@ -141,3 +142,4 @@ cli.add_command(comms)
 cli.add_command(build_command)
 cli.add_command(plan)
 cli.add_command(plans)
+cli.add_command(schema)

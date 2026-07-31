@@ -54,6 +54,17 @@ MEMORY_DREAM_RUNTIME_NORMALIZERS = (
     "UPDATE memory_dream_runs\n               SET status = 'failed'",
     "ADD CONSTRAINT memory_dream_runs_status_check",
 )
+DESTRUCTIVE_MIGRATION_VERSION = 355
+DESTRUCTIVE_DIRECTIVE = "-- gobby:destructive"
+DESTRUCTIVE_SQL_PATTERNS = (
+    re.compile(r"\bDROP\s+(?:TABLE|INDEX|SCHEMA|TYPE)\b", re.IGNORECASE),
+    re.compile(
+        r"\bALTER\s+TABLE\b[\s\S]*?\bDROP\s+(?:COLUMN|CONSTRAINT)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bTRUNCATE\b", re.IGNORECASE),
+    re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE),
+)
 
 
 def test_digest_owned_session_title_migration_contract() -> None:
@@ -124,6 +135,49 @@ def _tracked_migration_names(migrations_dir: Path) -> list[str]:
             if line.endswith(".sql") and (REPO_ROOT / line).exists()
         )
     return sorted(path.name for path in migrations_dir.glob("*.sql"))
+
+
+def _contains_destructive_sql(sql: str) -> bool:
+    return any(pattern.search(sql) is not None for pattern in DESTRUCTIVE_SQL_PATTERNS)
+
+
+def _has_destructive_directive(sql: str) -> bool:
+    return DESTRUCTIVE_DIRECTIVE in {
+        line.strip() for line in sql.splitlines() if line.lstrip().startswith("--")
+    }
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE retired;",
+        "ALTER TABLE active DROP COLUMN retired;",
+        "DROP INDEX retired;",
+        "DROP SCHEMA retired;",
+        "DROP TYPE retired;",
+        "ALTER TABLE active DROP CONSTRAINT old_check;",
+        "TRUNCATE active;",
+        "DELETE FROM active;",
+        "DO $migration$ BEGIN DROP TABLE retired; END; $migration$;",
+    ],
+)
+def test_destructive_sql_marker_audit_recognizes_required_statements(sql: str) -> None:
+    assert _contains_destructive_sql(sql)
+
+
+def test_post_bookkeeping_destructive_migrations_carry_marker() -> None:
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+    unmarked: list[str] = []
+
+    for path in migrations_dir.glob("*.sql"):
+        version = int(path.name.split("_", 1)[0])
+        if version < DESTRUCTIVE_MIGRATION_VERSION:
+            continue
+        sql = path.read_text(encoding="utf-8")
+        if _contains_destructive_sql(sql) and not _has_destructive_directive(sql):
+            unmarked.append(path.name)
+
+    assert unmarked == []
 
 
 def _storage_module_name(path: Path) -> str:
