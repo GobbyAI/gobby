@@ -581,21 +581,21 @@ def test_reconcile_cron_display_name_migration_is_dual_shape_safe() -> None:
 def test_drop_dead_tables_migration_is_destructive_and_dual_shape_safe() -> None:
     migration = DROP_DEAD_TABLES_MIGRATION.read_text(encoding="utf-8")
     normalized = _normalize_sql_whitespace(migration)
+    table_names = (
+        "savings_ledger",
+        "session_memories",
+        "rule_overrides",
+        "workflow_states",
+        "tool_embeddings",
+    )
 
     assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    for table_name in table_names:
+        assert f"Evidence block: {table_name}" in migration
     _assert_contains_all(
         "dead-table removal migration",
         normalized,
-        tuple(
-            f"DROP TABLE IF EXISTS {table_name};"
-            for table_name in (
-                "savings_ledger",
-                "session_memories",
-                "rule_overrides",
-                "workflow_states",
-                "tool_embeddings",
-            )
-        ),
+        tuple(f"DROP TABLE IF EXISTS {table_name};" for table_name in table_names),
     )
 
 

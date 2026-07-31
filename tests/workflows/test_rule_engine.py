@@ -757,9 +757,10 @@ class TestPriorityOrdering:
 
 
 @pytest.mark.asyncio
-async def test_evaluate_does_not_query_rule_overrides(
+async def test_workflow_engine_evaluate_does_not_query_rule_overrides(
     db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
+    """The concrete RuleEngine.evaluate workflow-engine path avoids override probes."""
     _insert_rule(
         manager,
         "block-rule",
