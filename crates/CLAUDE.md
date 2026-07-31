@@ -20,6 +20,15 @@ cargo test -p gobby-code
 cargo test <name> -p gobby-code
 ```
 
+Keep large unit-test modules out of production Rust files. Place the tests at
+`<module>/tests.rs` and declare them from `<module>.rs` with:
+
+```rust
+#[cfg(test)]
+#[path = "<module>/tests.rs"]
+mod tests;
+```
+
 Crate → binary map: `gobby-code` → `gcode`, `gobby-hooks` → `ghook`,
 `gobby-wiki` → `gwiki`; `gobby-core` is the shared library crate. The daemon and
 hooks shell out to the installed `~/.gobby/bin/{gcode,ghook,gwiki}` binaries, so
