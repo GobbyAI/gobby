@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -30,6 +32,30 @@ class _Symbol:
 class _FakeDb:
     def close(self) -> None:
         pass
+
+
+class _FakeIndex:
+    def __init__(self, root: Path, *, available: bool = True) -> None:
+        self.root = root
+        self.available = available
+
+    def get_project_stats(self, project_id: str) -> object | None:
+        assert project_id == "project-1"
+        return object() if self.available else None
+
+    def get_file(self, project_id: str, file_path: str) -> SimpleNamespace | None:
+        assert project_id == "project-1"
+        assert file_path == "docs/demo.md"
+        source_path = self.root / file_path
+        if not source_path.exists():
+            return None
+        content_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        return SimpleNamespace(content_hash=content_hash, symbol_count=0)
+
+    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+        assert project_id == "project-1"
+        assert file_path == "docs/demo.md"
+        return []
 
 
 class _NonClosingDb:
@@ -153,8 +179,6 @@ def _create_project(temp_db: HubDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name=f"plans-{root.name}", repo_path=str(root)).id
 
 
-
-
 def test_register_command_writes_plan_row(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -266,13 +290,14 @@ def test_validate_command_runs_semantic_lint_without_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = _write_contract_plan(tmp_path)
-    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: None)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
 
     result = CliRunner().invoke(plans, ["validate", str(plan)])
 
     assert result.exit_code == 0
     assert "Plan:" in result.output
     assert "Phases: 1" in result.output
+    assert "Symbol validation skipped" in result.output
 
 
 def test_validate_command_returns_semantic_lint_errors(tmp_path: Path) -> None:
@@ -293,3 +318,82 @@ def test_validate_command_reports_missing_plan_id_warning(tmp_path: Path) -> Non
     assert "Error: implementation plans must declare a real **Plan ID:**" in result.output
     assert "Warning: implementation plans must declare a real **Plan ID:**" in result.output
     assert "covers:unknown:*" in result.output
+
+
+def test_validate_helper_uses_auto_resolved_fresh_project_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    docs_path = tmp_path / "docs" / "demo.md"
+    docs_path.parent.mkdir()
+    docs_path.write_text("demo\n", encoding="utf-8")
+    monkeypatch.setattr(
+        plans_module,
+        "resolve_project_ref",
+        lambda *_args, **_kwargs: "project-1",
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(
+        plans_module,
+        "LocalProjectManager",
+        lambda _db: SimpleNamespace(
+            get=lambda _project_id: SimpleNamespace(repo_path=str(tmp_path))
+        ),
+    )
+    monkeypatch.setattr(
+        plans_module,
+        "CodeIndexStorage",
+        lambda _db: _FakeIndex(tmp_path),
+    )
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+
+    assert result["valid"] is True
+    assert result["symbol_validation"]["status"] == "passed"
+    assert result["symbol_validation"]["checked_targets"] == ["docs/demo.md"]
+
+
+def test_validate_helper_explicit_project_fails_closed_without_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(
+        plans_module,
+        "resolve_project_ref",
+        lambda *_args, **_kwargs: "project-1",
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(
+        plans_module,
+        "LocalProjectManager",
+        lambda _db: SimpleNamespace(
+            get=lambda _project_id: SimpleNamespace(repo_path=str(tmp_path))
+        ),
+    )
+    monkeypatch.setattr(
+        plans_module,
+        "CodeIndexStorage",
+        lambda _db: _FakeIndex(tmp_path, available=False),
+    )
+
+    result = plans_module._validate_plan_for_cli(plan, "gobby", mode="standard")
+
+    assert result["valid"] is False
+    assert result["symbol_validation"]["status"] == "failed"
+    assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
+
+
+def test_validate_helper_expansion_mode_fails_closed_without_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="expansion")
+
+    assert result["valid"] is False
+    assert result["symbol_validation"]["status"] == "failed"
+    assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"

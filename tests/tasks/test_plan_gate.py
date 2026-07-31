@@ -8,15 +8,17 @@ no-op when no plan artifact is recorded.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
 
+from gobby.tasks.expansion import _plan_gate as plan_gate_module
 from gobby.tasks.expansion._plan_gate import (
     PLANNING_AGENTS,
     validate_plan_for_agent_spawn,
@@ -98,8 +100,6 @@ Implement.
     return path
 
 
-
-
 def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
     artifacts = MagicMock()
     artifacts.plan_file_path = plan_file_path
@@ -107,6 +107,26 @@ def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
     manager.get_artifacts = MagicMock(return_value=artifacts)
     manager.get_task = MagicMock(return_value=SimpleNamespace(project_id="project-1"))
     return manager
+
+
+class _FreshZeroSymbolIndex:
+    def __init__(self, source_path: Path) -> None:
+        self.source_path = source_path
+
+    def get_project_stats(self, project_id: str) -> object:
+        assert project_id == "project-1"
+        return object()
+
+    def get_file(self, project_id: str, file_path: str) -> SimpleNamespace:
+        assert project_id == "project-1"
+        assert file_path == "src/foo.py"
+        content_hash = hashlib.sha256(self.source_path.read_bytes()).hexdigest()
+        return SimpleNamespace(content_hash=content_hash, symbol_count=0)
+
+    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[object]:
+        assert project_id == "project-1"
+        assert file_path == "src/foo.py"
+        return []
 
 
 def test_planning_agents_constant() -> None:
@@ -156,13 +176,64 @@ def test_no_plan_artifact_passes_through() -> None:
     assert result is None
 
 
-def test_planner_spawn_against_clean_plan_succeeds(tmp_path: Path) -> None:
+@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer"])
+def test_repair_agent_spawn_receives_missing_index_diagnostics(
+    tmp_path: Path,
+    agent_name: str,
+) -> None:
     plan = _write_clean_plan(tmp_path / "clean.md")
     manager = _make_task_manager_with_artifact(str(plan))
 
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+    result = validate_plan_for_agent_spawn(
+        agent_name=agent_name,
+        task_id="t1",
+        task_manager=manager,
+    )
+
+    assert result is not None
+    assert result["success"] is True
+    assert "prompt_append" in result
+    assert result["symbol_validation"]["status"] == "failed"
+
+
+def test_planner_spawn_against_fresh_index_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    source_path = tmp_path / "src" / "foo.py"
+    source_path.parent.mkdir()
+    source_path.write_text("", encoding="utf-8")
+    manager = _make_task_manager_with_artifact(str(plan))
+    monkeypatch.setattr(
+        plan_gate_module,
+        "get_project_context",
+        lambda _path: {"id": "project-1", "project_path": str(tmp_path)},
+    )
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="t1",
+        task_manager=manager,
+        code_index=_FreshZeroSymbolIndex(source_path),
+    )
 
     assert result is None
+
+
+def test_plan_adversary_blocks_when_symbol_validation_cannot_run(tmp_path: Path) -> None:
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary",
+        task_id="t1",
+        task_manager=manager,
+    )
+
+    assert result is not None
+    assert result["success"] is False
+    assert result["symbol_validation"]["status"] == "failed"
 
 
 @pytest.mark.parametrize("agent_name", ("planner", "plan-adversary"))
@@ -291,3 +362,72 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     assert result == gate_failure
     assert len(gate_threads) == 1
     assert gate_threads[0] != caller_thread
+
+
+@pytest.mark.asyncio
+async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    runner = MagicMock()
+    runner.can_spawn.return_value = (True, "ok", 0)
+    runner.child_session_manager = MagicMock()
+    runner.run_storage = MagicMock()
+    runner.run_storage.has_active_run_for_task.return_value = False
+    daemon_config = SimpleNamespace(
+        database_url="postgresql://user:pass@127.0.0.1/gobby",
+        bind_host="127.0.0.1",
+        daemon_port=60887,
+    )
+    spawn_result = SimpleNamespace(
+        success=True,
+        child_session_id="child-1",
+        status="running",
+        terminal_type="process",
+        tmux_session_name=None,
+        tmux_socket_name=None,
+        tmux_socket_path=None,
+        pid=123,
+        message="spawned",
+    )
+    gate_result = {
+        "success": True,
+        "prompt_append": "Symbol validation diagnostics:\n- [target_symbol_required] Fix scope",
+    }
+
+    with (
+        patch(
+            "gobby.tasks.expansion._plan_gate.validate_plan_for_agent_spawn",
+            return_value=gate_result,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+            return_value={"id": "project-1", "project_path": str(repo_path)},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+            new=AsyncMock(return_value=SimpleNamespace(env={})),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            new=AsyncMock(return_value=spawn_result),
+        ) as execute,
+    ):
+        result = await spawn_agent_impl(
+            prompt="Repair the plan",
+            runner=runner,
+            agent_lookup_name="planner",
+            parent_session_id="parent-1",
+            provider="codex",
+            isolation="none",
+            daemon_config=daemon_config,
+        )
+
+    assert result["success"] is True
+    await_args = execute.await_args
+    assert await_args is not None
+    spawn_request = await_args.args[0]
+    assert spawn_request.prompt == (
+        "Repair the plan\n\nSymbol validation diagnostics:\n- [target_symbol_required] Fix scope"
+    )

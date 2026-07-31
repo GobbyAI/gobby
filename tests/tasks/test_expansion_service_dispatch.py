@@ -89,6 +89,8 @@ async def test_contract_plan_dispatches_to_deterministic_compile(
 ### 1.1 Build Leaf [category: code]
 `kind: deliverable`
 
+Target: `src/example.py`
+
 Implement the behavior.
 
 **Acceptance:**
@@ -127,6 +129,11 @@ Implement the behavior.
         patch.object(service, "_generate_raw_spec", raw_spec),
         patch.object(
             service,
+            "validate_plan_file",
+            return_value={"valid": True, "errors": []},
+        ) as validate_plan,
+        patch.object(
+            service,
             "compile_plan_to_spec",
             return_value=_valid_spec(parent.id, plan_file),
         ) as deterministic_compile,
@@ -136,6 +143,48 @@ Implement the behavior.
     assert refreshed.compiled_spec is not None
     assert deterministic_compile.call_count == 1
     assert raw_spec.await_count == 0
+    assert validate_plan.call_args.kwargs["require_symbol_validation"] is True
+
+
+@pytest.mark.asyncio
+async def test_contract_plan_symbol_failure_blocks_deterministic_compile(
+    service: ExpansionService,
+    run_manager: LocalExpansionRunManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = tmp_path / "contract-plan.md"
+    run = run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(plan_path),
+    )
+    plan_doc = MagicMock(source_path=plan_path)
+
+    with (
+        patch.object(service, "_parse_contract_plan", return_value=plan_doc),
+        patch.object(
+            service,
+            "validate_plan_file",
+            return_value={
+                "valid": False,
+                "errors": ["Code index is stale for src/example.py"],
+            },
+        ) as validate_plan,
+        patch.object(service, "compile_plan_to_spec") as deterministic_compile,
+    ):
+        with pytest.raises(ValueError, match="Code index is stale"):
+            await service.compile_run(run.id)
+
+    deterministic_compile.assert_not_called()
+    validate_plan.assert_called_once()
+    assert validate_plan.call_args.kwargs["require_symbol_validation"] is True
+    stored_run = run_manager.get(run.id)
+    assert stored_run is not None
+    assert stored_run.compiled_spec is None
 
 
 @pytest.mark.asyncio
@@ -308,4 +357,6 @@ async def test_compile_run_rejects_failed_expansion_qa(
     ):
         await service.compile_run(run.id)
 
-    assert run_manager.get(run.id).compiled_spec is None
+    stored_run = run_manager.get(run.id)
+    assert stored_run is not None
+    assert stored_run.compiled_spec is None

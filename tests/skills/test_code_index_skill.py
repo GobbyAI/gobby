@@ -58,6 +58,21 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
 
 
+def test_code_index_skill_documents_durable_plan_targets() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "## Plan Target References" in body
+    assert "`path/to/file.py::Class.method`" in body
+    assert "`path/to/file.rs::Type::method`" in body
+    assert "`path/to/file.py::* — scope-reason: <non-empty explanation>`" in body
+    assert "Never use the returned symbol" in body
+    resolve_position = body.index("Resolve each changed symbol")
+    usages_position = body.index("`gcode usages`", resolve_position)
+    blast_position = body.index("`gcode blast-radius`", resolve_position)
+    assert resolve_position < usages_position
+    assert resolve_position < blast_position
+
+
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
     """Keep Gobby's install template byte-identical to gcode's bundled skill."""
     assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()

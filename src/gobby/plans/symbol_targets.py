@@ -1,0 +1,574 @@
+"""Durable, symbol-scoped validation for plan Targets blocks."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal, Protocol, cast
+
+import psycopg
+
+from gobby.plans.parser import Kind, PlanDocument
+from gobby.plans.semantic_lint import iter_target_block_lines
+
+INDEX_UNAVAILABLE = "symbol_index_unavailable"
+INDEX_STALE = "symbol_index_stale"
+MISSING_SYMBOL_SCOPE = "target_symbol_required"
+UNRESOLVED_SYMBOL = "target_symbol_unresolved"
+AMBIGUOUS_SYMBOL = "target_symbol_ambiguous"
+INVALID_WILDCARD_REASON = "target_wildcard_reason_invalid"
+UUID_REFERENCE = "target_uuid_forbidden"
+SCOPE_CONFLICT = "target_scope_conflict"
+MALFORMED_REFERENCE = "target_reference_malformed"
+
+SYMBOL_TARGET_ISSUE_CODES = frozenset(
+    {
+        INDEX_UNAVAILABLE,
+        INDEX_STALE,
+        MISSING_SYMBOL_SCOPE,
+        UNRESOLVED_SYMBOL,
+        AMBIGUOUS_SYMBOL,
+        INVALID_WILDCARD_REASON,
+        UUID_REFERENCE,
+        SCOPE_CONFLICT,
+        MALFORMED_REFERENCE,
+    }
+)
+
+_UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_BACKTICK_RE = re.compile(r"`([^`]+)`")
+_BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+_SCOPE_REASON_RE = re.compile(
+    r"\s*(?:—|–|-)\s*scope-reason\s*:\s*(?P<reason>.*)\s*$",
+    re.IGNORECASE,
+)
+
+
+class SymbolIndexStorage(Protocol):
+    """Storage calls required by symbol target validation."""
+
+    def get_project_stats(self, project_id: str) -> Any | None: ...
+
+    def get_file(self, project_id: str, file_path: str) -> Any | None: ...
+
+    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Any]: ...
+
+
+@dataclass(frozen=True)
+class SymbolTarget:
+    """One parsed target reference from a deliverable Targets block."""
+
+    section_id: str
+    file_path: str
+    symbol: str | None
+    wildcard: bool
+    scope_reason: str | None
+    raw: str
+
+    @property
+    def reference(self) -> str:
+        if self.wildcard:
+            return f"{self.file_path}::*"
+        if self.symbol is not None:
+            return f"{self.file_path}::{self.symbol}"
+        return self.file_path
+
+
+@dataclass(frozen=True)
+class SymbolValidationIssue:
+    """Structured, stable diagnostic for a target or index failure."""
+
+    code: str
+    message: str
+    section_id: str | None = None
+    file_path: str | None = None
+    symbol: str | None = None
+    blocking: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "code": self.code,
+            "message": self.message,
+            "blocking": self.blocking,
+        }
+        if self.section_id is not None:
+            result["section_id"] = self.section_id
+        if self.file_path is not None:
+            result["file_path"] = self.file_path
+        if self.symbol is not None:
+            result["symbol"] = self.symbol
+        return result
+
+
+@dataclass(frozen=True)
+class SymbolValidationResult:
+    """Symbol validation envelope embedded in plan validation results."""
+
+    status: Literal["passed", "failed", "skipped"]
+    checked_targets: tuple[str, ...] = ()
+    checked_symbols: tuple[str, ...] = ()
+    issues: tuple[SymbolValidationIssue, ...] = ()
+
+    @property
+    def errors(self) -> list[str]:
+        return [issue.message for issue in self.issues if issue.blocking]
+
+    @property
+    def warnings(self) -> list[str]:
+        return [issue.message for issue in self.issues if not issue.blocking]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "checked_targets": list(self.checked_targets),
+            "checked_symbols": list(self.checked_symbols),
+            "issues": [issue.to_dict() for issue in self.issues],
+        }
+
+
+def skipped_symbol_validation() -> SymbolValidationResult:
+    """Return the empty envelope used when structural validation cannot proceed."""
+
+    return SymbolValidationResult(status="skipped")
+
+
+def parse_symbol_targets(
+    plan_doc: PlanDocument,
+) -> tuple[tuple[SymbolTarget, ...], tuple[SymbolValidationIssue, ...]]:
+    """Parse canonical target references from every deliverable section."""
+
+    targets: list[SymbolTarget] = []
+    issues: list[SymbolValidationIssue] = []
+    for section in plan_doc.sections:
+        if section.kind is not Kind.deliverable:
+            continue
+        for line in iter_target_block_lines(plan_doc, section):
+            parsed, line_issues = _parse_target_line(line, section.section_id)
+            targets.extend(parsed)
+            issues.extend(line_issues)
+
+    by_file: dict[str, list[SymbolTarget]] = {}
+    for target in targets:
+        by_file.setdefault(target.file_path, []).append(target)
+    for file_path, file_targets in by_file.items():
+        has_wildcard = any(target.wildcard for target in file_targets)
+        has_exact = any(target.symbol is not None for target in file_targets)
+        if has_wildcard and has_exact:
+            issues.append(
+                SymbolValidationIssue(
+                    code=SCOPE_CONFLICT,
+                    message=(
+                        f"Targets for {file_path} mix exact symbols with `::*`; "
+                        "choose one scope form for the file"
+                    ),
+                    file_path=file_path,
+                )
+            )
+    return tuple(targets), tuple(issues)
+
+
+def validate_symbol_targets(
+    plan_doc: PlanDocument,
+    *,
+    project_id: str | None,
+    project_root: Path | None,
+    code_index: Any | None,
+    required: bool,
+) -> SymbolValidationResult:
+    """Validate parsed targets against a fresh project code index."""
+
+    unavailable = _unavailable_context_issue(
+        project_id=project_id,
+        project_root=project_root,
+        code_index=code_index,
+        required=required,
+    )
+    if unavailable is not None:
+        return SymbolValidationResult(
+            status="failed" if required else "skipped",
+            issues=(unavailable,),
+        )
+
+    storage = _index_storage(code_index)
+    assert project_id is not None
+    assert project_root is not None
+    try:
+        project_stats = storage.get_project_stats(project_id)
+    except psycopg.Error as exc:
+        return _index_read_failure(required, f"Code index is unavailable: {exc}")
+    if project_stats is None:
+        return _index_read_failure(
+            required,
+            f"No code index is available for project {project_id}",
+        )
+
+    targets, parse_issues = parse_symbol_targets(plan_doc)
+    issues = list(parse_issues)
+    checked_targets = _unique(target.reference for target in targets)
+    checked_symbols = _unique(target.reference for target in targets if target.symbol is not None)
+
+    by_file: dict[str, list[SymbolTarget]] = {}
+    for target in targets:
+        by_file.setdefault(target.file_path, []).append(target)
+    for file_path, file_targets in by_file.items():
+        issues.extend(
+            _validate_file_targets(
+                storage,
+                project_id=project_id,
+                project_root=project_root,
+                file_path=file_path,
+                targets=file_targets,
+            )
+        )
+
+    if not required and any(issue.code in {INDEX_UNAVAILABLE, INDEX_STALE} for issue in issues):
+        return SymbolValidationResult(
+            status="skipped",
+            checked_targets=checked_targets,
+            checked_symbols=checked_symbols,
+            issues=tuple(
+                SymbolValidationIssue(
+                    code=issue.code,
+                    message=issue.message,
+                    section_id=issue.section_id,
+                    file_path=issue.file_path,
+                    symbol=issue.symbol,
+                    blocking=False,
+                )
+                for issue in issues
+            ),
+        )
+
+    return SymbolValidationResult(
+        status="failed" if any(issue.blocking for issue in issues) else "passed",
+        checked_targets=checked_targets,
+        checked_symbols=checked_symbols,
+        issues=tuple(issues),
+    )
+
+
+def _parse_target_line(
+    line: str,
+    section_id: str,
+) -> tuple[list[SymbolTarget], list[SymbolValidationIssue]]:
+    matches = list(_BACKTICK_RE.finditer(line))
+    if matches:
+        tokens = [match.group(1).strip() for match in matches]
+        trailing = line[matches[-1].end() :].strip()
+    else:
+        stripped = _BULLET_RE.sub("", line, count=1).strip()
+        tokens = [token.strip() for token in stripped.split(",")]
+        trailing = ""
+
+    targets: list[SymbolTarget] = []
+    issues: list[SymbolValidationIssue] = []
+    for index, token in enumerate(tokens):
+        token_trailing = trailing if index == len(tokens) - 1 else ""
+        target, issue = _parse_target_token(token, token_trailing, section_id)
+        if target is not None:
+            targets.append(target)
+        if issue is not None:
+            issues.append(issue)
+    return targets, issues
+
+
+def _parse_target_token(
+    token: str,
+    trailing: str,
+    section_id: str,
+) -> tuple[SymbolTarget | None, SymbolValidationIssue | None]:
+    raw = token
+    reason: str | None = None
+    reason_match = _SCOPE_REASON_RE.search(token)
+    if reason_match is not None:
+        reason = reason_match.group("reason").strip()
+        token = token[: reason_match.start()].strip()
+    elif trailing:
+        trailing_match = _SCOPE_REASON_RE.fullmatch(trailing)
+        if trailing_match is not None:
+            reason = trailing_match.group("reason").strip()
+
+    if _UUID_RE.fullmatch(token):
+        return None, _target_issue(
+            UUID_REFERENCE,
+            "Targets must use durable qualified names instead of symbol UUIDs",
+            section_id,
+            raw,
+        )
+
+    file_part, separator, symbol = token.partition("::")
+    file_path = _normalize_target_path(file_part)
+    if file_path is None or (separator and not symbol):
+        return None, _target_issue(
+            MALFORMED_REFERENCE,
+            f"Malformed target reference `{raw}`",
+            section_id,
+            raw,
+        )
+    if symbol and _UUID_RE.fullmatch(symbol):
+        return None, SymbolValidationIssue(
+            code=UUID_REFERENCE,
+            message=(
+                f"Target `{raw}` uses an unstable symbol UUID; use the indexed qualified_name"
+            ),
+            section_id=section_id,
+            file_path=file_path,
+            symbol=symbol,
+        )
+    if symbol.startswith(":") or any(character.isspace() for character in symbol):
+        return None, _target_issue(
+            MALFORMED_REFERENCE,
+            f"Malformed target reference `{raw}`",
+            section_id,
+            raw,
+        )
+
+    wildcard = symbol == "*"
+    target = SymbolTarget(
+        section_id=section_id,
+        file_path=file_path,
+        symbol=None if wildcard or not separator else symbol,
+        wildcard=wildcard,
+        scope_reason=reason,
+        raw=raw,
+    )
+    if wildcard and not reason:
+        return target, SymbolValidationIssue(
+            code=INVALID_WILDCARD_REASON,
+            message=(
+                f"Wildcard target `{target.reference}` requires "
+                "`scope-reason: <non-empty explanation>`"
+            ),
+            section_id=section_id,
+            file_path=file_path,
+        )
+    if reason is not None and not wildcard:
+        return target, _target_issue(
+            MALFORMED_REFERENCE,
+            f"`scope-reason` is only valid for `::*` targets: `{raw}`",
+            section_id,
+            raw,
+        )
+    return target, None
+
+
+def _normalize_target_path(value: str) -> str | None:
+    candidate = value.strip()
+    if (
+        not candidate
+        or candidate.endswith("/")
+        or any(character.isspace() for character in candidate)
+        or ":" in candidate
+        or "\\" in candidate
+    ):
+        return None
+    while candidate.startswith("./"):
+        candidate = candidate[2:]
+    path = PurePosixPath(candidate)
+    if path.is_absolute() or not path.parts or any(part in {".", ".."} for part in path.parts):
+        return None
+    return path.as_posix()
+
+
+def _validate_file_targets(
+    storage: SymbolIndexStorage,
+    *,
+    project_id: str,
+    project_root: Path,
+    file_path: str,
+    targets: list[SymbolTarget],
+) -> list[SymbolValidationIssue]:
+    try:
+        indexed_file = storage.get_file(project_id, file_path)
+    except psycopg.Error as exc:
+        return [
+            SymbolValidationIssue(
+                code=INDEX_UNAVAILABLE,
+                message=f"Could not read code index record for {file_path}: {exc}",
+                file_path=file_path,
+            )
+        ]
+    if indexed_file is None:
+        return _validate_unindexed_targets(targets)
+
+    current_path = project_root / file_path
+    current_hash = _file_sha256(current_path)
+    if current_hash is None or current_hash != str(indexed_file.content_hash):
+        return [
+            SymbolValidationIssue(
+                code=INDEX_STALE,
+                message=(
+                    f"Code index is stale for {file_path}; refresh it before "
+                    "validating symbol targets"
+                ),
+                file_path=file_path,
+            )
+        ]
+
+    try:
+        symbols = storage.get_symbols_for_file(project_id, file_path)
+    except psycopg.Error as exc:
+        return [
+            SymbolValidationIssue(
+                code=INDEX_UNAVAILABLE,
+                message=f"Could not read indexed symbols for {file_path}: {exc}",
+                file_path=file_path,
+            )
+        ]
+    if int(indexed_file.symbol_count) > 0 and not symbols:
+        return [
+            SymbolValidationIssue(
+                code=INDEX_UNAVAILABLE,
+                message=(
+                    f"Code index record for {file_path} reports symbols but none are available"
+                ),
+                file_path=file_path,
+            )
+        ]
+
+    issues: list[SymbolValidationIssue] = []
+    qualified_names: dict[str, int] = {}
+    for indexed_symbol in symbols:
+        qualified_name = str(indexed_symbol.qualified_name)
+        qualified_names[qualified_name] = qualified_names.get(qualified_name, 0) + 1
+    for target in targets:
+        if target.wildcard:
+            continue
+        if target.symbol is None:
+            if symbols:
+                issues.append(
+                    SymbolValidationIssue(
+                        code=MISSING_SYMBOL_SCOPE,
+                        message=(
+                            f"Target `{target.file_path}` contains indexed symbols; "
+                            "name exact qualified symbols or use a justified `::*` scope"
+                        ),
+                        section_id=target.section_id,
+                        file_path=target.file_path,
+                    )
+                )
+            continue
+        match_count = qualified_names.get(target.symbol, 0)
+        if match_count == 0:
+            issues.append(
+                SymbolValidationIssue(
+                    code=UNRESOLVED_SYMBOL,
+                    message=(
+                        f"Target `{target.reference}` does not match an indexed "
+                        "qualified_name in that file"
+                    ),
+                    section_id=target.section_id,
+                    file_path=target.file_path,
+                    symbol=target.symbol,
+                )
+            )
+        elif match_count > 1:
+            issues.append(
+                SymbolValidationIssue(
+                    code=AMBIGUOUS_SYMBOL,
+                    message=(
+                        f"Target `{target.reference}` matches {match_count} indexed "
+                        "symbols in that file"
+                    ),
+                    section_id=target.section_id,
+                    file_path=target.file_path,
+                    symbol=target.symbol,
+                )
+            )
+    return issues
+
+
+def _validate_unindexed_targets(targets: list[SymbolTarget]) -> list[SymbolValidationIssue]:
+    issues: list[SymbolValidationIssue] = []
+    for target in targets:
+        if target.symbol is not None or target.wildcard:
+            issues.append(
+                SymbolValidationIssue(
+                    code=UNRESOLVED_SYMBOL,
+                    message=(
+                        f"Target `{target.reference}` names symbol scope for a file "
+                        "with no index record"
+                    ),
+                    section_id=target.section_id,
+                    file_path=target.file_path,
+                    symbol=target.symbol,
+                )
+            )
+    return issues
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as file_handle:
+            for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _index_storage(code_index: Any) -> SymbolIndexStorage:
+    storage = getattr(code_index, "storage", code_index)
+    return cast(SymbolIndexStorage, storage)
+
+
+def _unavailable_context_issue(
+    *,
+    project_id: str | None,
+    project_root: Path | None,
+    code_index: Any | None,
+    required: bool,
+) -> SymbolValidationIssue | None:
+    missing: list[str] = []
+    if project_id is None:
+        missing.append("project id")
+    if project_root is None:
+        missing.append("project root")
+    if code_index is None:
+        missing.append("code index")
+    if not missing:
+        return None
+    prefix = "Symbol validation cannot run" if required else "Symbol validation skipped"
+    return SymbolValidationIssue(
+        code=INDEX_UNAVAILABLE,
+        message=f"{prefix}: unavailable {', '.join(missing)}",
+        blocking=required,
+    )
+
+
+def _index_read_failure(required: bool, message: str) -> SymbolValidationResult:
+    return SymbolValidationResult(
+        status="failed" if required else "skipped",
+        issues=(
+            SymbolValidationIssue(
+                code=INDEX_UNAVAILABLE,
+                message=message,
+                blocking=required,
+            ),
+        ),
+    )
+
+
+def _target_issue(
+    code: str,
+    message: str,
+    section_id: str,
+    raw: str,
+) -> SymbolValidationIssue:
+    return SymbolValidationIssue(
+        code=code,
+        message=message,
+        section_id=section_id,
+        symbol=raw,
+    )
+
+
+def _unique(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))

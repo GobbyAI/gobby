@@ -152,21 +152,57 @@ the missing-section failure mode from #12725.
 
 ### Target Inventory Block Format
 
-Every deliverable declares the files it changes in a `Target:`/`Targets:`
-inventory before `**Acceptance:**`. The `target-coverage` lint fails the section
-when a concrete path appears in the body after a change-intent verb (`add`,
-`create`, `delete`, `edit`, `expose`, `extract`, `implement`, `modify`, `move`,
-`refactor`, `register`, `remove`, `rename`, `replace`, `split`, `touch`,
-`update`, `wire`) or in a `file:`/`behavior:` acceptance ref without a matching
-inventory entry.
+Every deliverable declares the files and indexed symbols it changes in a
+`Target:`/`Targets:` inventory before `**Acceptance:**`. Targets are the
+canonical scope contract; acceptance artifact parsing stays unchanged.
+
+Use one of these forms:
+
+```markdown
+Targets:
+- `path/to/file.py::Class.method`
+- `path/to/file.rs::Type::method`
+- `path/to/file.py::*` — scope-reason: cross-cutting rewrite of every handler
+- `path/to/new_file.py`
+```
+
+- Exact references must equal gcode's indexed `qualified_name` in the declared
+  file. Parsing splits only the first `::`, so Rust `Type::method` remains one
+  qualified name.
+- A fresh indexed file containing symbols requires one or more exact references
+  regardless of task category. A justified `::*` reference is the only
+  file-wide alternative.
+- Every `::*` carries `scope-reason: <non-empty explanation>` on the same line.
+- A bare path is valid only when the fresh project index has no symbol-bearing
+  record for that path, including a genuinely new file.
+- Multiple exact symbols may target one file. Never mix exact references with
+  `::*` for the same file.
+- Never put gcode symbol UUIDs or line numbers in Targets. UUIDs depend on byte
+  offsets; qualified names are the durable contract.
+
+Resolve Targets before writing broader implementation prose:
+
+1. Run `gcode search-symbol "<symbol>" path/to/file` for each existing target
+   file.
+2. Copy the exact displayed `qualified_name` with its file path into Targets.
+3. Resolve every directly changed symbol first. Then use `gcode usages` or
+   `gcode blast-radius` to discover consumers and add owned consumer targets.
+4. Run `uv run gobby plans validate <plan-file>` after the final edit. Explicit
+   project validation and expansion require an available fresh index.
+
+The `target-coverage` lint fails the section when a concrete path appears in
+the body after a change-intent verb (`add`, `create`, `delete`, `edit`,
+`expose`, `extract`, `implement`, `modify`, `move`, `refactor`, `register`,
+`remove`, `rename`, `replace`, `split`, `touch`, `update`, `wire`) or in a
+`file:`/`behavior:` acceptance ref without a matching inventory entry.
 
 The block is contiguous. **A blank line ends it**, so entries must directly
 follow the `Targets:` line:
 
 ```markdown
 Targets:
-- `src/module/file.py`
-- `tests/test_module.py`
+- `src/module/file.py::Example.validate`
+- `tests/test_module.py::test_validate_empty`
 ```
 
 Not this — the blank line ends the block, and the bullets are invisible to the
@@ -182,7 +218,8 @@ Matching is basename-aware in one direction: a mentioned path containing `/`
 must match a target entry exactly, while a bare filename matches any target
 sharing that basename. A bare extension such as `.tsx` is not a path and needs
 no entry. The full rule lives in `docs/contracts/plan-coverage.md`, "Target
-Inventory".
+Inventory". Expansion preserves the complete Targets block in the section body
+used as the leaf task description; no separate task field carries symbol scope.
 
 ### Whole-Plan Sweep After Findings
 
@@ -261,7 +298,10 @@ annotations the parser silently drops the section.
 ### 1.1 {Task Title} [category: code]
 `kind: deliverable`
 
-Target: `src/module/file.py`
+Targets:
+- `src/module/file.py::Example`
+- `src/module/file.py::Example.validate`
+- `tests/test_module.py::test_validate_empty`
 
 {Full implementation specification for this task. Everything here becomes the
 subtask description during expansion — the implementing agent sees ONLY this
@@ -293,7 +333,7 @@ class Example(Base):
 ### 1.2 {Task Title} [category: code] (depends: 1.1)
 `kind: deliverable`
 
-Target: `src/module/other.py`
+Target: `src/module/other.py::build_other`
 
 {Full implementation specification — code examples, behavioral specs, edge cases…}
 
@@ -550,6 +590,16 @@ Spot-check three `### N.N` sections: does each one contain enough detail (file
 paths, code examples, behavioral specs) that an agent who sees ONLY that section
 can do the work without outside context?
 
+### 6. Symbol Targets Resolve
+
+- Every existing symbol-bearing file uses exact gcode `qualified_name` Targets,
+  or one justified `::* — scope-reason: ...` entry.
+- Rust references retain `Type::method` after the file separator.
+- Bare paths are new or zero-symbol files in the fresh index.
+- No target contains a symbol UUID or line number.
+- No file mixes exact symbols with `::*`.
+- Final project-aware validation reports `symbol_validation.status: passed`.
+
 ### Verification Output
 
 Report:
@@ -561,6 +611,7 @@ Plan Verification:
 ✓ Categories assigned correctly
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
+✓ Symbol Targets resolve against a fresh gcode index
 
 Ready for review.
 ```
@@ -576,6 +627,7 @@ Plan Verification:
 ✓ Categories assigned correctly
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
+✓ Symbol Targets resolve against a fresh gcode index
 
 Plan updated. Ready for review.
 ```

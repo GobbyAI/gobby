@@ -107,9 +107,20 @@ class TestPlanDraftContent:
         # The implementing-agent-only-sees-this-section guarantee
         assert "only" in lowered
 
+    def test_symbol_target_contract_is_documented(self, body: str) -> None:
+        assert "`path/to/file.py::Class.method`" in body
+        assert "`path/to/file.rs::Type::method`" in body
+        assert "`path/to/file.py::*`" in body
+        assert "scope-reason: <non-empty explanation>" in body
+        assert "bare path is valid only" in body
+        assert "Never put gcode symbol UUIDs or line numbers in Targets" in body
+        assert "Never mix exact references with" in body
+        assert 'gcode search-symbol "<symbol>" path/to/file' in body
+        assert "symbol_validation.status: passed" in body
+
     # --- verification checklist --------------------------------------------
 
-    def test_verification_checklist_covers_five_items(self, body: str) -> None:
+    def test_verification_checklist_covers_six_items(self, body: str) -> None:
         """The plan skill's Step 5 asks the drafter to run this checklist;
         every item corresponds to something downstream cares about."""
         assert "Verification" in body
@@ -121,6 +132,7 @@ class TestPlanDraftContent:
             "Categor",  # 3
             "Phase Heading",  # 4
             "Self-Contained",  # 5
+            "Symbol Targets",  # 6
         )
         for check in required_checks:
             assert check in body, f"Verification checklist missing: {check}"

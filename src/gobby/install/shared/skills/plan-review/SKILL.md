@@ -83,6 +83,21 @@ mechanical validator failures, not qualitative review findings. If one appears
 in your prompt or task history, require the planner to check the whole plan for
 that same failure class before resubmission.
 
+Project-aware validation also requires
+`symbol_validation.status: passed`. It hashes each existing target file and
+compares that SHA-256 with the index before trusting symbols. Exact Targets must
+equal gcode `qualified_name` values in the declared file; bare paths are limited
+to new or zero-symbol files; `::*` requires a non-empty `scope-reason`; symbol
+UUIDs and wildcard/exact mixtures are rejected. `planner` and `plan-enhancer`
+may receive these diagnostics so they can repair the artifact.
+`plan-adversary`, expansion, and execution stay blocked until they pass.
+
+When checking a changed symbol, resolve the plan's exact file-qualified Target
+first with `gcode search-symbol`. Confirm the displayed `qualified_name` in that
+file before using `gcode usages` or `gcode blast-radius` for consumer and
+blast-radius research. A broad graph search cannot repair an unresolved
+canonical Target.
+
 The canonical heading regex and full contract grammar live in the `plan-draft`
 skill (the contract's authoring surface) and `docs/contracts/plan-coverage.md`
 — do not restate them here; load `plan-draft` when a finding requires quoting
@@ -127,7 +142,7 @@ zero phase sections. After parsing, count sections whose ID matches the
 contract phase regex `^P\d+$` (`_CONTRACT_PHASE_ID_RE` in
 `src/gobby/tasks/expansion/_common.py`). The expansion compiler cannot build
 the phase hierarchy without phases, so `validate_plan_file`
-(`src/gobby/tasks/expansion/_compile.py`) blocks adversary spawn for any plan
+(`src/gobby/tasks/expansion/_validate.py`) blocks adversary spawn for any plan
 with one or more `kind: deliverable` sections but zero phase sections.
 
 The ninth rejection is a conservative semantic-lint check. Any `deliverable`
@@ -243,9 +258,10 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
   `category: test` deliverables are valid explicit test tasks only when they
   carry their own target, acceptance criteria, and test-infrastructure, parity,
   characterization, or regression purpose.
-- **Concrete target file paths** — every `code` / `config` task must specify a
-  file path (`Target: src/foo/bar.py` or inline). Vague tasks like
-  "update the backend" are un-actionable.
+- **Concrete symbol-scoped Targets** — every deliverable specifies each changed
+  file in its Targets block. Existing symbol-bearing files use exact indexed
+  qualified names regardless of category, or one justified `::*` entry. Vague
+  tasks like "update the backend" are un-actionable.
 - **Valid expansion categories** — every `### N.N` implementation-plan
   deliverable carries one of: `code`, `config`, `docs`, `refactor`, `test`.
   `research`, `planning`, and `manual` are valid for direct task creation
@@ -328,9 +344,10 @@ snapshot:
 
 1. `requirements_traceability` — requirements, acceptance coverage,
    dependencies, and manifest parity.
-2. `repository_blast_radius` — use gcode to sweep callers, consumers,
-   constructors, destructures, implementations, fakes, exhaustive matches,
-   test seams, migration/registry inventories, and source-size constraints.
+2. `repository_blast_radius` — resolve exact file-qualified Targets first, then
+   use gcode to sweep callers, consumers, constructors, destructures,
+   implementations, fakes, exhaustive matches, test seams, migration/registry
+   inventories, and source-size constraints.
 3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
    sync/async boundaries, retries, races, bounds, serialization, and recovery.
 

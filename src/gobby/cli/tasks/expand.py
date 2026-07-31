@@ -13,6 +13,7 @@ from gobby.cli._plan_validation_output import (
     raise_plan_validation_failed,
 )
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.app import load_config
 from gobby.llm import LLMService
 from gobby.storage.expansion_runs import LocalExpansionRunManager
@@ -74,7 +75,16 @@ def validate_plan_cmd(plan_file: str) -> None:
     plan_path = Path(plan_file)
     if not plan_path.is_absolute():
         plan_path = Path.cwd() / plan_path
-    result = service.validate_plan_file(plan_path)
+    project_context = get_project_context(cwd=Path.cwd())
+    project_id = project_context.get("id") if project_context is not None else None
+    project_path = project_context.get("project_path") if project_context is not None else None
+    result = service.validate_plan_file(
+        plan_path,
+        project_id=project_id if isinstance(project_id, str) else None,
+        project_root=Path(project_path) if isinstance(project_path, str) else None,
+        code_index=CodeIndexStorage(service.db),
+        require_symbol_validation=True,
+    )
     if not result["valid"]:
         raise_plan_validation_failed(result)
     emit_plan_validation_messages({"warnings": result.get("warnings")})

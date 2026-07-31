@@ -49,6 +49,23 @@ Search output is intentionally snippet-sized. Broad file reads and wide line ran
 Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol`
 when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
 
+## Plan Target References
+
+Plan `Targets:` blocks use durable file-qualified names:
+
+- Python: `path/to/file.py::Class.method`
+- Rust: `path/to/file.rs::Type::method` (the validator splits only the first
+  `::`)
+- File-wide: `path/to/file.py::* — scope-reason: <non-empty explanation>`
+- Bare path: only for a new or indexed zero-symbol file
+
+Resolve each changed symbol with `gcode search-symbol "<name>" path/to/file`
+and copy the exact displayed `qualified_name`. Never use the returned symbol
+UUID or a line number in a plan Target. Resolve and validate these canonical
+Targets before running `gcode usages` or `gcode blast-radius`; those broader
+queries discover consumers and adjacent effects after the change anchor is
+known.
+
 ## Navigation
 
 - `gcode repo-outline` — high-level project summary with module symbol counts

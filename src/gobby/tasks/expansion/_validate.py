@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.plans.parser import Kind, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
+from gobby.plans.symbol_targets import skipped_symbol_validation, validate_symbol_targets
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -17,13 +18,23 @@ from gobby.tasks.expansion._common import (
 from gobby.tasks.task_types import VALID_TASK_TYPES
 
 
-def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
+def validate_plan_file(
+    self: Any,
+    plan_path: Path,
+    *,
+    project_id: str | None = None,
+    project_root: Path | None = None,
+    code_index: Any | None = None,
+    require_symbol_validation: bool = False,
+) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
+    skipped_symbols = skipped_symbol_validation().to_dict()
     if not plan_path.exists():
         return {
             "valid": False,
             "errors": [f"Plan file not found: {plan_path}"],
             "warnings": [],
+            "symbol_validation": skipped_symbols,
         }
     try:
         plan_doc = parse_plan(plan_path, parse_mode="draft")
@@ -32,6 +43,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
             "valid": False,
             "errors": [f"Plan file is not contract-conforming: {exc}"],
             "warnings": [],
+            "symbol_validation": skipped_symbols,
         }
     warnings = list(plan_doc.warnings)
     if warnings:
@@ -39,6 +51,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
             "valid": False,
             "errors": warnings,
             "warnings": warnings,
+            "symbol_validation": skipped_symbols,
         }
     deliverables = [section for section in plan_doc.sections if section.kind is Kind.deliverable]
     if not deliverables:
@@ -46,6 +59,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
             "valid": False,
             "errors": [f"Plan file has no kind: deliverable sections: {plan_path}"],
             "warnings": warnings,
+            "symbol_validation": skipped_symbols,
         }
     phases = {
         _contract_phase_number(section.section_id): _clean_contract_section_title(section.title)
@@ -64,6 +78,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
                 "§ 'Phase Heading Syntax'."
             ],
             "warnings": warnings,
+            "symbol_validation": skipped_symbols,
         }
     semantic_lint = lint_plan_document(plan_doc)
     if not semantic_lint.valid:
@@ -72,6 +87,22 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
             "errors": semantic_lint.errors,
             "warnings": warnings,
             "semantic_lint": semantic_lint.to_dict(),
+            "symbol_validation": skipped_symbols,
+        }
+    symbol_validation = validate_symbol_targets(
+        plan_doc,
+        project_id=project_id,
+        project_root=project_root,
+        code_index=code_index,
+        required=require_symbol_validation,
+    )
+    if symbol_validation.errors:
+        return {
+            "valid": False,
+            "errors": symbol_validation.errors,
+            "warnings": warnings,
+            "semantic_lint": semantic_lint.to_dict(),
+            "symbol_validation": symbol_validation.to_dict(),
         }
     return {
         "valid": True,
@@ -81,6 +112,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
         "deliverable_count": len(deliverables),
         "contract_plan": True,
         "warnings": warnings,
+        "symbol_validation": symbol_validation.to_dict(),
     }
 
 

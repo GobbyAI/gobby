@@ -8,8 +8,9 @@ miss ``^P\\d+$``, missing ``kind:`` annotations, malformed deferral objects)
 before wasting an LLM call on a structurally broken plan.
 
 The gate is a no-op for non-planning agents and for tasks with no plan
-artifact attached. It is a strict gate when it does fire — a structured
-``PlanValidationError`` payload short-circuits the spawn.
+artifact attached. Structural failures block every planning role. Symbol-only
+failures let authoring roles start with repair diagnostics while adversary
+review remains blocked.
 """
 
 from __future__ import annotations
@@ -20,11 +21,14 @@ from typing import Any
 
 import psycopg
 
+from gobby.utils.project_context import get_project_context
+
 logger = logging.getLogger(__name__)
 
 # Agent names whose spawn must be gated by plan validation. Centralized so the
 # spawn pipeline and tests share one source of truth.
 PLANNING_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer"})
+PLAN_REPAIR_AGENTS = frozenset({"planner", "plan-enhancer"})
 
 
 def validate_plan_for_agent_spawn(
@@ -70,15 +74,13 @@ def _validate_plan_for_agent_spawn(
 
     Returns:
         ``None`` when the gate does not apply or the plan validates clean.
-        A structured ``{"success": False, "error": "PlanValidationError: ..."}``
-        dict when the gate fires and the plan fails validation.
+        A structured failure when validation blocks the role, or a successful
+        prompt-append payload when an authoring role may repair symbol Targets.
     """
     if agent_name not in PLANNING_AGENTS:
         return None
     if not task_id or task_manager is None:
         return None
-    del code_index
-
     artifacts = _safe_get_artifacts(task_manager, task_id)
     if artifacts is None or not artifacts.plan_file_path:
         # No plan artifact recorded — caller embeds the plan in the prompt.
@@ -92,13 +94,43 @@ def _validate_plan_for_agent_spawn(
 
     from gobby.tasks.expansion._validate import validate_plan_file
 
-    result = validate_plan_file(None, plan_path)
+    project_context = get_project_context(plan_path.parent)
+    project_id = project_context.get("id") if project_context is not None else None
+    project_path = project_context.get("project_path") if project_context is not None else None
+    project_root = Path(project_path) if isinstance(project_path, str) else None
+    result = validate_plan_file(
+        None,
+        plan_path,
+        project_id=project_id if isinstance(project_id, str) else None,
+        project_root=project_root,
+        code_index=code_index,
+        require_symbol_validation=True,
+    )
     if result.get("valid"):
         return None
 
     errors = result.get("errors", [])
     warnings = result.get("warnings", [])
     error_summary = "; ".join(errors) if errors else "Plan validation failed"
+    symbol_validation = result.get("symbol_validation")
+    if (
+        agent_name in PLAN_REPAIR_AGENTS
+        and isinstance(symbol_validation, dict)
+        and symbol_validation.get("status") == "failed"
+    ):
+        logger.warning(
+            "Starting %s for task %s with symbol target diagnostics: %s",
+            agent_name,
+            task_id,
+            error_summary,
+        )
+        return {
+            "success": True,
+            "plan_file_path": str(plan_path),
+            "symbol_validation": symbol_validation,
+            "prompt_append": _symbol_repair_prompt(symbol_validation),
+        }
+
     logger.warning(
         "Refusing %s spawn for task %s: PlanValidationError: %s",
         agent_name,
@@ -115,6 +147,8 @@ def _validate_plan_for_agent_spawn(
         payload["validator_warnings"] = list(warnings)
     if "semantic_lint" in result:
         payload["semantic_lint"] = result["semantic_lint"]
+    if symbol_validation is not None:
+        payload["symbol_validation"] = symbol_validation
     return payload
 
 
@@ -127,3 +161,21 @@ def _safe_get_artifacts(task_manager: Any, task_id: str) -> Any | None:
     except Exception as exc:
         logger.debug("Failed to load task artifacts for %s: %s", task_id, exc)
         return None
+
+
+def _symbol_repair_prompt(symbol_validation: dict[str, Any]) -> str:
+    issues = symbol_validation.get("issues")
+    diagnostics: list[str] = []
+    if isinstance(issues, list):
+        for issue in issues:
+            if isinstance(issue, dict):
+                diagnostics.append(
+                    f"- [{issue.get('code', 'symbol_validation')}] "
+                    f"{issue.get('message', 'Symbol target validation failed')}"
+                )
+    details = "\n".join(diagnostics) or "- Symbol target validation failed"
+    return (
+        "Repair the plan's Targets blocks before completing this planning pass. "
+        "Use exact gcode qualified_name references, or a justified `::*` scope.\n"
+        f"Symbol validation diagnostics:\n{details}"
+    )

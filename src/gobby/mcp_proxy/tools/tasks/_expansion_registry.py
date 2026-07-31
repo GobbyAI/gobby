@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
@@ -593,7 +594,13 @@ def _register_plan_validation_tool(registry: InternalToolRegistry, ctx: Registry
             if repo_path and not Path(plan_file).is_absolute()
             else Path(plan_file)
         )
-        return service.validate_plan_file(plan_path)
+        return service.validate_plan_file(
+            plan_path,
+            project_id=project_ctx,
+            project_root=Path(repo_path) if repo_path else None,
+            code_index=CodeIndexStorage(ctx.task_manager.db),
+            require_symbol_validation=True,
+        )
 
     registry.register(
         name="validate_plan_file",

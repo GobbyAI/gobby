@@ -204,20 +204,23 @@ async def spawn_agent_impl(
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     # 0. Plan-validation gate for planning agents.
-    # planner / plan-adversary spawns refuse to start when the task's
-    # plan artifact fails the Plan-Coverage Contract validator. Catches
-    # structural drift the parser silently drops before wasting an LLM call.
+    # Structural failures block planning roles. Authoring roles may continue
+    # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
-    gate_failure = await asyncio.to_thread(
+    gate_result = await asyncio.to_thread(
         validate_plan_for_agent_spawn,
         agent_lookup_name,
         task_id,
         task_manager,
         code_index=code_index,
     )
-    if gate_failure is not None:
-        return gate_failure
+    if gate_result is not None:
+        if not gate_result.get("success"):
+            return gate_result
+        prompt_append = gate_result.get("prompt_append")
+        if isinstance(prompt_append, str):
+            prompt = f"{prompt}\n\n{prompt_append}"
 
     # 1. Merge config: agent_body defaults < params
     _raw_isolation: str | None = isolation

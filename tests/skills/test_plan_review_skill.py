@@ -10,9 +10,7 @@ pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
 PLAN_SKILL_PATH = Path("src/gobby/install/shared/skills/plan/SKILL.md")
-TASKLESS_AGENT_PATH = Path(
-    "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
-)
+TASKLESS_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml")
 STAGED_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
 
 
@@ -50,6 +48,19 @@ def test_plan_review_finding_and_verdict_vocabulary() -> None:
     assert "**fix** — one short paragraph" in body
     assert "`verdict: approved` or `verdict: needs_review`" in body
     assert "non-blocking nits never trigger escalation" in body.lower()
+
+
+def test_plan_review_resolves_symbol_targets_before_blast_radius() -> None:
+    body = _normalized(SKILL_PATH)
+
+    assert "symbol_validation.status: passed" in body
+    assert "exact file-qualified Target first" in body
+    exact_position = body.index("exact file-qualified Target first")
+    usages_position = body.index("`gcode usages`", exact_position)
+    blast_position = body.index("`gcode blast-radius`", exact_position)
+    assert exact_position < usages_position
+    assert exact_position < blast_position
+    assert "regardless of category" in body
 
 
 def test_review_prompts_have_direct_repository_and_task_access() -> None:

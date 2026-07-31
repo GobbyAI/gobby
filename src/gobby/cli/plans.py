@@ -10,6 +10,7 @@ from typing import Any, cast
 import click
 import psycopg
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.plans.review_evidence_io import normalize_plan_path
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
@@ -27,6 +28,7 @@ from ._plan_validation_output import emit_plan_validation_messages, raise_plan_v
 from .utils import resolve_project_ref
 
 _ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
+
 
 @click.group("plans")
 def plans() -> None:
@@ -148,6 +150,7 @@ def validate_plan_command(
         click.echo("  No phase metadata available")
     for phase_num, title in phase_items:
         click.echo(f"  {phase_num}: {title}")
+
 
 @plans.command("archive")
 @click.argument("plan_id")
@@ -326,8 +329,51 @@ def _validate_plan_for_cli(
     mode: str,
 ) -> dict[str, Any]:
     plan_path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
-    del project_ref, mode
-    return validate_plan_file(None, plan_path)
+    structural_result = validate_plan_file(None, plan_path)
+    if not structural_result.get("valid"):
+        return structural_result
+
+    require_symbol_validation = project_ref is not None or mode == "expansion"
+    project_id = _project_id(project_ref)
+    if project_id is None:
+        result = validate_plan_file(
+            None,
+            plan_path,
+            require_symbol_validation=require_symbol_validation,
+        )
+    else:
+        db = _open_db()
+        project = LocalProjectManager(db).get(project_id)
+        project_root = (
+            Path(project.repo_path) if project is not None and project.repo_path else None
+        )
+        result = validate_plan_file(
+            None,
+            plan_path,
+            project_id=project_id,
+            project_root=project_root,
+            code_index=CodeIndexStorage(db),
+            require_symbol_validation=require_symbol_validation,
+        )
+    return _with_symbol_validation_warnings(result)
+
+
+def _with_symbol_validation_warnings(result: dict[str, Any]) -> dict[str, Any]:
+    envelope = result.get("symbol_validation")
+    if not isinstance(envelope, dict) or envelope.get("status") != "skipped":
+        return result
+    issues = envelope.get("issues")
+    messages = (
+        [
+            issue["message"]
+            for issue in issues
+            if isinstance(issue, dict) and isinstance(issue.get("message"), str)
+        ]
+        if isinstance(issues, list)
+        else []
+    )
+    result["warnings"] = [*result.get("warnings", []), *messages]
+    return result
 
 
 def _project_id(project: str | None, *, required: bool = False) -> str | None:

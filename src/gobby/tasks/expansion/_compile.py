@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.feature_base import (
     FeatureCandidateInput,
     candidate_labels,
@@ -96,6 +97,20 @@ async def compile_run(
 
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
+        project = self.project_manager.get(task.project_id)
+        project_root = (
+            Path(project.repo_path) if project is not None and project.repo_path else None
+        )
+        plan_validation = self.validate_plan_file(
+            plan_doc.source_path,
+            project_id=task.project_id,
+            project_root=project_root,
+            code_index=CodeIndexStorage(self.db),
+            require_symbol_validation=True,
+        )
+        if not plan_validation["valid"]:
+            errors = "; ".join(plan_validation["errors"])
+            raise ValueError(f"Contract plan failed validation: {errors}")
         deliverable_count = sum(
             1 for section in plan_doc.sections if section.kind is Kind.deliverable
         )
