@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from gobby.cli.daemon import _services_start, _services_stop
+from gobby.cli.daemon import ServiceStartResult, _services_start, _services_stop
 from gobby.cli.hub_backup._manifest import (
     MANIFEST_NAME,
     ArtifactRecord,
@@ -49,6 +49,12 @@ from gobby.cli.hub_backup._verify import (
     verify_postgres_restore,
     verify_qdrant_restore,
     verify_volume_archives,
+)
+from gobby.cli.installers.compose_env import (
+    MANAGED_SERVICE_PROFILES,
+    ComposeEnvironmentError,
+    ComposeRuntime,
+    resolve_compose_runtime,
 )
 from gobby.cli.installers.container_restart import (
     FALKORDB_CONTAINER,
@@ -81,6 +87,14 @@ MIN_FREE_BYTES = 5 * 1024**3
 OUTPUT_DIR_MODE = 0o700
 DOCKER_INSPECT_TIMEOUT_SECONDS = 30
 TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+COMPOSE_START_TIMEOUT_SECONDS = 120
+
+_EPOCH_COMPOSE_OVERRIDE = """\
+services:
+  postgres:
+    environment:
+      PGOPTIONS: "${PGOPTIONS:?PGOPTIONS must carry the maintenance epoch}"
+"""
 
 POSTGRES_ARCHIVE_METHOD = "pg-restore-list+sha256"
 QDRANT_ARCHIVE_METHOD = "snapshot-download+sha256"
@@ -289,12 +303,81 @@ def _archive_volumes(
     try:
         artifacts, details = tar_volumes(backup_root)
     finally:
-        restart = _services_start(gobby_home)
+        restart = (
+            _start_epoch_services(gobby_home)
+            if os.environ.get(MAINTENANCE_EPOCH_ENV)
+            else _services_start(gobby_home)
+        )
     if restart.outcome != "success":
         raise click.ClickException(
             f"Docker services did not restart after archiving volumes: {restart.detail}"
         )
     return artifacts, details
+
+
+def _start_epoch_services(gobby_home: Path) -> ServiceStartResult:
+    """Start managed services with the epoch token available to Postgres healthchecks."""
+    services_dir = gobby_home / "services"
+    compose_file = services_dir / "docker-compose.yml"
+    if not compose_file.exists():
+        return ServiceStartResult("failed", f"Compose file is missing: {compose_file}")
+
+    try:
+        postgres_runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
+    except ComposeEnvironmentError as exc:
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
+    postgres_result = _run_epoch_compose_up(compose_file, services_dir, postgres_runtime)
+    if postgres_result.outcome != "success":
+        return postgres_result
+
+    try:
+        runtime = resolve_compose_runtime(gobby_home)
+    except ComposeEnvironmentError as exc:
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
+    if runtime.profiles != MANAGED_SERVICE_PROFILES:
+        return ServiceStartResult(
+            "failed",
+            "Docker service config must enable postgres, qdrant, and falkordb profiles",
+        )
+    return _run_epoch_compose_up(compose_file, services_dir, runtime)
+
+
+def _run_epoch_compose_up(
+    compose_file: Path,
+    services_dir: Path,
+    runtime: ComposeRuntime,
+) -> ServiceStartResult:
+    epoch = os.environ.get(MAINTENANCE_EPOCH_ENV, "")
+    if epoch not in runtime.environment.get("PGOPTIONS", ""):
+        return ServiceStartResult("failed", "PGOPTIONS does not carry the maintenance epoch")
+
+    command = ["docker", "compose", "-f", str(compose_file), "-f", "-"]
+    for profile in runtime.profiles:
+        command.extend(["--profile", profile])
+    command.extend(["up", "-d", "--remove-orphans", "--wait"])
+    try:
+        result = subprocess.run(  # nosec B603 - fixed Docker Compose arguments
+            command,
+            input=_EPOCH_COMPOSE_OVERRIDE,
+            capture_output=True,
+            text=True,
+            timeout=COMPOSE_START_TIMEOUT_SECONDS,
+            env=runtime.environment,
+            cwd=str(services_dir),
+        )
+    except subprocess.TimeoutExpired:
+        return ServiceStartResult(
+            "failed",
+            f"Docker compose up timed out after {COMPOSE_START_TIMEOUT_SECONDS}s",
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ServiceStartResult("failed", f"Docker compose execution failed: {exc}")
+    if result.returncode != 0:
+        return ServiceStartResult(
+            "failed",
+            f"Docker compose up failed: {result.stderr or result.stdout}",
+        )
+    return ServiceStartResult("success", "Docker services started")
 
 
 # ---------------------------------------------------------------------------

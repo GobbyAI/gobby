@@ -43,6 +43,7 @@ from gobby.cli.hub_backup._stores import (
     VOLUME_ARCHIVE_DIR,
 )
 from gobby.cli.hub_backup._verify import RoleExpectation
+from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
@@ -358,6 +359,7 @@ class _Harness:
             "dump_falkordb": self.dump_falkordb,
             "_services_stop": self.services_stop,
             "_services_start": self.services_start,
+            "_start_epoch_services": self.services_start,
             "tar_volumes": self.tar_volumes,
             "verify_postgres_restore": self.verify_postgres_restore,
             "verify_qdrant_restore": self.verify_qdrant_restore,
@@ -629,6 +631,52 @@ class TestCleanup:
         assert result.exit_code != 0
         assert "verify_postgres_restore" not in harness.calls
         assert harness.calls[-1] == "start_daemon"
+
+    def test_epoch_service_restart_injects_pgoptions_for_postgres_healthcheck(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        services_dir = tmp_path / "services"
+        services_dir.mkdir()
+        (services_dir / "docker-compose.yml").write_text("services: {}\n")
+        epoch = "3e553f12-2d7c-4e3f-a8c6-637e2a928942"
+        pgoptions = f"-c gobby.maintenance_epoch={epoch}"
+        monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, epoch)
+        monkeypatch.setenv("PGOPTIONS", pgoptions)
+
+        def resolve_runtime(
+            _gobby_home: Path,
+            *,
+            profiles: tuple[str, ...] = ("postgres", "qdrant", "falkordb"),
+        ) -> ComposeRuntime:
+            return ComposeRuntime(
+                environment={"PGOPTIONS": pgoptions},
+                profiles=profiles,
+            )
+
+        calls: list[tuple[list[str], dict[str, object]]] = []
+
+        def run_compose(
+            args: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(hub_cli, "resolve_compose_runtime", resolve_runtime, raising=False)
+        monkeypatch.setattr(subprocess, "run", run_compose)
+
+        result = hub_cli._start_epoch_services(tmp_path)
+
+        assert result == ServiceStartResult("success", "Docker services started")
+        assert len(calls) == 2
+        for command, kwargs in calls:
+            assert command.count("-f") == 2
+            assert command[command.index("-f", 3) + 1] == "-"
+            assert kwargs["input"] == hub_cli._EPOCH_COMPOSE_OVERRIDE
+            assert kwargs["env"] == {"PGOPTIONS": pgoptions}
+            assert "--wait" in command
 
     def test_refuses_to_archive_volumes_while_services_are_still_up(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
