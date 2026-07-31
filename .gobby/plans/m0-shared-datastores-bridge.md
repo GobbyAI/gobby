@@ -47,9 +47,17 @@ Docker stack on the tailnet without hand-editing generated files.
 ### 1.1 Add datastore_mode bootstrap key and remote-DSN support [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/config/bootstrap.py`, `src/gobby/config/app.py`,
-`src/gobby/cli/daemon.py`, `src/gobby/install/shared/config/bootstrap.yaml`,
-`crates/gcore/src/bootstrap.rs`
+Targets:
+- `src/gobby/config/bootstrap.py::BootstrapConfig`
+- `src/gobby/config/bootstrap.py::BootstrapConfig.to_config_dict`
+- `src/gobby/config/bootstrap.py::load_bootstrap`
+- `src/gobby/config/bootstrap.py::_validate_managed_database_url`
+- `src/gobby/config/app.py::DaemonConfig`
+- `src/gobby/cli/daemon.py::start`
+- `src/gobby/cli/daemon.py::stop`
+- `src/gobby/cli/installers/compose_env.py::resolve_compose_runtime`
+- `src/gobby/install/shared/config/bootstrap.yaml::*` — scope-reason: add the datastore topology key to the installed bootstrap template
+- `crates/gcore/src/bootstrap.rs::*` — scope-reason: add an adjacent parser-tolerance test for the new bootstrap key
 
 Add top-level bootstrap key `datastore_mode: Literal["local", "remote"] = "local"`:
 
@@ -89,11 +97,14 @@ tailnet host via config_store (see 1.2).
 ### 1.2 Compose bind-address knob, published host, and gobby datastores expose [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/data/docker-compose.services.yml`,
-`crates/gcore/assets/docker-compose.services.yml`,
-`src/gobby/cli/installers/compose_env.py`, `src/gobby/cli/installers/falkor.py`,
-`src/gobby/cli/installers/qdrant.py`, `src/gobby/cli/installers/postgres.py`,
-`src/gobby/cli/daemon.py`, new `src/gobby/cli/datastores.py`
+Targets:
+- `src/gobby/data/docker-compose.services.yml::*` — scope-reason: parameterize datastore port bindings across all three compose services
+- `crates/gcore/assets/docker-compose.services.yml::*` — scope-reason: keep the embedded compose template byte-identical with the Python template
+- `src/gobby/cli/installers/compose_env.py::resolve_compose_runtime`
+- `src/gobby/cli/installers/falkor.py::_update_config`
+- `src/gobby/cli/installers/qdrant.py::_update_config`
+- `src/gobby/cli/daemon.py::_services_start`
+- `src/gobby/cli/datastores.py`
 
 Parameterize the hub-side bind address and make exposure survive reinstalls:
 
@@ -132,8 +143,11 @@ or a concrete Tailscale interface address and rejects wildcard addresses
 ### 1.3 Remote-mode gobby install with reachability preflight [category: code] (depends: 1.1)
 `kind: deliverable`
 
-Target: `src/gobby/cli/install.py`, `src/gobby/cli/installers/postgres.py`,
-`src/gobby/cli/installers/qdrant.py`, `src/gobby/cli/installers/falkor.py`
+Targets:
+- `src/gobby/cli/install.py::install`
+- `src/gobby/cli/installers/postgres.py::install_postgres`
+- `src/gobby/cli/installers/qdrant.py::install_qdrant`
+- `src/gobby/cli/installers/falkor.py::install_falkordb`
 
 `gobby install` on a machine whose bootstrap.yaml says `datastore_mode: remote`:
 
@@ -169,7 +183,15 @@ state or lifecycle.
 ### 2.1 Migration: machine_id on worktrees, clones, agent_runs, cron_runs [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/storage/migrations/365_machine_scope.sql`, `src/gobby/storage/postgres_baseline_schema.sql`, `src/gobby/storage/worktrees.py`, `src/gobby/storage/clones.py`, `src/gobby/storage/agents/_manager.py`, `src/gobby/storage/cron_runs.py`, `src/gobby/agents/isolation_worktree.py`, `src/gobby/agents/isolation_clone.py`
+Targets:
+- `src/gobby/storage/migrations/365_machine_scope.sql`
+- `src/gobby/storage/postgres_baseline_schema.sql`
+- `src/gobby/storage/worktrees.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped uniqueness surfaces together
+- `src/gobby/storage/clones.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped path surfaces together
+- `src/gobby/storage/agents/_manager.py::*` — scope-reason: stamp machine ownership across agent-run creation paths
+- `src/gobby/storage/cron_runs.py::*` — scope-reason: add machine ownership to the cron-run model and creation paths
+- `src/gobby/agents/isolation_worktree.py::*` — scope-reason: propagate local machine ownership through worktree isolation setup
+- `src/gobby/agents/isolation_clone.py::*` — scope-reason: propagate local machine ownership through clone isolation setup
 
 The migration file is new. Slot allocation (amended 2026-07-30 per
 gcore-schema-authority §0.6): M0's machine-scoping slots live in the
@@ -218,9 +240,13 @@ clone and agent-run models) gain the field.
 ### 2.2 Scope agent lifecycle and workspace readers by machine_id [category: code] (depends: 2.1)
 `kind: deliverable`
 
-Target: `src/gobby/storage/agents/_queries.py`, `src/gobby/agents/lifecycle_monitor.py`,
-`src/gobby/storage/worktrees.py`, `src/gobby/storage/clones.py`,
-`src/gobby/dispatch/daemon_resume.py`, `src/gobby/hooks/event_handlers/_misc.py`
+Targets:
+- `src/gobby/storage/agents/_queries.py::*` — scope-reason: machine-scope every lifecycle query that can inspect local process state
+- `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: thread the local machine id through all lifecycle query call sites
+- `src/gobby/storage/worktrees.py::*` — scope-reason: machine-scope claim, lookup, stale discovery, and cleanup surfaces
+- `src/gobby/storage/clones.py::*` — scope-reason: machine-scope claim, lookup, stale discovery, and cleanup surfaces
+- `src/gobby/dispatch/daemon_resume.py::*` — scope-reason: restrict daemon-stop resume candidates to local tmux and workspace state
+- `src/gobby/hooks/event_handlers/_misc.py::MiscEventHandlerMixin.handle_worktree_remove`
 
 Every reader that inspects local processes/tmux or touches the local filesystem must
 see only rows owned by this machine:
@@ -253,10 +279,13 @@ see only rows owned by this machine:
 ### 2.3 Scope session background consumers to local-machine sessions [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/storage/sessions/_transcript.py`, `src/gobby/sessions/summarize.py`,
-`src/gobby/sessions/analyzer.py`, `src/gobby/agents/idle_check_handler.py`,
-`src/gobby/sessions/transcript_paths.py`,
-`src/gobby/hooks/event_handlers/_session_start/transcripts.py`
+Targets:
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.get_pending_transcript_sessions`
+- `src/gobby/sessions/summarize.py::generate_session_summaries`
+- `src/gobby/sessions/analyzer.py::TranscriptAnalyzer`
+- `src/gobby/agents/idle_check_handler.py::IdleCheckHandler.check_idle_agents`
+- `src/gobby/sessions/transcript_paths.py::find_transcript_on_disk`
+- `src/gobby/hooks/event_handlers/_session_start/transcripts.py::derive_transcript_path`
 
 `sessions.machine_id` already exists (a nullable `UUID REFERENCES machines(id)`
 after the gcore-schema-authority identity cutover), so this is query-scoping
@@ -286,8 +315,10 @@ construction:
 ### 2.4 Scope cron reconcile and stale sweeps by machine_id [category: code] (depends: 2.1)
 `kind: deliverable`
 
-Target: `src/gobby/storage/cron_children.py`, `src/gobby/storage/cron_runs.py`,
-`src/gobby/scheduler/scheduler.py`
+Targets:
+- `src/gobby/storage/cron_children.py::_fail_remaining_active_runs`
+- `src/gobby/storage/cron_runs.py::*` — scope-reason: machine-scope stale-run sweeps and concurrency counting alongside the model changes in 2.1
+- `src/gobby/scheduler/scheduler.py::*` — scope-reason: pass local machine ownership through startup reconcile, stale sweeps, admission, and concurrency accounting
 
 Occurrence claiming is already cross-daemon safe (`_create_scheduled_run` claims under
 `transaction_immediate(lock=CronRunAdmission())` with an `expected_next_run_at` CAS,
@@ -320,7 +351,10 @@ B deterministically kills A's in-flight runs. Scope to
 ### 3.1 Migration lockstep guard [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/storage/hub/postgres.py`, `src/gobby/storage/migrations.py`
+Targets:
+- `src/gobby/storage/hub/postgres.py::PostgresHubDatabase.apply_migrations`
+- `src/gobby/storage/migrations.py::MigrationUnsupportedError`
+- `src/gobby/storage/migrations.py::latest_known_version`
 
 Today `MigrationRunner.apply_pending` (`storage/migrations.py:122`) is advisory-locked
 and CAS-safe against concurrent migrators but silently ignores recorded versions it
