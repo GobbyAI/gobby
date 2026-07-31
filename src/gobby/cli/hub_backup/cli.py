@@ -134,7 +134,7 @@ def hub_backup(
     if epoch is not None:
         require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
-    qdrant_url, qdrant_api_key = _qdrant_settings(ctx)
+    qdrant_url, qdrant_api_key = _qdrant_settings(ctx, apply_migrations=epoch is None)
 
     # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
     restart_daemon = _daemon_is_running() and epoch is None
@@ -450,8 +450,12 @@ def _start_daemon() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _qdrant_settings(ctx: click.Context) -> tuple[str | None, str | None]:
-    qdrant = get_cli_runtime(ctx).config.databases.qdrant
+def _qdrant_settings(
+    ctx: click.Context,
+    *,
+    apply_migrations: bool = True,
+) -> tuple[str | None, str | None]:
+    qdrant = get_cli_runtime(ctx).require_config(apply_migrations=apply_migrations).databases.qdrant
     return qdrant.url, qdrant.api_key
 
 

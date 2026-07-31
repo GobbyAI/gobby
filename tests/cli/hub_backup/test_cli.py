@@ -13,8 +13,11 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple
+from unittest.mock import MagicMock
 
 import click
 import pytest
@@ -42,6 +45,7 @@ from gobby.cli.hub_backup._stores import (
 from gobby.cli.hub_backup._verify import RoleExpectation
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
 
@@ -551,6 +555,42 @@ class TestEpoch:
         assert manifest.epoch_id == "e1"
         assert "stop_daemon" in harness.calls
         assert "start_daemon" not in harness.calls
+
+    def test_epoch_config_loading_skips_pending_destructive_migrations(
+        self,
+        harness: _Harness,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        database = MagicMock()
+        apply_migrations_values: list[bool] = []
+        config = DaemonConfig()
+        config.databases.qdrant.url = QDRANT_URL
+        config.databases.qdrant.api_key = QDRANT_API_KEY
+
+        @contextmanager
+        def open_database(
+            _config_file: str | None = None,
+            *,
+            apply_migrations: bool = True,
+        ) -> Iterator[MagicMock]:
+            apply_migrations_values.append(apply_migrations)
+            if apply_migrations:
+                raise RuntimeError("pending destructive migration rejected")
+            yield database
+
+        def load_runtime_config(_config_file: str | None, _database: object) -> DaemonConfig:
+            return config
+
+        monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+        monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, "e1")
+        runtime = CliRuntime(config_file=None, config_loader=load_runtime_config)
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"), "--epoch", "e1")
+        runtime.close()
+
+        assert result.exit_code == 0, result.output
+        assert apply_migrations_values == [False]
 
 
 class TestCleanup:

@@ -557,6 +557,23 @@ def test_external_issue_outbound_cursor_matches_baseline() -> None:
     assert expected in migration
 
 
+def test_reconcile_cron_display_name_migration_is_dual_shape_safe() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "355_reconcile_346_cron_display_name.sql"
+    ).read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    _assert_contains_all(
+        "cron display name reconciliation migration",
+        normalized,
+        (
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS display_name TEXT;",
+            "DROP TABLE IF EXISTS tmux_input_requests, tmux_input_pane_states;",
+        ),
+    )
+
+
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     migration = (
