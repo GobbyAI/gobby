@@ -7,6 +7,7 @@ RESPONDER_COMMANDS: tuple[tuple[str, str], ...] = (
     ("reset", "Reset the current conversation"),
     ("stop", "Stop the active response"),
     ("status", "Show responder provider and model"),
+    ("subscriptions", "Manage event subscriptions"),
     ("help", "Show available commands"),
 )
 

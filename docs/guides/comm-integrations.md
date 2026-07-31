@@ -471,6 +471,30 @@ Session lifecycle events are:
 - `session.interactive.paused`
 - `session.interactive.expired`
 
+These four subscriptions can remain attached to a Telegram channel
+simultaneously. Telegram `/subscriptions` lists enabled and disabled records for
+that channel and updates them through the same validated subscription manager
+used by the CLI, HTTP API, and MCP tools. Mutation is limited to an allowlisted
+private chat. Menus show six records per page and include explicit-state
+controls plus **Enable all** and **Disable all**.
+
+Telegram pause deliveries include the complete last visible assistant message
+and support structured option buttons, exact live native-plan choices for
+Claude, Codex, Droid, Grok, and Qwen, a **Continue** button for other pauses,
+and an explicit native-reply prompt on every persisted message chunk. Native
+plan callbacks revalidate the pane and use the provider keystroke registry.
+Replies and Continue actions enter the existing inter-session mailbox with a
+live wake attempt; unavailable wake channels leave a durable queued answer.
+Session, project, channel, chat, access-policy, and paused-state checks run
+before forwarding.
+
+Compaction-only pauses defer notification for the existing 600-second
+continuation window. At the deadline the daemon re-reads status and transcript,
+sends a normal pause for real post-compaction output, sends a compaction-failure
+notification for a still-paused session with no real activity, and suppresses
+resumed or superseded sessions. Pending deadline evaluations recover after a
+daemon restart.
+
 Subscription timestamps are stored in UTC and presented to users as local ISO
 timestamps.
 

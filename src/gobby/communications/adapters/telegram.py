@@ -271,6 +271,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 chat_id=chat_id,
                 thread_id=message.platform_thread_id,
                 ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
+                action=message.metadata_json.get("callback_action"),
             )
         link_preview_options = resolve_link_preview_options(
             self._link_preview_options,
@@ -308,6 +309,7 @@ class TelegramAdapter(BaseChannelAdapter):
 
         if not message_ids:
             return None
+        message.metadata_json["platform_message_ids"] = message_ids
         root_message_id = message_ids[0]
         message_key = (str(chat_id), root_message_id)
         if link_preview_options != self._link_preview_options:

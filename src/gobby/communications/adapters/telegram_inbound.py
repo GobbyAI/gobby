@@ -345,6 +345,11 @@ def parse_telegram_update(
         "username": username,
         "external_username": username or user_id,
     }
+    reply_to_message = msg_data.get("reply_to_message")
+    if isinstance(reply_to_message, Mapping):
+        reply_to_message_id = reply_to_message.get("message_id")
+        if isinstance(reply_to_message_id, int | str):
+            metadata["reply_to_message_id"] = str(reply_to_message_id)
     if platform_thread_id is not None:
         metadata["message_thread_id"] = platform_thread_id
         metadata["is_topic_message"] = True

@@ -122,6 +122,40 @@ def init_servers(runner: GobbyRunner) -> None:
 
     runner.http_server.message_processor = runner.message_processor
 
+    if runner.communications_manager and runner.http_server.transcript_reader:
+        from gobby.communications.native_plan_actions import NativePlanActionService
+        from gobby.communications.session_notifications import SessionNotificationService
+        from gobby.communications.telegram_actions import TelegramActionController
+        from gobby.sessions.mailbox import MailboxService
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+
+        mailbox = MailboxService(
+            db=runner.database,
+            message_manager=InterSessionMessageManager(runner.database),
+            session_manager=runner.session_manager,
+            wake_dispatcher=runner.wake_dispatcher,
+        )
+        native_plan_actions = NativePlanActionService(
+            runner.session_manager,
+            runner.detection_registry,
+        )
+        runner.communications_manager.set_session_notification_service(
+            SessionNotificationService(
+                runner.communications_manager,
+                runner.session_manager,
+                runner.http_server.transcript_reader,
+                native_plan_actions=native_plan_actions,
+            )
+        )
+        runner.communications_manager.set_telegram_action_controller(
+            TelegramActionController(
+                runner.communications_manager,
+                runner.session_manager,
+                mailbox,
+                native_plan_actions,
+            )
+        )
+
     if runner.pipeline_executor is not None:
         runner.pipeline_executor.tool_proxy_getter = tool_proxy_getter
 

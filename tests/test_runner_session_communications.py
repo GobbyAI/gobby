@@ -104,8 +104,7 @@ async def test_session_event_routing_is_scoped_deduplicated_and_administrable(
         project_id=project_b.id,
     )
     channels = {
-        name: _channel(name)
-        for name in ("project-a", "project-b", "global", "disabled", "deleted")
+        name: _channel(name) for name in ("project-a", "project-b", "global", "disabled", "deleted")
     }
     store = LocalCommunicationsStore(temp_db)
     for channel in channels.values():
@@ -139,9 +138,7 @@ async def test_session_event_routing_is_scoped_deduplicated_and_administrable(
         store.create_routing_rule(rule)
     store.delete_routing_rule(rules["deleted"].id)
 
-    adapters = {
-        name: _telegram_adapter(f"platform-{name}") for name in channels
-    }
+    adapters = {name: _telegram_adapter(f"platform-{name}") for name in channels}
     adapter_factory = MagicMock(
         side_effect=[
             *[adapters[channel.name] for channel in channels.values()],
@@ -187,9 +184,7 @@ async def test_session_event_routing_is_scoped_deduplicated_and_administrable(
 
     persisted = store.list_messages(limit=100)
     assert len(persisted) == 4
-    source_event_ids = {
-        message.metadata_json["source_event_id"] for message in persisted
-    }
+    source_event_ids = {message.metadata_json["source_event_id"] for message in persisted}
     assert len(source_event_ids) == 2
     assert all(message.status == "sent" for message in persisted)
 
@@ -206,7 +201,7 @@ async def test_session_bridge_registers_without_websocket(
         delivered.set()
         return []
 
-    communications_manager.send_event = AsyncMock(side_effect=send_event)
+    communications_manager.handle_session_status_transition = AsyncMock(side_effect=send_event)
     daemon_loop = asyncio.get_running_loop()
     listener = setup_session_status_communications(
         session_manager,
@@ -219,4 +214,4 @@ async def test_session_bridge_registers_without_websocket(
     await asyncio.wait_for(delivered.wait(), timeout=1.0)
 
     assert listener in session_manager._status_transition_listeners
-    communications_manager.send_event.assert_awaited_once()
+    communications_manager.handle_session_status_transition.assert_awaited_once_with(transition)

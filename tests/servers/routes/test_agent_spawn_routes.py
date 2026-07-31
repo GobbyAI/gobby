@@ -186,7 +186,7 @@ class TestSpawnAgent:
         assert updated.claimed_by_session_id == data["conversation_id"]
         conversation = session_manager.get(data["conversation_id"])
         assert conversation is not None
-        assert conversation.title == f"#{conversation.seq_num} Claude"
+        assert conversation.title == "Claude"
         assert conversation.title_source == "provisional"
 
     def test_spawn_web_chat_preserves_review_status(

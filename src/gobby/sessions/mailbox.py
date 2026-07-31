@@ -120,10 +120,12 @@ class MailboxService:
         message_type: str = "message",
         metadata: Mapping[str, Any] | None = None,
         project_id: str | None = None,
+        preserve_content: bool = False,
     ) -> MailboxSendResult:
         """Send a mailbox message to an explicit resolved target selector."""
-        content = content.strip()
-        if not content:
+        if not preserve_content:
+            content = content.strip()
+        if not content.strip():
             raise ValueError("content is required")
 
         resolution = self.resolve_target(

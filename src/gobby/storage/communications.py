@@ -334,9 +334,16 @@ class LocalCommunicationsStore:
         sql = """
             SELECT m.* FROM comms_messages m
             JOIN comms_channels c ON m.channel_id = c.id
-            WHERE c.name = %s AND m.platform_message_id = %s
+            WHERE c.name = %s
+              AND (
+                    m.platform_message_id = %s
+                 OR m.metadata_json->'platform_message_ids' ? %s
+              )
         """
-        row = self.db.fetchone(sql, (channel_name, platform_message_id))
+        row = self.db.fetchone(
+            sql,
+            (channel_name, platform_message_id, platform_message_id),
+        )
         return CommsMessage.from_row(dict(row)) if row else None
 
     def list_messages(
@@ -418,16 +425,26 @@ SELECT
         status: str,
         error: str | None,
         platform_message_id: str | None,
+        metadata_json: dict[str, Any],
     ) -> None:
         """Persist the final delivery result for a reserved outbound message."""
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 UPDATE comms_messages
-                   SET status = %s, error = %s, platform_message_id = %s
+                   SET status = %s,
+                       error = %s,
+                       platform_message_id = %s,
+                       metadata_json = %s
                  WHERE id = %s
                 """,
-                (status, error, platform_message_id, message_id),
+                (
+                    status,
+                    error,
+                    platform_message_id,
+                    json.dumps(metadata_json),
+                    message_id,
+                ),
             )
 
     def update_message_content(self, message_id: str, content: str) -> None:

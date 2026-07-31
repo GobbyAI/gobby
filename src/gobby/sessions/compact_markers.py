@@ -3,6 +3,7 @@
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
+COMPACT_NOTIFICATION_STARTED_AT_VARIABLE = "compact_notification_started_at"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE = "compact_resume_advisory_skills"
 COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"

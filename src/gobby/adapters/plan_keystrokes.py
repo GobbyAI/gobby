@@ -86,6 +86,7 @@ class SupportsSendKeys(Protocol):
 # so stale web-UI clicks do not send blind digits to the current pane.
 PlanMenuResolver = Callable[[str, str], "PlanKeystrokeSequence | None"]
 PlanMenuMatcher = Callable[[str], bool]
+NativePlanOptionResolver = Callable[[int, str], "PlanKeystrokeSequence | None"]
 
 
 class PlanKeystrokeRegistry:
@@ -109,6 +110,7 @@ class PlanKeystrokeRegistry:
         self._map: dict[tuple[str, str], PlanKeystrokeSequence] = {}
         self._resolvers: dict[str, PlanMenuResolver] = {}
         self._menu_matchers: dict[str, PlanMenuMatcher] = {}
+        self._native_option_resolvers: dict[str, NativePlanOptionResolver] = {}
 
     def register(self, source: str, option_id: str, sequence: PlanKeystrokeSequence) -> None:
         """Register (overwriting) the static sequence for ``(source, option_id)``."""
@@ -121,6 +123,14 @@ class PlanKeystrokeRegistry:
     def register_menu_matcher(self, source: str, matcher: PlanMenuMatcher) -> None:
         """Register (overwriting) a static-menu presence matcher for ``source``."""
         self._menu_matchers[source] = matcher
+
+    def register_native_option_resolver(
+        self,
+        source: str,
+        resolver: NativePlanOptionResolver,
+    ) -> None:
+        """Register a live-menu resolver for a provider's numbered native choices."""
+        self._native_option_resolvers[source] = resolver
 
     def resolve(self, source: str | None, option_id: str | None) -> PlanKeystrokeSequence | None:
         """Return the static sequence for ``(source, option_id)`` or ``None``."""
@@ -154,11 +164,29 @@ class PlanKeystrokeRegistry:
             return None
         return sequence
 
+    def resolve_native_option_for_pane(
+        self,
+        source: str | None,
+        option: int | None,
+        pane_text: str,
+    ) -> PlanKeystrokeSequence | None:
+        """Resolve an exact numbered choice only when its native menu is live."""
+        if not source or option is None or isinstance(option, bool):
+            return None
+        resolver = self._native_option_resolvers.get(source)
+        if resolver is None:
+            return None
+        return resolver(option, pane_text)
+
     def has_source(self, source: str | None) -> bool:
         """Whether any static sequence or resolver is registered for ``source``."""
         if not source:
             return False
-        if source in self._resolvers or source in self._menu_matchers:
+        if (
+            source in self._resolvers
+            or source in self._menu_matchers
+            or source in self._native_option_resolvers
+        ):
             return True
         return any(key_source == source for key_source, _ in self._map)
 
@@ -424,6 +452,47 @@ def _pane_contains_all(*needles: str) -> PlanMenuMatcher:
     return lambda pane_text: all(needle in pane_text for needle in needles)
 
 
+def _numbered_native_resolver(
+    matcher: PlanMenuMatcher,
+    *,
+    minimum: int,
+    maximum: int,
+    sequence: Callable[[str], PlanKeystrokeSequence],
+) -> NativePlanOptionResolver:
+    """Build a guarded resolver for a fixed numbered native menu."""
+
+    def resolve(option: int, pane_text: str) -> PlanKeystrokeSequence | None:
+        if option < minimum or option > maximum or not matcher(pane_text):
+            return None
+        return sequence(str(option))
+
+    return resolve
+
+
+def _claude_native_option(
+    option: int,
+    pane_text: str,
+) -> PlanKeystrokeSequence | None:
+    lowered = pane_text.lower()
+    if any(marker in lowered for marker in _CLAUDE_FULL_MENU_MARKERS):
+        return _claude_digit_then_enter(str(option)) if 1 <= option <= 4 else None
+    if _CLAUDE_CONFIRM_MENU_MARKER in lowered:
+        return _claude_digit_only(str(option)) if 1 <= option <= 2 else None
+    return None
+
+
+def _qwen_native_option(
+    option: int,
+    pane_text: str,
+) -> PlanKeystrokeSequence | None:
+    matcher = _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes")
+    if not matcher(pane_text) or option < 1 or option > 3:
+        return None
+    if option == 3:
+        return PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),))
+    return _qwen_digit(str(option))
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -451,26 +520,53 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """
     # --- claude (ExitPlanMode menu) -- task #15727 ---
     registry.register_resolver("claude", _claude_plan_keystrokes)
+    registry.register_native_option_resolver("claude", _claude_native_option)
     # --- codex (Plan mode `/plan` -> "Implement this plan?" menu) -- task #15728 ---
+    codex_matcher = _pane_contains_all(
+        "Implement this plan?", "Yes, implement this plan", "No, stay in Plan mode"
+    )
     for _codex_option_id, _codex_sequence in _CODEX_PLAN_MENU.items():
         registry.register("codex", _codex_option_id, _codex_sequence)
-    registry.register_menu_matcher(
+    registry.register_menu_matcher("codex", codex_matcher)
+    registry.register_native_option_resolver(
         "codex",
-        _pane_contains_all(
-            "Implement this plan?", "Yes, implement this plan", "No, stay in Plan mode"
+        _numbered_native_resolver(
+            codex_matcher,
+            minimum=1,
+            maximum=3,
+            sequence=_codex_digit,
         ),
     )
     # --- droid (spec mode `--use-spec` -> "Proceed with the proposal" menu) -- task #15729 ---
+    droid_matcher = _pane_contains_all(
+        "Proceed with the proposal", "No and explain why", "1-4 select"
+    )
     for _droid_option_id, _droid_sequence in _DROID_PLAN_MENU.items():
         registry.register("droid", _droid_option_id, _droid_sequence)
-    registry.register_menu_matcher(
+    registry.register_menu_matcher("droid", droid_matcher)
+    registry.register_native_option_resolver(
         "droid",
-        _pane_contains_all("Proceed with the proposal", "No and explain why", "1-4 select"),
+        _numbered_native_resolver(
+            droid_matcher,
+            minimum=1,
+            maximum=4,
+            sequence=_droid_digit,
+        ),
     )
     # --- grok (Grok Build TUI tool-approval menu) -- task #15731 ---
+    grok_matcher = _pane_contains_all("No, reject (type to add feedback)")
     for _grok_option_id, _grok_sequence in _GROK_PLAN_MENU.items():
         registry.register("grok", _grok_option_id, _grok_sequence)
-    registry.register_menu_matcher("grok", _pane_contains_all("No, reject (type to add feedback)"))
+    registry.register_menu_matcher("grok", grok_matcher)
+    registry.register_native_option_resolver(
+        "grok",
+        _numbered_native_resolver(
+            grok_matcher,
+            minimum=1,
+            maximum=4,
+            sequence=_grok_digit,
+        ),
+    )
     # --- qwen (Qwen Code TUI tool-approval menu) -- task #15732 ---
     for _qwen_option_id, _qwen_sequence in _QWEN_PLAN_MENU.items():
         registry.register("qwen", _qwen_option_id, _qwen_sequence)
@@ -478,6 +574,7 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
         "qwen",
         _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes (esc)"),
     )
+    registry.register_native_option_resolver("qwen", _qwen_native_option)
 
 
 def build_default_plan_keystroke_registry() -> PlanKeystrokeRegistry:

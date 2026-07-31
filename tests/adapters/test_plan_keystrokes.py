@@ -640,6 +640,64 @@ class TestQwenPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("qwen", "approve_bogus") is None
 
 
+class TestNativeNumberedPlanOptions:
+    @pytest.mark.parametrize(
+        ("source", "option", "pane_text", "expected"),
+        [
+            ("claude", 3, _CLAUDE_FULL_MENU_PANE, _full("3")),
+            ("claude", 2, _CLAUDE_CONFIRM_MENU_PANE, _confirm("2")),
+            ("codex", 1, _CODEX_PLAN_MENU_PANE, _codex("1")),
+            ("codex", 2, _CODEX_PLAN_MENU_PANE, _codex("2")),
+            ("codex", 3, _CODEX_PLAN_MENU_PANE, _codex("3")),
+            ("droid", 2, _DROID_PLAN_MENU_PANE, _droid("2")),
+            ("droid", 3, _DROID_PLAN_MENU_PANE, _droid("3")),
+            ("grok", 2, _GROK_EDIT_MENU_PANE, _grok("2")),
+            ("qwen", 1, _QWEN_EDIT_MENU_PANE, _qwen("1")),
+            ("qwen", 2, _QWEN_EDIT_MENU_PANE, _qwen("2")),
+            ("qwen", 3, _QWEN_EDIT_MENU_PANE, _qwen_escape()),
+        ],
+    )
+    def test_resolves_exact_live_provider_choice(
+        self,
+        source: str,
+        option: int,
+        pane_text: str,
+        expected: PlanKeystrokeSequence,
+    ) -> None:
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_native_option_for_pane(
+                source,
+                option,
+                pane_text,
+            )
+            == expected
+        )
+
+    @pytest.mark.parametrize(
+        ("source", "option", "pane_text"),
+        [
+            ("agy", 1, _CODEX_PLAN_MENU_PANE),
+            ("codex", 4, _CODEX_PLAN_MENU_PANE),
+            ("codex", 1, "ordinary prompt"),
+            ("qwen", 0, _QWEN_EDIT_MENU_PANE),
+        ],
+    )
+    def test_rejects_unregistered_stale_or_out_of_range_choice(
+        self,
+        source: str,
+        option: int,
+        pane_text: str,
+    ) -> None:
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_native_option_for_pane(
+                source,
+                option,
+                pane_text,
+            )
+            is None
+        )
+
+
 class TestDefaultRegistry:
     def test_all_clis_registered(self) -> None:
         # Every managed CLI now has a captured native plan-menu mapping: claude

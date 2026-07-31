@@ -248,6 +248,19 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     assert updated.status == "delivered"
     assert updated.error == "no error"
 
+    comms_store.update_message_delivery(
+        saved.id,
+        "sent",
+        None,
+        "msg_root",
+        {"tokens": 10, "platform_message_ids": ["msg_root", "msg_tail"]},
+    )
+    alias = comms_store.get_message_by_platform_id("Msg", "msg_tail")
+    assert alias is not None
+    assert alias.id == saved.id
+    assert alias.platform_message_id == "msg_root"
+    assert alias.metadata_json["platform_message_ids"] == ["msg_root", "msg_tail"]
+
     comms_store.update_message_content(saved.id, "Edited response")
     edited = comms_store.get_message(saved.id)
     assert edited is not None
@@ -373,12 +386,7 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     assert len(comms_store.list_routing_rules(enabled=False)) == 1
     assert len(comms_store.list_routing_rules(event_pattern="task.*")) == 1
     assert (
-        len(
-            comms_store.list_routing_rules(
-                channel_id="00000000-0000-0000-0000-0000000000ff"
-            )
-        )
-        == 0
+        len(comms_store.list_routing_rules(channel_id="00000000-0000-0000-0000-0000000000ff")) == 0
     )
 
     saved.priority = 20

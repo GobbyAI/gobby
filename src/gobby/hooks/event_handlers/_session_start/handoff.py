@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from gobby.llm.sdk_utils import (
@@ -17,6 +18,7 @@ from gobby.sessions.compact_continuation import (
     consume_compact_handoff_marker,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
+from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.utils.injected_context import strip_injected_context
@@ -292,6 +294,11 @@ def prepare_compact_continuation_variables(
     db = handler._session_manager.db
     sv_mgr = SessionVariableManager(db)
     current_vars = sv_mgr.get_variables(session_id)
+    sv_mgr.set_variable(
+        session_id,
+        COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
+        datetime.now(UTC).isoformat(),
+    )
     auto_inject = _variable_enabled(current_vars.get("auto_inject_handoff"), default=True)
 
     session = handler._session_manager.get(session_id)

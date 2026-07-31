@@ -208,8 +208,22 @@ class InboundCommunications:
                     )
                 logger.exception("Failed to process inbound message: %s", e)
 
+        consumed_ids: set[str] = set()
+        for msg in stored:
+            try:
+                if await manager.handle_session_action(channel_name, msg):
+                    consumed_ids.add(msg.id)
+            except Exception as e:
+                logger.warning(
+                    "Session action handler error on handle_inbound_messages: %s",
+                    e,
+                    exc_info=True,
+                )
+
         if manager.event_callback is not None:
             for msg in stored:
+                if msg.id in consumed_ids:
+                    continue
                 try:
                     await manager.event_callback("comms.message_received", message=msg)
                 except Exception as e:

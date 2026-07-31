@@ -475,7 +475,6 @@ def setup_session_status_communications(
     loop_getter: Callable[[], asyncio.AbstractEventLoop | None],
 ) -> SessionStatusTransitionCallback:
     """Route committed session transitions from database threads onto the daemon loop."""
-    from gobby.communications.session_events import route_session_status_transition
 
     def on_transition(transition: SessionStatusTransition) -> None:
         loop = loop_getter()
@@ -486,7 +485,7 @@ def setup_session_status_communications(
             )
             return
         future = asyncio.run_coroutine_threadsafe(
-            route_session_status_transition(communications_manager, transition),
+            communications_manager.handle_session_status_transition(transition),
             loop,
         )
 

@@ -41,6 +41,6 @@ def _normalize_provider_label(source: str) -> str:
     return re.sub(r"[-_.]+", " ", fallback).title()
 
 
-def format_provisional_session_title(seq_num: int, source: str) -> str:
+def format_provisional_session_title(source: str) -> str:
     """Return the readable placeholder title used before digest title synthesis."""
-    return f"#{seq_num} {_normalize_provider_label(source)}"
+    return _normalize_provider_label(source)

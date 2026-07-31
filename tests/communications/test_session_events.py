@@ -27,6 +27,7 @@ class RecordingRouter:
         session_id: str | None = None,
         *,
         event_id: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> list[CommsMessage]:
         self.calls.append(
             {
@@ -35,6 +36,7 @@ class RecordingRouter:
                 "project_id": project_id,
                 "session_id": session_id,
                 "event_id": event_id,
+                "metadata": metadata,
             }
         )
         return []
@@ -72,9 +74,10 @@ def test_session_status_event_type_classifies_session_kind(
     status: str,
     expected: str,
 ) -> None:
-    assert session_status_event_type(
-        make_transition(agent_run_id=agent_run_id, status=status)
-    ) == expected
+    assert (
+        session_status_event_type(make_transition(agent_run_id=agent_run_id, status=status))
+        == expected
+    )
 
 
 async def test_route_session_status_transition_preserves_scope_and_utc_event_id() -> None:
@@ -98,17 +101,11 @@ async def test_route_session_status_transition_preserves_scope_and_utc_event_id(
     assert router.calls == [
         {
             "event_type": "session.agent.paused",
-            "content": (
-                "Session paused: Index docs (#42)\n"
-                "Provider: codex\n"
-                "Session ID: 11111111-1111-4111-8111-111111111111"
-            ),
+            "content": "#42 - Index docs - Paused",
             "project_id": "22222222-2222-4222-8222-222222222222",
             "session_id": "11111111-1111-4111-8111-111111111111",
-            "event_id": (
-                "11111111-1111-4111-8111-111111111111:paused:"
-                "2026-07-30T23:00:00+00:00"
-            ),
+            "event_id": ("11111111-1111-4111-8111-111111111111:paused:2026-07-30T23:00:00+00:00"),
+            "metadata": None,
         }
     ]
 
@@ -123,7 +120,7 @@ async def test_route_session_status_transition_ignores_unpublished_status() -> N
     assert router.calls == []
 
 
-def test_format_session_status_message_uses_short_reference_without_title() -> None:
+def test_format_session_status_message_uses_session_fallback_without_title() -> None:
     transition = make_transition(agent_run_id=None, status="expired")
     transition = SessionStatusTransition(
         session_id=transition.session_id,
@@ -136,4 +133,26 @@ def test_format_session_status_message_uses_short_reference_without_title() -> N
         source=transition.source,
     )
 
-    assert format_session_status_message(transition).startswith("Session expired: 11111111\n")
+    assert format_session_status_message(transition) == "Session - Expired"
+
+
+@pytest.mark.parametrize(
+    "legacy_title",
+    ["#42 Codex", "#42 - Codex", "#42: Codex"],
+)
+def test_format_session_status_message_does_not_duplicate_legacy_ref(
+    legacy_title: str,
+) -> None:
+    transition = make_transition(agent_run_id=None, status="paused")
+    transition = SessionStatusTransition(
+        session_id=transition.session_id,
+        project_id=transition.project_id,
+        agent_run_id=transition.agent_run_id,
+        status=transition.status,
+        transitioned_at=transition.transitioned_at,
+        seq_num=42,
+        title=legacy_title,
+        source=transition.source,
+    )
+
+    assert format_session_status_message(transition) == "#42 - Codex - Paused"

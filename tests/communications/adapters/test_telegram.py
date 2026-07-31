@@ -82,6 +82,10 @@ async def test_initialize_success(
                             "command": "status",
                             "description": "Show responder provider and model",
                         },
+                        {
+                            "command": "subscriptions",
+                            "description": "Manage event subscriptions",
+                        },
                         {"command": "help", "description": "Show available commands"},
                     ]
                 },
@@ -335,6 +339,7 @@ async def test_send_message_chunking(
     secret_resolver: Callable[[str], str | None],
 ) -> None:
     mock_post = AsyncMock()
+    sent_message_ids = iter((901, 902))
 
     # Mock behavior depending on the url called
     async def side_effect(url, **kwargs):
@@ -343,6 +348,11 @@ async def test_send_message_chunking(
         resp.raise_for_status = MagicMock()
         if "deleteWebhook" in url:
             resp.json.return_value = {"ok": True}
+        elif "sendMessage" in url:
+            resp.json.return_value = {
+                "ok": True,
+                "result": {"message_id": next(sent_message_ids)},
+            }
         else:
             resp.json.return_value = {"ok": True, "result": {"message_id": 999}}
         return resp
@@ -366,7 +376,12 @@ async def test_send_message_chunking(
             direction="outbound",
             content=long_content,
             platform_thread_id="123",
-            metadata_json={"platform_destination": "chat999"},
+            session_id="session-1",
+            metadata_json={
+                "platform_destination": "chat999",
+                "callback_action": "session_action",
+                "inline_keyboard": [[{"text": "Continue", "value": "Continue"}]],
+            },
             created_at=datetime.now(UTC).isoformat(),
         )
 
@@ -376,9 +391,14 @@ async def test_send_message_chunking(
         # First call with 4096 chars
         first_call_args = mock_post.call_args_list[0][1]
         assert len(first_call_args["json"]["text"]) == 4096
+        assert "reply_markup" not in first_call_args["json"]
         # Second call with 904 chars
         second_call_args = mock_post.call_args_list[1][1]
         assert len(second_call_args["json"]["text"]) == 904
+        assert second_call_args["json"]["reply_markup"]["inline_keyboard"][0][0]["text"] == (
+            "Continue"
+        )
+        assert message.metadata_json["platform_message_ids"] == ["901", "902"]
 
 
 @pytest.mark.asyncio

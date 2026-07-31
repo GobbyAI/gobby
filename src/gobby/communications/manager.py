@@ -52,7 +52,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gobby.ai.vision import VisionExtractService
+    from gobby.communications.session_notifications import SessionNotificationService
+    from gobby.communications.telegram_actions import TelegramActionController
     from gobby.config.communications import CommunicationsConfig
+    from gobby.sessions.status_events import SessionStatusTransition
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
     from gobby.storage.sessions import SessionManager
@@ -97,6 +100,8 @@ class CommunicationsManager:
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
         self._voice_transcription_timeout_seconds = 120.0
         self._vision_extract_service: VisionExtractService | None = None
+        self._session_notifications: SessionNotificationService | None = None
+        self._telegram_actions: TelegramActionController | None = None
 
         self._identity_manager = IdentityManager(store, session_store, config)
         self._thread_manager = ThreadManager(max_size=10000)
@@ -128,9 +133,13 @@ class CommunicationsManager:
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
         await self._lifecycle.start()
+        if self._session_notifications is not None:
+            await self._session_notifications.start()
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
+        if self._session_notifications is not None:
+            await self._session_notifications.stop()
         await self.responder.stop()
         await self._lifecycle.stop()
         if self._vision_extract_service is not None:
@@ -264,6 +273,7 @@ class CommunicationsManager:
         session_id: str | None = None,
         *,
         event_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> list[CommsMessage]:
         """Route event to matching channels and send to each."""
         return await self._outbound.send_event(
@@ -272,6 +282,7 @@ class CommunicationsManager:
             project_id,
             session_id,
             event_id=event_id,
+            metadata=metadata,
         )
 
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
@@ -349,6 +360,42 @@ class CommunicationsManager:
     def set_vision_extract_service(self, service: VisionExtractService | None) -> None:
         """Wire the daemon's configured vision extraction service."""
         self._vision_extract_service = service
+
+    def set_session_notification_service(
+        self,
+        service: SessionNotificationService,
+    ) -> None:
+        """Attach transcript-aware session lifecycle notifications."""
+        self._session_notifications = service
+
+    def set_telegram_action_controller(
+        self,
+        controller: TelegramActionController,
+    ) -> None:
+        """Attach Telegram lifecycle and subscription actions."""
+        self._telegram_actions = controller
+
+    async def handle_session_status_transition(
+        self,
+        transition: SessionStatusTransition,
+    ) -> None:
+        """Route a committed status transition through the attached notifier."""
+        if self._session_notifications is not None:
+            await self._session_notifications.route_transition(transition)
+            return
+        from gobby.communications.session_events import route_session_status_transition
+
+        await route_session_status_transition(self, transition)
+
+    async def handle_session_action(
+        self,
+        channel_name: str,
+        message: CommsMessage,
+    ) -> bool:
+        """Consume an actionable inbound message before responder fan-out."""
+        if self._telegram_actions is None:
+            return False
+        return await self._telegram_actions.handle(channel_name, message)
 
     def get_vision_extract_service(self) -> VisionExtractService | None:
         """Return the configured daemon vision extraction service."""

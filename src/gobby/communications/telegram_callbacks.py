@@ -31,6 +31,7 @@ class TelegramCallbackResolution:
     status: Literal["ok", "expired", "invalid"]
     session_id: str | None = None
     value: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class _CallbackEntry:
     chat_id: str
     thread_id: str | None
     expires_at: float
+    action: str | None
 
 
 class TelegramCallbackRegistry:
@@ -67,11 +69,13 @@ class TelegramCallbackRegistry:
         chat_id: str,
         thread_id: str | None,
         ttl_seconds: object,
+        action: object = None,
     ) -> dict[str, list[list[dict[str, str]]]]:
         """Validate a keyboard and replace button values with opaque callback tokens."""
         normalized_session_id = _required_string(session_id, "session_id")
         normalized_chat_id = _required_string(chat_id, "chat_id")
         normalized_thread_id = _optional_string(thread_id)
+        normalized_action = _optional_string(action)
         ttl = _bounded_ttl(ttl_seconds)
         buttons = _normalized_keyboard(keyboard)
         button_count = sum(len(row) for row in buttons)
@@ -94,6 +98,7 @@ class TelegramCallbackRegistry:
                     chat_id=normalized_chat_id,
                     thread_id=normalized_thread_id,
                     expires_at=expires_at,
+                    action=normalized_action,
                 )
                 self._evict_excess()
                 telegram_row.append({"text": text, "callback_data": callback_data})
@@ -127,6 +132,7 @@ class TelegramCallbackRegistry:
             status="ok",
             session_id=entry.session_id,
             value=entry.value,
+            action=entry.action,
         )
 
     def discard_keyboard(self, markup: object) -> None:
@@ -222,6 +228,8 @@ def telegram_callback_message(
     if resolution.status == "ok":
         metadata["callback_session_id"] = resolution.session_id
         metadata["callback_value"] = resolution.value
+        if resolution.action is not None:
+            metadata["callback_action"] = resolution.action
 
     source_message_id = _platform_identifier(source_message.get("message_id"))
     if source_message_id is not None:

@@ -218,6 +218,7 @@ class OutboundCommunications:
         session_id: str | None = None,
         *,
         event_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> list[CommsMessage]:
         """Route event to matching channels and send to each."""
         manager = self._manager
@@ -236,7 +237,12 @@ class OutboundCommunications:
                 continue
             try:
                 if event_id is None:
-                    msg = await manager.send_message(channel_name, content, session_id=session_id)
+                    msg = await manager.send_message(
+                        channel_name,
+                        content,
+                        session_id=session_id,
+                        metadata=metadata,
+                    )
                 else:
                     msg = await self._send_event_once(
                         channel_name,
@@ -244,6 +250,7 @@ class OutboundCommunications:
                         event_type=event_type,
                         event_id=event_id,
                         session_id=session_id,
+                        metadata=metadata,
                     )
                 messages.append(msg)
             except Exception as e:
@@ -259,6 +266,7 @@ class OutboundCommunications:
         event_type: str,
         event_id: str,
         session_id: str | None,
+        metadata: dict[str, Any] | None,
     ) -> CommsMessage:
         """Reserve and deliver one event message per channel."""
         manager = self._manager
@@ -280,11 +288,11 @@ class OutboundCommunications:
         platform_thread_id = None
         if session_id:
             platform_thread_id = manager._get_thread_id(channel.id, session_id)
-        metadata = await self.enrich_metadata(
+        effective_metadata = await self.enrich_metadata(
             channel,
             channel_name,
             session_id,
-            {"source_event_id": event_id},
+            {**(metadata or {}), "source_event_id": event_id},
         )
         message = CommsMessage(
             id=message_id,
@@ -294,7 +302,7 @@ class OutboundCommunications:
             session_id=session_id,
             status="pending",
             platform_thread_id=platform_thread_id,
-            metadata_json=metadata,
+            metadata_json=effective_metadata,
             created_at=datetime.now(UTC),
         )
 
@@ -322,6 +330,7 @@ class OutboundCommunications:
                 message.status,
                 message.error,
                 message.platform_message_id,
+                message.metadata_json,
             )
         except Exception as exc:
             logger.exception("Failed to update outbound event message: %s", exc)
