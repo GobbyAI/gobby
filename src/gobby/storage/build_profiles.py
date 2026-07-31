@@ -110,8 +110,7 @@ class BuildProfileLoader:
                         continue
                     stored_hash = row["bundled_hash"]
                     current_hash = manager.row_hash(row)
-                    legacy_hash = manager.legacy_row_hash(row)
-                    if stored_hash and current_hash != stored_hash and legacy_hash != stored_hash:
+                    if stored_hash and current_hash != stored_hash:
                         skipped += 1
                         continue
                     if stored_hash == profile.bundled_hash and current_hash == profile.bundled_hash:
@@ -490,10 +489,6 @@ class BuildProfileManager:
         return cls._hash_payload(cls._row_payload(row))
 
     @classmethod
-    def legacy_row_hash(cls, row: Mapping[str, Any]) -> str:
-        return cls._hash_payload(cls._legacy_row_payload(row))
-
-    @classmethod
     def _profile_hash(cls, profile: BuildProfile) -> str:
         return cls._hash_payload(cls._profile_payload(profile))
 
@@ -669,24 +664,6 @@ class BuildProfileManager:
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
             "plan_enhancement_rounds": int(row["plan_enhancement_rounds"] or 0),
-            "delivery_mode": row["delivery_mode"],
-            "delivery_target_repo": row["delivery_target_repo"],
-            "tags": _json_list(row["tags_json"], "tags_json"),
-        }
-
-    @staticmethod
-    def _legacy_row_payload(row: Mapping[str, Any]) -> dict[str, Any]:
-        # Shape of the immediately-previous release's row payload (delivery fields
-        # present, plan_enhancement_rounds absent). Lets an unmodified bundled row
-        # whose stored hash predates plan_enhancement_rounds still match and refresh
-        # rather than being misread as a user edit.
-        return {
-            "name": row["name"],
-            "display_label": row["display_label"],
-            "description": row["description"],
-            "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
-            "isolation": row["isolation"],
-            "unattended": bool(row["unattended"]),
             "delivery_mode": row["delivery_mode"],
             "delivery_target_repo": row["delivery_target_repo"],
             "tags": _json_list(row["tags_json"], "tags_json"),

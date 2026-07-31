@@ -102,13 +102,9 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
     return None
 
 
-def _legacy_github_issue_uuid_seed(owner: str, repo: str, issue_num: int) -> str:
-    normalized_repo = repo.removesuffix(".git").lower()
-    return f"{owner.lower()}/{normalized_repo}/issues/{issue_num}"
-
-
 def _github_issue_uuid_seed(project_id: str, owner: str, repo: str, issue_num: int) -> str:
-    return f"{project_id}/github/{_legacy_github_issue_uuid_seed(owner, repo, issue_num)}"
+    normalized_repo = repo.removesuffix(".git").lower()
+    return f"{project_id}/github/{owner.lower()}/{normalized_repo}/issues/{issue_num}"
 
 
 def _compute_path_cache(
