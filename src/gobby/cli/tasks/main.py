@@ -82,7 +82,7 @@ tasks.add_command(repair_lifecycle_cmd)
     "--output",
     "output_path",
     type=click.Path(path_type=Path),
-    help="Output file path (default: .gobby/tasks.jsonl)",
+    help="Output file path (default: ~/.gobby/backups/<project-uuid>/tasks.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 def backup_tasks(output_path: Path | None, quiet: bool) -> None:
@@ -107,7 +107,7 @@ def backup_tasks(output_path: Path | None, quiet: bool) -> None:
     "--input",
     "input_path",
     type=click.Path(path_type=Path),
-    help="Input file path (default: .gobby/tasks.jsonl)",
+    help="Input file path (default: ~/.gobby/backups/<project-uuid>/tasks.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 def restore_tasks(input_path: Path | None, quiet: bool) -> None:

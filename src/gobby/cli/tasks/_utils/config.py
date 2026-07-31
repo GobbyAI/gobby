@@ -14,8 +14,6 @@ from gobby.sync.tasks import TaskBackupManager
 
 logger = logging.getLogger(__name__)
 
-TASKS_BACKUP_PATH = ".gobby/tasks.jsonl"
-
 
 def check_tasks_enabled() -> None:
     """Check if gobby-tasks is enabled, exit if not."""
@@ -45,7 +43,7 @@ def get_task_manager() -> LocalTaskManager:
 def get_backup_manager(path: str | Path | None = None) -> TaskBackupManager:
     """Get initialized task backup manager."""
     manager = get_task_manager()
-    return TaskBackupManager(manager, backup_path=path or TASKS_BACKUP_PATH)
+    return TaskBackupManager(manager, backup_path=path)
 
 
 def get_github_importer() -> GitHubIssueImporter:

@@ -168,14 +168,25 @@ class TestLocalProjectManager:
         assert row is not None
         assert row["count"] == 1
 
-    def test_ensure_exists_returns_project_with_conflicting_name(
+    def test_ensure_exists_raises_on_conflicting_active_name(
         self, project_manager: LocalProjectManager
     ) -> None:
-        existing = project_manager.create(name="synced-project")
+        project_manager.create(name="synced-project")
 
-        ensured = project_manager.ensure_exists(str(uuid.uuid4()), "synced-project")
+        with pytest.raises(UniqueViolation):
+            project_manager.ensure_exists(str(uuid.uuid4()), "synced-project")
 
-        assert ensured.id == existing.id
+    def test_ensure_exists_updates_matching_project_id(
+        self, project_manager: LocalProjectManager
+    ) -> None:
+        project_id = str(uuid.uuid4())
+        project_manager.ensure_exists(project_id, "old-name", "/old/path")
+
+        ensured = project_manager.ensure_exists(project_id, "new-name", "/new/path")
+
+        assert ensured.id == project_id
+        assert ensured.name == "new-name"
+        assert ensured.repo_path == "/new/path"
 
     def test_list_projects(self, project_manager: LocalProjectManager) -> None:
         """Test listing all projects."""

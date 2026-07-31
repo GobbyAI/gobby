@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
 from gobby.tasks.criteria_contract import require_validation_criteria
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
@@ -326,20 +326,11 @@ class TaskBackupManager:
         self._custom_backup_path = backup_path is not None
 
     def _get_backup_path(self, project_id: str | None) -> Path:
-        """Resolve the configured or project-local backup path."""
+        """Resolve the configured or machine-local project backup path."""
         if self._custom_backup_path or not project_id:
             return self.backup_path
 
-        # Try to find project
-        from gobby.storage.projects import LocalProjectManager
-
-        project_manager = LocalProjectManager(self.db)
-        project = project_manager.get(project_id)
-
-        if project and project.repo_path:
-            return Path(project.repo_path) / ".gobby" / "tasks.jsonl"
-
-        return self.backup_path
+        return project_backup_path(project_id, "tasks.jsonl")
 
     def backup(self, project_id: str | None = None) -> int:
         """Write current live task rows as a deterministic atomic JSONL snapshot."""

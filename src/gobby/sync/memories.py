@@ -17,7 +17,7 @@ from gobby.memory.manager import MemoryManager
 from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import ALL_MEMORIES, Memory, MemoryScope, validate_memory_type
-from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime
 from gobby.utils.json_helpers import json_dumps
 
@@ -180,8 +180,12 @@ class MemoryBackupManager:
         self.memory_manager = memory_manager
         self.config = config
         self.backup_path = config.backup_path
+        self._custom_backup_path = config.backup_path != Path(".gobby/memories.jsonl")
 
-    def _get_backup_path(self) -> Path:
+    def _get_backup_path(self, project_id: str | None = None) -> Path:
+        if project_id and not self._custom_backup_path:
+            return project_backup_path(project_id, "memories.jsonl")
+
         if self.backup_path.is_absolute():
             return self.backup_path
 
@@ -208,7 +212,9 @@ class MemoryBackupManager:
         if not self.config.enabled or self.memory_manager is None:
             return 0
         try:
-            return self._backup_memories_sync(self._get_backup_path(), project_id=project_id)
+            return self._backup_memories_sync(
+                self._get_backup_path(project_id), project_id=project_id
+            )
         except MemoryBackupError:
             raise
         except Exception as exc:

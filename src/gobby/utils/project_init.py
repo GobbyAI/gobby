@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,9 +23,15 @@ from gobby.utils.datetime import datetime_to_required_iso
 
 logger = logging.getLogger(__name__)
 
+WORKTREE_LOCAL_PROJECT_KEYS = frozenset({"parent_project_id", "parent_project_path"})
+NONPORTABLE_PROJECT_KEYS = WORKTREE_LOCAL_PROJECT_KEYS | frozenset(
+    {"linear_team_id", "linear_project_id"}
+)
+
 
 def _atomic_write_project_json(project_file: Path, project_data: dict[str, Any]) -> None:
     """Serialize project data before atomically replacing project.json."""
+    existing_mode = stat.S_IMODE(project_file.stat().st_mode) if project_file.exists() else None
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{project_file.name}.",
         suffix=".tmp",
@@ -33,6 +40,8 @@ def _atomic_write_project_json(project_file: Path, project_data: dict[str, Any])
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            if existing_mode is not None:
+                os.fchmod(tmp.fileno(), existing_mode)
             json.dump(project_data, tmp, indent=2)
             tmp.write("\n")
         os.replace(tmp_name, project_file)
@@ -206,6 +215,11 @@ def initialize_project(
     if project_context and project_context.get("id"):
         logger.debug("Project already initialized: %s", project_context.get("name"))
         project_root = Path(project_context.get("project_path") or cwd).resolve()
+        project_id = str(project_context["id"])
+        project_name = str(project_context.get("name") or "")
+        project_manager = LocalProjectManager(db)
+        project_manager.ensure_exists(project_id, project_name, str(project_root))
+        update_project_json_fields(project_root)
 
         # Re-detect and merge verification commands on re-init
         from gobby.project_verification.refresh import refresh_project_verification_deterministic
@@ -216,10 +230,10 @@ def initialize_project(
             logger.info("Updated verification commands in project.json")
 
         return InitResult(
-            project_id=str(project_context["id"]),
-            project_name=project_context.get("name", ""),
-            project_path=project_context.get("project_path", str(cwd)),
-            created_at=project_context.get("created_at", ""),
+            project_id=project_id,
+            project_name=project_name,
+            project_path=str(project_root),
+            created_at=str(project_context.get("created_at") or ""),
             already_existed=True,
             verification=verification if verification.to_dict() else None,
         )
@@ -262,8 +276,6 @@ def initialize_project(
             existing.name,
             datetime_to_required_iso(existing.created_at),
             verification,
-            linear_team_id=_optional_str(existing.linear_team_id),
-            linear_project_id=_optional_str(existing.linear_project_id),
         )
         return InitResult(
             project_id=existing.id,
@@ -343,7 +355,7 @@ def _update_project_json_verification(
 
 
 def update_project_json_fields(cwd: Path, **fields: Any) -> None:
-    """Update top-level fields in .gobby/project.json, preserving other fields."""
+    """Update portable project fields while removing machine-local metadata."""
     project_file = cwd / ".gobby" / "project.json"
     if not project_file.exists():
         return
@@ -355,7 +367,12 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
         logger.warning("Failed to read project.json for field update: %s", e)
         return
 
+    for key in NONPORTABLE_PROJECT_KEYS:
+        project_data.pop(key, None)
+
     for key, value in fields.items():
+        if key in NONPORTABLE_PROJECT_KEYS:
+            continue
         project_data[key] = value
 
     _atomic_write_project_json(project_file, project_data)
@@ -369,8 +386,6 @@ def _write_project_json(
     name: str,
     created_at: str,
     verification: VerificationCommands | None = None,
-    linear_team_id: str | None = None,
-    linear_project_id: str | None = None,
 ) -> None:
     """Write the .gobby/project.json file.
 
@@ -390,11 +405,6 @@ def _write_project_json(
         "name": name,
         "created_at": created_at,
     }
-    if linear_team_id is not None:
-        project_data["linear_team_id"] = linear_team_id
-    if linear_project_id is not None:
-        project_data["linear_project_id"] = linear_project_id
-
     # Add verification config if provided and has commands
     if verification:
         verification_dict = verification.to_dict()

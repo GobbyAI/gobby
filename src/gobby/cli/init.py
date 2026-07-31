@@ -70,29 +70,30 @@ def init(
         click.echo(f"Initialized project '{result.project_name}' in {cwd}")
         click.echo(f"  Project ID: {result.project_id}")
         click.echo(f"  Config: {cwd / '.gobby' / 'project.json'}")
-        # Trigger initial code indexing via gcode
-        try:
-            gcode_bin = resolve_native_bin("gcode")
-            if gcode_bin:
-                click.echo("Indexing codebase...")
-                proc = subprocess.run(
-                    [gcode_bin, "index", "--project", str(result.project_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                if proc.returncode == 0:
-                    if proc.stdout:
-                        click.echo(proc.stdout.rstrip())
-                else:
-                    detail = proc.stderr.strip() if proc.stderr else "(no details)"
-                    click.echo(f"Code indexing failed: {detail}", err=True)
+
+    # Trigger initial code indexing via gcode
+    try:
+        gcode_bin = resolve_native_bin("gcode")
+        if gcode_bin:
+            click.echo("Indexing codebase...")
+            proc = subprocess.run(
+                [gcode_bin, "index", "--project", str(result.project_path)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if proc.returncode == 0:
+                if proc.stdout:
+                    click.echo(proc.stdout.rstrip())
             else:
-                click.echo(
-                    "gcode not installed — skipping initial index. Run `gobby install`.", err=True
-                )
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
-            click.echo(f"Code indexing skipped: {e}", err=True)
+                detail = proc.stderr.strip() if proc.stderr else "(no details)"
+                click.echo(f"Code indexing failed: {detail}", err=True)
+        else:
+            click.echo(
+                "gcode not installed — skipping initial index. Run `gobby install`.", err=True
+            )
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+        click.echo(f"Code indexing skipped: {e}", err=True)
 
     _maybe_install_git_hooks_for_init(Path(result.project_path).resolve())
 

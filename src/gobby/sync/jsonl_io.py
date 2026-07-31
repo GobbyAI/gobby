@@ -8,6 +8,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from gobby import paths
+
+
+def project_backup_path(project_id: str, filename: str) -> Path:
+    """Return the machine-local backup path for a committed project UUID."""
+    return paths.get_gobby_home() / "backups" / project_id / filename
+
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows only
