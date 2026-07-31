@@ -92,6 +92,7 @@ def test_init_waits_for_loop_start_so_immediate_run_succeeds() -> None:
 
 def test_runtime_propagates_exceptions_and_rejects_work_after_shutdown() -> None:
     runtime = WorkflowEvaluationRuntime(max_workers=1)
+    assert runtime.is_closing is False
 
     async def fail() -> None:
         raise LookupError("evaluation failed")
@@ -101,6 +102,7 @@ def test_runtime_propagates_exceptions_and_rejects_work_after_shutdown() -> None
 
     runtime.shutdown()
     runtime.shutdown()
+    assert runtime.is_closing is True
 
     async def succeed() -> str:
         return "ok"

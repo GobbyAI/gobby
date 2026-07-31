@@ -561,6 +561,67 @@ class TestCancelledErrorHandling:
             result = handler.handle(event)
             assert result.decision == "allow"
 
+    def test_controlled_shutdown_non_stop_cancellation_logs_debug(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runtime = MagicMock()
+        runtime.is_closing = True
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
+            result = handler._handle_cancelled(self._make_event(HookEventType.BEFORE_TOOL))
+
+        records = [
+            record
+            for record in caplog.records
+            if "Workflow evaluation cancelled" in record.getMessage()
+        ]
+        assert result.decision == "allow"
+        assert [record.levelno for record in records] == [logging.DEBUG]
+
+    def test_unexpected_non_stop_cancellation_logs_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runtime = MagicMock()
+        runtime.is_closing = False
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
+            result = handler._handle_cancelled(self._make_event(HookEventType.BEFORE_TOOL))
+
+        records = [
+            record
+            for record in caplog.records
+            if "Workflow evaluation cancelled" in record.getMessage()
+        ]
+        assert result.decision == "allow"
+        assert [record.levelno for record in records] == [logging.WARNING]
+
+    def test_controlled_shutdown_stop_cancellation_still_warns_and_blocks(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runtime = MagicMock()
+        runtime.is_closing = True
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"),
+            patch("gobby.workflows.hooks.audit_source_block_sync") as audit,
+        ):
+            result = handler._handle_cancelled(self._make_event(HookEventType.STOP))
+
+        records = [
+            record
+            for record in caplog.records
+            if "Workflow evaluation cancelled" in record.getMessage()
+        ]
+        assert result.decision == "block"
+        assert [record.levelno for record in records] == [logging.WARNING]
+        audit.assert_called_once()
+
 
 class TestVariablePersistence:
     """Tests that rule set_variable effects are persisted across evaluations.

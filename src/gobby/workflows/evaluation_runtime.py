@@ -62,6 +62,12 @@ class WorkflowEvaluationRuntime:
 
         return future.result()
 
+    @property
+    def is_closing(self) -> bool:
+        """Return whether controlled shutdown has started."""
+        with self._lock:
+            return self._closing
+
     def shutdown(self) -> None:
         """Stop accepting work and shut down without waiting for stalled helpers."""
         with self._lock:

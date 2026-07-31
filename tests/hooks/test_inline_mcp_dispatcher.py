@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,12 +28,42 @@ from gobby.utils.project_context import (
     set_project_context,
 )
 from gobby.utils.session_context import (
+    SessionContext,
     get_session_context,
     reset_session_context,
     set_session_context,
 )
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def daemon_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    loop = asyncio.new_event_loop()
+    started = threading.Event()
+
+    def run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        loop.call_soon(started.set)
+        loop.run_forever()
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
+        asyncio.set_event_loop(None)
+
+    thread = threading.Thread(target=run_loop, name="test-daemon-loop")
+    thread.start()
+    assert started.wait(timeout=1)
+    try:
+        yield loop
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1)
+        assert not thread.is_alive()
 
 
 @pytest.mark.asyncio
@@ -36,6 +71,7 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
     temp_db: HubDatabase,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    daemon_loop: asyncio.AbstractEventLoop,
 ) -> None:
     project = LocalProjectManager(temp_db).create(
         name="inline-delivery-project",
@@ -76,7 +112,13 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
         hook_manager_resolver=lambda: hook_manager,
     )
     assert proxy.session_manager is session_manager
-    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy)
+    observed: dict[str, object] = {}
+
+    def get_proxy() -> ToolProxyService:
+        observed["getter_loop"] = asyncio.get_running_loop()
+        return proxy
+
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(get_proxy, daemon_loop)
     assert dispatcher is not None
 
     event = HookEvent(
@@ -95,7 +137,15 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
         assert get_session_context() is None
         assert _current_project_context.get() is None
 
-        with patch.object(proxy, "call_tool", wraps=proxy.call_tool) as call_tool:
+        original_call_tool = proxy.call_tool
+
+        async def tracked_call_tool(*args: Any, **kwargs: Any) -> object:
+            observed["call_loop"] = asyncio.get_running_loop()
+            observed["session_context"] = get_session_context()
+            observed["project_context"] = _current_project_context.get()
+            return await original_call_tool(*args, **kwargs)
+
+        with patch.object(proxy, "call_tool", side_effect=tracked_call_tool) as call_tool:
             result = await dispatcher(
                 "gobby-agents",
                 "get_inter_session_message",
@@ -106,6 +156,14 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
         assert result is not None
         assert result["success"] is True
         assert "inline delivery regression" in str(result["result"])
+        assert observed["getter_loop"] is daemon_loop
+        assert observed["call_loop"] is daemon_loop
+        observed_session_context = observed["session_context"]
+        observed_project_context = observed["project_context"]
+        assert isinstance(observed_session_context, SessionContext)
+        assert isinstance(observed_project_context, dict)
+        assert observed_session_context.session_id == recipient.id
+        assert observed_project_context["project_path"] == str(tmp_path)
         assert call_tool.await_args is not None
         assert call_tool.await_args.kwargs["session_id"] == recipient.id
         proxied_arguments = call_tool.await_args.args[2]
@@ -123,6 +181,147 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
         )
         assert get_session_context() is None
         assert _current_project_context.get() is None
+
+        async def target_contexts() -> tuple[object, object]:
+            return get_session_context(), _current_project_context.get()
+
+        target_context_future = asyncio.run_coroutine_threadsafe(target_contexts(), daemon_loop)
+        assert await asyncio.wrap_future(target_context_future) == (None, None)
     finally:
         reset_project_context(project_token)
         reset_session_context(session_token)
+
+
+@pytest.mark.asyncio
+async def test_same_loop_dispatch_calls_proxy_directly() -> None:
+    loop = asyncio.get_running_loop()
+    observed: dict[str, asyncio.AbstractEventLoop] = {}
+    proxy = MagicMock()
+    proxy.session_manager = None
+
+    async def call_tool(*_args: object, **_kwargs: object) -> dict[str, str]:
+        observed["call_loop"] = asyncio.get_running_loop()
+        return {"result": "ok"}
+
+    proxy.call_tool = AsyncMock(side_effect=call_tool)
+
+    def get_proxy() -> MagicMock:
+        observed["getter_loop"] = asyncio.get_running_loop()
+        return proxy
+
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(get_proxy, loop)
+    assert dispatcher is not None
+
+    result = await dispatcher("gobby-memory", "memory_stats", {}, None)
+
+    assert result == {"success": True, "inject_result": True, "result": {"result": "ok"}}
+    assert observed == {"getter_loop": loop, "call_loop": loop}
+
+
+@pytest.mark.asyncio
+async def test_cross_loop_timeout_cancels_daemon_task(
+    daemon_loop: asyncio.AbstractEventLoop,
+) -> None:
+    started = threading.Event()
+    cancelled = threading.Event()
+    late_work = threading.Event()
+    proxy = MagicMock()
+    proxy.session_manager = None
+
+    async def call_tool(*_args: object, **_kwargs: object) -> None:
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+        late_work.set()
+
+    proxy.call_tool = AsyncMock(side_effect=call_tool)
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy, daemon_loop)
+    assert dispatcher is not None
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            dispatcher("gobby-memory", "memory_stats", {}, None),
+            timeout=0.05,
+        )
+    assert started.is_set()
+    assert await asyncio.to_thread(cancelled.wait, 1)
+    assert not await asyncio.to_thread(late_work.wait, 0.05)
+    assert proxy.call_tool.await_count == 1
+
+
+def test_workflow_shutdown_cancels_daemon_task(
+    daemon_loop: asyncio.AbstractEventLoop,
+) -> None:
+    started = threading.Event()
+    cancelled = threading.Event()
+    late_work = threading.Event()
+    proxy = MagicMock()
+    proxy.session_manager = None
+
+    async def call_tool(*_args: object, **_kwargs: object) -> None:
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+        late_work.set()
+
+    proxy.call_tool = AsyncMock(side_effect=call_tool)
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy, daemon_loop)
+    assert dispatcher is not None
+    runtime = WorkflowEvaluationRuntime()
+    cancellations: list[concurrent.futures.CancelledError] = []
+
+    def run_dispatch() -> None:
+        try:
+            runtime.run(dispatcher("gobby-memory", "memory_stats", {}, None))
+        except concurrent.futures.CancelledError as exc:
+            cancellations.append(exc)
+
+    worker = threading.Thread(target=run_dispatch, name="test-workflow-dispatch")
+    worker.start()
+    assert started.wait(timeout=1)
+    runtime.shutdown()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert cancelled.wait(timeout=1)
+    assert not late_work.wait(timeout=0.05)
+    assert len(cancellations) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loop_state", ["missing", "stopped"])
+async def test_unavailable_daemon_loop_fails_without_proxy_lookup(loop_state: str) -> None:
+    stopped_loop = asyncio.new_event_loop() if loop_state == "stopped" else None
+    getter = MagicMock()
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(getter, stopped_loop)
+    assert dispatcher is not None
+    try:
+        result = await dispatcher("gobby-memory", "memory_stats", {}, None)
+    finally:
+        if stopped_loop is not None:
+            stopped_loop.close()
+
+    assert result == {"success": False, "error": "daemon event loop is unavailable"}
+    getter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_memory_tools_share_inline_result_envelope() -> None:
+    loop = asyncio.get_running_loop()
+    proxy = MagicMock()
+    proxy.session_manager = None
+    proxy.call_tool = AsyncMock(side_effect=lambda _server, tool, *_args, **_kwargs: {"tool": tool})
+    dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy, loop)
+    assert dispatcher is not None
+
+    results = [
+        await dispatcher("gobby-memory", tool, {}, None)
+        for tool in ("recall_memories_for_prompt", "recall_review_lessons_for_files")
+    ]
+
+    assert [result["success"] for result in results if result is not None] == [True, True]
+    assert [result["inject_result"] for result in results if result is not None] == [True, True]

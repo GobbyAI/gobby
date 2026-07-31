@@ -212,6 +212,7 @@ class HookManagerFactory:
             completion_registry,
             tool_proxy_getter,
             broadcaster,
+            loop,
         )
 
         # Initialize webhooks
@@ -330,12 +331,14 @@ class HookManagerFactory:
     @staticmethod
     def _build_inline_mcp_dispatcher(
         tool_proxy_getter: Any | None,
+        daemon_loop: asyncio.AbstractEventLoop | None,
     ) -> Callable[..., Any] | None:
         """Build an async dispatcher for inline mcp_call effects.
 
         Used by the rule engine to dispatch inject_result mcp_calls within
         the effect loop, ensuring atomicity with sibling set_variable effects.
-        Runs as a coroutine since evaluate() is already async.
+        Loop-bound proxy work runs on the daemon loop even when evaluation
+        runs on the isolated workflow loop.
 
         Returns None if tool_proxy_getter is unavailable.
         """
@@ -344,7 +347,7 @@ class HookManagerFactory:
 
         _logger = logging.getLogger("gobby.workflows.engine.inline_dispatch")
 
-        async def dispatcher(
+        async def dispatch_on_daemon_loop(
             server: str,
             tool: str,
             arguments: dict[str, Any],
@@ -427,6 +430,36 @@ class HookManagerFactory:
             finally:
                 if tokens is not None:
                     reset_seeded_contexts(tokens)
+
+        async def dispatcher(
+            server: str,
+            tool: str,
+            arguments: dict[str, Any],
+            event: Any,
+        ) -> dict[str, Any] | None:
+            if daemon_loop is None or daemon_loop.is_closed() or not daemon_loop.is_running():
+                error = "daemon event loop is unavailable"
+                _logger.warning("inline_mcp_dispatcher: %s", error)
+                return {"success": False, "error": error}
+
+            running_loop = asyncio.get_running_loop()
+            if running_loop is daemon_loop:
+                return await dispatch_on_daemon_loop(server, tool, arguments, event)
+
+            dispatch_coro = dispatch_on_daemon_loop(server, tool, arguments, event)
+            try:
+                future = asyncio.run_coroutine_threadsafe(dispatch_coro, daemon_loop)
+            except RuntimeError:
+                dispatch_coro.close()
+                error = "daemon event loop is unavailable"
+                _logger.warning("inline_mcp_dispatcher: %s", error)
+                return {"success": False, "error": error}
+
+            try:
+                return await asyncio.wrap_future(future)
+            except asyncio.CancelledError:
+                future.cancel()
+                raise
 
         return dispatcher
 
@@ -514,6 +547,7 @@ class HookManagerFactory:
         completion_registry: Any | None,
         tool_proxy_getter: Any | None,
         broadcaster: Any | None,
+        daemon_loop: asyncio.AbstractEventLoop | None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
         from gobby.workflows.engine.core import RuleEngine
@@ -530,7 +564,10 @@ class HookManagerFactory:
         # Build inline mcp_call dispatcher for inject_result atomicity.
         # Dispatches mcp_calls within the rule engine's effect loop so
         # set_variable effects that follow only fire on success.
-        inline_dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(tool_proxy_getter)
+        inline_dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(
+            tool_proxy_getter,
+            daemon_loop,
+        )
 
         rule_engine = RuleEngine(
             db=database,

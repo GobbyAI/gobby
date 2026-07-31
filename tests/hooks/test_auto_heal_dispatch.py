@@ -333,7 +333,10 @@ class TestInlineMcpDispatcher:
 
         proxy = AsyncMock()
         proxy.call_tool = AsyncMock(return_value={"result": "ok"})
-        dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy)
+        dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(
+            lambda: proxy,
+            asyncio.get_running_loop(),
+        )
 
         assert dispatcher is not None
         result = await dispatcher(

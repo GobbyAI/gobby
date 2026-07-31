@@ -11,12 +11,10 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
-from gobby.workflows.hooks import (
-    _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION,
-    WorkflowHookHandler,
-)
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.tool_context import _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION
 
 pytestmark = pytest.mark.unit
 

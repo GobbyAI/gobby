@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -177,9 +178,7 @@ def _patched_subsystems() -> tuple[SimpleNamespace, SimpleNamespace]:
     return workflow_components, autonomous_components
 
 
-def _create_kwargs(
-    session_manager: SessionManager, default_config: DaemonConfig
-) -> dict[str, object]:
+def _create_kwargs(session_manager: SessionManager, default_config: DaemonConfig) -> dict[str, Any]:
     return {
         "daemon_host": "localhost",
         "daemon_port": 60887,
@@ -206,6 +205,7 @@ def test_factory_create_uses_injected_memory_manager(
     """The daemon's fully-wired MemoryManager must be shared, not rebuilt (#17491)."""
     workflow_components, autonomous_components = _patched_subsystems()
     shared_memory_manager = MagicMock()
+    daemon_loop = MagicMock()
 
     with (
         patch.object(HookManagerFactory, "_create_autonomous", return_value=autonomous_components),
@@ -215,9 +215,11 @@ def test_factory_create_uses_injected_memory_manager(
         ) as create_workflow_engine,
         patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
     ):
+        kwargs = _create_kwargs(session_manager, default_config)
+        kwargs["loop"] = daemon_loop
         components = HookManagerFactory.create(
             memory_manager=shared_memory_manager,
-            **_create_kwargs(session_manager, default_config),  # type: ignore[arg-type]
+            **kwargs,
         )
 
     create_memory.assert_not_called()
@@ -227,6 +229,7 @@ def test_factory_create_uses_injected_memory_manager(
         **create_workflow_engine.call_args.kwargs,
     )
     assert bound_args.arguments["memory_manager"] is shared_memory_manager
+    assert bound_args.arguments["daemon_loop"] is daemon_loop
     assert components.memory_manager is shared_memory_manager
 
 
@@ -252,7 +255,7 @@ def test_factory_create_memory_fallback_threads_llm_service(
     ):
         kwargs = _create_kwargs(session_manager, default_config)
         kwargs["llm_service"] = llm_service
-        components = HookManagerFactory.create(**kwargs)  # type: ignore[arg-type]
+        components = HookManagerFactory.create(**kwargs)
 
     create_memory.assert_called_once_with(temp_db, default_config, llm_service)
     create_workflow_engine.assert_called_once()
