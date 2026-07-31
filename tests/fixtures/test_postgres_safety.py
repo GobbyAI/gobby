@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
+from psycopg import sql
 
 from tests.fixtures.postgres import (
     _adapt_seed_rows,
@@ -13,13 +17,14 @@ from tests.fixtures.postgres import (
     _configured_postgres_database_url,
     _enforce_safe_test_schema,
     _schema_looks_test_only,
+    isolated_test_schema,
 )
 
 pytestmark = pytest.mark.unit
 
 
 def test_schema_looks_test_only_accepts_test_schema_name() -> None:
-    assert _schema_looks_test_only("gobby_test_12345_master_abcd")
+    assert _schema_looks_test_only("gobby_test_12345_1_master_abcd")
 
 
 def test_schema_looks_test_only_rejects_default_public_schema() -> None:
@@ -40,7 +45,7 @@ def test_enforce_safe_test_schema_allows_test_schema_under_test_protect(
 ) -> None:
     monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
 
-    assert _enforce_safe_test_schema("gobby_test_12345_master_abcd") is None
+    assert _enforce_safe_test_schema("gobby_test_12345_1_master_abcd") is None
 
 
 def test_configured_postgres_database_url_requires_test_protect(
@@ -75,37 +80,94 @@ def test_adapt_seed_rows_wraps_json_values() -> None:
     assert adapted[0][1].obj == ["fast"]
 
 
-def test_orphan_cleanup_holds_drop_lock_through_scan_and_drop(
+def test_orphan_cleanup_delegates_to_leased_sweeper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.fixtures.postgres as postgres_fixture
+
+    sweep = MagicMock(return_value=0)
+    monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
+
+    _cleanup_orphaned_schemas("postgresql://test", age_hours=12)
+
+    sweep.assert_called_once_with("postgresql://test", 12)
+
+
+def test_isolated_test_schema_rejects_label_that_breaks_name_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.fixtures.postgres as postgres_fixture
+
+    connect = MagicMock()
+    monkeypatch.setattr(postgres_fixture, "_cleanup_orphaned_schemas", MagicMock())
+    monkeypatch.setattr(postgres_fixture.psycopg, "connect", connect)
+
+    with pytest.raises(ValueError, match="worker label"):
+        with isolated_test_schema("postgresql://test", "gw_0"):
+            pass
+
+    connect.assert_not_called()
+
+
+def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tests.fixtures.postgres as postgres_fixture
 
     events: list[str] = []
+    lock_params: list[object] = []
     connection = MagicMock()
     connection.__enter__.return_value = connection
 
     def execute(query: object, params: object | None = None) -> MagicMock:
-        del params
         rendered = str(query)
         result = MagicMock()
         if "pg_advisory_unlock" in rendered:
             events.append("unlock")
         elif "pg_advisory_lock" in rendered:
-            events.append("lock")
+            events.append("lease")
+            lock_params.append(params)
+        elif "CREATE SCHEMA" in rendered:
+            events.append("create")
         elif "information_schema.schemata" in rendered:
-            events.append("scan")
-            result.fetchall.return_value = [("gobby_test_0_1_master_abc",)]
+            result.fetchone.return_value = (1,)
         elif "DROP SCHEMA" in rendered:
             events.append("drop")
         return result
 
     connection.execute.side_effect = execute
-    monkeypatch.setattr(
-        postgres_fixture.psycopg,
-        "connect",
-        lambda *_args, **_kwargs: connection,
-    )
+    connect = MagicMock(return_value=connection)
+    monkeypatch.setattr(postgres_fixture, "_cleanup_orphaned_schemas", MagicMock())
+    monkeypatch.setattr(postgres_fixture.psycopg, "connect", connect)
 
-    _cleanup_orphaned_schemas("postgresql://test")
+    with isolated_test_schema("postgresql://test", "master") as schema:
+        assert events == ["lease", "create"]
+        assert connection.__exit__.call_count == 0
+        assert lock_params == [(schema,)]
 
-    assert events == ["lock", "scan", "drop", "unlock"]
+    assert events == ["lease", "create", "drop", "unlock"]
+    assert connection.__exit__.call_count == 1
+    assert connect.call_count == 1
+
+
+@pytest.mark.integration
+def test_held_schema_lease_blocks_orphan_sweep(postgres_database_url: str) -> None:
+    from gobby.runner_maintenance import storage_hygiene
+
+    schema = f"gobby_test_0_{os.getpid()}_lease_{uuid.uuid4().hex[:6]}"
+    with psycopg.connect(postgres_database_url, autocommit=True) as live_connection:
+        live_connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
+        live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        try:
+            dropped = storage_hygiene.sweep_orphaned_test_schemas(postgres_database_url)
+
+            assert dropped == 0
+            assert live_connection.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (schema,),
+            ).fetchone() == (1,)
+        finally:
+            live_connection.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+            )
+            live_connection.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))

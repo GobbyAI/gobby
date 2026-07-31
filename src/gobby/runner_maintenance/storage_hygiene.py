@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import psycopg
+from psycopg import sql
 
 from gobby.cli.utils import get_gobby_home
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
@@ -17,6 +21,102 @@ logger = logging.getLogger("gobby.runner_maintenance")
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 _SKILL_CLEANUP_BATCH_LIMIT = 500
 _APPROVAL_EXPIRY_BATCH_LIMIT = 100
+_TEST_SCHEMA_PREFIX = "gobby_test_"
+_TEST_SCHEMA_RETENTION_HOURS = 24
+
+
+def _test_schema_created_epoch(schema_name: str) -> int | None:
+    """Return the creation epoch for a schema satisfying the six-part test contract."""
+    parts = schema_name.split("_")
+    if len(parts) != 6 or parts[:2] != ["gobby", "test"]:
+        return None
+    created_epoch, process_id, worker_label, nonce = parts[2:]
+    if not created_epoch.isascii() or not created_epoch.isdigit():
+        return None
+    if not process_id.isascii() or not process_id.isdigit():
+        return None
+    if not worker_label or not nonce:
+        return None
+    return int(created_epoch)
+
+
+def _test_schema_is_sweep_eligible(schema_name: str, cutoff_epoch: int) -> bool:
+    created_epoch = _test_schema_created_epoch(schema_name)
+    return created_epoch is not None and created_epoch <= cutoff_epoch
+
+
+def sweep_orphaned_test_schemas(
+    database_url: str,
+    age_hours: int = _TEST_SCHEMA_RETENTION_HOURS,
+) -> int:
+    """Drop abandoned test schemas only while holding their schema-specific lease.
+
+    Age is only an eligibility hint. A test creator holds the same session-scoped
+    advisory lock for the schema's lifetime, so a live test always defeats the
+    try-lock. Eligibility and existence are rechecked after acquiring the lease.
+
+    This Python DDL surface is intentionally retained until schema-authority phase
+    4 moves the same lease protocol behind ``gdaemon schema sweep-test-schemas``.
+    """
+    cutoff_epoch = int(time.time()) - age_hours * 60 * 60
+    dropped = 0
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        candidates = connection.execute(
+            """
+            SELECT schema_name
+            FROM information_schema.schemata
+            WHERE schema_name LIKE 'gobby_test_%%'
+            """
+        ).fetchall()
+        for (candidate_name,) in candidates:
+            lock_row = connection.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s))",
+                (candidate_name,),
+            ).fetchone()
+            if lock_row is None or lock_row[0] is not True:
+                continue
+            try:
+                current = connection.execute(
+                    """
+                    SELECT schema_name
+                    FROM information_schema.schemata
+                    WHERE schema_name = %s
+                    """,
+                    (candidate_name,),
+                ).fetchone()
+                if current is None:
+                    continue
+                schema_name = current[0]
+                if not _test_schema_is_sweep_eligible(schema_name, cutoff_epoch):
+                    continue
+                logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
+                try:
+                    connection.execute(
+                        sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name))
+                    )
+                except psycopg.Error:
+                    logger.exception("Failed to drop orphaned schema %s", schema_name)
+                else:
+                    dropped += 1
+            finally:
+                connection.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))",
+                    (candidate_name,),
+                )
+    return dropped
+
+
+async def sweep_test_schemas_on_startup(database_url: str | None) -> None:
+    """Run the leased test-schema sweep once without blocking daemon startup I/O."""
+    if not database_url:
+        return
+    try:
+        dropped = await asyncio.to_thread(sweep_orphaned_test_schemas, database_url)
+    except Exception:
+        logger.exception("Failed to sweep orphaned Postgres test schemas at startup")
+        return
+    if dropped:
+        logger.info("Swept %s orphaned Postgres test schema(s) at startup", dropped)
 
 
 async def purge_deleted_skills_loop(

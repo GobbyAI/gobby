@@ -67,6 +67,9 @@ from gobby.runner_maintenance.storage_hygiene import (
 from gobby.runner_maintenance.storage_hygiene import (
     purge_deleted_skills_loop as purge_deleted_skills_loop,
 )
+from gobby.runner_maintenance.storage_hygiene import (
+    sweep_test_schemas_on_startup as sweep_test_schemas_on_startup,
+)
 from gobby.runner_maintenance.telemetry_loops import (
     _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT as _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT,
 )

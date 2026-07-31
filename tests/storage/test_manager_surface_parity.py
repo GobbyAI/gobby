@@ -38,26 +38,26 @@ def _scoped_postgres_url(database_url: str, schema: str) -> str:
 def test_scoped_postgres_url_preserves_existing_query_params() -> None:
     scoped = _scoped_postgres_url(
         "postgresql://user:pass@localhost:5432/gobby?sslmode=disable",
-        "gobby_test_schema",
+        "gobby_test_12345_1_master_abcd",
     )
 
     parsed = urllib.parse.urlsplit(scoped)
     assert parsed.scheme == "postgresql"
     assert urllib.parse.parse_qs(parsed.query) == {
         "sslmode": ["disable"],
-        "options": ["-csearch_path=gobby_test_schema"],
+        "options": ["-csearch_path=gobby_test_12345_1_master_abcd"],
     }
 
 
 def test_scoped_postgres_url_merges_existing_options() -> None:
     scoped = _scoped_postgres_url(
         "postgresql://user:pass@localhost:5432/gobby?options=-cstatement_timeout%3D5000",
-        "gobby_test_schema",
+        "gobby_test_12345_1_master_abcd",
     )
 
     parsed = urllib.parse.urlsplit(scoped)
     assert urllib.parse.parse_qs(parsed.query) == {
-        "options": ["-cstatement_timeout=5000 -csearch_path=gobby_test_schema"],
+        "options": ["-cstatement_timeout=5000 -csearch_path=gobby_test_12345_1_master_abcd"],
     }
 
 

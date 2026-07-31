@@ -99,6 +99,7 @@ class GobbyRunner:
     _shutdown_requested: bool
     _shutdown_intent: ShutdownIntent
     _metrics_cleanup_task: asyncio.Task[None] | None
+    _test_schema_sweep_task: asyncio.Task[None] | None
     _tool_results_cleanup_task: asyncio.Task[None] | None
     _workflow_audit_cleanup_task: asyncio.Task[None] | None
     _vector_rebuild_task: asyncio.Task[None] | None
