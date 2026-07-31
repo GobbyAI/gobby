@@ -6,11 +6,11 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from gobby.sessions.status_events import SessionStatusTransitionCallback
 from gobby.storage.hub.protocol import HubDatabase
 
 from ._bootstrap import (
     SessionChangeCallback,
-    SessionStatusTransitionCallback,
     TitleChangeCallback,
     _SessionBootstrapMixin,
 )

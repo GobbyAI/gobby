@@ -498,9 +498,7 @@ class AgentLifecycleMonitor:
             "child_session_id": run.child_session_id,
         }
         if self._session_manager is not None:
-            expire_kwargs["status_notifier"] = (
-                self._session_manager._notify_status_transition
-            )
+            expire_kwargs["status_notifier"] = self._session_manager._notify_status_transition
         await self._run_db(
             expire_parked_daemon_session,
             self._db,
