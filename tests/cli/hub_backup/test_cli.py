@@ -145,6 +145,7 @@ class _Harness:
         self.qdrant_snapshot_settings: tuple[str | None, str | None] | None = None
         self.qdrant_verify_settings: tuple[str | None, str | None] | None = None
         self.shutdown_source_seen: str | None = None
+        self.stop_quiet_seen: bool | None = None
         self.postgres_paths_seen: tuple[Path, Path] | None = None
         self.probes_seen: dict[str, int] | None = None
         self.roles_seen: list[RoleExpectation] | None = None
@@ -210,6 +211,7 @@ class _Harness:
     ) -> bool:
         self._step("stop_daemon")
         self.shutdown_source_seen = shutdown_source
+        self.stop_quiet_seen = quiet
         return True
 
     def start_daemon(self) -> None:
@@ -740,6 +742,13 @@ class TestPreflight:
 
 
 class TestJsonOutput:
+    def test_json_output_stops_daemon_quietly(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        _run_ok(runtime, tmp_path / "backup", "--json")
+
+        assert harness.stop_quiet_seen is True
+
     def test_json_output_reports_the_manifest_path_and_summary(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
     ) -> None:

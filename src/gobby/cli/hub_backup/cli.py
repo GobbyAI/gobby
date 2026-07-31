@@ -154,7 +154,7 @@ def hub_backup(
     restart_daemon = _daemon_is_running() and epoch is None
     manifest_path = backup_root / MANIFEST_NAME
     try:
-        stop_daemon(shutdown_source="cli_hub_backup")
+        stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
         manifest = _run_backup(
             backup_root=backup_root,
             gobby_home=gobby_home,
