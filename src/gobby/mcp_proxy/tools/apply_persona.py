@@ -273,7 +273,6 @@ async def apply_persona_impl(
                 if task:
                     task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
                     extra_vars["assigned_task_id"] = task_ref
-                    extra_vars["session_task"] = task_ref
         except Exception as e:
             logger.warning("Failed to resolve task_id %s: %s", task_id, e)
 
