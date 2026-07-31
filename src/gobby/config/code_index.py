@@ -3,27 +3,9 @@
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig
-
-_LEGACY_SUMMARY_KEYS = {
-    "summary_enabled": "enabled",
-    "summary_batch_size": "batch_size",
-    "summary_profile": "profile",
-    "summary_candidates": "candidates",
-    "summary_max_concurrency": "max_concurrency",
-}
-_REMOVED_KEYS = frozenset(
-    {
-        "auto_index_on_commit",
-        "content_extensions",
-        "exclude_patterns",
-        "languages",
-        "max_file_size_bytes",
-        "qdrant_collection_prefix",
-    }
-)
 
 
 class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
@@ -145,30 +127,6 @@ class CodeIndexConfig(BaseModel):
         gt=0,
         description="Maximum vector-sync breaker backoff",
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def drop_removed_keys(cls, data: object) -> object:
-        """Drop removed keys and migrate legacy flat symbol-summary keys."""
-        if isinstance(data, dict):
-            updated = dict(data)
-            updated.pop("sync_worker_vector_batch_size", None)
-            for key in _REMOVED_KEYS:
-                updated.pop(key, None)
-            if any(key in updated for key in _LEGACY_SUMMARY_KEYS):
-                existing_summary = updated.get("symbol_summary")
-                symbol_summary = (
-                    dict(existing_summary) if isinstance(existing_summary, dict) else {}
-                )
-                for old_key, new_key in _LEGACY_SUMMARY_KEYS.items():
-                    if old_key in updated and new_key not in symbol_summary:
-                        symbol_summary[new_key] = updated.pop(old_key)
-                    else:
-                        # Drop the legacy flat key once an explicit nested value wins.
-                        updated.pop(old_key, None)
-                updated["symbol_summary"] = symbol_summary
-            return updated
-        return data
 
     @field_validator("nightly_full_reindex_cron")
     @classmethod

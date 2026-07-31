@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +37,6 @@ _SKIPPABLE_STAGE_VALUES: tuple[SkippableStage, ...] = (
     "merge",
 )
 SKIPPABLE_STAGES: frozenset[SkippableStage] = frozenset(_SKIPPABLE_STAGE_VALUES)
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,16 +46,6 @@ class StageCapOverride:
     stage_name: str
     max_work_attempts: int | None = None
     max_review_rounds: int | None = None
-
-
-_LEGACY_CAP_DESTINATIONS: Mapping[str, tuple[str, str]] = {
-    "max_expansion_attempts": ("expansion", "max_work_attempts"),
-    "max_qa_rounds": ("development", "max_review_rounds"),
-    "max_merge_attempts": ("merge", "max_work_attempts"),
-    "max_epic_qa_rounds": ("epic_qa", "max_review_rounds"),
-    "max_review_rounds": ("pr", "max_review_rounds"),
-    "default_max_review_rounds": ("pr", "max_review_rounds"),
-}
 
 
 @dataclass(frozen=True)
@@ -108,9 +96,6 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 def _merge_config(target: dict[str, Any], updates: Mapping[str, Any]) -> None:
     for key, value in updates.items():
-        if key in _LEGACY_CAP_DESTINATIONS:
-            _merge_legacy_cap(target, key, value)
-            continue
         target[key] = value
 
 
@@ -118,42 +103,6 @@ def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
     return BuildConfig(
         max_active_agents=_normalize_int(raw.get("max_active_agents", 10), "max_active_agents"),
     )
-
-
-def _merge_legacy_cap(target: dict[str, Any], field_name: str, value: Any) -> None:
-    stage_name, cap_field = _LEGACY_CAP_DESTINATIONS[field_name]
-    stage_caps = _merge_stage_caps(target.get("stage_caps", {}), {})
-    existing = stage_caps.get(stage_name, {})
-    if not isinstance(existing, Mapping):
-        existing = {}
-    updated = dict(existing)
-    updated[cap_field] = value
-    stage_caps[stage_name] = updated
-    target["stage_caps"] = stage_caps
-    logger.warning(
-        "build config field %s is deprecated; translated to stage_caps.%s.%s",
-        field_name,
-        stage_name,
-        cap_field,
-    )
-
-
-def _merge_stage_caps(existing: Any, updates: Any) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-    if existing:
-        if not isinstance(existing, Mapping):
-            raise ValueError("stage_caps must be a mapping")
-        merged.update(_string_key_mapping(existing, "stage_caps"))
-    if updates:
-        if not isinstance(updates, Mapping):
-            raise ValueError("stage_caps must be a mapping")
-        for stage_name, raw_override in _string_key_mapping(updates, "stage_caps").items():
-            if not isinstance(raw_override, Mapping):
-                raise ValueError(f"stage_caps.{stage_name} must be a mapping")
-            current = dict(merged.get(stage_name, {}))
-            current.update(_string_key_mapping(raw_override, f"stage_caps.{stage_name}"))
-            merged[stage_name] = current
-    return merged
 
 
 def _normalize_int(value: Any, field_name: str) -> int:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from gobby.config.app import DaemonConfig, load_config
 from gobby.config.build import BuildConfig, load_build_config
@@ -119,19 +119,10 @@ def test_build_config_keeps_only_the_consumed_agent_limit(
     assert config.max_active_agents == 4
 
 
-def test_code_index_drops_removed_keys_during_final_migration() -> None:
-    config = CodeIndexConfig.model_validate(
-        {
-            "auto_index_on_commit": False,
-            "content_extensions": [".txt"],
-            "exclude_patterns": ["vendor"],
-            "languages": ["python"],
-            "max_file_size_bytes": 10,
-            "qdrant_collection_prefix": "custom_",
-        }
-    )
-
-    assert REMOVED_CODE_INDEX_FIELDS.isdisjoint(config.model_dump())
+@pytest.mark.parametrize("field_name", sorted(REMOVED_CODE_INDEX_FIELDS))
+def test_code_index_rejects_removed_fields(field_name: str) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        CodeIndexConfig.model_validate({field_name: 1})
 
 
 def test_flattened_defaults_emit_no_removed_config_paths() -> None:
@@ -150,7 +141,7 @@ def test_flattened_defaults_emit_no_removed_config_paths() -> None:
     }.isdisjoint(flattened)
 
 
-def test_load_config_deletes_rows_for_removed_config_fields(tmp_path: Path) -> None:
+def test_load_config_rejects_removed_config_fields(tmp_path: Path) -> None:
     class DummyConfigStore:
         def __init__(self) -> None:
             self.deleted: list[str] = []
@@ -164,9 +155,10 @@ def test_load_config_deletes_rows_for_removed_config_fields(tmp_path: Path) -> N
 
     store = DummyConfigStore()
 
-    load_config(
-        config_file=str(tmp_path / "bootstrap.yaml"),
-        config_store=store,
-    )
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_config(
+            config_file=str(tmp_path / "bootstrap.yaml"),
+            config_store=store,
+        )
 
-    assert set(store.deleted) == set(REMOVED_CONFIG_STORE_ROWS)
+    assert store.deleted == []

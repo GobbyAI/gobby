@@ -17,11 +17,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gobby.config._loading import (
-    _drop_legacy_embedding_config_store_keys,
-    _drop_removed_config_store_keys,
-    _migrate_code_index_symbol_summary_config_store_keys,
-    _migrate_default_ui_mode_config_store_row,
-    _migrate_legacy_config,
     _reject_removed_file_config_sections,
     _resolve_config_values,
     _restore_bootstrap_pre_database_settings,
@@ -42,7 +37,6 @@ from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.embedding_keys import storage_embedding_config_entries_to_runtime
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.feature_base import iter_feature_default_configs, validate_feature_candidates
-from gobby.config.feature_candidate_defaults import delete_stale_default_feature_candidate_rows
 from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
@@ -573,12 +567,7 @@ def load_config(
                     deep_merge(config_dict, file_dict)
 
         # Layer 3: DB values (runtime overrides via config_store)
-        delete_stale_default_feature_candidate_rows(config_store)
         flat_db = config_store.get_all()
-        flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
-        flat_db = _migrate_code_index_symbol_summary_config_store_keys(flat_db, config_store)
-        flat_db = _drop_removed_config_store_keys(flat_db, config_store)
-        flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)
         if flat_db:
             db_dict = unflatten_config(storage_embedding_config_entries_to_runtime(flat_db))
             # Resolve $secret:NAME and ${VAR} patterns in DB values
@@ -603,9 +592,6 @@ def load_config(
     # If GOBBY_TEST_PROTECT is set, force safe paths from environment
     if os.environ.get("GOBBY_TEST_PROTECT") == "1":
         _apply_test_logging_overrides(config_dict)
-    # Migrate legacy config keys (renamed/removed fields still in DB)
-    config_dict = _migrate_legacy_config(config_dict)
-
     # Validate and create config object
     try:
         config = DaemonConfig(**config_dict)
