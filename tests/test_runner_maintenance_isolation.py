@@ -200,7 +200,7 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
     unrelated_path = tmp_path / "unrelated"
     unrelated_path.mkdir()
     monkeypatch.chdir(unrelated_path)
-    from gobby import runner_maintenance
+    from gobby.runner_maintenance import isolation as runner_maintenance
 
     run_git = runner_maintenance._run_git_command
     git_cwds: list[str] = []
@@ -275,7 +275,7 @@ async def test_expired_isolation_loop_logs_git_cleanup_failures(
             return 9
         return 0
 
-    monkeypatch.setattr("gobby.runner_maintenance._run_git_command", run_git)
+    monkeypatch.setattr("gobby.runner_maintenance.isolation._run_git_command", run_git)
     caplog.set_level("WARNING")
     shutdown_checks = 0
 
