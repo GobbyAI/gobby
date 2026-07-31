@@ -2959,3 +2959,1108 @@ entry below.
 4.6's follow-up-epic ids land here at close-out. -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Fix repo config breakage
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.1.1: Mirror byte-identical to ghook copy; schema-mirror-check
+    passes. file: `schemas/diagnose-output.v2.schema.json`.
+
+    0.1.2: `.gitleaks.toml` absent; pre-commit gitleaks hook runs with default rules
+    and passes. behavior: "gitleaks default ruleset active" in pre-commit run.
+
+    0.1.3: `.github/coderabbit.yaml` deleted. file: `.github/coderabbit.yaml`.
+
+    0.1.4: Per-fix evidence + the kept-adjacent ledger recorded. behavior: "0.1 evidence
+    ledger" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:0.1:0.1.1
+  - covers:gcore-schema-authority:0.1:0.1.2
+  - covers:gcore-schema-authority:0.1:0.1.3
+  - covers:gcore-schema-authority:0.1:0.1.4
+  tdd: true
+  source_section: '0.1'
+  assigned_agent: backend-developer
+- title: Repair hijacked migration slot 346 + drop orphan tmux tables
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  - '0.5'
+  validation_criteria: '0.2.1: Migration 355 exists, is dual-shape safe (fresh + live),
+    and carries the destructive marker. file: `src/gobby/storage/migrations/355_reconcile_346_cron_display_name.sql`.
+
+    0.2.2: Live hub has `cron_jobs.display_name`; tmux tables gone. behavior: "column
+    present, orphan tables absent" via psql check in session transcript.
+
+    0.2.3: Contract test covers 355. test: `tests/storage/test_migration_contract.py`.'
+  labels:
+  - covers:gcore-schema-authority:0.2:0.2.1
+  - covers:gcore-schema-authority:0.2:0.2.2
+  - covers:gcore-schema-authority:0.2:0.2.3
+  tdd: true
+  source_section: '0.2'
+  implementation_domain: backend
+- title: Build fresh-vs-live schema diff harness
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.2'
+  validation_criteria: '0.3.1: Diff script exists, reproducible, documented usage.
+    file: `scripts/schema_diff.py`.
+
+    0.3.2: Zero unexplained divergences between fresh and live; resolutions recorded.
+    behavior: "clean diff output" in session transcript.
+
+    0.3.3: Reconcile migration ships if needed (else explicitly recorded as not-needed).
+    file: `src/gobby/storage/migrations/356_reconcile_live_hub_schema_drift_v2.sql`.'
+  labels:
+  - covers:gcore-schema-authority:0.3:0.3.1
+  - covers:gcore-schema-authority:0.3:0.3.2
+  - covers:gcore-schema-authority:0.3:0.3.3
+  tdd: true
+  source_section: '0.3'
+  implementation_domain: backend
+- title: Hub backup command + verified-restore manifest
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '0.4.1: `gobby hub-backup` covers PG (`-Fc` + `pg_dumpall --globals-only`)
+    + Qdrant + FalkorDB + volume tarballs; daemon stopped first and restarted last;
+    services restart even on failure; v2 manifest with distinct `archive_verified`/`restore_verified`
+    states, fingerprint, checksums, row-count probes; allow-audit log files enter
+    the inventory once 5.1 lands. file: `src/gobby/cli/hub_backup/cli.py`.
+
+    0.4.2: Initial full backup completed with `restore_verified` earned for all three
+    stores via scratch restores, incl. a globals replay with role/ACL verification.
+    behavior: "backup manifest + restore checks" in session transcript.
+
+    0.4.3: Freshness/identity machine-checked: the gate refuses a manifest older than
+    max age, lacking `restore_verified`, or fingerprint-mismatched. test: `tests/cli/`
+    hub-backup focused run.'
+  labels:
+  - covers:gcore-schema-authority:0.4:0.4.1
+  - covers:gcore-schema-authority:0.4:0.4.2
+  - covers:gcore-schema-authority:0.4:0.4.3
+  tdd: true
+  source_section: '0.4'
+  implementation_domain: backend
+- title: Destructive-migration gate in the runner
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  - '0.7'
+  validation_criteria: "0.5.1: Boot/CLI halts before a pending destructive migration;\
+    \ fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.\n\
+    0.5.2: Gated apply verifies `restore_verified` + freshness + stable identity +\
+    \ epoch binding (`manifest.epoch_id` = open epoch) + exact pre-batch schema-head\
+    \ match, and refuses each failure mode individually. test: `tests/storage/` gate\
+    \ focused run.\n0.5.3: Marker audit: destructive SQL without the marker fails\
+    \ the contract suite, incl. TRUNCATE/DROP CONSTRAINT/DO-block cases. test: `tests/storage/test_migration_contract.py`.\n\
+    0.5.4: Interrupted destructive batch resumes from DB-attested bookkeeping after\
+    \ every committed migration \u2014 including a crash after commit but before any\
+    \ receipt write, and including resume from a different machine reading only hub\
+    \ state; a prefix mismatch or a different-bytes-same-version runner refuses loudly.\
+    \ test: `tests/storage/` batch-resume focused run.\n0.5.5: The contiguity guard\
+    \ halts on a gapped pending chain; the gated apply refuses to run without an open\
+    \ maintenance epoch. test: `tests/storage/test_migration_contract.py`."
+  labels:
+  - covers:gcore-schema-authority:0.5:0.5.1
+  - covers:gcore-schema-authority:0.5:0.5.2
+  - covers:gcore-schema-authority:0.5:0.5.3
+  - covers:gcore-schema-authority:0.5:0.5.4
+  - covers:gcore-schema-authority:0.5:0.5.5
+  tdd: true
+  source_section: '0.5'
+  implementation_domain: backend
+- title: Amend the M0 artifact to UUID-native machine scoping
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.6.1: M0 artifact specifies UUID-native machine scoping with
+    post-364 slots; no `machine_id TEXT` remains in its spec. file: `.gobby/plans/m0-shared-datastores-bridge.md`.
+
+    0.6.2: Amended artifact validates and re-registers. behavior: "validate + register
+    output" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:0.6:0.6.1
+  - covers:gcore-schema-authority:0.6:0.6.2
+  tdd: true
+  source_section: '0.6'
+  assigned_agent: backend-developer
+- title: 'Shared maintenance epoch: DB-enforced fence, orchestrator, ledgers'
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  validation_criteria: "0.7.1: Migration 354 ships bookkeeping columns + both ledger\
+    \ tables + the login-fence trigger; auto-applies as a non-destructive precursor.\
+    \ file: `src/gobby/storage/migrations/354_migration_bookkeeping.sql`.\n0.7.2:\
+    \ With an epoch open, a tokenless login is rejected BY THE DATABASE \u2014 pinned\
+    \ for a Python client, a Rust (gcode/gwiki-style) connection, and a bare psycopg\
+    \ connection simulating a pre-protocol daemon; with no epoch open, logins are\
+    \ unaffected; Python entry points surface the courtesy diagnostic. test: `tests/storage/test_maintenance_epoch.py`.\n\
+    0.7.3: Epoch open terminates pre-existing foreign connections and verifies clean\
+    \ `pg_stat_activity`; release happens only via the owning orchestrator run or\
+    \ evidence-gated abort. test: `tests/storage/test_maintenance_epoch.py`.\n0.7.4:\
+    \ `gobby hub-maintenance` run/status/resume/abort lifecycle works end-to-end;\
+    \ resume re-enters an interrupted campaign from hub state alone (different-machine\
+    \ simulation); destructive commands refuse to run outside an orchestrator-owned\
+    \ epoch. test: `tests/cli/` hub-maintenance focused run.\n0.7.5: Receipt state\
+    \ machine: a crash injected between an external-store deletion and its receipt\
+    \ resumes via the component's idempotent postcondition; a pending receipt whose\
+    \ postcondition does not hold re-runs its component. test: `tests/storage/test_maintenance_epoch.py`."
+  labels:
+  - covers:gcore-schema-authority:0.7:0.7.1
+  - covers:gcore-schema-authority:0.7:0.7.2
+  - covers:gcore-schema-authority:0.7:0.7.3
+  - covers:gcore-schema-authority:0.7:0.7.4
+  - covers:gcore-schema-authority:0.7:0.7.5
+  tdd: true
+  source_section: '0.7'
+  implementation_domain: fullstack
+- title: Decompose runner_maintenance.py into a package
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.8.1: Package replaces the module; every file < 1,000 lines;
+    import paths preserved via `__init__` re-exports; no behavior change. behavior:
+    "line counts + import check" in session transcript.
+
+    0.8.2: Daemon boots and maintenance loops register unchanged. test: `tests/` runner-maintenance
+    focused run.'
+  labels:
+  - covers:gcore-schema-authority:0.8:0.8.1
+  - covers:gcore-schema-authority:0.8:0.8.2
+  tdd: false
+  source_section: '0.8'
+  assigned_agent: backend-developer
+- title: Rewrite claims reader off workflow_states
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: Claims resolve from tasks table; no workflow_states
+    reference remains in claims path. symbol: `get_claimed_task_owners`.
+
+    2.1.2: CLI listing still marks claimed tasks. test: `tests/cli/tasks/` focused
+    run.'
+  labels:
+  - covers:gcore-schema-authority:2.1:2.1.1
+  - covers:gcore-schema-authority:2.1:2.1.2
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Drop dead tables
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '0.3'
+  - '0.4'
+  - '0.5'
+  validation_criteria: '2.2.1: Migration 357 drops all five tables + FKs; dual-shape
+    safe. file: `src/gobby/storage/migrations/357_drop_dead_tables.sql`.
+
+    2.2.2: Rule-eval pipeline has no override probe. symbol: `WorkflowEngine.evaluate`.
+
+    2.2.3: Row-count/sequence evidence for each table recorded pre-drop. behavior:
+    "evidence block per table" in session transcript.
+
+    2.2.4: Focused suites green. test: `tests/workflows/test_rule_engine.py`.'
+  labels:
+  - covers:gcore-schema-authority:2.2:2.2.1
+  - covers:gcore-schema-authority:2.2:2.2.2
+  - covers:gcore-schema-authority:2.2:2.2.3
+  - covers:gcore-schema-authority:2.2:2.2.4
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Drop dead columns + dead indexes
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '0.4'
+  - '0.5'
+  validation_criteria: '2.3.1: Migration 358 ships with per-column and per-index verification
+    evidence. file: `src/gobby/storage/migrations/358_drop_dead_columns.sql`.
+
+    2.3.2: Contract tests updated. test: `tests/storage/test_migration_contract.py`.'
+  labels:
+  - covers:gcore-schema-authority:2.3:2.3.1
+  - covers:gcore-schema-authority:2.3:2.3.2
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: 'gobby_test_* schema hygiene: leaked-schema drops + leased startup sweep'
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.8'
+  validation_criteria: '2.4.1: Startup sweep registered in daemon maintenance; drops
+    aged `gobby_test_*` schemas only under an acquired lease + recheck; a held lease
+    (live test) blocks the drop, pinned by test. file: `src/gobby/runner_maintenance/storage_hygiene.py`.
+
+    2.4.2: Creation-time validation rejects labels breaking the 6-part contract; fixtures
+    acquire the lease at creation. test: `tests/fixtures/test_postgres_safety.py`.
+
+    2.4.3: Hub has zero leaked schemas post-cleanup. behavior: "psql schema list clean"
+    in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.4:2.4.1
+  - covers:gcore-schema-authority:2.4:2.4.2
+  - covers:gcore-schema-authority:2.4:2.4.3
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Delete dead Python files
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.5.1: 9 files + shim tests deleted; import graph clean (`uv
+    run mypy src/` + daemon boot). behavior: "daemon starts clean" in session transcript.
+
+    2.5.2: stages.py endpoints still serve. test: `tests/servers/routes/test_stage_routes.py`.'
+  labels:
+  - covers:gcore-schema-authority:2.5:2.5.1
+  - covers:gcore-schema-authority:2.5:2.5.2
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Remove postgres-activate ritual + SQLite residue
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  - '0.5'
+  - '2.3'
+  validation_criteria: '2.6.1: `gobby postgres activate` gone; `_pgaudit_probe` dropped.
+    file: `src/gobby/cli/postgres.py`.
+
+    2.6.2: bootstrap.yaml schema has neither `database_path` nor `hub_backend`; Rust
+    reads `database_url` directly. symbol: `parse_hub_database_bootstrap`.
+
+    2.6.3: gcode DSN resolution works against the trimmed bootstrap. behavior: "gcode
+    search succeeds post-reinstall" in session transcript.
+
+    2.6.4: Focused pytest + cargo check green. test: `tests/config/` focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.6:2.6.1
+  - covers:gcore-schema-authority:2.6:2.6.2
+  - covers:gcore-schema-authority:2.6:2.6.3
+  - covers:gcore-schema-authority:2.6:2.6.4
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Remove no-op CLI/API surfaces
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.7.1: All six surfaces removed or corrected; CLI/API help
+    output clean. file: `src/gobby/cli/build.py`.
+
+    2.7.2: Focused route/CLI tests green. test: `tests/cli/` focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.7:2.7.1
+  - covers:gcore-schema-authority:2.7:2.7.2
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: backend
+- title: Remove dead config fields incl. CodeIndexConfig disposition
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.8.1: Enumerated sets removed; config loads; flatten_config
+    emits no orphan keys. symbol: `DaemonConfig`.
+
+    2.8.2: Six dead CodeIndexConfig fields removed; web settings form updated in lockstep;
+    kept-field consumer trace recorded. behavior: "per-field disposition" in session
+    transcript.
+
+    2.8.3: Focused config tests green. test: `tests/config/` focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.8:2.8.1
+  - covers:gcore-schema-authority:2.8:2.8.2
+  - covers:gcore-schema-authority:2.8:2.8.3
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: backend
+- title: Remove legacy config-chain migration paths
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.8'
+  validation_criteria: '2.9.1: 9 config-chain paths removed with per-item hub-state
+    evidence. behavior: "per-item evidence ledger" in session transcript.
+
+    2.9.2: Config loads; daemon boots clean. test: `tests/config/` focused run.
+
+    2.9.3: Kept-adjacent ledger recorded (load chain, wiki section, live default seeding).
+    behavior: "2.9 kept ledger" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.9:2.9.1
+  - covers:gcore-schema-authority:2.9:2.9.2
+  - covers:gcore-schema-authority:2.9:2.9.3
+  tdd: true
+  source_section: '2.9'
+  implementation_domain: backend
+- title: Consolidate duplicate utilities, _sanitize_url first
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '2.10.1: Single `sanitize_url` with query/fragment stripping
+    + IPv6 re-bracketing; both call sites migrated. symbol: `sanitize_url`.
+
+    2.10.2: All four named families each resolve to one canonical implementation with
+    duplicates deleted; per-family site evidence + the kept-adjacent corrections recorded.
+    behavior: "duplicate sweep results" in session transcript.
+
+    2.10.3: Focused tests green. test: `tests/clones/` focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.10:2.10.1
+  - covers:gcore-schema-authority:2.10:2.10.2
+  - covers:gcore-schema-authority:2.10:2.10.3
+  tdd: true
+  source_section: '2.10'
+  implementation_domain: backend
+- title: Consolidate webhook stacks onto httpx; drop aiohttp
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.10'
+  validation_criteria: '2.11.1: Pipeline webhooks deliver via the shared transport
+    with unchanged payload behavior; SSRF-blocking + pinning tests green. test: `tests/workflows/`
+    webhook-focused run.
+
+    2.11.2: `aiohttp` absent from pyproject and `uv.lock`; zero imports remain. file:
+    `pyproject.toml`.
+
+    2.11.3: Dispatcher rides the same transport: fail-closed blocking semantics preserved,
+    backoff capped, private addresses still allowed for local endpoints. test: `tests/hooks/`
+    webhook-focused run.
+
+    2.11.4: Transport edge semantics pinned by tests (Codex review): TLS SNI + certificate
+    hostname verification against the ORIGINAL hostname when connecting via pinned
+    IP; multi-address DNS answers all validated and pinned; response cap enforced
+    mid-stream on chunked bodies; retries limited to idempotent methods (a non-idempotent
+    request retries only when provably never sent); hostile `HTTP_PROXY`/`HTTPS_PROXY`/
+    `ALL_PROXY` environment variables never route a pinned request through a proxy
+    (trust_env=False pinned by test). test: `tests/utils/` webhook-transport focused
+    run.'
+  labels:
+  - covers:gcore-schema-authority:2.11:2.11.1
+  - covers:gcore-schema-authority:2.11:2.11.2
+  - covers:gcore-schema-authority:2.11:2.11.3
+  - covers:gcore-schema-authority:2.11:2.11.4
+  tdd: true
+  source_section: '2.11'
+  implementation_domain: backend
+- title: Remove memory-dream merge arm + _legacy fallbacks
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  - '0.5'
+  - '2.19'
+  validation_criteria: '2.12.1: Manifest symbols removed; live pipeline untouched;
+    dream run completes post-change. behavior: "successful dream run" in daemon logs
+    or `dream_runs` row in session transcript.
+
+    2.12.2: Dream suites green without `_legacy` fakes. test: `tests/memory/test_dream.py`.
+
+    2.12.3: CHECK constraints match the live action set; affected runs purged whole
+    with row-count evidence and stamped `revert_forfeited`; `revert_dream_run` fails
+    closed on forfeited runs and replays untouched runs normally. test: `tests/memory/`
+    revert-focused run.
+
+    2.12.4: `revert_forfeited` is in `RUN_TERMINAL_STATUSES`; admission, display,
+    pruning, and repeated-revert paths handle it; exhaustiveness tests cover the full
+    vocabulary. symbol: `RUN_TERMINAL_STATUSES`.'
+  labels:
+  - covers:gcore-schema-authority:2.12:2.12.1
+  - covers:gcore-schema-authority:2.12:2.12.2
+  - covers:gcore-schema-authority:2.12:2.12.3
+  - covers:gcore-schema-authority:2.12:2.12.4
+  tdd: true
+  source_section: '2.12'
+  implementation_domain: backend
+- title: 'TTS: remove voice=[] extra; pin no-torch-at-import'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.13.1: `voice = []` extra gone; chatterbox-tts + pins present.
+    file: `pyproject.toml`.
+
+    2.13.2: No-torch-at-import regression test. test: `tests/voice/test_lazy_import.py`.'
+  labels:
+  - covers:gcore-schema-authority:2.13:2.13.1
+  - covers:gcore-schema-authority:2.13:2.13.2
+  tdd: true
+  source_section: '2.13'
+  implementation_domain: backend
+- title: Remove dead Rust mediawiki/wayback + dead deps
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.14.1: Files + deps gone; workspace builds; clippy clean
+    per crate. behavior: "cargo check + clippy per crate" in session transcript.
+
+    2.14.2: public_boundary contract test updated and green. test: `crates/gcore/tests/public_boundary.rs`.
+
+    2.14.3: gwiki ingest suites green. behavior: "cargo test -p gobby-wiki" in session
+    transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.14:2.14.1
+  - covers:gcore-schema-authority:2.14:2.14.2
+  - covers:gcore-schema-authority:2.14:2.14.3
+  tdd: true
+  source_section: '2.14'
+  implementation_domain: backend
+- title: Remove dead web modules + dead deps; Python dead deps
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.15.1: Web builds clean with modules + deps removed. behavior:
+    "npm run build" in session transcript.
+
+    2.15.2: Python deps trimmed; `uv sync` + daemon boot green. file: `pyproject.toml`.'
+  labels:
+  - covers:gcore-schema-authority:2.15:2.15.1
+  - covers:gcore-schema-authority:2.15:2.15.2
+  tdd: true
+  source_section: '2.15'
+  implementation_domain: backend
+- title: Retire template-registry chaff, DB registry verified
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.16.1: Registry rows retired with pre-verification evidence
+    per row. behavior: "DB registry verification ledger" in session transcript.
+
+    2.16.2: rules CLAUDE.md accurate against DB. file: `src/gobby/install/shared/workflows/rules/CLAUDE.md`.
+
+    2.16.3: gcode SKILL.md regenerated. file: `src/gobby/install/shared/skills/gcode/SKILL.md`.'
+  labels:
+  - covers:gcore-schema-authority:2.16:2.16.1
+  - covers:gcore-schema-authority:2.16:2.16.2
+  - covers:gcore-schema-authority:2.16:2.16.3
+  tdd: true
+  source_section: '2.16'
+  assigned_agent: backend-developer
+- title: Decompose the 3 oversized gcode files
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.17.1: All three files < 1,000 lines post-split; no new clippy
+    warnings. behavior: "line counts + clippy" in session transcript.
+
+    2.17.2: Out-of-line test convention documented. file: `crates/CLAUDE.md`.
+
+    2.17.3: gcode suites green. behavior: "cargo test -p gobby-code" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.17:2.17.1
+  - covers:gcore-schema-authority:2.17:2.17.2
+  - covers:gcore-schema-authority:2.17:2.17.3
+  tdd: false
+  source_section: '2.17'
+  assigned_agent: backend-developer
+- title: 'Machine identity: machines.id UUID PK'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.21'
+  - '2.6'
+  - '0.4'
+  - '0.5'
+  - '0.7'
+  - '0.6'
+  validation_criteria: "2.18.1: Generator is uuid4-only; `machineid` import and dep\
+    \ gone. symbol: `_generate_machine_id`.\n2.18.2: Migration 361 ships `machines.id\
+    \ UUID PK` (TEXT column gone) + `bin_update_state` re-key; dual-shape safe; destructive-marked.\
+    \ file: `src/gobby/storage/migrations/361_machines_uuid_identity.sql`.\n2.18.3:\
+    \ Staged cutover verified: inventory ledger, live-machine remap (machines row\
+    \ + rewritten local file agree), non-live rows retired with sessions NULLed and\
+    \ one `retired_machine_identities` tombstone per retired id, zero-unmapped gate\
+    \ passes. behavior: \"cutover ledger + gate evidence\" in session transcript.\n\
+    2.18.4: Fresh-home boot generates uuid4 and registers it in `machines` at daemon\
+    \ startup. behavior: \"fresh-home boot check\" in session transcript.\n2.18.5:\
+    \ Unpack skips identity by default; `--restore-identity` restores it. behavior:\
+    \ \"pack/unpack round-trip\" in session transcript.\n2.18.6: Cutover journal resumes\
+    \ from every phase AND per identity (a partially retired inventory resumes where\
+    \ it stopped); fault-injection at each DB/file boundary green; 361's guard refuses\
+    \ a half-remapped machine; the 360 \u2192 cutover-NULLs \u2192 361 \u2192 362\
+    \ intermediate sequence is exercised end-to-end; a tombstoned identity file re-keys\
+    \ fresh at boot. test: `tests/storage/` identity-cutover focused run.\n2.18.7:\
+    \ Preflight fails on foreign `pg_stat_activity` connections; 360's deny-all fence\
+    \ (activated under table locks before preflight) rejects an old writer reconnecting\
+    \ mid-window AND a uuid-shaped legacy writer (tests); re-inventory runs after\
+    \ activation; identity file flocked; identity-file replacement fsyncs file + parent\
+    \ dir and readback-verifies before the journal advances; identity file + checksum\
+    \ present in the cutover backup manifest; restore-based rollback documented. behavior:\
+    \ \"quiescence + fence + rollback evidence\" in session transcript."
+  labels:
+  - covers:gcore-schema-authority:2.18:2.18.1
+  - covers:gcore-schema-authority:2.18:2.18.2
+  - covers:gcore-schema-authority:2.18:2.18.3
+  - covers:gcore-schema-authority:2.18:2.18.4
+  - covers:gcore-schema-authority:2.18:2.18.5
+  - covers:gcore-schema-authority:2.18:2.18.6
+  - covers:gcore-schema-authority:2.18:2.18.7
+  tdd: true
+  source_section: '2.18'
+  implementation_domain: backend
+- title: 'Sessions machine attribution: UUID FK + sentinel policy'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.18'
+  - '0.6'
+  - '0.4'
+  - '0.5'
+  validation_criteria: '2.19.1: Migration 362 converts the column, rebuilds `idx_sessions_unique`
+    NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK; destructive- marked.
+    file: `src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql`.
+
+    2.19.2: Registration idempotency holds for machine-attributed and NULL-machine
+    sessions. test: `tests/storage/` sessions-focused run.
+
+    2.19.3: Web-chat session create and pipeline session lookup work post-change.
+    test: `web/src/hooks/__tests__/` + `tests/workflows/` focused runs.
+
+    2.19.4: identity-model.md reflects the UUID contract. file: `docs/contracts/identity-model.md`.
+
+    2.19.5: M0 prerequisite verified: the registered M0 artifact is 0.6''s amended
+    UUID-native version (post-364 slots, no TEXT machine_id); collision preflight
+    ledger recorded (zero expected). behavior: "M0 amendment verification + collision
+    ledger" in session transcript.
+
+    2.19.6: Child-table policy exercised: a synthetic duplicate group with one-row-per-session
+    children (session_variables), multi-row children, and a parent_session_id self-reference
+    merges per the recorded order without constraint violations; the FK/uniqueness
+    inventory is emitted from pg_constraint. test: `tests/storage/` survivor-merge
+    focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.19:2.19.1
+  - covers:gcore-schema-authority:2.19:2.19.2
+  - covers:gcore-schema-authority:2.19:2.19.3
+  - covers:gcore-schema-authority:2.19:2.19.4
+  - covers:gcore-schema-authority:2.19:2.19.5
+  - covers:gcore-schema-authority:2.19:2.19.6
+  tdd: true
+  source_section: '2.19'
+  implementation_domain: backend
+- title: project.json contributor flow + untrack state JSONLs
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.20.1: Fresh-clone simulation: gcode works, `gobby init`
+    registers the row and indexes, working tree stays clean. behavior: "fresh-clone
+    walkthrough" in session transcript.
+
+    2.20.2: State JSONLs untracked; pre-push makes no auto-commit; local backup written
+    at push. behavior: "push dry-run" in session transcript.
+
+    2.20.3: `ensure_exists` targeted; name collision fails loudly. test: `tests/storage/`
+    projects-focused run.
+
+    2.20.4: Non-portable keys never re-emitted; file mode preserved. test: `tests/utils/`
+    project_init-focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.20:2.20.1
+  - covers:gcore-schema-authority:2.20:2.20.2
+  - covers:gcore-schema-authority:2.20:2.20.3
+  - covers:gcore-schema-authority:2.20:2.20.4
+  tdd: true
+  source_section: '2.20'
+  implementation_domain: backend
+- title: Remove legacy secrets/auth migration paths
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.21.1: Fernet apparatus + migrate CLI + auth/webhook migrators
+    removed with hub-state evidence. behavior: "per-item evidence" in session transcript.
+
+    2.21.2: Secrets store works post-Fernet-removal. test: `tests/storage/test_secrets.py`.
+
+    2.21.3: Kept-adjacent ledger recorded (live crypto path, CRUD CLI, inbound verifiers,
+    auth verification). behavior: "2.21 kept ledger" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.21:2.21.1
+  - covers:gcore-schema-authority:2.21:2.21.2
+  - covers:gcore-schema-authority:2.21:2.21.3
+  tdd: true
+  source_section: '2.21'
+  implementation_domain: backend
+- title: Remove legacy installer/hook migration paths
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.22.1: 6 paths removed; keeps recorded. behavior: "evidence
+    ledger" in session transcript.
+
+    2.22.2: Install/uninstall flows green. test: `tests/cli/installers/` focused run.'
+  labels:
+  - covers:gcore-schema-authority:2.22:2.22.1
+  - covers:gcore-schema-authority:2.22:2.22.2
+  tdd: true
+  source_section: '2.22'
+  implementation_domain: backend
+- title: Remove legacy data-shape paths + gated github uuid seeds
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.23.1: Data-shape paths removed with hub-state evidence;
+    gate decision recorded either way. behavior: "evidence + gate record" in session
+    transcript.
+
+    2.23.2: Wiki cron + build-profile suites green. test: `tests/wiki/` + `tests/storage/`
+    focused runs.
+
+    2.23.3: Kept-adjacent ledger recorded (live wiki jobs, current row-hash path,
+    github sync machinery). behavior: "2.23 kept ledger" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.23:2.23.1
+  - covers:gcore-schema-authority:2.23:2.23.2
+  - covers:gcore-schema-authority:2.23:2.23.3
+  tdd: true
+  source_section: '2.23'
+  implementation_domain: backend
+- title: 'Detection profiles: agy rename + grok.toml + manifest regen'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.16'
+  validation_criteria: '2.24.1: `agy.toml` + `grok.toml` resolve at runtime with 14/14
+    rule ids; grok rules verified against a live pane capture; bundled-content manifest
+    regenerated. behavior: "manifest resolution check" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.24:2.24.1
+  tdd: true
+  source_section: '2.24'
+  assigned_agent: backend-developer
+- title: Delete scratch files + doc fixes
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.25.1: Scratch files gone; doc fixes applied. file: `docs/guides/release-guide.md`.
+
+    2.25.2: All 5 stubs + 31 dumps deleted; the named kept files remain; kept ledger
+    recorded. behavior: "2.25 kept/deleted ledger" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:2.25:2.25.1
+  - covers:gcore-schema-authority:2.25:2.25.2
+  tdd: true
+  source_section: '2.25'
+  assigned_agent: backend-developer
+- title: Redirect rule_eval telemetry; session-variable expiry
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.3'
+  - '0.8'
+  validation_criteria: '5.1.1: Allow-outcome rule evals write no `metrics_events`
+    rows; they appear in the rotating surface log and as Prometheus-exposed counters/histograms;
+    block rows unchanged. symbol: `_run_rule_loop`.
+
+    5.1.2: `SESSION_REVIVAL_HORIZON_HOURS` enforced in every revival path; expiry
+    sweep clears variables past that identical horizon only; abandoned `pending_interactions`
+    rows reach a terminal status. test: `tests/storage/` session-lifecycle focused
+    run.
+
+    5.1.3: `cleanup_old_metrics` atomic; `reset_metrics` filtered. test: `tests/mcp_proxy/`
+    metrics focused run.
+
+    5.1.4: Allow-audit surface retention sized in days with recorded math; delivery
+    probe shows allow lines in the new log; write-failure path degrades to counter
+    + warning without blocking evals; queue overflow drops newest with a counted metric
+    and the shutdown deadline is enforced (both pinned by test); the log files appear
+    in the hub-backup manifest with checksums (Codex review). test: `tests/workflows/`
+    telemetry-focused run.'
+  labels:
+  - covers:gcore-schema-authority:5.1:5.1.1
+  - covers:gcore-schema-authority:5.1:5.1.2
+  - covers:gcore-schema-authority:5.1:5.1.3
+  - covers:gcore-schema-authority:5.1:5.1.4
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: One-time purge + space reclaim, fresh-backup gated
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '0.4'
+  - '0.7'
+  validation_criteria: '5.2.1: Fresh backup manifest immediately precedes the purge
+    run. behavior: "pre-purge backup manifest" in session transcript.
+
+    5.2.2: Purge script + per-table pre/post ledger recorded; only enumerated categories
+    touched. file: `scripts/hub_data_purge.sql`.
+
+    5.2.3: Post-purge smoke: daemon boot, rule-eval writes, session create, pipeline
+    run, admin stats endpoints. behavior: "post-purge smoke" in session transcript.
+
+    5.2.4: Phase split honored (DML in transactions, VACUUM outside); epoch + quiescence
+    + full-relation/WAL/margin preflight evidence; hub-resident completion receipts
+    (`destructive_batches`) support rerun from any machine; size ledger recorded.
+    behavior: "size ledger + preflight" in session transcript.
+
+    5.2.5: `gobby hub-purge` owns the orchestration end-to-end as the purge campaign;
+    it refuses a predicates file whose sha256 differs from the batch intent row. test:
+    `tests/cli/` hub-purge focused run.'
+  labels:
+  - covers:gcore-schema-authority:5.2:5.2.1
+  - covers:gcore-schema-authority:5.2:5.2.2
+  - covers:gcore-schema-authority:5.2:5.2.3
+  - covers:gcore-schema-authority:5.2:5.2.4
+  - covers:gcore-schema-authority:5.2:5.2.5
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Probe removal + Qdrant/FalkorDB orphan reconciliation
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  - '0.7'
+  - '0.3'
+  validation_criteria: '5.3.1: Probe project absent from `code_indexed_projects` and
+    both projections via `gcode invalidate --project-id --force` (owner CLI; no global
+    prune, no direct store deletes). behavior: "targeted deletion evidence" in session
+    transcript.
+
+    5.3.2: Four-tier classification ledger recorded (reserved globals kept); orphans
+    dropped only via the hash-pinned manifest, executed by owner surfaces (gcode for
+    `code_symbols_*`, gwiki for topics, the recall cleanup command for recall/debug
+    graphs); live surfaces green (gcode search, wiki search, memory recall smoke).
+    behavior: "reconcile ledger + smoke" in session transcript.
+
+    5.3.3: Benchmark/debug graph leak has a teardown fix; a fresh benchmark run leaves
+    no new graph behind. test: recall benchmark harness focused run.
+
+    5.3.4: gcode SKILL.md + bundled-content manifest regenerated after the CLI change.
+    behavior: "regen evidence" in session transcript.
+
+    5.3.5: Apply preceded by a fresh backup whose inventory covers every candidate
+    (binding sha recorded); per-target receipts support rerun after partial completion.
+    behavior: "coverage + receipt evidence" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:5.3:5.3.1
+  - covers:gcore-schema-authority:5.3:5.3.2
+  - covers:gcore-schema-authority:5.3:5.3.3
+  - covers:gcore-schema-authority:5.3:5.3.4
+  - covers:gcore-schema-authority:5.3:5.3.5
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: BM25 index verification + reserved disposition slot
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.12'
+  - '0.3'
+  validation_criteria: '5.4.1: Per-index verdict with EXPLAIN evidence recorded. file:
+    `docs/evidence/bm25-verification.md`.
+
+    5.4.2: Slot 364 ships either way: destructive-marked drop with proof attached,
+    or no-op verdict record on all-stay. file: `src/gobby/storage/migrations/364_bm25_disposition.sql`.'
+  labels:
+  - covers:gcore-schema-authority:5.4:5.4.1
+  - covers:gcore-schema-authority:5.4:5.4.2
+  tdd: true
+  source_section: '5.4'
+  implementation_domain: backend
+- title: 'M0-landed gate: cross-epic dependency installed and verified'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.19'
+  validation_criteria: '3.0.1: Cross-epic dependency installed; M0 slots applied on
+    the hub with filename/checksum bookkeeping recorded. behavior: "M0 gate evidence
+    (dependency id + psql bookkeeping listing)" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:3.0:3.0.1
+  tdd: true
+  source_section: '3.0'
+  assigned_agent: backend-developer
+- title: 'Filename-aware migration bookkeeping: enforcement semantics'
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.3'
+  - '3.0'
+  validation_criteria: '3.1.1: Bookkeeping columns + verification in runner; hijack
+    scenario test. symbol: `MigrationRunner.apply_pending`.
+
+    3.1.2: Typo''d filename fails hard. test: `tests/storage/test_migration_contract.py`.
+
+    3.1.3: Historical rows keep NULL bookkeeping (no retroactive stamping); contiguity
+    is baseline-relative; baseline row carries pseudo-filename + checksum post-flatten.
+    test: `tests/storage/test_migration_contract.py`.'
+  labels:
+  - covers:gcore-schema-authority:3.1:3.1.1
+  - covers:gcore-schema-authority:3.1:3.1.2
+  - covers:gcore-schema-authority:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Flatten migrations into regenerated baseline
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.0'
+  - '0.4'
+  - '5.4'
+  - '0.7'
+  validation_criteria: '3.2.1: Flatten script reproducible; run recorded. file: `scripts/flatten_schema.py`.
+
+    3.2.2: Triple diff clean. behavior: "three-way identical schemas" in session transcript.
+
+    3.2.3: Fresh install + pytest fixture build from new baseline; focused storage
+    suites green. test: `tests/storage/hub/test_postgres_baseline_application.py`.
+
+    3.2.4: M0-landed gate recorded (hub `schema_migrations` includes M0 slots pre-flatten).
+    behavior: "gate evidence" in session transcript.
+
+    3.2.5: Pre-flatten DDL + seed manifest persisted with hashes before migration
+    deletion. file: `docs/evidence/pre-flatten/`.
+
+    3.2.6: Single-transaction bookkeeping cutover under quiescence + lock; crash and
+    runner-skew tests green. test: `tests/storage/` flatten-cutover focused run.'
+  labels:
+  - covers:gcore-schema-authority:3.2:3.2.1
+  - covers:gcore-schema-authority:3.2:3.2.2
+  - covers:gcore-schema-authority:3.2:3.2.3
+  - covers:gcore-schema-authority:3.2:3.2.4
+  - covers:gcore-schema-authority:3.2:3.2.5
+  - covers:gcore-schema-authority:3.2:3.2.6
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Embed schema assets + migration runner in gcore
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '4.1.1: Assets embedded; runner applies fresh + idempotent
+    re-apply. symbol: `SchemaRunner`.
+
+    4.1.4: Concurrent named-schema applies don''t deadlock; an interrupted non-transactional
+    migration (invalid concurrent index) recovers on re-apply. behavior: "lock + recovery
+    tests" in cargo test output.
+
+    4.1.2: Lockstep guard fails an older binary against a newer DB. behavior: "guard
+    test" in cargo test output.
+
+    4.1.3: Feature gating keeps ghook/build.rs free of postgres. behavior: "cargo
+    tree -p gobby-hooks" in session transcript.
+
+    4.1.5: Destructive-gate parity: a destructive-marked migration halts default apply
+    in the gcore runner; the gated path applies. behavior: "gate tests" in cargo test
+    output.
+
+    4.1.6: `schema verify` detects catalog drift (dropped column/index/ constraint),
+    seed drift, and bookkeeping drift in a scratch schema. behavior: "verify contract
+    tests" in cargo test output.'
+  labels:
+  - covers:gcore-schema-authority:4.1:4.1.1
+  - covers:gcore-schema-authority:4.1:4.1.4
+  - covers:gcore-schema-authority:4.1:4.1.2
+  - covers:gcore-schema-authority:4.1:4.1.3
+  - covers:gcore-schema-authority:4.1:4.1.5
+  - covers:gcore-schema-authority:4.1:4.1.6
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Create gobby-daemon crate with gdaemon schema CLI
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: `gdaemon schema apply` builds a fresh schema identical
+    to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+
+    4.2.2: `--schema` applies into a named schema. behavior: "scratch-schema apply"
+    in session transcript.
+
+    4.2.3: Binary installed; version sidecar written. file: `docs/guides/release-guide.md`.
+
+    4.2.4: Malicious `--schema` identifiers rejected; no DSN on argv; credentials
+    redacted in errors/logs. behavior: "hardening tests" in cargo test output.
+
+    4.2.5: `schema version --json` emits the six-field identity incl. `assets_root_hash`;
+    the install receipt records observed provenance only. behavior: "identity output
+    + receipt" in session transcript.
+
+    4.2.6: `schema apply` with a mismatched expected identity refuses before connecting;
+    binary replacement between a preflight check and apply is caught by the same-process
+    comparison. behavior: "identity-enforcement tests" in cargo test output.'
+  labels:
+  - covers:gcore-schema-authority:4.2:4.2.1
+  - covers:gcore-schema-authority:4.2:4.2.2
+  - covers:gcore-schema-authority:4.2:4.2.3
+  - covers:gcore-schema-authority:4.2:4.2.4
+  - covers:gcore-schema-authority:4.2:4.2.5
+  - covers:gcore-schema-authority:4.2:4.2.6
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Switch Python to gdaemon; delete Python migration machinery
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: "4.3.1: Daemon startup applies schema via gdaemon; boot green.\
+    \ behavior: \"daemon start log showing gdaemon apply\" in session transcript.\n\
+    4.3.2: Python migration machinery deleted; no `apply_migrations` SQL left in Python.\
+    \ file: `src/gobby/storage/migrations.py`.\n4.3.3: Focused pytest builds schemas\
+    \ through gdaemon. test: `tests/storage/hub/test_postgres_baseline_application.py`\
+    \ (successor).\n4.3.4: Missing-binary failure mode is actionable. test: `tests/storage/`\
+    \ shell-out contract test.\n4.3.5: Fresh install on a clean home provisions gdaemon\
+    \ before the first migration apply. behavior: \"fresh-install ordering check\"\
+    \ in session transcript.\n4.3.6: Handshake fails closed: new-Python + old-gdaemon\
+    \ against an empty DB; mutated intermediate migration (root-hash mismatch); old-binary\
+    \ + old-sidecar skew. test: `tests/storage/` handshake focused run.\n4.3.7: `schema_diff.py`\
+    \ builds its fresh reference through gdaemon. behavior: \"diff harness run post-cutover\"\
+    \ in session transcript.\n4.3.8: Decoy-DB test: explicit-conninfo database object\
+    \ + divergent bootstrap default \u2192 gdaemon applies to the object's DB only.\
+    \ test: `tests/storage/` DSN-pinning focused run.\n4.3.9: `gobby schema` survives\
+    \ the runner deletion as a gdaemon wrapper with unchanged gate semantics. test:\
+    \ `tests/cli/` schema focused run.\n4.3.10: Full install/upgrade fails (not warns)\
+    \ when gdaemon cannot be installed, verified, or complete the initial apply. test:\
+    \ `tests/cli/installers/` focused run."
+  labels:
+  - covers:gcore-schema-authority:4.3:4.3.1
+  - covers:gcore-schema-authority:4.3:4.3.2
+  - covers:gcore-schema-authority:4.3:4.3.3
+  - covers:gcore-schema-authority:4.3:4.3.4
+  - covers:gcore-schema-authority:4.3:4.3.5
+  - covers:gcore-schema-authority:4.3:4.3.6
+  - covers:gcore-schema-authority:4.3:4.3.7
+  - covers:gcore-schema-authority:4.3:4.3.8
+  - covers:gcore-schema-authority:4.3:4.3.9
+  - covers:gcore-schema-authority:4.3:4.3.10
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Retire runtime ensure-DDL from production Python
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  - '2.4'
+  - '0.8'
+  validation_criteria: '4.4.1: All six sites removed and the 2.4 sweep re-homed to
+    gdaemon; daemon boot, a dream run, and stage-registry paths run without issuing
+    DDL. behavior: "boot + dream run post-removal" in session transcript.
+
+    4.4.2: Audit shows zero persistent DDL of ANY object kind (tables, indexes, schemas,
+    types, functions, triggers, sequences, constraints, extensions, views) against
+    PostgreSQL in production Python; kept-adjacent ledger recorded. behavior: "DDL
+    sweep output" in session transcript.
+
+    4.4.3: `memory_dream_truth_state` present in the gcore baseline; dream truth-state
+    reads/writes work post-removal. test: `tests/memory/` focused run.
+
+    4.4.4: Former `ensure_table` test callers build via gdaemon fixtures. test: `tests/dispatch/`
+    + `tests/storage/tasks/` focused runs.'
+  labels:
+  - covers:gcore-schema-authority:4.4:4.4.1
+  - covers:gcore-schema-authority:4.4:4.4.2
+  - covers:gcore-schema-authority:4.4:4.4.3
+  - covers:gcore-schema-authority:4.4:4.4.4
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Re-home gcode/gwiki standalone DDL onto gcore
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.5.1: Canonical shared-table definitions live in gcore; gcode/gwiki
+    setup paths source them from gcore with zero independent DDL strings remaining.
+    file: `crates/gcore/src/schema/external.rs`.
+
+    4.5.2: Standalone gcode/gwiki setup against a fresh database still works; emitted
+    DDL is byte-identical to gcore''s export. behavior: "cargo test -p gobby-code
+    + -p gobby-wiki setup suites" in session transcript.
+
+    4.5.3: Baseline adoption seam still classifies and adopts standalone tables. test:
+    `tests/storage/hub/test_postgres_baseline_application.py`.'
+  labels:
+  - covers:gcore-schema-authority:4.5:4.5.1
+  - covers:gcore-schema-authority:4.5:4.5.2
+  - covers:gcore-schema-authority:4.5:4.5.3
+  tdd: true
+  source_section: '4.5'
+  implementation_domain: backend
+- title: 'Close-out: file the follow-up epic for every deferral'
+  category: config
+  task_type: feature
+  depends_on:
+  - '4.4'
+  - '4.5'
+  - '5.2'
+  - '5.3'
+  - '2.7'
+  - '2.9'
+  - '2.11'
+  - '2.13'
+  - '2.14'
+  - '2.15'
+  - '2.17'
+  - '2.20'
+  - '2.22'
+  - '2.23'
+  - '2.24'
+  - '2.25'
+  validation_criteria: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+    task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+    spans volume, recall_* growth). behavior: "task id in close-out ledger" in session
+    transcript.
+
+    4.6.2: Hub-PC datastore-move plan-drafting task filed. behavior: "task id in close-out
+    ledger" in session transcript.
+
+    4.6.3: Shared-daemon / feature-crate build-out plan-drafting task filed (two-daemon-hub
+    roadmap). behavior: "task id in close-out ledger" in session transcript.
+
+    4.6.4: Hot-path perf task filed (projection-cleanup DELETEs + vector-branch enqueue
+    bug, triage polling cadence, `gh_triage_build_dispatches.task_id` FK index). behavior:
+    "task id in close-out ledger" in session transcript.
+
+    4.6.5: `indexing.extra_excludes` follow-up task filed. behavior: "task id in close-out
+    ledger" in session transcript.
+
+    4.6.6: Machine-attribution deferral task filed (attachments blob attribution,
+    prune machine-scoping, `code_index_prune_dirty_projects` scoping) with #17435/#17437
+    linked, not duplicated. behavior: "task id in close-out ledger" in session transcript.
+
+    4.6.7: Git-history scrub decision task filed (tasks.jsonl / memories.jsonl before
+    repo publication). behavior: "task id in close-out ledger" in session transcript.
+
+    4.6.8: Rust inline-test file-size-linter task filed; keep-records (29 `*-steps`
+    rows) confirmed task-free; already-filed links recorded (#19365, #19366, #19367-closed).
+    behavior: "close-out ledger complete" in session transcript.'
+  labels:
+  - covers:gcore-schema-authority:4.6:4.6.1
+  - covers:gcore-schema-authority:4.6:4.6.2
+  - covers:gcore-schema-authority:4.6:4.6.3
+  - covers:gcore-schema-authority:4.6:4.6.4
+  - covers:gcore-schema-authority:4.6:4.6.5
+  - covers:gcore-schema-authority:4.6:4.6.6
+  - covers:gcore-schema-authority:4.6:4.6.7
+  - covers:gcore-schema-authority:4.6:4.6.8
+  tdd: true
+  source_section: '4.6'
+  assigned_agent: backend-developer
+```

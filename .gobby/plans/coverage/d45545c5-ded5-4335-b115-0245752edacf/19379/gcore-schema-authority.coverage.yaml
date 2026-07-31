@@ -1,1013 +1,1846 @@
 header:
   plan_id: gcore-schema-authority
-  plan_hash: 064192fc10a171005a44dded4523f6507b44d3e83bc429a36d2b14bebe45ee45
+  plan_hash: 360c1e04aa70722b2bdac226e6886dba808c0e1c60ba8f13d2e11ddffdf0b946
   root_task_ref: '#19379'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-07-31T04:44:02Z'
+  generated_at: '2026-07-31T04:57:31Z'
   task_tree_source: db
-  task_tree_source_hash: 71f1d3c7059a7fd027a38e24fb6ca7f76ccd92b247d85937228f1cd118ee17f5
+  task_tree_source_hash: b3554632b86d768cb7a6ef4295f06410bee10b8909dedcc05e976e6f441d8416
   evidence_summary: []
   evidence: []
 rows:
 - section_id: '0.1'
   item_id: 0.1.1
   plan_node_hash: 67cb5a2cad03bab3e683ebc9c21fe6cc92ce921a65eaa8100197a5b8dd01b928
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19385'
+    validation_criteria_snippet: '0.1.1: Mirror byte-identical to ghook copy; schema-mirror-check
+      passes. file: `schemas/diagnose-output.v2.schema.json`. 0.1.2: `.gitleaks.toml`
+      absent; pre-com...'
+    matched_artifact_ref: schemas/diagnose-output.v2.schema.json
   deferral_target: null
 - section_id: '0.1'
   item_id: 0.1.2
   plan_node_hash: f36396d9e81a61263e8b00651ce4d5da4c65b039190bb0768f2474d033fdc6f5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19385'
+    validation_criteria_snippet: '0.1.1: Mirror byte-identical to ghook copy; schema-mirror-check
+      passes. file: `schemas/diagnose-output.v2.schema.json`. 0.1.2: `.gitleaks.toml`
+      absent; pre-com...'
+    matched_artifact_ref: gitleaks default ruleset active
   deferral_target: null
 - section_id: '0.1'
   item_id: 0.1.3
   plan_node_hash: 4942055164901b701d70f9b57ce313833a9cb2321e95b2fff43197e40ab75fb7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19385'
+    validation_criteria_snippet: '0.1.1: Mirror byte-identical to ghook copy; schema-mirror-check
+      passes. file: `schemas/diagnose-output.v2.schema.json`. 0.1.2: `.gitleaks.toml`
+      absent; pre-com...'
+    matched_artifact_ref: .github/coderabbit.yaml
   deferral_target: null
 - section_id: '0.1'
   item_id: 0.1.4
   plan_node_hash: 9a2d3333f8276512911d92b313668cd2b8acdf9e5750d90cf115c8a5d1d81b71
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19385'
+    validation_criteria_snippet: '0.1.1: Mirror byte-identical to ghook copy; schema-mirror-check
+      passes. file: `schemas/diagnose-output.v2.schema.json`. 0.1.2: `.gitleaks.toml`
+      absent; pre-com...'
+    matched_artifact_ref: 0.1 evidence ledger
   deferral_target: null
 - section_id: '0.2'
   item_id: 0.2.1
   plan_node_hash: 6eb35c8b28790ed59fd75a8c0c6b732e98718f7fcab3abdc9e475e01ca69f225
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19386'
+    validation_criteria_snippet: '0.2.1: Migration 355 exists, is dual-shape safe
+      (fresh + live), and carries the destructive marker. file: `src/gobby/storage/migrations/355_reconcile_346_cron_...'
+    matched_artifact_ref: src/gobby/storage/migrations/355_reconcile_346_cron_display_name.sql
   deferral_target: null
 - section_id: '0.2'
   item_id: 0.2.2
   plan_node_hash: 4f7b069d1ed0008fbef71d2e9c110d9ea732c887ece7f93789a7a7a2c90973da
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19386'
+    validation_criteria_snippet: '0.2.1: Migration 355 exists, is dual-shape safe
+      (fresh + live), and carries the destructive marker. file: `src/gobby/storage/migrations/355_reconcile_346_cron_...'
+    matched_artifact_ref: column present, orphan tables absent
   deferral_target: null
 - section_id: '0.2'
   item_id: 0.2.3
   plan_node_hash: 7e976d76ea091cdff6567904d7c6920150b05ce14f46c8164d505d3fd0b77e73
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19386'
+    validation_criteria_snippet: '0.2.1: Migration 355 exists, is dual-shape safe
+      (fresh + live), and carries the destructive marker. file: `src/gobby/storage/migrations/355_reconcile_346_cron_...'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '0.3'
   item_id: 0.3.1
   plan_node_hash: 56821c524fdb9e109fbec93dbcb0f47466bac3a07b4943ce48254bbb75a44e2e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19387'
+    validation_criteria_snippet: '0.3.1: Diff script exists, reproducible, documented
+      usage. file: `scripts/schema_diff.py`. 0.3.2: Zero unexplained divergences between
+      fresh and live; resoluti...'
+    matched_artifact_ref: scripts/schema_diff.py
   deferral_target: null
 - section_id: '0.3'
   item_id: 0.3.2
   plan_node_hash: 2b7b2c912222e43ee2ad210d953f8b646cadd0d4bbfc283ccde44ecdeb33f273
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19387'
+    validation_criteria_snippet: '0.3.1: Diff script exists, reproducible, documented
+      usage. file: `scripts/schema_diff.py`. 0.3.2: Zero unexplained divergences between
+      fresh and live; resoluti...'
+    matched_artifact_ref: clean diff output
   deferral_target: null
 - section_id: '0.3'
   item_id: 0.3.3
   plan_node_hash: e7db84a87b44374f6a23c31167abdc5857ea74696e94e36490f9b66a0b3108f5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19387'
+    validation_criteria_snippet: '0.3.1: Diff script exists, reproducible, documented
+      usage. file: `scripts/schema_diff.py`. 0.3.2: Zero unexplained divergences between
+      fresh and live; resoluti...'
+    matched_artifact_ref: src/gobby/storage/migrations/356_reconcile_live_hub_schema_drift_v2.sql
   deferral_target: null
 - section_id: '0.4'
   item_id: 0.4.1
   plan_node_hash: 53eeb4d0e06fea26fb519bc68bbe73ae77e88189fc6098365793e321aaae0841
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19388'
+    validation_criteria_snippet: '0.4.1: `gobby hub-backup` covers PG (`-Fc` + `pg_dumpall
+      --globals-only`) + Qdrant + FalkorDB + volume tarballs; daemon stopped first
+      and restarted last; servi...'
+    matched_artifact_ref: src/gobby/cli/hub_backup/cli.py
   deferral_target: null
 - section_id: '0.4'
   item_id: 0.4.2
   plan_node_hash: 93a3e9a368bc5b8b87a0f51b44d169041b87246e01d502396988878ea4e5a55f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19388'
+    validation_criteria_snippet: '0.4.1: `gobby hub-backup` covers PG (`-Fc` + `pg_dumpall
+      --globals-only`) + Qdrant + FalkorDB + volume tarballs; daemon stopped first
+      and restarted last; servi...'
+    matched_artifact_ref: backup manifest + restore checks
   deferral_target: null
 - section_id: '0.4'
   item_id: 0.4.3
   plan_node_hash: 922a4c08f1bf903675100e81ed44aea0907a5f1ac64f3eb23e86681858f2bf72
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19388'
+    validation_criteria_snippet: '0.4.1: `gobby hub-backup` covers PG (`-Fc` + `pg_dumpall
+      --globals-only`) + Qdrant + FalkorDB + volume tarballs; daemon stopped first
+      and restarted last; servi...'
+    matched_artifact_ref: tests/cli/
   deferral_target: null
 - section_id: '0.5'
   item_id: 0.5.1
   plan_node_hash: f6b48abb702de72035b93abe5e1724677ebeb5d9469e32ef2a4f6c15842d2af9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19389'
+    validation_criteria_snippet: '0.5.1: Boot/CLI halts before a pending destructive
+      migration; fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.
+      0.5....'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '0.5'
   item_id: 0.5.2
   plan_node_hash: a2dbf7c6db5d0283e0b02fe4dd3527ac6fa97a2f0395b2c09d7dfad1953806db
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19389'
+    validation_criteria_snippet: '0.5.1: Boot/CLI halts before a pending destructive
+      migration; fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.
+      0.5....'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '0.5'
   item_id: 0.5.3
   plan_node_hash: 4c7f24c4764db074171ad599c5b312762228b9b7a9b5e82e59ba1dd1382be873
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19389'
+    validation_criteria_snippet: '0.5.1: Boot/CLI halts before a pending destructive
+      migration; fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.
+      0.5....'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '0.5'
   item_id: 0.5.4
   plan_node_hash: bd246c082533ab1b7984502dbccb4293b91cedc0e6d4b9295653faf0ccb615a1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19389'
+    validation_criteria_snippet: '0.5.1: Boot/CLI halts before a pending destructive
+      migration; fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.
+      0.5....'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '0.5'
   item_id: 0.5.5
   plan_node_hash: 44e05054535174b419d86886ce69f2e5d971848848187e80c25927a0b211b260
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19389'
+    validation_criteria_snippet: '0.5.1: Boot/CLI halts before a pending destructive
+      migration; fresh- schema and pytest paths unaffected. test: `tests/storage/test_migration_contract.py`.
+      0.5....'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '0.6'
   item_id: 0.6.1
   plan_node_hash: aafe9aba7721f4f81ba3fc11f812a6d05fd4944fd1b9c18fea9d075c24e6c3c7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19390'
+    validation_criteria_snippet: '0.6.1: M0 artifact specifies UUID-native machine
+      scoping with post-364 slots; no `machine_id TEXT` remains in its spec. file:
+      `.gobby/plans/m0-shared-datastore...'
+    matched_artifact_ref: .gobby/plans/m0-shared-datastores-bridge.md
   deferral_target: null
 - section_id: '0.6'
   item_id: 0.6.2
   plan_node_hash: 3bc9db5b9b54b130610a217c3a4142f9797d08ef8709fbf4b9a04e6560d4c7cb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19390'
+    validation_criteria_snippet: '0.6.1: M0 artifact specifies UUID-native machine
+      scoping with post-364 slots; no `machine_id TEXT` remains in its spec. file:
+      `.gobby/plans/m0-shared-datastore...'
+    matched_artifact_ref: validate + register output
   deferral_target: null
 - section_id: '0.7'
   item_id: 0.7.1
   plan_node_hash: 086b633b8d768ad1283cd62f6fbf2a43cc347fd2ab6292875085724a453975f1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19391'
+    validation_criteria_snippet: '0.7.1: Migration 354 ships bookkeeping columns +
+      both ledger tables + the login-fence trigger; auto-applies as a non-destructive
+      precursor. file: `src/gobby/st...'
+    matched_artifact_ref: src/gobby/storage/migrations/354_migration_bookkeeping.sql
   deferral_target: null
 - section_id: '0.7'
   item_id: 0.7.2
   plan_node_hash: f03af4af9f3fd694087369b28542089d85ffc19f706575eb621ef474a7a21c0a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19391'
+    validation_criteria_snippet: '0.7.1: Migration 354 ships bookkeeping columns +
+      both ledger tables + the login-fence trigger; auto-applies as a non-destructive
+      precursor. file: `src/gobby/st...'
+    matched_artifact_ref: tests/storage/test_maintenance_epoch.py
   deferral_target: null
 - section_id: '0.7'
   item_id: 0.7.3
   plan_node_hash: ded5c5b7d0c9fe63bcb2715a464584811ba289b314e48412ce9a6165e3849a45
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19391'
+    validation_criteria_snippet: '0.7.1: Migration 354 ships bookkeeping columns +
+      both ledger tables + the login-fence trigger; auto-applies as a non-destructive
+      precursor. file: `src/gobby/st...'
+    matched_artifact_ref: tests/storage/test_maintenance_epoch.py
   deferral_target: null
 - section_id: '0.7'
   item_id: 0.7.4
   plan_node_hash: 753d9baf835a3a0ebf2c5ccec00a58c16dc495d1ff3a8c69b9a0dc655be41b66
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19391'
+    validation_criteria_snippet: '0.7.1: Migration 354 ships bookkeeping columns +
+      both ledger tables + the login-fence trigger; auto-applies as a non-destructive
+      precursor. file: `src/gobby/st...'
+    matched_artifact_ref: tests/cli/
   deferral_target: null
 - section_id: '0.7'
   item_id: 0.7.5
   plan_node_hash: 3ebf6b0fb830c0bf28f7477460a4cbbd5234f22243532b3bf433e1ef8e2991ae
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19391'
+    validation_criteria_snippet: '0.7.1: Migration 354 ships bookkeeping columns +
+      both ledger tables + the login-fence trigger; auto-applies as a non-destructive
+      precursor. file: `src/gobby/st...'
+    matched_artifact_ref: tests/storage/test_maintenance_epoch.py
   deferral_target: null
 - section_id: '0.8'
   item_id: 0.8.1
   plan_node_hash: 84c2230e21904aa1861342406f91b73426732de341d27f1e401f54d6092f6d81
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19392'
+    validation_criteria_snippet: '0.8.1: Package replaces the module; every file <
+      1,000 lines; import paths preserved via `__init__` re-exports; no behavior change.
+      behavior: "line counts + im...'
+    matched_artifact_ref: line counts + import check
   deferral_target: null
 - section_id: '0.8'
   item_id: 0.8.2
   plan_node_hash: 757a3dc921ab1bd572ab85e97394dc38262b1b25e26598bdb8c7af9966ab19be
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19392'
+    validation_criteria_snippet: '0.8.1: Package replaces the module; every file <
+      1,000 lines; import paths preserved via `__init__` re-exports; no behavior change.
+      behavior: "line counts + im...'
+    matched_artifact_ref: tests/
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.1
   plan_node_hash: 5c08c1e24c02edf01c338ee077e0f230c21f44b743eb6845806e07da3e574ac9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19393'
+    validation_criteria_snippet: '2.1.1: Claims resolve from tasks table; no workflow_states
+      reference remains in claims path. symbol: `get_claimed_task_owners`. 2.1.2:
+      CLI listing still marks ...'
+    matched_artifact_ref: get_claimed_task_owners
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.2
   plan_node_hash: 6bb360998664f15aa62fe30d41c5ec592b906af9bd166b41f75e341ce6e84a59
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19393'
+    validation_criteria_snippet: '2.1.1: Claims resolve from tasks table; no workflow_states
+      reference remains in claims path. symbol: `get_claimed_task_owners`. 2.1.2:
+      CLI listing still marks ...'
+    matched_artifact_ref: tests/cli/tasks/
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.1
   plan_node_hash: 521efea8ec18eb0ade81bb6844ca136f57352bc3b8f4a44b4e6e4a6be6493765
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19394'
+    validation_criteria_snippet: '2.2.1: Migration 357 drops all five tables + FKs;
+      dual-shape safe. file: `src/gobby/storage/migrations/357_drop_dead_tables.sql`.
+      2.2.2: Rule-eval pipeline has...'
+    matched_artifact_ref: src/gobby/storage/migrations/357_drop_dead_tables.sql
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.2
   plan_node_hash: 7d61098689ec43d01cb29a1b5b7b8abab7729da177ba93dead2bf6266253cd6d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19394'
+    validation_criteria_snippet: '2.2.1: Migration 357 drops all five tables + FKs;
+      dual-shape safe. file: `src/gobby/storage/migrations/357_drop_dead_tables.sql`.
+      2.2.2: Rule-eval pipeline has...'
+    matched_artifact_ref: WorkflowEngine.evaluate
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.3
   plan_node_hash: d5d0b3a75681f10cc124609778f9eaf674e743e472ecb62008ed03c1bedf9d65
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19394'
+    validation_criteria_snippet: '2.2.1: Migration 357 drops all five tables + FKs;
+      dual-shape safe. file: `src/gobby/storage/migrations/357_drop_dead_tables.sql`.
+      2.2.2: Rule-eval pipeline has...'
+    matched_artifact_ref: evidence block per table
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.4
   plan_node_hash: 7e2dbf78e7ca47304041ff960236b545247732a6eb4a4d1c9606a2d234edc824
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19394'
+    validation_criteria_snippet: '2.2.1: Migration 357 drops all five tables + FKs;
+      dual-shape safe. file: `src/gobby/storage/migrations/357_drop_dead_tables.sql`.
+      2.2.2: Rule-eval pipeline has...'
+    matched_artifact_ref: tests/workflows/test_rule_engine.py
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.1
   plan_node_hash: 612a8bc8b90313cb0165deb7bec2f308a54ed16bd173860c678122bca7a53ae5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19395'
+    validation_criteria_snippet: '2.3.1: Migration 358 ships with per-column and per-index
+      verification evidence. file: `src/gobby/storage/migrations/358_drop_dead_columns.sql`.
+      2.3.2: Contract...'
+    matched_artifact_ref: src/gobby/storage/migrations/358_drop_dead_columns.sql
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.2
   plan_node_hash: fa0f4c1e63e5ca9cbe5def99e711235275edc937668a27eb2c74e5aa57534532
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19395'
+    validation_criteria_snippet: '2.3.1: Migration 358 ships with per-column and per-index
+      verification evidence. file: `src/gobby/storage/migrations/358_drop_dead_columns.sql`.
+      2.3.2: Contract...'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.1
   plan_node_hash: b662df032c19f26461e61104ab788cde2f39a924a21488c7dcdc64229661fde3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19396'
+    validation_criteria_snippet: '2.4.1: Startup sweep registered in daemon maintenance;
+      drops aged `gobby_test_*` schemas only under an acquired lease + recheck; a
+      held lease (live test) block...'
+    matched_artifact_ref: src/gobby/runner_maintenance/storage_hygiene.py
   deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.2
   plan_node_hash: 34ded1187caef01e9f1ea08597b5bedf06b89dae609188a6af3c7cdb0375dee8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19396'
+    validation_criteria_snippet: '2.4.1: Startup sweep registered in daemon maintenance;
+      drops aged `gobby_test_*` schemas only under an acquired lease + recheck; a
+      held lease (live test) block...'
+    matched_artifact_ref: tests/fixtures/test_postgres_safety.py
   deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.3
   plan_node_hash: 89f2bf6ddb992b76a823dd7a5a5a99f8f59589184286082846f8c4c0c6dcb3c3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19396'
+    validation_criteria_snippet: '2.4.1: Startup sweep registered in daemon maintenance;
+      drops aged `gobby_test_*` schemas only under an acquired lease + recheck; a
+      held lease (live test) block...'
+    matched_artifact_ref: psql schema list clean
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.1
   plan_node_hash: 6eed96dd7dca08524f8dbfa78b67b6da49e8e095811123134425c2f82ba13e81
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19397'
+    validation_criteria_snippet: '2.5.1: 9 files + shim tests deleted; import graph
+      clean (`uv run mypy src/` + daemon boot). behavior: "daemon starts clean" in
+      session transcript. 2.5.2: stage...'
+    matched_artifact_ref: daemon starts clean
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.2
   plan_node_hash: c1d5b6cb53f81f70f54459826f59fa0136783f1b69b09ebdebd0cd8cae402a4e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19397'
+    validation_criteria_snippet: '2.5.1: 9 files + shim tests deleted; import graph
+      clean (`uv run mypy src/` + daemon boot). behavior: "daemon starts clean" in
+      session transcript. 2.5.2: stage...'
+    matched_artifact_ref: tests/servers/routes/test_stage_routes.py
   deferral_target: null
 - section_id: '2.6'
   item_id: 2.6.1
   plan_node_hash: 87a684de51f541039004aaa84b78d8978c952d3b8c50eb989bbe8018ac6e9e28
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19398'
+    validation_criteria_snippet: '2.6.1: `gobby postgres activate` gone; `_pgaudit_probe`
+      dropped. file: `src/gobby/cli/postgres.py`. 2.6.2: bootstrap.yaml schema has
+      neither `database_path` no...'
+    matched_artifact_ref: src/gobby/cli/postgres.py
   deferral_target: null
 - section_id: '2.6'
   item_id: 2.6.2
   plan_node_hash: 87197e29119b0759b1791af205261017c1a00aa13ffa8a7285ee4573d3689d1e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19398'
+    validation_criteria_snippet: '2.6.1: `gobby postgres activate` gone; `_pgaudit_probe`
+      dropped. file: `src/gobby/cli/postgres.py`. 2.6.2: bootstrap.yaml schema has
+      neither `database_path` no...'
+    matched_artifact_ref: parse_hub_database_bootstrap
   deferral_target: null
 - section_id: '2.6'
   item_id: 2.6.3
   plan_node_hash: 1068fd5422ed0a5669e894581b6546b794d500833e27fdcf7ddeed9100a362ce
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19398'
+    validation_criteria_snippet: '2.6.1: `gobby postgres activate` gone; `_pgaudit_probe`
+      dropped. file: `src/gobby/cli/postgres.py`. 2.6.2: bootstrap.yaml schema has
+      neither `database_path` no...'
+    matched_artifact_ref: gcode search succeeds post-reinstall
   deferral_target: null
 - section_id: '2.6'
   item_id: 2.6.4
   plan_node_hash: f5a25683ca24d198253c097f00179de5dcb18129bdf2e45229cb347543900d56
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19398'
+    validation_criteria_snippet: '2.6.1: `gobby postgres activate` gone; `_pgaudit_probe`
+      dropped. file: `src/gobby/cli/postgres.py`. 2.6.2: bootstrap.yaml schema has
+      neither `database_path` no...'
+    matched_artifact_ref: tests/config/
   deferral_target: null
 - section_id: '2.7'
   item_id: 2.7.1
   plan_node_hash: 9c75037e79325ff05ca55c221b922cb1850070de15b53c8dea9097c874aa3ec5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19399'
+    validation_criteria_snippet: '2.7.1: All six surfaces removed or corrected; CLI/API
+      help output clean. file: `src/gobby/cli/build.py`. 2.7.2: Focused route/CLI
+      tests green. test: `tests/cli...'
+    matched_artifact_ref: src/gobby/cli/build.py
   deferral_target: null
 - section_id: '2.7'
   item_id: 2.7.2
   plan_node_hash: 5af3d73dc861ed9bb49b7c9485138c349f368d57713c78e3b1cf808dc1d9a5b0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19399'
+    validation_criteria_snippet: '2.7.1: All six surfaces removed or corrected; CLI/API
+      help output clean. file: `src/gobby/cli/build.py`. 2.7.2: Focused route/CLI
+      tests green. test: `tests/cli...'
+    matched_artifact_ref: tests/cli/
   deferral_target: null
 - section_id: '2.8'
   item_id: 2.8.1
   plan_node_hash: dbf80c216a80c2957295d5dbbba3bd11e08afcf77a0bab54d3fbdb7ff7cfcf3a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19400'
+    validation_criteria_snippet: '2.8.1: Enumerated sets removed; config loads; flatten_config
+      emits no orphan keys. symbol: `DaemonConfig`. 2.8.2: Six dead CodeIndexConfig
+      fields removed; web ...'
+    matched_artifact_ref: DaemonConfig
   deferral_target: null
 - section_id: '2.8'
   item_id: 2.8.2
   plan_node_hash: efb0c06208ccc8351b77a1146f1a85d7440721d5f218e7669193dcb76def1fad
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19400'
+    validation_criteria_snippet: '2.8.1: Enumerated sets removed; config loads; flatten_config
+      emits no orphan keys. symbol: `DaemonConfig`. 2.8.2: Six dead CodeIndexConfig
+      fields removed; web ...'
+    matched_artifact_ref: per-field disposition
   deferral_target: null
 - section_id: '2.8'
   item_id: 2.8.3
   plan_node_hash: 4b5b087b0d9d4bc7f844749c41e02df31beb94f95597c817e2156e771c6e504f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19400'
+    validation_criteria_snippet: '2.8.1: Enumerated sets removed; config loads; flatten_config
+      emits no orphan keys. symbol: `DaemonConfig`. 2.8.2: Six dead CodeIndexConfig
+      fields removed; web ...'
+    matched_artifact_ref: tests/config/
   deferral_target: null
 - section_id: '2.9'
   item_id: 2.9.1
   plan_node_hash: 0670aa03a24c1dfc0d807129f0cd189818f41fdfe4bfab95aec7578f53ebc813
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19401'
+    validation_criteria_snippet: '2.9.1: 9 config-chain paths removed with per-item
+      hub-state evidence. behavior: "per-item evidence ledger" in session transcript.
+      2.9.2: Config loads; daemon b...'
+    matched_artifact_ref: per-item evidence ledger
   deferral_target: null
 - section_id: '2.9'
   item_id: 2.9.2
   plan_node_hash: 2a703b11871b829ebe0a9fbfe9d257563cad162f93dfff620cd00f681dbdb274
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19401'
+    validation_criteria_snippet: '2.9.1: 9 config-chain paths removed with per-item
+      hub-state evidence. behavior: "per-item evidence ledger" in session transcript.
+      2.9.2: Config loads; daemon b...'
+    matched_artifact_ref: tests/config/
   deferral_target: null
 - section_id: '2.9'
   item_id: 2.9.3
   plan_node_hash: f52629e275ccc662eb7537a21839fd8d7caab8e55da42cc146724032fc6afb44
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19401'
+    validation_criteria_snippet: '2.9.1: 9 config-chain paths removed with per-item
+      hub-state evidence. behavior: "per-item evidence ledger" in session transcript.
+      2.9.2: Config loads; daemon b...'
+    matched_artifact_ref: 2.9 kept ledger
   deferral_target: null
 - section_id: '2.10'
   item_id: 2.10.1
   plan_node_hash: 493207c97440680ed744ee5fd8ebd0223437c1d2236045aac78ac7fca360f884
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19402'
+    validation_criteria_snippet: '2.10.1: Single `sanitize_url` with query/fragment
+      stripping + IPv6 re-bracketing; both call sites migrated. symbol: `sanitize_url`.
+      2.10.2: All four named fami...'
+    matched_artifact_ref: sanitize_url
   deferral_target: null
 - section_id: '2.10'
   item_id: 2.10.2
   plan_node_hash: a0a6f8d75539f40f3d33b1b4333a963ba955c1c14d4eb7254ce01536bc929da8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19402'
+    validation_criteria_snippet: '2.10.1: Single `sanitize_url` with query/fragment
+      stripping + IPv6 re-bracketing; both call sites migrated. symbol: `sanitize_url`.
+      2.10.2: All four named fami...'
+    matched_artifact_ref: duplicate sweep results
   deferral_target: null
 - section_id: '2.10'
   item_id: 2.10.3
   plan_node_hash: afac5c7f21868897e7cf7610d3297708349c381d444273662e6ff7ac0b8067ee
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19402'
+    validation_criteria_snippet: '2.10.1: Single `sanitize_url` with query/fragment
+      stripping + IPv6 re-bracketing; both call sites migrated. symbol: `sanitize_url`.
+      2.10.2: All four named fami...'
+    matched_artifact_ref: tests/clones/
   deferral_target: null
 - section_id: '2.11'
   item_id: 2.11.1
   plan_node_hash: b69011aa62fb2c6be202711b28dd6cfb380f64e41ae1b7901ff9ee14483a1024
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19403'
+    validation_criteria_snippet: '2.11.1: Pipeline webhooks deliver via the shared
+      transport with unchanged payload behavior; SSRF-blocking + pinning tests green.
+      test: `tests/workflows/` webho...'
+    matched_artifact_ref: tests/workflows/
   deferral_target: null
 - section_id: '2.11'
   item_id: 2.11.2
   plan_node_hash: 61d24d3724cba26e46e7fbe0c06584434d1c78bb50b8d9b278ee32636167c16b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19403'
+    validation_criteria_snippet: '2.11.1: Pipeline webhooks deliver via the shared
+      transport with unchanged payload behavior; SSRF-blocking + pinning tests green.
+      test: `tests/workflows/` webho...'
+    matched_artifact_ref: pyproject.toml
   deferral_target: null
 - section_id: '2.11'
   item_id: 2.11.3
   plan_node_hash: 3e3e09994a53fb0fb6ec1b83c9f5b1406e5d3fb147a0ed39fc5ff91ecf45c8f4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19403'
+    validation_criteria_snippet: '2.11.1: Pipeline webhooks deliver via the shared
+      transport with unchanged payload behavior; SSRF-blocking + pinning tests green.
+      test: `tests/workflows/` webho...'
+    matched_artifact_ref: tests/hooks/
   deferral_target: null
 - section_id: '2.11'
   item_id: 2.11.4
   plan_node_hash: 98b0ee9edd2beb0a8bd8ae32a0b262fdf4af189927c2c5fdd5e842dc072d968c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19403'
+    validation_criteria_snippet: '2.11.1: Pipeline webhooks deliver via the shared
+      transport with unchanged payload behavior; SSRF-blocking + pinning tests green.
+      test: `tests/workflows/` webho...'
+    matched_artifact_ref: tests/utils/
   deferral_target: null
 - section_id: '2.12'
   item_id: 2.12.1
   plan_node_hash: 524ae0f1461b37c861bf299221c76052220f74388876eebec5d3463d15630e80
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19404'
+    validation_criteria_snippet: '2.12.1: Manifest symbols removed; live pipeline
+      untouched; dream run completes post-change. behavior: "successful dream run"
+      in daemon logs or `dream_runs` row...'
+    matched_artifact_ref: successful dream run
   deferral_target: null
 - section_id: '2.12'
   item_id: 2.12.2
   plan_node_hash: 6510941e6f43f8ef0f9285155173218d57b7931bc10c0d56a8e0cb3410d67a58
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19404'
+    validation_criteria_snippet: '2.12.1: Manifest symbols removed; live pipeline
+      untouched; dream run completes post-change. behavior: "successful dream run"
+      in daemon logs or `dream_runs` row...'
+    matched_artifact_ref: tests/memory/test_dream.py
   deferral_target: null
 - section_id: '2.12'
   item_id: 2.12.3
   plan_node_hash: c681a29b076d37b4ade95e744fa9a3bfbbb0576463563f97243144000147e57c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19404'
+    validation_criteria_snippet: '2.12.1: Manifest symbols removed; live pipeline
+      untouched; dream run completes post-change. behavior: "successful dream run"
+      in daemon logs or `dream_runs` row...'
+    matched_artifact_ref: tests/memory/
   deferral_target: null
 - section_id: '2.12'
   item_id: 2.12.4
   plan_node_hash: d4c789e69c117725db733fdcb28b28fdbf25e14b69d40d66bdd3ca4c7b45281e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19404'
+    validation_criteria_snippet: '2.12.1: Manifest symbols removed; live pipeline
+      untouched; dream run completes post-change. behavior: "successful dream run"
+      in daemon logs or `dream_runs` row...'
+    matched_artifact_ref: RUN_TERMINAL_STATUSES
   deferral_target: null
 - section_id: '2.13'
   item_id: 2.13.1
   plan_node_hash: 2a79e15c8a7a58c787d912f420a3a8b87484dacee974fb67f651ae843e45b99f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19405'
+    validation_criteria_snippet: '2.13.1: `voice = []` extra gone; chatterbox-tts
+      + pins present. file: `pyproject.toml`. 2.13.2: No-torch-at-import regression
+      test. test: `tests/voice/test_laz...'
+    matched_artifact_ref: pyproject.toml
   deferral_target: null
 - section_id: '2.13'
   item_id: 2.13.2
   plan_node_hash: e261841b37785894d42d8fa9aebe456e9a85780906f017e1852e5e94a407891e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19405'
+    validation_criteria_snippet: '2.13.1: `voice = []` extra gone; chatterbox-tts
+      + pins present. file: `pyproject.toml`. 2.13.2: No-torch-at-import regression
+      test. test: `tests/voice/test_laz...'
+    matched_artifact_ref: tests/voice/test_lazy_import.py
   deferral_target: null
 - section_id: '2.14'
   item_id: 2.14.1
   plan_node_hash: 5ddd0922c8612abff2c93462e25ce1a15efb1c56610599c53566a0682d6dba13
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19406'
+    validation_criteria_snippet: '2.14.1: Files + deps gone; workspace builds; clippy
+      clean per crate. behavior: "cargo check + clippy per crate" in session transcript.
+      2.14.2: public_boundary ...'
+    matched_artifact_ref: cargo check + clippy per crate
   deferral_target: null
 - section_id: '2.14'
   item_id: 2.14.2
   plan_node_hash: 4c23c7d3d2404a03449d825795beb2f82316d6ed93d7076737b27adc26a9a192
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19406'
+    validation_criteria_snippet: '2.14.1: Files + deps gone; workspace builds; clippy
+      clean per crate. behavior: "cargo check + clippy per crate" in session transcript.
+      2.14.2: public_boundary ...'
+    matched_artifact_ref: crates/gcore/tests/public_boundary.rs
   deferral_target: null
 - section_id: '2.14'
   item_id: 2.14.3
   plan_node_hash: 7c3bc9531f5d47f159ba03a0cb66d8deee3c0cfcaf168a46e1e584722943b9db
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19406'
+    validation_criteria_snippet: '2.14.1: Files + deps gone; workspace builds; clippy
+      clean per crate. behavior: "cargo check + clippy per crate" in session transcript.
+      2.14.2: public_boundary ...'
+    matched_artifact_ref: cargo test -p gobby-wiki
   deferral_target: null
 - section_id: '2.15'
   item_id: 2.15.1
   plan_node_hash: 4be3ba1203e56b9f4458e016062d90e5a341e1aee725a60d18fee4aeabedaf44
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19407'
+    validation_criteria_snippet: '2.15.1: Web builds clean with modules + deps removed.
+      behavior: "npm run build" in session transcript. 2.15.2: Python deps trimmed;
+      `uv sync` + daemon boot gre...'
+    matched_artifact_ref: npm run build
   deferral_target: null
 - section_id: '2.15'
   item_id: 2.15.2
   plan_node_hash: c10bc2b44f4fdaca8214907cb2aee9cef3d11e23592eb1330ce3924915d6dfa1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19407'
+    validation_criteria_snippet: '2.15.1: Web builds clean with modules + deps removed.
+      behavior: "npm run build" in session transcript. 2.15.2: Python deps trimmed;
+      `uv sync` + daemon boot gre...'
+    matched_artifact_ref: pyproject.toml
   deferral_target: null
 - section_id: '2.16'
   item_id: 2.16.1
   plan_node_hash: 578edb7c43f2168e27056e60c9f368e75417db4b67dc75b712d860ea6f79bd50
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19408'
+    validation_criteria_snippet: '2.16.1: Registry rows retired with pre-verification
+      evidence per row. behavior: "DB registry verification ledger" in session transcript.
+      2.16.2: rules CLAUDE.m...'
+    matched_artifact_ref: DB registry verification ledger
   deferral_target: null
 - section_id: '2.16'
   item_id: 2.16.2
   plan_node_hash: bb19816a4d2be8122a7af2ad87f0184ec51360ae36b6f136c64b94055c81aaad
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19408'
+    validation_criteria_snippet: '2.16.1: Registry rows retired with pre-verification
+      evidence per row. behavior: "DB registry verification ledger" in session transcript.
+      2.16.2: rules CLAUDE.m...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/CLAUDE.md
   deferral_target: null
 - section_id: '2.16'
   item_id: 2.16.3
   plan_node_hash: 4ea1109a376055f442405dcba6f920a52e7e97afd95393fba12ea41f99948555
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19408'
+    validation_criteria_snippet: '2.16.1: Registry rows retired with pre-verification
+      evidence per row. behavior: "DB registry verification ledger" in session transcript.
+      2.16.2: rules CLAUDE.m...'
+    matched_artifact_ref: src/gobby/install/shared/skills/gcode/SKILL.md
   deferral_target: null
 - section_id: '2.17'
   item_id: 2.17.1
   plan_node_hash: 18d9c370121f098aa8daf13c05305ee708749fc162dacdfd0f9cbedbfa65da85
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19409'
+    validation_criteria_snippet: '2.17.1: All three files < 1,000 lines post-split;
+      no new clippy warnings. behavior: "line counts + clippy" in session transcript.
+      2.17.2: Out-of-line test conv...'
+    matched_artifact_ref: line counts + clippy
   deferral_target: null
 - section_id: '2.17'
   item_id: 2.17.2
   plan_node_hash: 9bd66fa56fb89bf543940065b2cb9b8c49085823aeb1b392055e38435da0de80
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19409'
+    validation_criteria_snippet: '2.17.1: All three files < 1,000 lines post-split;
+      no new clippy warnings. behavior: "line counts + clippy" in session transcript.
+      2.17.2: Out-of-line test conv...'
+    matched_artifact_ref: crates/CLAUDE.md
   deferral_target: null
 - section_id: '2.17'
   item_id: 2.17.3
   plan_node_hash: aa03ed87e67e04fca6a3a57ef28169d4a67b96b0fddee5e336c28a067e2bc08c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19409'
+    validation_criteria_snippet: '2.17.1: All three files < 1,000 lines post-split;
+      no new clippy warnings. behavior: "line counts + clippy" in session transcript.
+      2.17.2: Out-of-line test conv...'
+    matched_artifact_ref: cargo test -p gobby-code
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.1
   plan_node_hash: d3bde04ecb27db1c8bc9ee631207410d476b5eba025c2b87d5fd27d3a893aeab
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: _generate_machine_id
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.2
   plan_node_hash: f5f0e9402a3c08616341aa8a0e405a66dd1cf61d4df49a2aad834b4825a9a62c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: src/gobby/storage/migrations/361_machines_uuid_identity.sql
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.3
   plan_node_hash: 757f9ccdba06c3e2c686e0b8b1f4a78d40af82e7cbbfcc0317b290e63adc9637
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: cutover ledger + gate evidence
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.4
   plan_node_hash: 44d3b499ddecc3f8f9895c77a881114fe073a03c92c116f0afdfefc82bd07468
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: fresh-home boot check
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.5
   plan_node_hash: b38567cf5b3ed8a6ffd2bfaf57ac16710551ded0ba1630081e93cbde71e87823
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: pack/unpack round-trip
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.6
   plan_node_hash: 9ad41e8d078de13782651b1ac0324388ffe0b4b7b20339ea30aac4be57607001
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.7
   plan_node_hash: 3ddbae97353d87d4685bd0cd40f1adb977cb176ca25bdf60d33fb0079c4f76ec
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19410'
+    validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      UUID PK` (TEXT colum...'
+    matched_artifact_ref: quiescence + fence + rollback evidence
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.1
   plan_node_hash: 586b46c20d83319955955c44aa46b32e742a8891bc953d55feef6c35df2c10e0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.2
   plan_node_hash: ab3a1ee877eb2f2a1ce28ff2c5ed95d59b3dfca6e72931e9c228bfbfbbcc2588
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.3
   plan_node_hash: 0b30797154a48ca73c3032720406dd8f11a18af004c9d39ce775ee59eb606995
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: web/src/hooks/__tests__/
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.4
   plan_node_hash: e564f15eaf6de7cfec998271f196c0ec6aaf84c956d6d0d1fed517a43a59a788
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: docs/contracts/identity-model.md
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.5
   plan_node_hash: a8f6d17ebaa7f7b563aa534fcb123b2d738f61eca84505eb7f083d1dee5bf24d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: M0 amendment verification + collision ledger
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.6
   plan_node_hash: f6c7eb96bbd4a4ce07a44a443d55104fac0bfb1496439c06b9033d95963c798e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19411'
+    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+      `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
+      destructive- marked. file: `...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '2.20'
   item_id: 2.20.1
   plan_node_hash: bdd875e89c64e55425787c0b2e58563c4b099315a1fa8743adc3d13ab8c47f93
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19412'
+    validation_criteria_snippet: '2.20.1: Fresh-clone simulation: gcode works, `gobby
+      init` registers the row and indexes, working tree stays clean. behavior: "fresh-clone
+      walkthrough" in sessi...'
+    matched_artifact_ref: fresh-clone walkthrough
   deferral_target: null
 - section_id: '2.20'
   item_id: 2.20.2
   plan_node_hash: ab1b8d8dfada7fa7d40450ab092fb917226616c9a4368f60afcaffb651cd0bd9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19412'
+    validation_criteria_snippet: '2.20.1: Fresh-clone simulation: gcode works, `gobby
+      init` registers the row and indexes, working tree stays clean. behavior: "fresh-clone
+      walkthrough" in sessi...'
+    matched_artifact_ref: push dry-run
   deferral_target: null
 - section_id: '2.20'
   item_id: 2.20.3
   plan_node_hash: 40006f15c246fe42cddb1fd75f8cfdc575617c55d68f1c86e1e09f97431352a3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19412'
+    validation_criteria_snippet: '2.20.1: Fresh-clone simulation: gcode works, `gobby
+      init` registers the row and indexes, working tree stays clean. behavior: "fresh-clone
+      walkthrough" in sessi...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '2.20'
   item_id: 2.20.4
   plan_node_hash: 1b692b95f2591d9b918e5fc549d36198ea7498afdfb1102b13af072b8fb1f3a0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19412'
+    validation_criteria_snippet: '2.20.1: Fresh-clone simulation: gcode works, `gobby
+      init` registers the row and indexes, working tree stays clean. behavior: "fresh-clone
+      walkthrough" in sessi...'
+    matched_artifact_ref: tests/utils/
   deferral_target: null
 - section_id: '2.21'
   item_id: 2.21.1
   plan_node_hash: 635eb0e5e90a3455c8782f51dea7cbd2217d1d643e7ad5829c2b9fc145750068
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19413'
+    validation_criteria_snippet: '2.21.1: Fernet apparatus + migrate CLI + auth/webhook
+      migrators removed with hub-state evidence. behavior: "per-item evidence" in
+      session transcript. 2.21.2: S...'
+    matched_artifact_ref: per-item evidence
   deferral_target: null
 - section_id: '2.21'
   item_id: 2.21.2
   plan_node_hash: 70f6349134fad1d866ca31cc626f749d36887538686402ab2a62b3a08fc7afe7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19413'
+    validation_criteria_snippet: '2.21.1: Fernet apparatus + migrate CLI + auth/webhook
+      migrators removed with hub-state evidence. behavior: "per-item evidence" in
+      session transcript. 2.21.2: S...'
+    matched_artifact_ref: tests/storage/test_secrets.py
   deferral_target: null
 - section_id: '2.21'
   item_id: 2.21.3
   plan_node_hash: c91ead5d171d5e060ed2230c02e16b6d30b6012edc617d8c321a36653bd5a20e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19413'
+    validation_criteria_snippet: '2.21.1: Fernet apparatus + migrate CLI + auth/webhook
+      migrators removed with hub-state evidence. behavior: "per-item evidence" in
+      session transcript. 2.21.2: S...'
+    matched_artifact_ref: 2.21 kept ledger
   deferral_target: null
 - section_id: '2.22'
   item_id: 2.22.1
   plan_node_hash: 175eb6d7d42f0f94e5460041c146bf235c123cae373f3d8b2f44fd564ca37f6e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19414'
+    validation_criteria_snippet: '2.22.1: 6 paths removed; keeps recorded. behavior:
+      "evidence ledger" in session transcript. 2.22.2: Install/uninstall flows green.
+      test: `tests/cli/installers/...'
+    matched_artifact_ref: evidence ledger
   deferral_target: null
 - section_id: '2.22'
   item_id: 2.22.2
   plan_node_hash: deed1cba3b0be608cca9e9dea6ce61a7e3dbd9166880aff8b91a7157631dd407
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19414'
+    validation_criteria_snippet: '2.22.1: 6 paths removed; keeps recorded. behavior:
+      "evidence ledger" in session transcript. 2.22.2: Install/uninstall flows green.
+      test: `tests/cli/installers/...'
+    matched_artifact_ref: tests/cli/installers/
   deferral_target: null
 - section_id: '2.23'
   item_id: 2.23.1
   plan_node_hash: 8e31615504bda42680d1e906c35215e0270b040a6986ff91ef176f50c107feb2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19415'
+    validation_criteria_snippet: '2.23.1: Data-shape paths removed with hub-state
+      evidence; gate decision recorded either way. behavior: "evidence + gate record"
+      in session transcript. 2.23.2: ...'
+    matched_artifact_ref: evidence + gate record
   deferral_target: null
 - section_id: '2.23'
   item_id: 2.23.2
   plan_node_hash: b93c5b9e5eee175ba1609ce4316edfb6d018bf638176d8afb834cc1bae2abafc
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19415'
+    validation_criteria_snippet: '2.23.1: Data-shape paths removed with hub-state
+      evidence; gate decision recorded either way. behavior: "evidence + gate record"
+      in session transcript. 2.23.2: ...'
+    matched_artifact_ref: tests/wiki/
   deferral_target: null
 - section_id: '2.23'
   item_id: 2.23.3
   plan_node_hash: 3dfe85fd42f4857f1316ac8a19f9c9d7884e448c3f9779d995db47b3e1965939
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19415'
+    validation_criteria_snippet: '2.23.1: Data-shape paths removed with hub-state
+      evidence; gate decision recorded either way. behavior: "evidence + gate record"
+      in session transcript. 2.23.2: ...'
+    matched_artifact_ref: 2.23 kept ledger
   deferral_target: null
 - section_id: '2.24'
   item_id: 2.24.1
   plan_node_hash: 4b126cadcfdb48899c91faac2403767dfa3bd962164b4b99aa490bfac076c01c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19416'
+    validation_criteria_snippet: '2.24.1: `agy.toml` + `grok.toml` resolve at runtime
+      with 14/14 rule ids; grok rules verified against a live pane capture; bundled-content
+      manifest regenerated....'
+    matched_artifact_ref: manifest resolution check
   deferral_target: null
 - section_id: '2.25'
   item_id: 2.25.1
   plan_node_hash: 94af0b9faa222761c1e575fc234642c7268690363b32f1cdb6bd292c92b9d864
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19417'
+    validation_criteria_snippet: '2.25.1: Scratch files gone; doc fixes applied. file:
+      `docs/guides/release-guide.md`. 2.25.2: All 5 stubs + 31 dumps deleted; the
+      named kept files remain; kept ...'
+    matched_artifact_ref: docs/guides/release-guide.md
   deferral_target: null
 - section_id: '2.25'
   item_id: 2.25.2
   plan_node_hash: 856cc21cb796dd3fca4ae5cf786cca8c490741fbe7fdd359fb604a112f0e0489
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19417'
+    validation_criteria_snippet: '2.25.1: Scratch files gone; doc fixes applied. file:
+      `docs/guides/release-guide.md`. 2.25.2: All 5 stubs + 31 dumps deleted; the
+      named kept files remain; kept ...'
+    matched_artifact_ref: 2.25 kept/deleted ledger
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.1
   plan_node_hash: e15a159c5859b11777893a655df79de8883d4bb3c51a8d41c82f296309a21bb1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19418'
+    validation_criteria_snippet: '5.1.1: Allow-outcome rule evals write no `metrics_events`
+      rows; they appear in the rotating surface log and as Prometheus-exposed counters/histograms;
+      block ro...'
+    matched_artifact_ref: _run_rule_loop
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.2
   plan_node_hash: 05adedfd1c25674848a139632ef13724ae6baf2b46aabdfc1a9abaac22b1c840
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19418'
+    validation_criteria_snippet: '5.1.1: Allow-outcome rule evals write no `metrics_events`
+      rows; they appear in the rotating surface log and as Prometheus-exposed counters/histograms;
+      block ro...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.3
   plan_node_hash: 1d57325ec347b9399b5e911aaccfee536e3e62bf9e310ecceaae18b8cf597eb2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19418'
+    validation_criteria_snippet: '5.1.1: Allow-outcome rule evals write no `metrics_events`
+      rows; they appear in the rotating surface log and as Prometheus-exposed counters/histograms;
+      block ro...'
+    matched_artifact_ref: tests/mcp_proxy/
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.4
   plan_node_hash: 2df3224d8dca984110b4375d4cf3011d7708afec7b89dc6732caf34bbc16f9c3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19418'
+    validation_criteria_snippet: '5.1.1: Allow-outcome rule evals write no `metrics_events`
+      rows; they appear in the rotating surface log and as Prometheus-exposed counters/histograms;
+      block ro...'
+    matched_artifact_ref: tests/workflows/
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.1
   plan_node_hash: d40f88ae3735123d50bdd356ba4fc0c7d70a92edd01ec6dbe997497970277a0b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19419'
+    validation_criteria_snippet: '5.2.1: Fresh backup manifest immediately precedes
+      the purge run. behavior: "pre-purge backup manifest" in session transcript.
+      5.2.2: Purge script + per-table p...'
+    matched_artifact_ref: pre-purge backup manifest
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.2
   plan_node_hash: 2f18ed45fa2cc8d382cf880a2c6c0ac49f6249030f2bec5af8e4f6b91b72c737
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19419'
+    validation_criteria_snippet: '5.2.1: Fresh backup manifest immediately precedes
+      the purge run. behavior: "pre-purge backup manifest" in session transcript.
+      5.2.2: Purge script + per-table p...'
+    matched_artifact_ref: scripts/hub_data_purge.sql
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.3
   plan_node_hash: b14eb053d5c3b45dcdd7605325c419294a449005166343b5a74ac44731809cf4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19419'
+    validation_criteria_snippet: '5.2.1: Fresh backup manifest immediately precedes
+      the purge run. behavior: "pre-purge backup manifest" in session transcript.
+      5.2.2: Purge script + per-table p...'
+    matched_artifact_ref: post-purge smoke
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.4
   plan_node_hash: da142cf10cfae305bb8f616bbfa2b7877fb06e2750dc57e67b5f5139104851a2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19419'
+    validation_criteria_snippet: '5.2.1: Fresh backup manifest immediately precedes
+      the purge run. behavior: "pre-purge backup manifest" in session transcript.
+      5.2.2: Purge script + per-table p...'
+    matched_artifact_ref: size ledger + preflight
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.5
   plan_node_hash: 2bc0c682707639f95f3d796c89865761a1c2fea88cdfd55af513826298cf6f32
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19419'
+    validation_criteria_snippet: '5.2.1: Fresh backup manifest immediately precedes
+      the purge run. behavior: "pre-purge backup manifest" in session transcript.
+      5.2.2: Purge script + per-table p...'
+    matched_artifact_ref: tests/cli/
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.1
   plan_node_hash: 5a39549b15de8d1852b726efc9a21cd313f40856fcb140f423184c2ce2c6ba1e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19420'
+    validation_criteria_snippet: '5.3.1: Probe project absent from `code_indexed_projects`
+      and both projections via `gcode invalidate --project-id --force` (owner CLI;
+      no global prune, no direc...'
+    matched_artifact_ref: targeted deletion evidence
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.2
   plan_node_hash: 39ce8a8b3dba5a7f7069193481ede45681020a8155a82a94e55387c3e322c2db
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19420'
+    validation_criteria_snippet: '5.3.1: Probe project absent from `code_indexed_projects`
+      and both projections via `gcode invalidate --project-id --force` (owner CLI;
+      no global prune, no direc...'
+    matched_artifact_ref: reconcile ledger + smoke
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.3
   plan_node_hash: 0f1a73dd376c2c7da90debcb2c46f84c4027ac93991589194eea729b67c66e75
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19420'
+    validation_criteria_snippet: '5.3.1: Probe project absent from `code_indexed_projects`
+      and both projections via `gcode invalidate --project-id --force` (owner CLI;
+      no global prune, no direc...'
+    matched_artifact_ref: recall benchmark harness focused run
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.4
   plan_node_hash: d0a790f2b2f1bfd979e36a79ed9a3854687f313e38b545f67e742a67010a25bf
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19420'
+    validation_criteria_snippet: '5.3.1: Probe project absent from `code_indexed_projects`
+      and both projections via `gcode invalidate --project-id --force` (owner CLI;
+      no global prune, no direc...'
+    matched_artifact_ref: regen evidence
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.5
   plan_node_hash: 027aef5e6c485d7c8d33bbf8ef468d10cb6d7677c151b63623b2e6a8402db835
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19420'
+    validation_criteria_snippet: '5.3.1: Probe project absent from `code_indexed_projects`
+      and both projections via `gcode invalidate --project-id --force` (owner CLI;
+      no global prune, no direc...'
+    matched_artifact_ref: coverage + receipt evidence
   deferral_target: null
 - section_id: '5.4'
   item_id: 5.4.1
   plan_node_hash: 0683d9f720b5055b837755dce86017da0ed88325ea808642bebd01b395880d46
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19421'
+    validation_criteria_snippet: '5.4.1: Per-index verdict with EXPLAIN evidence recorded.
+      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 364 ships either way:
+      destructive-marked drop ...'
+    matched_artifact_ref: docs/evidence/bm25-verification.md
   deferral_target: null
 - section_id: '5.4'
   item_id: 5.4.2
   plan_node_hash: 39035d44985d6f5a5c8fd60d9ff5c1463efaf6d91e51d1d7f70eca17b822d999
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19421'
+    validation_criteria_snippet: '5.4.1: Per-index verdict with EXPLAIN evidence recorded.
+      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 364 ships either way:
+      destructive-marked drop ...'
+    matched_artifact_ref: src/gobby/storage/migrations/364_bm25_disposition.sql
   deferral_target: null
 - section_id: '3.0'
   item_id: 3.0.1
   plan_node_hash: 0b625c22efbbfe399bfa8c75a8fd57a6dc850815ccd2b198061350b9e0144ac3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19422'
+    validation_criteria_snippet: '3.0.1: Cross-epic dependency installed; M0 slots
+      applied on the hub with filename/checksum bookkeeping recorded. behavior: "M0
+      gate evidence (dependency id + p...'
+    matched_artifact_ref: M0 gate evidence (dependency id + psql bookkeeping listing)
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.1
   plan_node_hash: 9b795bbee3b338fbd1f3307279bdde983564dd849ecf7255e2174f95b12a9205
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19423'
+    validation_criteria_snippet: '3.1.1: Bookkeeping columns + verification in runner;
+      hijack scenario test. symbol: `MigrationRunner.apply_pending`. 3.1.2: Typo''d
+      filename fails hard. test: `t...'
+    matched_artifact_ref: MigrationRunner.apply_pending
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.2
   plan_node_hash: 94b7908953df759f816ae412d79dda60754c822a02d7460af572cac15a4942ee
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19423'
+    validation_criteria_snippet: '3.1.1: Bookkeeping columns + verification in runner;
+      hijack scenario test. symbol: `MigrationRunner.apply_pending`. 3.1.2: Typo''d
+      filename fails hard. test: `t...'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.3
   plan_node_hash: 62aa79fd66ee4fe47045b0b29605d5cb50bdcd5899da2032b33c7547e90dafc9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19423'
+    validation_criteria_snippet: '3.1.1: Bookkeeping columns + verification in runner;
+      hijack scenario test. symbol: `MigrationRunner.apply_pending`. 3.1.2: Typo''d
+      filename fails hard. test: `t...'
+    matched_artifact_ref: tests/storage/test_migration_contract.py
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.1
   plan_node_hash: feac9d44be4918e1f256dde8eafc5b15b90c558192e7185cb3487fbe455ec080
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: scripts/flatten_schema.py
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.2
   plan_node_hash: e2b8d2db274e2efb45620841cdb8891c4d636d4b983fb469ca3822760895fcfb
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: three-way identical schemas
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.3
   plan_node_hash: 41719c217d7dfd625a3d155011f8cc7910f710739e76a09c00251abd391d3c57
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_baseline_application.py
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.4
   plan_node_hash: 7aee022c80d860e1042ac348bb59ec198ea8a725cff976ed4575f51bc9d7313d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: gate evidence
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.5
   plan_node_hash: 72cd4f2ab05c7888978a17df867683fd5ea9a50e394002051e9499c90f356aa8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: docs/evidence/pre-flatten/
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.6
   plan_node_hash: bce650e7e618b53f5ee6fd127ab939e87fa3b3a0bf20da9d4547f624a90c44c3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19424'
+    validation_criteria_snippet: '3.2.1: Flatten script reproducible; run recorded.
+      file: `scripts/flatten_schema.py`. 3.2.2: Triple diff clean. behavior: "three-way
+      identical schemas" in sessi...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.1
   plan_node_hash: 7b1ccf4e7c67bf289a693eac89ce77912cb45e7b9ded0506001912ca680b0b12
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: SchemaRunner
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.4
   plan_node_hash: 4f8bbb78dfe1d2743da91829fe5b8900b9ce0534be88d9587af1f803a2e166ee
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: lock + recovery tests
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.2
   plan_node_hash: 1f2e56aab10bee408c691bc055a69c6e2aca11601fd93700d38652c4834d858b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: guard test
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.3
   plan_node_hash: fcee7bd6325c39f710fb554b9948879b30ad46c5f5b8b3c526aed847d1ff0ae1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: cargo tree -p gobby-hooks
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.5
   plan_node_hash: 917a8a965405aed21a902fe7251b1816983396f702b355f5cc4059f8c7b693ce
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: gate tests
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.6
   plan_node_hash: a1fca576d366be503273fcb294bf4d3fa41dca5e12077aca780ed37a441f31e1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19425'
+    validation_criteria_snippet: '4.1.1: Assets embedded; runner applies fresh + idempotent
+      re-apply. symbol: `SchemaRunner`. 4.1.4: Concurrent named-schema applies don''t
+      deadlock; an interrupt...'
+    matched_artifact_ref: verify contract tests
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.1
   plan_node_hash: ea5931c34e6773363aeff05db9831375f82262b96a3a6cebdb7e6a40fd922384
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: apply + diff vs baseline
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.2
   plan_node_hash: a862a7dd6cbfb4c3c96967fd55210b3e7f1fce67056b346867c5272ae485f7c2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: scratch-schema apply
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.3
   plan_node_hash: 6c63452b5f50af0aa6c3d9a498c82a066cf784b558363561b4a60ef4fb944788
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: docs/guides/release-guide.md
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.4
   plan_node_hash: b3ad5954088761d0f0ba8419ecc2f6e4cc70b1933cf926e40926b0b404561b8e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: hardening tests
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.5
   plan_node_hash: 7d3d66e81277b1d85cf2b96184b8cbd8ac9679db23f23b8ca6a2744c875ce7a2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: identity output + receipt
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.6
   plan_node_hash: 457f0366cbc1b873190370eb89bbf56d016c9ee24ceecfd3f2c435516eaf2cde
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19426'
+    validation_criteria_snippet: '4.2.1: `gdaemon schema apply` builds a fresh schema
+      identical to the baseline. behavior: "apply + diff vs baseline" in session transcript.
+      4.2.2: `--schema` ap...'
+    matched_artifact_ref: identity-enforcement tests
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.1
   plan_node_hash: 472ba0bb04f7e0b1789123cac42624ecb87958e69ac1a92929d407375137bd73
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: daemon start log showing gdaemon apply
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.2
   plan_node_hash: f8d0cfdc120193eb412b7ee4f01acf479c891b767618d42adc56252a416f96b8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: src/gobby/storage/migrations.py
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.3
   plan_node_hash: d9213384c71d38fbe642f21d9ec053ee3c51844533ad194e31f89f5e7c040ca2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_baseline_application.py
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.4
   plan_node_hash: ef981e2a7f54c768852d17a04c411474400816896c9faaf009c9361ca001c25b
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.5
   plan_node_hash: 07553dfc3c1705ef7205dd7da1e60d4b61068de0fe3fa10a495b016870124bcf
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: fresh-install ordering check
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.6
   plan_node_hash: dbeb13914ffa09544149a11666565921fbdf629e50bd3454b12f0292c4e067a4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.7
   plan_node_hash: cb43d1464217bc71591c58fe2bc75752c8c448ceb8a45a9f9f3a13e78b2cab4a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: diff harness run post-cutover
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.8
   plan_node_hash: 3ae1c47355dec5aefe0c45dd7ead3f86c79d71d60b51aaa3702211c57c13c884
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: "explicit-conninfo database object + divergent bootstrap\
+      \ default \u2192 gdaemon applies to the object's DB only"
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.9
   plan_node_hash: b0f7c5f13167786392bfdbcba16598c3a634a435d43aaa3e3a29899732c5b8cc
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: tests/cli/
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.10
   plan_node_hash: 08465090a396866b74c11a75ff64e4073762988ce0aba0a54ca3c624b77d0f32
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19427'
+    validation_criteria_snippet: '4.3.1: Daemon startup applies schema via gdaemon;
+      boot green. behavior: "daemon start log showing gdaemon apply" in session transcript.
+      4.3.2: Python migration...'
+    matched_artifact_ref: tests/cli/installers/
   deferral_target: null
 - section_id: '4.4'
   item_id: 4.4.1
   plan_node_hash: 0a96d784a81f937f68ca2404ff31511ba1ab7a2643d71a4ad0f5a09c0e2a8e07
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19428'
+    validation_criteria_snippet: '4.4.1: All six sites removed and the 2.4 sweep re-homed
+      to gdaemon; daemon boot, a dream run, and stage-registry paths run without issuing
+      DDL. behavior: "boot...'
+    matched_artifact_ref: boot + dream run post-removal
   deferral_target: null
 - section_id: '4.4'
   item_id: 4.4.2
   plan_node_hash: 728ba97e971823c526dd5cbf8d9fe523dc0dac34076e63a47bd1d2eb7176c340
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19428'
+    validation_criteria_snippet: '4.4.1: All six sites removed and the 2.4 sweep re-homed
+      to gdaemon; daemon boot, a dream run, and stage-registry paths run without issuing
+      DDL. behavior: "boot...'
+    matched_artifact_ref: DDL sweep output
   deferral_target: null
 - section_id: '4.4'
   item_id: 4.4.3
   plan_node_hash: d61e6f3a71f4a0e08580e9a4f6eb67bc878ac64bbbc4a206fdf47383a83509ed
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19428'
+    validation_criteria_snippet: '4.4.1: All six sites removed and the 2.4 sweep re-homed
+      to gdaemon; daemon boot, a dream run, and stage-registry paths run without issuing
+      DDL. behavior: "boot...'
+    matched_artifact_ref: tests/memory/
   deferral_target: null
 - section_id: '4.4'
   item_id: 4.4.4
   plan_node_hash: 36236ad4b4eff384099f6cdf1d94cfbeba1d3a9190e706fe8a977c117966cada
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19428'
+    validation_criteria_snippet: '4.4.1: All six sites removed and the 2.4 sweep re-homed
+      to gdaemon; daemon boot, a dream run, and stage-registry paths run without issuing
+      DDL. behavior: "boot...'
+    matched_artifact_ref: tests/dispatch/
   deferral_target: null
 - section_id: '4.5'
   item_id: 4.5.1
   plan_node_hash: ae16f7429a2d27fcec258b8da142047457f4e578642158c35d74f58003d2e3e2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19429'
+    validation_criteria_snippet: '4.5.1: Canonical shared-table definitions live in
+      gcore; gcode/gwiki setup paths source them from gcore with zero independent
+      DDL strings remaining. file: `cra...'
+    matched_artifact_ref: crates/gcore/src/schema/external.rs
   deferral_target: null
 - section_id: '4.5'
   item_id: 4.5.2
   plan_node_hash: 130a4c9c1c3d1f135a974fdd66c479026cdffd2e5e543312468034ddfd38c275
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19429'
+    validation_criteria_snippet: '4.5.1: Canonical shared-table definitions live in
+      gcore; gcode/gwiki setup paths source them from gcore with zero independent
+      DDL strings remaining. file: `cra...'
+    matched_artifact_ref: cargo test -p gobby-code + -p gobby-wiki setup suites
   deferral_target: null
 - section_id: '4.5'
   item_id: 4.5.3
   plan_node_hash: 6ed92a429f9403bf17c761f969018c1a74dc47162c387da491956b6b611777f3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19429'
+    validation_criteria_snippet: '4.5.1: Canonical shared-table definitions live in
+      gcore; gcode/gwiki setup paths source them from gcore with zero independent
+      DDL strings remaining. file: `cra...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_baseline_application.py
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.1
   plan_node_hash: 7ac2465bb4c4cab1ecb5f38ee0de49b7cfef397af0471485ab4f51594456f9da
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.2
   plan_node_hash: 20982f5ca3f72b189f4bedb7a122e7f848da4cdb74b77e08c0e32a8a8560e680
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.3
   plan_node_hash: c884f8cda958df6b89ca4f33890e108ce14e27d0500ef06927ea9e1b6eca18ab
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.4
   plan_node_hash: 7c8aa24b978260f079c10443300595c8d1059fa76866982303eeb289a80c2111
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.5
   plan_node_hash: 5aa7349f1ce2606f2c437fd99bcabc000a52a6e506e77f27f2767dc7755caf82
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.6
   plan_node_hash: 968b6e90e70d8560078351afc1acc1092025c204710c84f193f365f27a283912
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.7
   plan_node_hash: c812b2f5c8f9d30a2704a80b5d79cf73ee65c0a68549ec70669aee0a63678d04
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: task id in close-out ledger
   deferral_target: null
 - section_id: '4.6'
   item_id: 4.6.8
   plan_node_hash: 298581c312b40875b994d12dfad4731e604454dc09b1dd03596627f642f18b43
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19430'
+    validation_criteria_snippet: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
+      task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+      spans vo...'
+    matched_artifact_ref: close-out ledger complete
   deferral_target: null
