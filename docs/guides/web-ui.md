@@ -230,7 +230,6 @@ review and generated-image rendering use their chat transports directly.
 
 - [frontend-style-guide.md](frontend-style-guide.md)
 - [providers-and-models.md](providers-and-models.md)
-- [artifacts.md](artifacts.md)
 - [observability.md](observability.md)
 - [http-endpoints.md](http-endpoints.md)
 

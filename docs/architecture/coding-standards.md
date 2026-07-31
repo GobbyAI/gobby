@@ -722,4 +722,4 @@ so `--hook-type pre-push` is deliberately not installed through pre-commit):
 uv run pre-commit install
 ```
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-31_
