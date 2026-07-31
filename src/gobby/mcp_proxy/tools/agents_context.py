@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
-    from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.clones import LocalCloneManager
@@ -50,4 +49,3 @@ class AgentsRegistryContext:
     code_index: CodeIndexContext | None = None
     transcript_reader: TranscriptReader | None = None
     detection_registry: DetectionManifestRegistry | None = None
-    review_evidence_store: PlanReviewEvidenceStore | None = None

@@ -1490,6 +1490,40 @@ class TestEndAgentRun:
         )
 
     @pytest.mark.asyncio
+    async def test_db_backed_registry_terminalizes_without_evidence_lookup(
+        self, temp_db: HubDatabase
+    ) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+            status="success",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.complete_run.return_value = True
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents_registry.LocalAgentRunManager",
+                return_value=runner.run_storage,
+            ),
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            registry = create_agents_registry(runner, db=temp_db)
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+
+    @pytest.mark.asyncio
     async def test_terminalizes_before_closing_terminal(self) -> None:
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1627,7 +1661,9 @@ class TestKillAgentSelfTerminationViaRunId:
         runner.cancel_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_run_id_self_termination_requires_review_completion(self) -> None:
+    async def test_db_backed_run_id_self_termination_defaults_to_success(
+        self, temp_db: HubDatabase
+    ) -> None:
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
             run_id="run-123",
@@ -1635,32 +1671,24 @@ class TestKillAgentSelfTerminationViaRunId:
             parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
-        registry = create_agents_registry(runner)
+        runner.complete_run.return_value = True
+        registry = create_agents_registry(runner, db=temp_db)
         kill_agent = registry._tools["kill_agent"].func
 
         from gobby.utils.session_context import session_context_for_test
 
-        completion_error = {
-            "success": False,
-            "error": "Review work is incomplete",
-            "error_code": "review_incomplete",
-        }
         with (
             session_context_for_test("sess-456"),
             patch(
-                "gobby.mcp_proxy.tools.agents_lifecycle_tools._review_completion_error",
-                return_value=completion_error,
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.agents._complete_self_terminated_run",
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
-            ) as mock_complete,
+                return_value={"success": True},
+            ),
         ):
             result = await kill_agent(run_id="run-123")
 
-        assert result == completion_error
-        mock_complete.assert_not_awaited()
-        runner.complete_run.assert_not_called()
+        assert result["success"] is True
+        runner.complete_run.assert_called_once_with("run-123", result=None)
 
     @pytest.mark.asyncio
     async def test_run_id_parent_kill_defaults_to_cancelled(self) -> None:
