@@ -428,10 +428,9 @@ mod tests {
 
     #[test]
     fn postgres_bootstrap_accepts_inline_url() {
-        let resolved = resolve_database_url_from_bootstrap(&bootstrap(Some(
-            "postgresql://inline/db",
-        )))
-        .expect("resolve inline url");
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap(Some("postgresql://inline/db")))
+                .expect("resolve inline url");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }
@@ -444,8 +443,8 @@ mod tests {
         .expect("parse bootstrap")
         .expect("bootstrap data");
 
-        let resolved = resolve_database_url_from_bootstrap(&bootstrap)
-            .expect("resolve legacy bootstrap");
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap).expect("resolve legacy bootstrap");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }
@@ -458,8 +457,8 @@ mod tests {
         .expect("parse bootstrap")
         .expect("bootstrap data");
 
-        let resolved = resolve_database_url_from_bootstrap(&bootstrap)
-            .expect("resolve trimmed bootstrap");
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap).expect("resolve trimmed bootstrap");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }

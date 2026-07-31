@@ -334,11 +334,7 @@ mod tests {
     fn postgres_database_url_reads_postgres_url() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
-        fs::write(
-            &path,
-            "database_url: postgresql://localhost/gobby\n",
-        )
-        .unwrap();
+        fs::write(&path, "database_url: postgresql://localhost/gobby\n").unwrap();
 
         assert_eq!(
             postgres_database_url_from_bootstrap_file(&path)
@@ -352,11 +348,7 @@ mod tests {
     fn postgres_database_url_trims_url() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
-        fs::write(
-            &path,
-            "database_url: '  postgresql://localhost/gobby  '\n",
-        )
-        .unwrap();
+        fs::write(&path, "database_url: '  postgresql://localhost/gobby  '\n").unwrap();
 
         assert_eq!(
             postgres_database_url_from_bootstrap_file(&path)
