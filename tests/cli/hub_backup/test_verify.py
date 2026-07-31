@@ -58,6 +58,8 @@ class _DockerFake:
             piped = rest[0] == "-i"
             if piped:
                 rest = rest[1:]
+            if rest[0] == "-e":
+                rest = rest[2:]
             return self._handle_exec(args, rest[1:], piped=piped, stdin=stdin)
         raise AssertionError(f"unexpected command: {args}")
 
@@ -236,6 +238,33 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     assert restore_argv[4:] == ["pg_restore", "-U", "postgres", "-d", "gobby"]
     assert "--no-owner" not in restore_argv
     assert fake.argv_starting("docker", "rm", "-f", fake.container)
+
+
+def test_verify_postgres_restore_uses_repair_escape_for_restored_database_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 1}
+    _install(monkeypatch, fake)
+    dump_path, globals_path = _pg_fixture(tmp_path)
+
+    _verify.verify_postgres_restore(
+        dump_path,
+        globals_path,
+        expected_probes={"tasks": 1},
+        expected_roles=[RoleExpectation("gobby", rolsuper=False, rolcanlogin=True)],
+    )
+
+    row_count_argv = fake.exec_argv_containing("count(*)")[0]
+    assert row_count_argv[2:5] == [
+        "-e",
+        "PGOPTIONS=-c event_triggers=off",
+        fake.container,
+    ]
+    role_argv = fake.exec_argv_containing("pg_roles")[0]
+    assert "PGOPTIONS=-c event_triggers=off" not in role_argv
 
 
 def test_verify_postgres_restore_ignores_globals_replay_exit_code(

@@ -39,6 +39,7 @@ _VOLUME_METHOD = "tar-extract-scratch"
 _QDRANT_SCRATCH_PREFIX = "hub_backup_verify_"
 _QDRANT_TIMEOUT_SECONDS = 120
 _SCRATCH_DB = "gobby"
+_SCRATCH_REPAIR_PGOPTIONS = "PGOPTIONS=-c event_triggers=off"
 _SUPERUSER = "postgres"
 _FALKOR_DATA_DIR = "/var/lib/falkordb/data"
 _REDIS_CLI = 'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning'
@@ -244,8 +245,10 @@ def _check_row_counts(container: str, expected_probes: dict[str, int]) -> None:
 
 
 def _psql_query(container: str, database: str, sql: str, *, action: str) -> str:
+    docker_options = ["-e", _SCRATCH_REPAIR_PGOPTIONS] if database == _SCRATCH_DB else []
     result = _docker(
         "exec",
+        *docker_options,
         container,
         "psql",
         "-U",
