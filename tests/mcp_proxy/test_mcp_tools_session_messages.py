@@ -756,6 +756,7 @@ def test_set_handoff_context_schema_marks_session_id_optional(full_sessions_regi
 
     assert schema is not None
     assert "session_id" in schema["inputSchema"]["properties"]
+    assert "full" not in schema["inputSchema"]["properties"]
     assert "session_id" not in schema["inputSchema"].get("required", [])
     assert "defaults to the current session" in schema["description"]
 

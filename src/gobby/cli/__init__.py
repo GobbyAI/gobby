@@ -14,7 +14,6 @@ from .communications import comms
 from .cron import cron
 from .daemon import health, restart, start, status, stop
 from .embeddings import embeddings
-from .export_import import export_cmd, import_cmd
 from .extensions import hooks, webhooks
 from .github import github
 from .hub_backup.cli import hub_backup
@@ -129,9 +128,6 @@ cli.add_command(sync)
 cli.add_command(auth)
 cli.add_command(secrets)
 cli.add_command(service)
-cli.add_command(export_cmd)
-cli.add_command(import_cmd)
-
 cli.add_command(qdrant)
 cli.add_command(postgres_cli)
 cli.add_command(pack)

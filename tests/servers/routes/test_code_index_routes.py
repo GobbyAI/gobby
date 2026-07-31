@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -423,13 +423,15 @@ def test_clear_graph_delegates(client: TestClient, mock_server: MagicMock) -> No
 def test_rebuild_graph_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.post(
         "/api/code-index/graph/rebuild",
-        params={"project_id": PROJECT_ID, "limit": 50},
+        params={"project_id": PROJECT_ID},
     )
     assert response.status_code == 200
-    mock_server.services.code_indexer.rebuild_graph.assert_awaited_once_with(
-        PROJECT_ID,
-        limit=50,
-    )
+    mock_server.services.code_indexer.rebuild_graph.assert_awaited_once_with(PROJECT_ID)
+
+    operation = cast(FastAPI, client.app).openapi()["paths"]["/api/code-index/graph/rebuild"][
+        "post"
+    ]
+    assert [parameter["name"] for parameter in operation["parameters"]] == ["project_id"]
 
 
 def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> None:

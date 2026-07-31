@@ -402,14 +402,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
     @router.post("/graph/rebuild")
     async def rebuild_graph(
         project_id: str | None = Query(None, description="Project ID"),
-        limit: int = Query(10_000, description="Maximum indexed files to replay"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code indexer not available")
         scoped_project = _require_project_id(project_id)
         try:
-            result = await code_indexer.rebuild_graph(scoped_project, limit=limit)
+            result = await code_indexer.rebuild_graph(scoped_project)
         except HTTPException:
             raise
         except (

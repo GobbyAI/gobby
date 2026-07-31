@@ -254,20 +254,7 @@ def update_task(
 @click.command("close")
 @click.argument("task_ids", metavar="TASK", nargs=-1, required=True)
 @click.option("--reason", "-r", default="completed", help="Reason for closing")
-@click.option(
-    "--skip-validation",
-    is_flag=True,
-    help="Deprecated; criterion-to-evidence validation cannot be skipped",
-)
-@click.option(
-    "--force",
-    "-f",
-    is_flag=True,
-    help="Deprecated; structural child-completion checks cannot be skipped",
-)
-def close_task_cmd(
-    task_ids: tuple[str, ...], reason: str, skip_validation: bool, force: bool
-) -> None:
+def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
     """Close one or more tasks.
 
     TASK can be: #N (e.g., #1, #47), seq_num (e.g., 47), path (e.g., 1.2.3), or UUID.
@@ -285,8 +272,6 @@ def close_task_cmd(
         services=_services(),
         task_ids=task_ids,
         reason=reason,
-        skip_validation=skip_validation,
-        force=force,
     )
 
 
