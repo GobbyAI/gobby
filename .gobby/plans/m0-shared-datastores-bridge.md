@@ -169,28 +169,38 @@ state or lifecycle.
 ### 2.1 Migration: machine_id on worktrees, clones, agent_runs, cron_runs [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/storage/migrations/343_machine_scope.sql`, `src/gobby/storage/postgres_baseline_schema.sql`, `src/gobby/storage/worktrees.py`, `src/gobby/storage/clones.py`, `src/gobby/storage/agents/_manager.py`, `src/gobby/storage/cron_runs.py`, `src/gobby/agents/isolation_worktree.py`, `src/gobby/agents/isolation_clone.py`
+Target: `src/gobby/storage/migrations/365_machine_scope.sql`, `src/gobby/storage/postgres_baseline_schema.sql`, `src/gobby/storage/worktrees.py`, `src/gobby/storage/clones.py`, `src/gobby/storage/agents/_manager.py`, `src/gobby/storage/cron_runs.py`, `src/gobby/agents/isolation_worktree.py`, `src/gobby/agents/isolation_clone.py`
 
-The migration file is new; use the next free number after
-`src/gobby/storage/migrations/342_task_validation_epoch.sql`.
+The migration file is new. Slot allocation (amended 2026-07-30 per
+gcore-schema-authority §0.6): M0's machine-scoping slots live in the
+post-364 range (365+) under that plan's serialized migration allocator —
+slots 354–364 are owned by the gcore-schema-authority allocation
+manifest, and independent "next free number" probing is prohibited.
+Re-verify against disk and live `MAX(version)` at implementation.
+Prerequisite: gcore-schema-authority 2.18/2.19 (machines.id UUID PK;
+sessions.machine_id nullable UUID FK) are applied before this migration
+runs — machine scoping is UUID-native from the start.
 
 Schema changes (baseline + migration kept in sync per the repo's migration-contract
 rules):
 
-- `worktrees`: ADD `machine_id TEXT NOT NULL`. Backfill only from the authoritative
-`sessions.machine_id` join via `agent_session_id`; an unresolved owner aborts the
+- `worktrees`: ADD `machine_id UUID NOT NULL REFERENCES machines(id)`. Backfill
+only from the authoritative UUID-keyed `sessions.machine_id` join via
+`agent_session_id`; an unresolved or NULL-machine owner aborts the
 migration with diagnostics instead of guessing.
 Replace `idx_worktrees_path` UNIQUE(worktree_path) → UNIQUE(machine_id,
 worktree_path); replace `idx_worktrees_branch` UNIQUE(project_id, branch_name) →
 UNIQUE(project_id, branch_name, machine_id). Branch uniqueness is per-machine
 because local git branches do not sync between machines.
-- `clones`: ADD `machine_id TEXT NOT NULL` (same authoritative-session backfill and
-fail-closed handling); `idx_clones_path` →
+- `clones`: ADD `machine_id UUID NOT NULL REFERENCES machines(id)` (same
+authoritative-session backfill and fail-closed handling); `idx_clones_path` →
 UNIQUE(machine_id, clone_path).
-- `agent_runs`: ADD `machine_id TEXT NOT NULL` (same authoritative-session backfill
-and fail-closed handling); new index `(machine_id, status)`.
-- `cron_runs`: ADD `machine_id TEXT NOT NULL`; backfill through the run's
-authoritative session ownership and abort on an unresolved row.
+- `agent_runs`: ADD `machine_id UUID NOT NULL REFERENCES machines(id)` (same
+authoritative-session backfill and fail-closed handling); new index
+`(machine_id, status)`.
+- `cron_runs`: ADD `machine_id UUID NOT NULL REFERENCES machines(id)`; backfill
+through the run's authoritative session ownership and abort on an unresolved
+row.
 
 Writers stamp `get_machine_id()` at creation: worktree create
 (`src/gobby/storage/worktrees.py:118`), clone create (`src/gobby/storage/clones.py:137`),
@@ -200,7 +210,7 @@ clone and agent-run models) gain the field.
 
 **Acceptance:**
 
-- 2.1.1 - Migration adds NOT NULL columns, swaps unique indexes, backfills only through authoritative session ownership, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/343_machine_scope.sql`.
+- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through authoritative session ownership, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/365_machine_scope.sql`.
 - 2.1.2 - Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 2.1.3 - Same (project, branch) worktree can exist for two machine_ids; same path string can exist for two machine_ids. test: `tests/storage/test_worktrees.py::test_worktree_uniqueness_is_machine_scoped`.
 - 2.1.4 - Worktree/clone/agent-run/cron-run creation stamps the local machine_id. test: `tests/storage/test_machine_scope_writers.py::test_creation_paths_stamp_machine_id`.
@@ -248,7 +258,10 @@ Target: `src/gobby/storage/sessions/_transcript.py`, `src/gobby/sessions/summari
 `src/gobby/sessions/transcript_paths.py`,
 `src/gobby/hooks/event_handlers/_session_start/transcripts.py`
 
-`sessions.machine_id` already exists (NOT NULL), so this is query-scoping only:
+`sessions.machine_id` already exists (a nullable `UUID REFERENCES machines(id)`
+after the gcore-schema-authority identity cutover), so this is query-scoping
+only — `machine_id = local` filtering excludes NULL-machine rows by
+construction:
 
 - `get_pending_transcript_sessions` (`storage/sessions/_transcript.py:21` — confirmed
   unscoped today) filters `machine_id = local`; daemon B must not attempt to process
