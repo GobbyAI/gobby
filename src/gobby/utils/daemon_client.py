@@ -281,6 +281,10 @@ class DaemonClient:
                 response = httpx.put(
                     url, json=json_data, headers=self._auth_headers, timeout=timeout_val
                 )
+            elif method.upper() == "PATCH":
+                response = httpx.patch(
+                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                )
             elif method.upper() == "DELETE":
                 if json_data is None:
                     response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)

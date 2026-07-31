@@ -355,6 +355,21 @@ class TestDaemonClientCallHttpApi:
         assert response == mock_response
         mock_put.assert_called_once()
 
+    def test_patch_request(self) -> None:
+        """Test PATCH request."""
+        client = DaemonClient()
+        mock_response = MagicMock()
+
+        with patch("httpx.patch", return_value=mock_response) as mock_patch:
+            response = client.call_http_api(
+                "/update",
+                method="PATCH",
+                json_data={"key": "value"},
+            )
+
+        assert response == mock_response
+        mock_patch.assert_called_once()
+
     def test_delete_request(self) -> None:
         """Test DELETE request."""
         client = DaemonClient()
@@ -372,7 +387,7 @@ class TestDaemonClientCallHttpApi:
         client = DaemonClient()
 
         with pytest.raises(ValueError, match="Unsupported HTTP method"):
-            client.call_http_api("/test", method="PATCH")
+            client.call_http_api("/test", method="OPTIONS")
 
     def test_custom_timeout(self) -> None:
         """Test using custom timeout."""
