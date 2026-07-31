@@ -152,7 +152,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/gobby\n",
+            "database_url: postgresql://bootstrap/gobby\n",
         )
         .unwrap();
         let home = dir.path().to_str().unwrap();

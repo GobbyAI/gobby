@@ -154,8 +154,7 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    hub_backend, database_url, and postgres_pool) are read from
-    ~/.gobby/bootstrap.yaml.
+    database_url, and postgres_pool) are read from ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """

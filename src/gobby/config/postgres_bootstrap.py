@@ -32,7 +32,8 @@ def write_postgres_defaults(
     database_url: str,
 ) -> None:
     def _apply(data: dict[str, Any]) -> None:
-        data["hub_backend"] = "postgres"
+        data.pop("hub_backend", None)
+        data.pop("database_path", None)
         data["database_url"] = database_url
         data.pop("database_url_ref", None)
         data.pop("postgres_install_mode", None)
@@ -46,7 +47,8 @@ def clear_postgres_fields(gobby_home: Path) -> None:
 
     def _apply(data: dict[str, Any]) -> None:
         _require_postgres_runtime_bootstrap(data)
-        data["hub_backend"] = "postgres"
+        data.pop("hub_backend", None)
+        data.pop("database_path", None)
         data.pop("postgres_install_mode", None)
 
     update_bootstrap_yaml(bootstrap_path(gobby_home), _apply)
@@ -64,10 +66,6 @@ def read_bootstrap_database_url(gobby_home: Path) -> str | None:
 
 
 def _require_postgres_runtime_bootstrap(data: dict[str, Any]) -> None:
-    if data.get("hub_backend") != "postgres":
-        raise BootstrapConfigError(
-            "PostgreSQL uninstall requires hub_backend=postgres with database_url."
-        )
     if not _has_bootstrap_string(data, "database_url"):
         raise BootstrapConfigError(
             "PostgreSQL uninstall requires database_url so the PostgreSQL-only runtime can start."

@@ -406,7 +406,6 @@ fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<
 
 #[derive(Debug, Deserialize)]
 struct HubBootstrap {
-    hub_backend: Option<String>,
     database_url: Option<String>,
 }
 
@@ -418,9 +417,6 @@ fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Optio
         .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
     let bootstrap: HubBootstrap = serde_yaml::from_str(&contents)
         .with_context(|| format!("failed to parse {}", path.display()))?;
-    if matches!(bootstrap.hub_backend.as_deref(), Some(backend) if backend != "postgres") {
-        return Ok(None);
-    }
     Ok(non_empty_trimmed(bootstrap.database_url))
 }
 

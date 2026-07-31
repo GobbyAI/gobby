@@ -124,14 +124,10 @@ def test_initdb_seed_installs_pg_search_extension(repo_root: Path) -> None:
     assert "CREATE EXTENSION IF NOT EXISTS pg_search;" in seed_sql
 
 
-def test_pgaudit_seed_installs_extension_and_probe_table(repo_root: Path) -> None:
+def test_pgaudit_seed_installs_only_the_extension(repo_root: Path) -> None:
     seed_sql = _read_source_asset(repo_root, "initdb.d/02-pgaudit.sql")
 
-    assert "CREATE EXTENSION IF NOT EXISTS pgaudit;" in seed_sql
-    assert "CREATE TABLE IF NOT EXISTS _pgaudit_probe" in seed_sql
-    assert "last_probed_at" in seed_sql
-    assert "INSERT INTO _pgaudit_probe (id) VALUES (1)" in seed_sql
-    assert "ON CONFLICT (id) DO NOTHING" in seed_sql
+    assert seed_sql.strip() == "CREATE EXTENSION IF NOT EXISTS pgaudit;"
 
 
 def test_pgcrypto_seed_installs_extension(repo_root: Path) -> None:

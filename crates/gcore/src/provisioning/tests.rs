@@ -625,10 +625,10 @@ fn divergent_hubs_surface_conflict() {
         .write_at(&gcore_config_path(&home))
         .expect("write gcore config");
     fs::write(
-            home.join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://daemon:secret@daemon/gobby?application_name=gobby\n",
-        )
-        .expect("write bootstrap");
+        home.join("bootstrap.yaml"),
+        "database_url: postgresql://daemon:secret@daemon/gobby?application_name=gobby\n",
+    )
+    .expect("write bootstrap");
 
     let err = ensure_hub_with_identity(
         &EnsureHubOptions::new(home),
@@ -722,7 +722,7 @@ fn insufficient_identity_privilege_preserves_hub() {
         .expect("write gcore config");
     fs::write(
         home.join("bootstrap.yaml"),
-        "hub_backend: postgres\ndatabase_url: postgresql://daemon/gobby\n",
+        "database_url: postgresql://daemon/gobby\n",
     )
     .expect("write bootstrap");
 

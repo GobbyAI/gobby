@@ -90,7 +90,7 @@ def test_postgres_service_preloads_pg_search_and_pgaudit(
         assert option in command
 
 
-def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
+def test_postgres_service_healthcheck_validates_pgaudit_configuration(
     compose_data: dict[str, object],
 ) -> None:
     environment = compose_data["services"]["postgres"]["environment"]
@@ -108,9 +108,6 @@ def test_postgres_service_healthcheck_probes_validation_window_audit_capture(
     assert "pgaudit-*.log" in test_command
     assert "stat -c '%U %a'" in test_command
     assert "postgres 640" in test_command
-    assert "UPDATE _pgaudit_probe SET last_probed_at = NOW()" in test_command
-    assert "AUDIT: SESSION" in test_command
-    assert "UPDATE" in test_command
 
 
 def test_postgres_service_has_pg_isready_healthcheck(

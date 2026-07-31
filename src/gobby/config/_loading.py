@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 _BOOTSTRAP_PRE_DATABASE_KEYS = (
-    "hub_backend",
     "database_url",
     "postgres_pool",
 )

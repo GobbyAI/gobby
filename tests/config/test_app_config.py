@@ -1202,15 +1202,14 @@ class TestLoadConfig:
                 config_store=DummyConfigStore(),
             )
 
-    def test_load_config_preserves_bootstrap_backend_selection_over_db(
+    def test_load_config_preserves_bootstrap_database_settings_over_db(
         self, temp_dir: Path
     ) -> None:
-        """DB config cannot override bootstrap-level hub backend selection."""
+        """DB config cannot override bootstrap-level database settings."""
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
-            "hub_backend: postgres\n"
             "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
             "postgres_pool:\n"
             "  min_size: 4\n"
@@ -1222,7 +1221,6 @@ class TestLoadConfig:
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
                 return {
-                    "hub_backend": "local",
                     "database_url": None,
                     "postgres_pool.min_size": 99,
                     "postgres_pool.max_size": 100,
@@ -1234,7 +1232,6 @@ class TestLoadConfig:
             resolve_database_url=True,
         )
 
-        assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert not hasattr(config, "postgres_install_mode")
         assert config.postgres_pool.min_size == 4
@@ -1307,7 +1304,7 @@ class TestBootstrapConfig:
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
-        assert d["hub_backend"] == "postgres"
+        assert "hub_backend" not in d
         assert d["database_url"] is None
         assert "postgres_install_mode" not in d
 

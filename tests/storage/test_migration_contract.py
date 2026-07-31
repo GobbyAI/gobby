@@ -21,6 +21,7 @@ RECONCILE_DRIFT_V2_MIGRATION = (
 )
 DROP_DEAD_TABLES_MIGRATION = SRC_ROOT / "storage" / "migrations" / "357_drop_dead_tables.sql"
 DROP_DEAD_COLUMNS_MIGRATION = SRC_ROOT / "storage" / "migrations" / "358_drop_dead_columns.sql"
+DROP_PGAUDIT_PROBE_MIGRATION = SRC_ROOT / "storage" / "migrations" / "359_drop_pgaudit_probe.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -625,6 +626,15 @@ def test_drop_dead_columns_migration_is_destructive_and_dual_shape_safe() -> Non
     for index_name in indexes:
         assert f"Evidence block: {index_name}" in migration
         assert f"DROP INDEX IF EXISTS {index_name};" in normalized
+
+
+def test_drop_pgaudit_probe_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_PGAUDIT_PROBE_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    assert "Evidence block: _pgaudit_probe" in migration
+    assert "DROP TABLE IF EXISTS _pgaudit_probe;" in normalized
 
 
 def test_reconcile_live_hub_schema_drift_v2_matches_canonical_schema() -> None:

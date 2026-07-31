@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn database_url_logs_bad_bootstrap_and_falls_back_to_gcore_config() {
         let home = tempfile::tempdir().expect("create home");
-        fs::write(home.path().join("bootstrap.yaml"), "hub_backend: [")
+        fs::write(home.path().join("bootstrap.yaml"), "database_url: [")
             .expect("write bad bootstrap");
         fs::write(
             home.path().join("gcore.yaml"),
@@ -142,7 +142,7 @@ mod tests {
         let home = tempfile::tempdir().expect("create home");
         fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap.example/gobby\n",
+            "database_url: postgresql://bootstrap.example/gobby\n",
         )
         .expect("write bootstrap");
         fs::write(
@@ -199,7 +199,7 @@ mod tests {
         let home = tempfile::tempdir().expect("create home");
         fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap.example/gobby\n",
+            "database_url: postgresql://bootstrap.example/gobby\n",
         )
         .expect("write bootstrap");
         fs::write(

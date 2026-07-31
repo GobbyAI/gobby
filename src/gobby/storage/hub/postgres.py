@@ -64,7 +64,6 @@ atexit.register(_close_open_databases_at_exit)
 _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
     {
         "gobby_install_ownership",
-        "_pgaudit_probe",
     }
 )
 _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(

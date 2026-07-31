@@ -344,7 +344,6 @@ def _prepare_gcode_runtime(
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
-            "hub_backend": "postgres",
             "database_url": database_url,
             "daemon_port": daemon_port or DEFAULT_DAEMON_PORT,
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,

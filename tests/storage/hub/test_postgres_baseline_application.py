@@ -53,7 +53,6 @@ class _ClassifyConnection:
     [
         (set(), set(), "fresh"),
         ({"gobby_install_ownership"}, set(), "fresh_with_install_infra"),
-        ({"_pgaudit_probe"}, set(), "fresh_with_install_infra"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION}, "already_baselined"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION + 1}, "already_baselined"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION - 1}, "corrupt_partial"),
@@ -62,7 +61,6 @@ class _ClassifyConnection:
         ({"gobby_install_ownership", "tasks"}, set(), "corrupt_partial"),
         (
             {
-                "_pgaudit_probe",
                 "code_indexed_projects",
                 "code_indexed_files",
                 "code_symbols",

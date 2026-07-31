@@ -64,28 +64,6 @@ def test_normalize_schema_dump_preserves_definition_drift() -> None:
     )
 
 
-def test_normalize_schema_dump_removes_documented_accepted_table_objects() -> None:
-    dump = """
-CREATE TABLE public._pgaudit_probe (id integer NOT NULL);
-CREATE SEQUENCE public._pgaudit_probe_id_seq START WITH 1;
-ALTER SEQUENCE public._pgaudit_probe_id_seq OWNED BY public._pgaudit_probe.id;
-ALTER TABLE ONLY public._pgaudit_probe ALTER COLUMN id
-    SET DEFAULT nextval('public._pgaudit_probe_id_seq'::regclass);
-ALTER TABLE ONLY public._pgaudit_probe
-    ADD CONSTRAINT _pgaudit_probe_pkey PRIMARY KEY (id);
-CREATE TABLE public.tasks (id uuid NOT NULL);
-"""
-
-    normalized = normalize_schema_dump(
-        dump,
-        schema_name="public",
-        accepted_tables=frozenset({"_pgaudit_probe"}),
-    )
-
-    assert "_pgaudit_probe" not in normalized
-    assert "CREATE TABLE __schema__.tasks" in normalized
-
-
 def test_normalize_schema_dump_normalizes_embedded_current_schema_literal() -> None:
     fresh = """
 CREATE FUNCTION scratch.guard() RETURNS trigger LANGUAGE plpgsql AS $$

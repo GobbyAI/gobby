@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import shlex
-import shutil
-import subprocess  # nosec B404 # subprocess needed for Docker pgAudit readback probes
 import sys
-import uuid
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
 import click
-import psycopg
 
-from gobby import __version__
 from gobby.cli.installers.postgres import (
-    _extension_present,
-    _preload_libraries,
     _read_bootstrap_database_url,
     get_postgres_status,
     install_postgres,
@@ -27,15 +17,10 @@ from gobby.cli.installers.postgres import (
 )
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
-from gobby.cli.postgres_bootstrap import set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
 from gobby.code_index.bm25_health import render_bm25_status, repair_bm25_indexes
 from gobby.config.app import load_config
 from gobby.utils.json_helpers import json_dumps
-
-_TICKET_CAPTURE_KINDS = {"pgaudit-managed"}
-_PGAUDIT_CONTAINER = "gobby-postgres"
-_PGAUDIT_LOG_DIR = "/var/log/pgaudit"
 
 
 @click.group("postgres")
@@ -147,52 +132,6 @@ def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool, allow_unverified: boo
     _render_restore_result(result)
 
 
-@postgres_cli.command("activate")
-@click.option(
-    "--capture-sink",
-    default=None,
-    metavar="TYPE:LOCATION",
-    help="Deprecated. Capture sinks are not used by Docker PostgreSQL installs.",
-)
-@click.option(
-    "--accept-no-rollback-risk",
-    is_flag=True,
-    default=False,
-    help="Deprecated. No-rollback acknowledgements are not used by Docker installs.",
-)
-def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> None:
-    """Activate PostgreSQL runtime after capture validation."""
-    if _daemon_running():
-        raise click.ClickException("Stop the daemon first: gobby stop")
-
-    if capture_sink or accept_no_rollback_risk:
-        raise click.ClickException(
-            "Capture flags are not applicable in Docker mode; pgAudit is the gate."
-        )
-    probe = _probe_pgaudit_or_fail()
-    ticket = _build_cutover_ticket(
-        mode="docker",
-        capture_kind="pgaudit-managed",
-        capture_value=None,
-        verification=_verification_ok(probe),
-    )
-
-    backup_path = _backup_bootstrap()
-    _set_bootstrap_field("hub_backend", "postgres")
-    try:
-        _write_cutover_ticket(ticket)
-    except Exception:
-        _restore_bootstrap(backup_path)
-        raise
-
-    click.echo("hub_backend set to postgres.")
-    click.echo("PostgreSQL is now the required hub runtime.")
-    click.echo("For validation-window recovery export guidance:")
-    click.echo("  docs/runbooks/postgres-rollback.md")
-    click.echo(f"Cutover ticket: {ticket['_path']}")
-    click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
-
-
 def _render_install_result(result: dict[str, Any]) -> None:
     if result.get("success"):
         click.echo(result.get("message", "PostgreSQL configured"))
@@ -203,7 +142,7 @@ def _render_install_result(result: dict[str, Any]) -> None:
         pgaudit_available = result.get("pgaudit_available")
         if pgaudit_available is not None:
             click.echo(f"  pgaudit available: {'yes' if pgaudit_available else 'no'}")
-        click.echo("\nRestart the daemon after cutover when hub_backend is activated.")
+        click.echo("\nRestart the daemon to use the updated PostgreSQL settings.")
         return
 
     click.echo(f"Failed: {result.get('error', 'unknown error')}", err=True)
@@ -253,172 +192,3 @@ def _daemon_running() -> bool:
     except ValueError:
         return False
     return _is_process_alive(pid)
-
-
-def _probe_pgaudit_or_fail() -> dict[str, Any]:
-    probe_token = f"gobby-pgaudit-probe-{uuid.uuid4().hex}"
-    with _postgres_connection() as conn:
-        if not _extension_present(conn, "pgaudit"):
-            raise click.ClickException("pgAudit extension is not installed in PostgreSQL.")
-
-        preload_libraries = _preload_libraries(conn)
-        if "pgaudit" not in preload_libraries:
-            raise click.ClickException("pgAudit is not loaded in shared_preload_libraries.")
-
-        row = conn.execute("SELECT setting FROM pg_settings WHERE name = 'pgaudit.log'").fetchone()
-        pgaudit_log = str(row[0]) if row else ""
-        log_tokens = {token.strip() for token in pgaudit_log.split(",") if token.strip()}
-        if not ({"write", "all"} & log_tokens):
-            raise click.ClickException("pgAudit must be configured with pgaudit.log=write.")
-
-        try:
-            probe_query = psycopg.sql.SQL(
-                "/* {} */ UPDATE _pgaudit_probe "
-                "SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at"
-            ).format(psycopg.sql.Identifier(probe_token))
-            row = conn.execute(probe_query).fetchone()
-            conn.commit()
-        except psycopg.Error as exc:
-            raise click.ClickException(f"pgAudit write probe failed: {exc}") from exc
-        if row is None:
-            raise click.ClickException("pgAudit probe table _pgaudit_probe is missing seed row.")
-
-    log_probe = _probe_docker_pgaudit_log_or_fail(probe_token)
-
-    return {
-        "extension": "pgaudit",
-        "shared_preload_libraries": preload_libraries,
-        "pgaudit_log": pgaudit_log,
-        "write_probe": "ok",
-        "audit_file": log_probe["audit_file"],
-        "audit_readback": log_probe["audit_readback"],
-    }
-
-
-def _probe_docker_pgaudit_log_or_fail(probe_token: str) -> dict[str, str]:
-    token_arg = shlex.quote(probe_token)
-    script = f"""
-set -eu
-test -d {_PGAUDIT_LOG_DIR}
-audit_file="$(find {_PGAUDIT_LOG_DIR} -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)"
-test -n "$audit_file"
-test "$(stat -c '%U %a' "$audit_file")" = "postgres 640"
-audit_line="$(grep -E 'LOG:  AUDIT: SESSION,.*UPDATE' "$audit_file" | grep -F {token_arg} | tail -n1)"
-test -n "$audit_line"
-printf '%s\\n%s\\n' "$audit_file" "$audit_line"
-""".strip()
-    try:
-        result = subprocess.run(  # nosec B603 B607 # fixed Docker exec command
-            ["docker", "exec", _PGAUDIT_CONTAINER, "sh", "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-        raise click.ClickException(f"Unable to read pgAudit Docker log: {exc}") from exc
-
-    if result.returncode != 0:
-        detail = (
-            result.stderr or result.stdout or f"docker exec exited {result.returncode}"
-        ).strip()
-        raise click.ClickException(f"pgAudit log readback probe failed: {detail}")
-
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if len(lines) < 2:
-        raise click.ClickException("pgAudit log readback probe did not return an AUDIT line.")
-    return {"audit_file": lines[0], "audit_readback": lines[1]}
-
-
-def _postgres_connection() -> Any:
-    database_url = _read_bootstrap_database_url(get_gobby_home())
-    if not database_url:
-        raise click.ClickException(
-            "PostgreSQL credentials are unavailable; run `gobby postgres install` first."
-        )
-    try:
-        return psycopg.connect(database_url, connect_timeout=5)
-    except psycopg.Error as exc:
-        raise click.ClickException(f"Unable to connect to PostgreSQL: {exc}") from exc
-
-
-def _verification_ok(probe_detail: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "state": "ok",
-        "probed_at": _utc_timestamp(),
-        "probe_detail": probe_detail,
-    }
-
-
-def _build_cutover_ticket(
-    *,
-    mode: str,
-    capture_kind: str,
-    capture_value: str | None,
-    verification: dict[str, Any],
-    acknowledgement: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    if capture_kind not in _TICKET_CAPTURE_KINDS:
-        raise click.ClickException(f"Unknown cutover capture kind: {capture_kind}")
-    if capture_value is not None:
-        raise click.ClickException(f"{capture_kind} cutover ticket must not set capture_value.")
-    if acknowledgement is not None:
-        raise click.ClickException(f"{capture_kind} cutover ticket must not set acknowledgement.")
-
-    activated_at = datetime.now(UTC).replace(microsecond=0)
-    ticket: dict[str, Any] = {
-        "mode": mode,
-        "activated_at": activated_at.isoformat(timespec="seconds"),
-        "deadline_at": (activated_at + timedelta(hours=48)).isoformat(timespec="seconds"),
-        "gobby_version": __version__,
-        "capture_kind": capture_kind,
-        "capture_value": capture_value,
-        "verification": verification,
-    }
-    if acknowledgement is not None:
-        ticket["acknowledgement"] = acknowledgement
-    return ticket
-
-
-def _backup_bootstrap() -> Path:
-    bootstrap_path = _bootstrap_path()
-    if not bootstrap_path.exists():
-        raise click.ClickException("bootstrap.yaml not found; run `gobby install` first.")
-    backup_path = bootstrap_path.with_name(
-        f"bootstrap.yaml.{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.bak"
-    )
-    shutil.copy2(bootstrap_path, backup_path)
-    return backup_path
-
-
-def _restore_bootstrap(backup_path: Path) -> None:
-    shutil.copy2(backup_path, _bootstrap_path())
-    _bootstrap_path().chmod(0o600)
-
-
-def _set_bootstrap_field(field: str, value: str) -> None:
-    set_bootstrap_field(gobby_home=get_gobby_home(), field=field, value=value)
-
-
-def _write_cutover_ticket(ticket: dict[str, Any]) -> None:
-    migrations_dir = get_gobby_home() / "migrations"
-    migrations_dir.mkdir(parents=True, exist_ok=True)
-    path = migrations_dir / f"cutover-{_ticket_timestamp(ticket)}.json"
-    tmp_path = path.with_suffix(".json.tmp")
-    payload = {key: value for key, value in ticket.items() if key != "_path"}
-    tmp_path.write_text(json_dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp_path, path)
-    ticket["_path"] = str(path)
-
-
-def _ticket_timestamp(ticket: dict[str, Any]) -> str:
-    value = str(ticket["activated_at"])
-    parsed = datetime.fromisoformat(value)
-    return parsed.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-
-
-def _bootstrap_path() -> Path:
-    return get_gobby_home() / "bootstrap.yaml"
-
-
-def _utc_timestamp() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat(timespec="seconds")
