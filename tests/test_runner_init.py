@@ -435,7 +435,13 @@ class TestInitHubDatabase:
         """PostgreSQL backend opens the configured DSN and applies migrations."""
         from gobby.runner_init import helpers
 
-        with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database:
+        with (
+            patch(
+                "gobby.runner_init.helpers.admitted_database_url",
+                side_effect=lambda database_url: database_url,
+            ),
+            patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database,
+        ):
             db = MagicMock()
             postgres_database.return_value = db
             config = SimpleNamespace(
@@ -483,6 +489,10 @@ class TestInitHubDatabase:
         monkeypatch.setattr(
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             FakePostgresDatabase,
+        )
+        monkeypatch.setattr(
+            "gobby.runner_init.helpers.admitted_database_url",
+            lambda database_url: database_url,
         )
         monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(

@@ -63,6 +63,10 @@ from gobby.cli.postgres_backup import (
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.paths import get_gobby_home
+from gobby.storage.maintenance_epoch import (
+    MAINTENANCE_EPOCH_ENV,
+    require_orchestrator_epoch,
+)
 from gobby.utils.version import get_version
 
 # `gobby-postgres-test-1` is deliberately absent: the test cluster is scratch
@@ -113,12 +117,22 @@ def hub_backup(
     json_output: bool,
 ) -> None:
     """Back up every hub datastore and prove each artifact restores."""
+    if epoch is not None:
+        child_epoch = os.environ.get(MAINTENANCE_EPOCH_ENV)
+        if child_epoch != epoch:
+            raise click.ClickException(
+                "`hub-backup --epoch` may only run as a child of "
+                "`gobby hub-maintenance` for the same epoch"
+            )
+
     gobby_home = get_gobby_home()
     backup_root = _resolve_output_dir(output)
     _preflight(backup_root)
     _create_output_dir(backup_root)
 
     database_url = _resolve_database_url(gobby_home)
+    if epoch is not None:
+        require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
     qdrant_url, qdrant_api_key = _qdrant_settings(ctx)
 

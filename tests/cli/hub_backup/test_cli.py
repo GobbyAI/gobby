@@ -341,6 +341,7 @@ class _Harness:
         monkeypatch.setattr(hub_cli, "get_gobby_home", lambda: self.gobby_home)
         replacements: dict[str, object] = {
             "_resolve_database_url": self.resolve_database_url,
+            "require_orchestrator_epoch": lambda _database_url, _epoch: None,
             "_require_managed_docker_postgres": self.require_managed_docker_postgres,
             "_daemon_is_running": self.daemon_is_running,
             "stop_daemon": self.stop_daemon,
@@ -536,8 +537,13 @@ class TestOutputDirectory:
 
 class TestEpoch:
     def test_epoch_is_recorded_and_suppresses_the_daemon_restart(
-        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setenv("GOBBY_MAINTENANCE_EPOCH", "e1")
         backup_root = tmp_path / "backup"
         _run_ok(runtime, backup_root, "--epoch", "e1")
 

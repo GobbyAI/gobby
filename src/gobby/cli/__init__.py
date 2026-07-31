@@ -18,6 +18,7 @@ from .export_import import export_cmd, import_cmd
 from .extensions import hooks, webhooks
 from .github import github
 from .hub_backup.cli import hub_backup
+from .hub_maintenance import hub_maintenance
 from .init import init
 from .install import install, uninstall
 from .linear import linear
@@ -135,6 +136,7 @@ cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(hub_backup)
+cli.add_command(hub_maintenance)
 cli.add_command(comms)
 cli.add_command(build_command)
 cli.add_command(plan)

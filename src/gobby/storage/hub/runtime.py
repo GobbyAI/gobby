@@ -11,6 +11,7 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.maintenance_epoch import admitted_database_url
 
 
 @contextmanager
@@ -28,7 +29,8 @@ def runtime_hub_database(
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
+    database_url = admitted_database_url(config.database_url)
+    db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
     try:
         if apply_migrations:
             db.apply_migrations()

@@ -16,6 +16,7 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.maintenance_epoch import admitted_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,9 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
+    admitted_url = admitted_database_url(database_url)
     postgres_db = _initialize_postgres_with_startup_retry(
-        lambda: PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
+        lambda: PostgresHubDatabase(admitted_url, pool_config=config.postgres_pool)
     )
     logger.info("Database: PostgreSQL hub")
     return postgres_db
