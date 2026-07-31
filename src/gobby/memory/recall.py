@@ -48,10 +48,13 @@ Classify whether the parent user's prompt contains substantive work or a substan
 question. Return strict JSON with exactly two fields:
 {"substantive":true|false,"reason":"<reason>"}
 
-Allowed reasons:
+When substantive is true, reason must be one of:
 task, technical_question, problem_report, design_request, detailed_follow_up,
+other_substantive.
+
+When substantive is false, reason must be one of:
 acknowledgment, approval, continuation, status_question, wait, lifecycle_command,
-conversational, other_substantive, other_non_substantive.
+conversational, other_non_substantive.
 """
 
 _ALLOWED_SUBSTANTIVE_REASONS = frozenset(
@@ -563,9 +566,17 @@ def _parse_classifier_response(response: Any) -> tuple[bool, str]:
     if reason not in _ALLOWED_CLASSIFIER_REASONS:
         raise ValueError(f"unsupported reason: {reason}")
     if substantive and reason not in _ALLOWED_SUBSTANTIVE_REASONS:
-        raise ValueError("substantive result used a non-substantive reason")
+        logger.debug(
+            "Memory recall classifier reason %s contradicted substantive=true; normalizing",
+            reason,
+        )
+        reason = "other_substantive"
     if not substantive and reason not in _ALLOWED_NON_SUBSTANTIVE_REASONS:
-        raise ValueError("non-substantive result used a substantive reason")
+        logger.debug(
+            "Memory recall classifier reason %s contradicted substantive=false; normalizing",
+            reason,
+        )
+        reason = "other_non_substantive"
     return substantive, reason
 
 

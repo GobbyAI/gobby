@@ -210,6 +210,44 @@ async def test_classifier_rejection_does_not_search(temp_db: HubDatabase) -> Non
     assert manager.calls == []
 
 
+@pytest.mark.asyncio
+async def test_classifier_boolean_wins_when_true_reason_is_non_substantive(
+    temp_db: HubDatabase,
+) -> None:
+    manager = FakeMemoryManager([_memory("m1")])
+    llm = FakeLLMService({"substantive": True, "reason": "status_question"})
+
+    result = await _runner(temp_db, manager, llm).run(
+        _event("Which lane?"),
+        SESSION_ID,
+        _variables(),
+    )
+
+    assert result is not None
+    assert len(manager.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_classifier_boolean_wins_when_false_reason_is_substantive(
+    temp_db: HubDatabase,
+) -> None:
+    manager = FakeMemoryManager([_memory("m1")])
+    llm = FakeLLMService({"substantive": False, "reason": "technical_question"})
+    prompt = (
+        "Please inspect this complicated regression and implement the complete focused "
+        "durable repair today."
+    )
+
+    result = await _runner(temp_db, manager, llm).run(
+        _event(prompt),
+        SESSION_ID,
+        _variables(),
+    )
+
+    assert result is None
+    assert manager.calls == []
+
+
 @pytest.mark.parametrize(
     "response",
     [

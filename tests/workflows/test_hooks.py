@@ -14,7 +14,9 @@ import concurrent.futures
 import json
 import logging
 import threading
+from collections.abc import Coroutine
 from datetime import UTC, datetime
+from typing import NoReturn
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -508,6 +510,11 @@ class TestThreadingScenarios:
 class TestCancelledErrorHandling:
     """Tests that CancelledError fails closed for STOP events and open for others."""
 
+    @staticmethod
+    def _raise_cancelled(coroutine: Coroutine[object, object, HookResponse]) -> NoReturn:
+        coroutine.close()
+        raise concurrent.futures.CancelledError
+
     def _make_event(self, event_type: HookEventType) -> HookEvent:
         return HookEvent(
             event_type=event_type,
@@ -521,7 +528,7 @@ class TestCancelledErrorHandling:
         """CancelledError on STOP event should block (fail-closed)."""
         event = self._make_event(HookEventType.STOP)
         runtime = MagicMock()
-        runtime.run.side_effect = concurrent.futures.CancelledError()
+        runtime.run.side_effect = self._raise_cancelled
         with (
             patch("asyncio.get_running_loop", side_effect=RuntimeError),
             patch("gobby.workflows.hooks.audit_source_block_sync") as audit,
@@ -535,7 +542,7 @@ class TestCancelledErrorHandling:
         """CancelledError on non-STOP event should allow (fail-open)."""
         event = self._make_event(HookEventType.BEFORE_TOOL)
         runtime = MagicMock()
-        runtime.run.side_effect = concurrent.futures.CancelledError()
+        runtime.run.side_effect = self._raise_cancelled
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.evaluate(event)
@@ -545,7 +552,7 @@ class TestCancelledErrorHandling:
         """CancelledError on STOP event should block in handle()."""
         event = self._make_event(HookEventType.STOP)
         runtime = MagicMock()
-        runtime.run.side_effect = concurrent.futures.CancelledError()
+        runtime.run.side_effect = self._raise_cancelled
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.handle(event)
@@ -555,7 +562,7 @@ class TestCancelledErrorHandling:
         """CancelledError on non-STOP event should allow in handle()."""
         event = self._make_event(HookEventType.SESSION_START)
         runtime = MagicMock()
-        runtime.run.side_effect = concurrent.futures.CancelledError()
+        runtime.run.side_effect = self._raise_cancelled
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.handle(event)
