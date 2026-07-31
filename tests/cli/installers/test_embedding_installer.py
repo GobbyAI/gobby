@@ -752,7 +752,6 @@ class TestPersistEmbeddingConfig:
                 "gobby.storage.hub.runtime.runtime_hub_database",
                 return_value=nullcontext(temp_db),
             ),
-            patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
             patch(
                 "gobby.cli.installers.embedding._managed_embedding_collections_exist",
                 return_value=False,
@@ -795,7 +794,6 @@ class TestPersistEmbeddingConfig:
                 "gobby.storage.hub.runtime.runtime_hub_database",
                 return_value=nullcontext(temp_db),
             ),
-            patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
             patch(
                 "gobby.cli.installers.embedding._managed_embedding_collections_exist",
                 return_value=False,
