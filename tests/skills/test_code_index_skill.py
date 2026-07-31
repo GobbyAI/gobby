@@ -18,7 +18,7 @@ def _gcode_bundled_skill_path() -> Path:
     configured_path = os.environ.get(GCODE_SKILL_PATH_ENV)
     if configured_path:
         return Path(configured_path).expanduser()
-    return REPO_ROOT / SKILL_PATH
+    return REPO_ROOT / "crates/gcode/assets/SKILL.md"
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:
@@ -54,7 +54,7 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "`gcode symbol <full-uuid>`" in body
     assert "`gcode symbols <full-uuid> <full-uuid> ...`" in body
     assert "Search output is intentionally snippet-sized" in body
-    assert "Broad file reads and wide line ranges are noisy" in body
+    assert "before reaching for broad `sed`, `awk`, or full-file reads" in body
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
 
 

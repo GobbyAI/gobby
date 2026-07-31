@@ -35,7 +35,8 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
     1. Walks all .md files in the bundled prompts directory
     2. Parses frontmatter + body from each file
     3. Creates new records or updates changed content (idempotent)
-    4. All records are created with scope='bundled' and project_id=None
+    4. Deletes bundled records whose source files were removed
+    5. All records are created with scope='bundled' and project_id=None
 
     Args:
         db: Database connection
@@ -50,6 +51,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
         "synced": 0,
         "updated": 0,
         "skipped": 0,
+        "orphaned": 0,
         "errors": [],
     }
 
@@ -60,6 +62,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
 
     # dev_mode=True so we can update bundled records during sync
     manager = LocalPromptManager(db, dev_mode=True)
+    on_disk_names: set[str] = set()
 
     for md_file in sorted(prompts_path.rglob("*.md")):
         try:
@@ -69,6 +72,7 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
             # Derive prompt name from relative path (without .md extension)
             rel_path = md_file.relative_to(prompts_path)
             name = str(rel_path.with_suffix(""))
+            on_disk_names.add(name)
 
             description = frontmatter.get("description", "")
             version = str(frontmatter.get("version", "1.0"))
@@ -124,6 +128,13 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
             error_msg = f"Failed to sync prompt '{md_file}': {e}"
             logger.error(error_msg)
             result["errors"].append(error_msg)
+
+    if not result["errors"]:
+        bundled_count = manager.count_prompts(scope="bundled")
+        for record in manager.list_prompts(scope="bundled", limit=bundled_count):
+            if record.name not in on_disk_names and manager.delete_prompt(record.id):
+                logger.debug("Deleted removed bundled prompt: %s", record.name)
+                result["orphaned"] += 1
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.debug(

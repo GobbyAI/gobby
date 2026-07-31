@@ -1,30 +1,31 @@
 # Rule Templates Reference
 
-This directory contains bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing installed bundled rows are refreshed when template content changes while preserving the user's enabled toggle. Rules under `deprecated/` are excluded from sync, and existing bundled rows whose templates were removed are soft-deleted as orphans. See `../CLAUDE.md` for the template vs active enforcement distinction.
+This directory contains bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing installed bundled rows are refreshed when template content changes while preserving the user's enabled toggle. Installed bundled rows whose templates were removed are soft-deleted as orphans. See `../CLAUDE.md` for the template vs active enforcement distinction.
 
 ## Rule Groups
 
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
 | `worker-safety` | `worker-safety/` | 49 | Block git push (global + worker-scoped), force push, destructive git/shell, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
-| `tool-hygiene` | `tool-hygiene/` | 2 | Require `uv` for Python, track pending memory review |
+| `tool-hygiene` | `tool-hygiene/` | 5 | Require `uv`, route memory operations through Gobby, and track pending memory review |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
-| `task-enforcement` | `task-enforcement/` | 11 | Block native task tools, require task before edit, track claims, require lifecycle skills, require commits before status, block validation skip, block needs_review and review_approved for interactive, require error triage before status |
-| `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before a turn can end |
-| `plan-mode` | `plan-mode/` | 4 | Detect enter/exit plan mode, prompt for plan skill, reset on session start |
-| `memory-lifecycle` | `memory-lifecycle/` | 6 | Memory recall, digest, capture, title generation, tracking reset |
-| `context-handoff` | `context-handoff/` | 7 | Session summary injection (clear/compact/resume), task context, baseline dirty files |
+| `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and lifecycle skills, protect shared-worktree commits, and enforce valid task transitions |
+| `stop-gates` | `stop-gates/` | 3 | Require workflow step completion, task close, and epic tree close before turn end |
+| `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
+| `memory-lifecycle` | `memory-lifecycle/` | 11 | Recall, digest, capture, plan-memory guards, turn sequencing, and tracking reset |
+| `context-handoff` | `context-handoff/` | 10 | Compact/resume handoffs, task context, user profile, wiki context, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
-| `messaging` | `messaging/` | 4 | P2P messaging: deliver pending, activate commands, tool restrictions, exit conditions |
+| `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |
+| `code-index` | `code-index/` | 5 | Require code-index guidance and prefer `gcode` for search and source navigation |
+| `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 19 | Require language skills on first file write, discover skill hubs on turn start, reset loading tracking on context loss |
+| `skill-discovery` | `skill-discovery/` | 23 | Require language skills on first file write, discover skill hubs, and reset loading tracking |
 | `brevity` | `brevity/` | 6 | Load brevity on turn start, opt-out phrases, drift detection and next-turn feedback, per-turn reinforcement |
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
-| `context7` | `context7/` | 1 | Block first code file write/edit with optional context7 docs nudge |
-| `review-learning` | `review-learning/` | 1 | Inject confirmed review lessons before edits to matching touched files |
-| `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
+| `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
+| `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
 
 ## File Convention
 
@@ -57,26 +58,18 @@ Tags serve two purposes:
 
 | Tag | Meaning |
 |-----|---------|
-| `gobby` | **Provenance** — rule ships with gobby. All non-deprecated rules get this tag. |
+| `gobby` | **Provenance** — rule ships with Gobby. All bundled rules get this tag. |
 | `default` | **Audience** — rule applies to the interactive session (`default` agent). |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
-The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load all interactive-session rules. Worker agents (e.g., `pipeline-worker.yaml`) select specific group tags instead.
+The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
 
-Rules in `worker-safety` and `pipeline-enforcement` have `gobby` but NOT `default` — they are only loaded by agents that explicitly select their group tags.
+`pipeline-enforcement` omits `default` and is selected explicitly. `worker-safety` combines default-tagged interactive protections with worker protections selected by group tag.
 
 ### Group Tags
 
-| Tag | Groups |
-|-----|--------|
-| `enforcement` | worker-safety, task-enforcement, stop-gates, tdd-enforcement |
-| `safety` | worker-safety |
-| `discovery` | progressive-discovery |
-| `memory` | memory-lifecycle |
-| `context` | context-handoff |
-| `messaging` | messaging |
-| `pipeline` | pipeline-enforcement |
-| `skill-discovery` | skill-discovery |
+Each group uses its directory name as an identity tag. Cross-cutting tags such as
+`enforcement`, `lifecycle`, `context`, and `memory` may span several groups.
 
 ## Guides
 

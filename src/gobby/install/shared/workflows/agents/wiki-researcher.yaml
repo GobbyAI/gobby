@@ -69,9 +69,6 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
-    exclude:
-      - "tag:sync"
-
 step_variables:
   task_claimed: false
   skill_loaded: false

@@ -1,5 +1,8 @@
 """Tests for bundled prompt synchronization."""
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from gobby.prompts.sync import sync_bundled_prompts
@@ -58,6 +61,27 @@ class TestSyncBundledPrompts:
         # Second sync should detect the change and update
         result = sync_bundled_prompts(db)
         assert result["updated"] > 0
+
+    def test_sync_deletes_prompt_removed_from_bundle(self, db: HubDatabase, tmp_path: Path) -> None:
+        """Retire installed prompt rows whose bundled source file was removed."""
+        manager = LocalPromptManager(db, dev_mode=True)
+        removed = manager.create_prompt(
+            name="memory/removed",
+            content="obsolete",
+            scope="bundled",
+            source_path="/old/bundle/memory/removed.md",
+        )
+
+        prompts_path = tmp_path / "prompts"
+        prompts_path.mkdir()
+        (prompts_path / "retained.md").write_text("retained", encoding="utf-8")
+
+        with patch("gobby.prompts.sync.get_bundled_prompts_path", return_value=prompts_path):
+            result = sync_bundled_prompts(db)
+
+        assert result["errors"] == []
+        assert result["orphaned"] == 1
+        assert manager.get_prompt(removed.id) is None
 
     def test_sync_sets_scope_bundled(self, db) -> None:
         """Test that all synced records have scope='bundled'."""

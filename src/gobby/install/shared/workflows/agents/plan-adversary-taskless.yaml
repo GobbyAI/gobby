@@ -161,7 +161,6 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
     exclude:
-      - "tag:sync"
       - "tag:task-skill-gates"
 
 step_variables:

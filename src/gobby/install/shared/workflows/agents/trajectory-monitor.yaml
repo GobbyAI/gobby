@@ -50,9 +50,6 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
-    exclude:
-      - "tag:sync"
-
 step_variables:
   task_claimed: false
   required_skills:
