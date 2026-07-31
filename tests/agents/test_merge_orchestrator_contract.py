@@ -183,17 +183,6 @@ def _create_contract_schema(db: HubDatabase) -> None:
             updated_at TEXT
         )
         """,
-        """
-        CREATE TABLE rule_overrides (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            rule_name TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT,
-            updated_at TEXT,
-            UNIQUE(session_id, rule_name)
-        )
-        """,
     ]
     for statement in statements:
         db.execute(statement)

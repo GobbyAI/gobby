@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -757,58 +756,26 @@ class TestPriorityOrdering:
         assert variables["x"] == 1
 
 
-class TestSessionOverrides:
-    @pytest.mark.asyncio
-    async def test_session_override_disables_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """A session override with enabled=False should skip the rule."""
+@pytest.mark.asyncio
+async def test_evaluate_does_not_query_rule_overrides(
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
+) -> None:
+    _insert_rule(
+        manager,
+        "block-rule",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            effects=[RuleEffect(type="block", reason="Blocked!")],
+        ),
+    )
 
-        _insert_rule(
-            manager,
-            "block-rule",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="block", reason="Blocked!")],
-            ),
-        )
+    engine = RuleEngine(db)
+    event = _make_event(HookEventType.BEFORE_TOOL)
+    with patch.object(db, "fetchall", wraps=db.fetchall) as fetchall:
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
-        # Insert session override to disable the rule
-        session_id = str(uuid.uuid4())
-        db.execute(
-            """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
-               VALUES (%s, %s, %s, %s)""",
-            (str(uuid.uuid4()), session_id, "block-rule", False),
-        )
-
-        event = _make_event(HookEventType.BEFORE_TOOL)
-        await _assert_evaluation(db, event, "allow", session_id=session_id)
-
-    @pytest.mark.asyncio
-    async def test_session_override_only_affects_that_session(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Override for one session should not affect another session."""
-
-        _insert_rule(
-            manager,
-            "block-rule",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="block", reason="Blocked!")],
-            ),
-        )
-
-        db.execute(
-            """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
-               VALUES (%s, %s, %s, %s)""",
-            (str(uuid.uuid4()), SESSION_ID, "block-rule", False),
-        )
-
-        event = _make_event(HookEventType.BEFORE_TOOL)
-
-        # A different session should still be blocked
-        await _assert_evaluation(db, event, "block", session_id=OTHER_SESSION_ID)
+    assert response.decision == "block"
+    assert all("rule_overrides" not in str(call.args[0]) for call in fetchall.call_args_list)
 
 
 class TestObserveEffect:
@@ -3348,35 +3315,6 @@ class TestConsecutiveBlockDifferentTool:
         assert (
             variables["_last_blocked_reason"] == "Rule enforced by Gobby: [block-all]\nAll blocked"
         )
-
-
-class TestSessionOverridesExtended:
-    """Tests for session-scoped rule overrides."""
-
-    @pytest.mark.asyncio
-    async def test_override_disables_rule(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Session override can disable a specific rule."""
-        _insert_rule(
-            manager,
-            "block-everything",
-            RuleDefinitionBody(
-                event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="block", reason="blocked")],
-            ),
-        )
-
-        # Add session override to disable this rule
-        db.execute(
-            "INSERT INTO rule_overrides (id, session_id, rule_name, enabled) VALUES (%s, %s, %s, %s)",
-            ("override-1", SESSION_ID, "block-everything", False),
-        )
-
-        engine = RuleEngine(db)
-        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
-        assert response.decision == "allow"
 
 
 class _FakeSkill:

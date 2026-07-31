@@ -19,6 +19,7 @@ RECONCILE_DRIFT_MIGRATION = (
 RECONCILE_DRIFT_V2_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "356_reconcile_live_hub_schema_drift_v2.sql"
 )
+DROP_DEAD_TABLES_MIGRATION = SRC_ROOT / "storage" / "migrations" / "357_drop_dead_tables.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -577,6 +578,27 @@ def test_reconcile_cron_display_name_migration_is_dual_shape_safe() -> None:
     )
 
 
+def test_drop_dead_tables_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_DEAD_TABLES_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    _assert_contains_all(
+        "dead-table removal migration",
+        normalized,
+        tuple(
+            f"DROP TABLE IF EXISTS {table_name};"
+            for table_name in (
+                "savings_ledger",
+                "session_memories",
+                "rule_overrides",
+                "workflow_states",
+                "tool_embeddings",
+            )
+        ),
+    )
+
+
 def test_reconcile_live_hub_schema_drift_v2_matches_canonical_schema() -> None:
     migration = RECONCILE_DRIFT_V2_MIGRATION.read_text(encoding="utf-8")
     normalized = _normalize_sql_whitespace(migration)
@@ -685,7 +707,6 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
         "comms_routing_rules": ("id", "channel_id", "project_id", "session_id"),
         "comms_attachments": ("id", "message_id"),
         "session_variables": ("session_id",),
-        "rule_overrides": ("session_id",),
         "unmodeled_observation_events": ("id", "session_id"),
         "unmodeled_observations": ("example_session_id",),
     }.items():
@@ -728,7 +749,6 @@ def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
         "comms_messages": ("platform_message_id", "platform_thread_id"),
         "comms_identities": ("external_user_id",),
         "sessions": ("external_id", "spawned_by_agent_id"),
-        "rule_overrides": ("id",),
         "secret_key_material": ("id",),
         "spans": ("trace_id", "span_id", "parent_span_id"),
     }.items():
