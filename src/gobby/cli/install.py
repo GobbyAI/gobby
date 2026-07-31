@@ -50,7 +50,6 @@ from ._install_daemon import (
 from ._install_daemon import (
     maybe_start_daemon_after_install as _daemon_maybe_start_daemon_after_install,
 )
-from ._install_legacy import _raise_graph_backend_removed
 from ._install_project import (
     _initialize_project_after_setup,
     _should_initialize_project,
@@ -314,24 +313,6 @@ def _install_required_stack(
     "falkordb_password_stdin",
     is_flag=True,
     help="Read a custom FalkorDB password from stdin",
-)
-@click.option(
-    "--neo4j-password",
-    "deprecated_neo4j_password",
-    default=None,
-    hidden=True,
-    expose_value=False,
-    callback=lambda _ctx, _param, value: _raise_graph_backend_removed()
-    if value is not None
-    else None,
-)
-@click.option(
-    "--neo4j",
-    "neo4j_flag",
-    is_flag=True,
-    hidden=True,
-    expose_value=False,
-    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--project",
@@ -788,14 +769,6 @@ def install(
     is_flag=True,
     default=False,
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
-)
-@click.option(
-    "--neo4j",
-    "neo4j_flag",
-    is_flag=True,
-    hidden=True,
-    expose_value=False,
-    callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
 )
 @click.option(
     "--project",

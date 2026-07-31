@@ -29,17 +29,6 @@ logger = logging.getLogger(__name__)
 
 _HOOK_TYPES = list(QWEN_HOOK_NAMES)
 
-_LEGACY_HOOK_TYPES = [
-    "BeforeAgent",
-    "AfterAgent",
-    "BeforeTool",
-    "AfterTool",
-    "BeforeToolSelection",
-    "BeforeModel",
-    "AfterModel",
-    "PreCompress",
-]
-
 
 def _remove_gobby_hooks(settings: dict[str, Any], hook_types: list[str]) -> list[str]:
     """Remove only Gobby-owned handlers for the selected Qwen events."""
@@ -139,8 +128,6 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         hooks_dir=hooks_dir,
     )
 
-    _remove_gobby_hooks(existing_settings, _LEGACY_HOOK_TYPES)
-
     if "hooks" not in existing_settings:
         existing_settings["hooks"] = {}
     for hook_type, hook_config in gobby_settings.get("hooks", {}).items():
@@ -235,7 +222,7 @@ def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
         )
         settings = {}
 
-    hooks_removed.extend(_remove_gobby_hooks(settings, [*_HOOK_TYPES, *_LEGACY_HOOK_TYPES]))
+    hooks_removed.extend(_remove_gobby_hooks(settings, _HOOK_TYPES))
 
     with open(settings_file, "w") as f:
         json.dump(settings, f, indent=2)

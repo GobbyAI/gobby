@@ -282,9 +282,9 @@ class TestUnpackCommand:
         result = runner.invoke(unpack, [str(archive)])
         assert result.exit_code == 0
 
-        assert not (fake_home / "hub-postgres.db").exists()
+        assert (fake_home / "hub-postgres.db").read_text() == "restored db"
         assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
-        assert "Skipped legacy PostgreSQL archive member" in result.output
+        assert "Restored: hub-postgres.db" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
@@ -390,7 +390,7 @@ class TestUnpackCommand:
         assert result.exit_code == 0
 
         assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
-        assert not (fake_home / "hub-postgres.db").exists()
+        assert (fake_home / "hub-postgres.db").read_text() == "restored db"
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)

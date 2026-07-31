@@ -599,9 +599,6 @@ def unpack(
 
             if member.name.startswith("gobby/"):
                 rel = member.name.removeprefix("gobby/")
-                if rel == "hub-postgres.db":
-                    click.echo("  Skipped legacy PostgreSQL archive member: hub-postgres.db")
-                    continue
                 target = _safe_archive_target(get_gobby_home(), rel, member)
                 if member.isdir():
                     target.mkdir(parents=True, exist_ok=True)

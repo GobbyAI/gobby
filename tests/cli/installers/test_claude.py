@@ -445,7 +445,7 @@ class TestInstallClaude:
     @patch("gobby.cli.installers.claude.install_shared_content")
     @patch("gobby.cli.installers.claude.install_cli_content")
     @patch("gobby.cli.installers.claude.configure_mcp_server_json")
-    def test_install_claude_hooks_dir_replacement(
+    def test_install_claude_preserves_unowned_hook_script_command(
         self,
         mock_mcp_config: MagicMock,
         mock_cli_content: MagicMock,
@@ -455,7 +455,7 @@ class TestInstallClaude:
         mock_home_dir: Path,
         temp_dir: Path,
     ) -> None:
-        """Test that $HOOKS_DIR is replaced in hooks template."""
+        """Expand $HOOKS_DIR without migrating an unowned script command."""
         from gobby.cli.installers.claude import install_claude
 
         # Create install dir with $HOOKS_DIR in template
@@ -486,13 +486,13 @@ class TestInstallClaude:
 
         assert result["success"] is True
 
-        # Verify commands were rewritten to the ghook format
+        # The path placeholder is expanded, but the unowned command is preserved.
         with open(temp_project / ".claude" / "settings.json") as f:
             settings = json.load(f)
 
         command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        assert "--gobby-owned" in command
-        assert "--cli=claude --type=SessionStart" in command
+        hook_path = (mock_home_dir / ".gobby" / "hooks" / "hook.py").resolve()
+        assert command == f'python "{hook_path}"'
         assert "$HOOKS_DIR" not in command
 
     @patch("gobby.cli.installers.claude.get_install_dir")

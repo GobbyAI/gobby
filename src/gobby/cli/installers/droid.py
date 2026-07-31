@@ -127,38 +127,16 @@ def _load_droid_hooks_template(hooks_dir: Path) -> dict[str, Any]:
     return hooks
 
 
-def _unwrap_legacy_hooks_wrapper(settings: dict[str, Any]) -> dict[str, Any]:
-    """Flatten a legacy ``{"hooks": {...}}`` Droid hooks file to flat format.
-
-    Droid 0.159.1 rejects the ``hooks`` wrapper key in ``hooks.json``.  Existing
-    files from older Gobby installs may still use the wrapper.  This helper
-    unwraps the wrapper in-place, preserving any non-hook top-level keys.
-    """
-    if "hooks" not in settings:
-        return settings
-    hooks = settings.get("hooks")
-    if not isinstance(hooks, dict):
-        return settings
-    # Only unwrap when the "hooks" value looks like a hooks map (values are
-    # lists).  This avoids clobbering unrelated "hooks" keys in settings.json.
-    if not all(isinstance(v, list) for v in hooks.values()):
-        return settings
-    unwrapped = {k: v for k, v in settings.items() if k != "hooks"}
-    unwrapped.update(hooks)
-    return unwrapped
-
-
 def _merge_gobby_hooks(
     existing_settings: dict[str, Any],
     gobby_hooks: dict[str, Any],
 ) -> dict[str, Any]:
     """Merge Droid Gobby hook entries while preserving non-Gobby entries.
 
-    Both *existing_settings* and *gobby_hooks* use flat format (hook event
-    names as top-level keys).  Legacy ``{"hooks": {...}}`` existing files are
-    unwrapped for backward compatibility.
+    Both *existing_settings* and *gobby_hooks* use flat format, with hook event
+    names as top-level keys.
     """
-    updated = _unwrap_legacy_hooks_wrapper(deepcopy(existing_settings))
+    updated = deepcopy(existing_settings)
 
     if not isinstance(gobby_hooks, dict):
         raise ValueError("Droid hooks template does not contain a hooks object")
@@ -180,12 +158,8 @@ def _merge_gobby_hooks(
 
 
 def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """Remove Gobby-managed Droid hook entries while preserving unrelated hooks.
-
-    Handles both flat format (hook event names as top-level keys) and legacy
-    ``{"hooks": {...}}`` format for backward compatibility.
-    """
-    updated = _unwrap_legacy_hooks_wrapper(deepcopy(settings))
+    """Remove Gobby-managed Droid hook entries while preserving unrelated hooks."""
+    updated = deepcopy(settings)
 
     removed: list[str] = []
     for hook_type in DROID_PASCAL_HOOK_NAMES:
@@ -204,27 +178,6 @@ def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[
             del updated[hook_type]
 
     return updated, removed
-
-
-def _cleanup_legacy_droid_hooks_file() -> None:
-    """Remove the legacy ``~/.factory/hooks/hooks.json`` file.
-
-    Droid 0.159.1 reads hooks from ``~/.factory/hooks.json`` (scope root).  The
-    older nested ``hooks/hooks.json`` path is no longer loaded by Droid and may
-    contain a stale ``{"hooks": {...}}`` wrapper that is silently ignored.
-    Removing it avoids confusion and duplicate detection.
-    """
-    if os.environ.get("GOBBY_DROID_HOOKS_FILE"):
-        return
-    if os.environ.get("GOBBY_HOOKS_DIR"):
-        return
-    legacy = Path.home() / ".factory" / "hooks" / "hooks.json"
-    try:
-        if legacy.exists():
-            legacy.unlink()
-            logger.info("Removed legacy Droid hooks file: %s", legacy)
-    except OSError as exc:
-        logger.warning("Could not remove legacy Droid hooks file %s: %s", legacy, exc)
 
 
 def _warn_empty_project_hooks(project_path: Path) -> list[str]:
@@ -321,7 +274,6 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
             cleaned = clean_project_hooks(project_path / ".factory" / "hooks.json", flat=True)
             if cleaned:
                 result["project_hooks_cleaned"] = cleaned
-            _cleanup_legacy_droid_hooks_file()
     except OSError as exc:
         result["error"] = f"Failed to install hook helper files: {exc}"
         return result
