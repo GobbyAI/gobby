@@ -57,6 +57,10 @@
         "X-Gobby-Session-Id": {
           "type": "string",
           "minLength": 1
+        },
+        "X-Gobby-Agent-Run-Id": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }
