@@ -2223,6 +2223,7 @@ def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None
     assert created.session_id == "session-1"
     assert created.config_json == {}
     assert created.created_at == created.updated_at
+    assert all(args.args != ("Telegram",) for args in store.get_channel.call_args_list)
     assert manager._router._rules_cache is None
 
     manager._router._rules_cache = [created]

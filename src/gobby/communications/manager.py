@@ -476,7 +476,13 @@ class CommunicationsManager:
         channel_ref = channel.strip()
         if not channel_ref:
             raise ValueError("Channel is required")
-        resolved = self._store.get_channel(channel_ref)
+        resolved = None
+        try:
+            uuid.UUID(channel_ref)
+        except ValueError:
+            pass
+        else:
+            resolved = self._store.get_channel(channel_ref)
         if resolved is None:
             resolved = self._store.get_channel_by_name(channel_ref)
         if resolved is None:
