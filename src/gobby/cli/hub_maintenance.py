@@ -14,6 +14,7 @@ import click
 
 from gobby.cli.hub_backup.cli import _start_daemon
 from gobby.cli.postgres_backup import _resolve_database_url as _resolve_backup_database_url
+from gobby.cli.utils_shutdown import stop_daemon
 from gobby.paths import get_gobby_home
 from gobby.storage.maintenance_epoch import (
     CAMPAIGNS,
@@ -78,6 +79,7 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
     """Open a new epoch and run CAMPAIGN through verified release."""
     executor = _load_campaign_executor(campaign)
     database_url = _resolve_database_url()
+    _stop_daemon_before_fence()
     owner_command = f"hub-maintenance:{campaign}"
     epoch = open_maintenance_epoch(
         database_url,
@@ -107,6 +109,7 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
 def resume_campaign(ctx: click.Context) -> None:
     """Resume the open campaign using only hub-resident state."""
     database_url = _resolve_database_url()
+    _stop_daemon_before_fence()
     epoch = discover_active_maintenance_epoch(database_url)
     if epoch is None:
         raise click.ClickException("No maintenance epoch is open")
@@ -174,6 +177,20 @@ def abort_campaign(disposition: str) -> None:
     )
     _start_daemon()
     click.echo(f"Maintenance epoch {epoch.id} aborted and released")
+
+
+def _stop_daemon_before_fence() -> None:
+    """Stop the live daemon before the login fence can strand its pool.
+
+    An epoch opened against a running daemon terminates its pool connections
+    and then rejects every reconnect, wedging the daemon until restart
+    (#19437). The fence must only ever go up over a quiesced hub.
+    """
+    if not stop_daemon(shutdown_source="cli_hub_maintenance"):
+        raise click.ClickException(
+            "Could not stop the running daemon; refusing to open a maintenance "
+            "epoch while live clients hold hub connections"
+        )
 
 
 def _continue_campaign(

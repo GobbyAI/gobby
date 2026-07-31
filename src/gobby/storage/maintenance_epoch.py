@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -35,6 +36,8 @@ CAMPAIGNS: tuple[Campaign, ...] = (
     "flatten",
 )
 MAINTENANCE_EPOCH_ENV = "GOBBY_MAINTENANCE_EPOCH"
+_QUIESCENCE_DEADLINE_SECONDS = 15.0
+_QUIESCENCE_POLL_SECONDS = 0.25
 _LOGIN_ERROR_PATTERN = re.compile(r"GOBBY_MAINTENANCE_EPOCH (?P<epoch>[0-9a-fA-F-]{36}) is active")
 _PGOPTIONS_EPOCH_PATTERN = re.compile(r"(?:^|\s)-c\s+gobby\.maintenance_epoch=\S+")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -166,8 +169,17 @@ def open_maintenance_epoch(
     campaign: Campaign,
     opened_by: str,
     scope_note: str,
+    quiescence_deadline_seconds: float = _QUIESCENCE_DEADLINE_SECONDS,
+    quiescence_poll_seconds: float = _QUIESCENCE_POLL_SECONDS,
 ) -> MaintenanceEpoch:
-    """Commit the fence, terminate older clients, then prove quiescence."""
+    """Commit the fence, terminate older clients, then prove quiescence.
+
+    ``pg_terminate_backend`` is asynchronous, so terminated backends may
+    linger briefly in ``pg_stat_activity``. Quiescence is therefore polled
+    up to ``quiescence_deadline_seconds``. If clients still remain, the
+    just-committed fence is released before raising so a failed open can
+    never strand live clients behind an ownerless epoch.
+    """
     _validate_campaign(campaign)
     if not opened_by.strip():
         raise ValueError("opened_by is required")
@@ -202,31 +214,66 @@ def open_maintenance_epoch(
             raise MaintenanceEpochError("The maintenance epoch insert returned no row")
 
         connection.commit()
-        connection.execute(
-            """
-            SELECT pg_catalog.pg_terminate_backend(activity.pid)
-            FROM pg_catalog.pg_stat_activity AS activity
-            WHERE activity.datname = current_database()
-              AND activity.pid <> pg_backend_pid()
-              AND activity.backend_type = 'client backend'
-            """
-        ).fetchall()
-        remaining = connection.execute(
-            """
-            SELECT COUNT(*) AS foreign_connections
-            FROM pg_catalog.pg_stat_activity AS activity
-            WHERE activity.datname = current_database()
-              AND activity.pid <> pg_backend_pid()
-              AND activity.backend_type = 'client backend'
-            """
-        ).fetchone()
-        foreign_connections = int(remaining["foreign_connections"]) if remaining is not None else 0
-        if foreign_connections:
-            raise MaintenanceQuiescenceError(
-                f"Maintenance epoch {epoch_id} is fenced, but "
-                f"{foreign_connections} foreign client connection(s) remain."
+        deadline = time.monotonic() + quiescence_deadline_seconds
+        while True:
+            connection.execute(
+                """
+                SELECT pg_catalog.pg_terminate_backend(activity.pid)
+                FROM pg_catalog.pg_stat_activity AS activity
+                WHERE activity.datname = current_database()
+                  AND activity.pid <> pg_backend_pid()
+                  AND activity.backend_type = 'client backend'
+                """
+            ).fetchall()
+            remaining = connection.execute(
+                """
+                SELECT COUNT(*) AS foreign_connections
+                FROM pg_catalog.pg_stat_activity AS activity
+                WHERE activity.datname = current_database()
+                  AND activity.pid <> pg_backend_pid()
+                  AND activity.backend_type = 'client backend'
+                """
+            ).fetchone()
+            foreign_connections = (
+                int(remaining["foreign_connections"]) if remaining is not None else 0
             )
-        return _epoch_from_row(row)
+            if not foreign_connections:
+                return _epoch_from_row(row)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(quiescence_poll_seconds)
+        try:
+            _release_fence_after_failed_open(connection, epoch_id)
+        except psycopg.Error as release_error:
+            raise MaintenanceQuiescenceError(
+                f"Maintenance epoch {epoch_id} could not quiesce "
+                f"({foreign_connections} foreign client connection(s) remain) "
+                "and the fence could not be released; "
+                "run `gobby hub-maintenance abort`."
+            ) from release_error
+        raise MaintenanceQuiescenceError(
+            f"Maintenance epoch {epoch_id} could not quiesce: "
+            f"{foreign_connections} foreign client connection(s) remained after "
+            f"{quiescence_deadline_seconds:.1f}s; the fence was released."
+        )
+
+
+def _release_fence_after_failed_open(
+    connection: psycopg.Connection[dict[str, Any]],
+    epoch_id: uuid.UUID,
+) -> None:
+    """Roll the fence back on the opening connection after failed quiescence."""
+    connection.execute(
+        """
+        UPDATE maintenance_epochs
+        SET released_at = NOW(),
+            released_by_command = 'open-maintenance-epoch quiescence failure'
+        WHERE id = %s
+          AND released_at IS NULL
+        """,
+        (epoch_id,),
+    )
+    connection.commit()
 
 
 def discover_active_maintenance_epoch(database_url: str) -> MaintenanceEpoch | None:

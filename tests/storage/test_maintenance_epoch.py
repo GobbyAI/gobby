@@ -14,6 +14,8 @@ from typing import Any
 import psycopg
 import pytest
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+from psycopg_pool.errors import PoolTimeout
 
 import gobby.runner_init.helpers as runner_helpers
 import gobby.storage.hub.runtime as hub_runtime
@@ -286,9 +288,15 @@ class _FakeCursor:
 
 
 class _FakeEpochConnection:
-    def __init__(self, epoch_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        epoch_id: uuid.UUID,
+        *,
+        foreign_counts: list[int] | None = None,
+    ) -> None:
         self.epoch_id = epoch_id
         self.events: list[str] = []
+        self._foreign_counts = [0] if foreign_counts is None else list(foreign_counts)
 
     def __enter__(self) -> _FakeEpochConnection:
         return self
@@ -316,7 +324,15 @@ class _FakeEpochConnection:
             return _FakeCursor(rows=[])
         if "pg_stat_activity" in normalized:
             self.events.append("verify")
-            return _FakeCursor(row={"foreign_connections": 0})
+            count = (
+                self._foreign_counts.pop(0)
+                if len(self._foreign_counts) > 1
+                else self._foreign_counts[0]
+            )
+            return _FakeCursor(row={"foreign_connections": count})
+        if normalized.startswith("UPDATE maintenance_epochs"):
+            self.events.append("release-fence")
+            return _FakeCursor(row=None)
         raise AssertionError(normalized)
 
     def commit(self) -> None:
@@ -340,6 +356,97 @@ def test_epoch_open_commits_fence_before_terminating_and_verifying_connections(
 
     assert opened.id == epoch_id
     assert connection.events == ["insert", "commit", "terminate", "verify", "close"]
+
+
+def test_epoch_open_waits_boundedly_for_terminated_backends_to_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pg_terminate_backend is asynchronous; lingering backends must not fail the open."""
+    epoch_id = uuid.uuid4()
+    connection = _FakeEpochConnection(epoch_id, foreign_counts=[2, 0])
+    monkeypatch.setattr(maintenance, "_connect", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(maintenance, "_new_epoch_id", lambda: epoch_id)
+
+    opened = open_maintenance_epoch(
+        "postgresql://example/gobby",
+        campaign="purge",
+        opened_by="hub-maintenance:purge",
+        scope_note="test",
+        quiescence_deadline_seconds=5.0,
+        quiescence_poll_seconds=0.0,
+    )
+
+    assert opened.id == epoch_id
+    assert connection.events == [
+        "insert",
+        "commit",
+        "terminate",
+        "verify",
+        "terminate",
+        "verify",
+        "close",
+    ]
+
+
+def test_epoch_open_releases_fence_when_quiescence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed open must roll the fence back instead of stranding live clients."""
+    epoch_id = uuid.uuid4()
+    connection = _FakeEpochConnection(epoch_id, foreign_counts=[3])
+    monkeypatch.setattr(maintenance, "_connect", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(maintenance, "_new_epoch_id", lambda: epoch_id)
+
+    with pytest.raises(maintenance.MaintenanceQuiescenceError, match="fence was released"):
+        open_maintenance_epoch(
+            "postgresql://example/gobby",
+            campaign="purge",
+            opened_by="hub-maintenance:purge",
+            scope_note="test",
+            quiescence_deadline_seconds=0.05,
+            quiescence_poll_seconds=0.0,
+        )
+
+    assert connection.events[-3:] == ["release-fence", "commit", "close"]
+    assert connection.events.count("terminate") >= 1
+
+
+def test_connection_pool_recovers_after_fence_release_without_restart(
+    epoch_admin: tuple[psycopg.Connection[Any], str],
+) -> None:
+    """The 2026-07-31 wedge: an open fence starves the pool; release must restore it."""
+    connection, scoped_dsn = epoch_admin
+    epoch_id = _insert_epoch(connection, campaign="schema-apply")
+
+    pool = ConnectionPool(
+        scoped_dsn,
+        min_size=0,
+        max_size=2,
+        open=True,
+        timeout=1.0,
+    )
+    try:
+        with pytest.raises(PoolTimeout):
+            with pool.connection(timeout=1.0):
+                pass
+        stats = pool.get_stats()
+        assert stats.get("connections_errors", 0) >= 1
+
+        connection.execute(
+            """
+            UPDATE maintenance_epochs
+            SET released_at = NOW(),
+                released_by_command = 'test fence release'
+            WHERE id = %s
+            """,
+            (epoch_id,),
+        )
+
+        with pool.connection(timeout=10.0) as pooled:
+            assert pooled.execute("SELECT 1").fetchone() is not None
+        assert pool.get_stats().get("requests_waiting", 0) == 0
+    finally:
+        pool.close()
 
 
 def test_release_requires_owning_orchestrator_and_verified_batch(

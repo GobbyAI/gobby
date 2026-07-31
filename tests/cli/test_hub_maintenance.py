@@ -85,6 +85,11 @@ def _install_lifecycle_fakes(
     monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
     monkeypatch.setattr(
         command,
+        "stop_daemon",
+        lambda **_kwargs: _record(events, "stop-daemon", True),
+    )
+    monkeypatch.setattr(
+        command,
         "open_maintenance_epoch",
         lambda *_args, **_kwargs: _record(events, "open", epoch),
     )
@@ -162,6 +167,7 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
 
     assert result.exit_code == 0, result.output
     assert events == [
+        "stop-daemon",
         "open",
         "batch",
         "backup",
@@ -198,6 +204,7 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
 
     assert result.exit_code == 0, result.output
     assert events == [
+        "stop-daemon",
         "discover",
         "load-batch",
         "backup",
@@ -210,6 +217,26 @@ def test_resume_uses_only_hub_epoch_and_batch_state(
         "restart",
     ]
     assert "reconcile" in result.output
+
+
+def test_run_aborts_before_fence_when_daemon_stop_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    epoch = _epoch()
+    batch = _batch(epoch)
+    _install_lifecycle_fakes(monkeypatch, epoch=epoch, batch=batch, events=events)
+    monkeypatch.setattr(
+        command,
+        "stop_daemon",
+        lambda **_kwargs: _record(events, "stop-daemon", False),
+    )
+
+    result = CliRunner().invoke(cli, ["hub-maintenance", "run", "purge"])
+
+    assert result.exit_code != 0
+    assert "refusing to open a maintenance epoch" in result.output
+    assert events == ["stop-daemon"]
 
 
 def test_interrupted_run_keeps_epoch_open_and_daemon_stopped(
