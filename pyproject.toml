@@ -77,8 +77,6 @@ dependencies = [
 
 [project.optional-dependencies]
 email = ["aiosmtplib>=5.1.1", "aioimaplib>=1.0"]
-# Compatibility alias for older setup scripts. Voice dependencies are base requirements.
-voice = []
 
 [project.scripts]
 gobby = "gobby.cli:cli"

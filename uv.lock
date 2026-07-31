@@ -1299,7 +1299,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=15.0" },
     { name = "yake", specifier = ">=0.7.3" },
 ]
-provides-extras = ["email", "voice"]
+provides-extras = ["email"]
 
 [package.metadata.requires-dev]
 dev = [
