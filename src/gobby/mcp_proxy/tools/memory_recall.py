@@ -48,7 +48,7 @@ def register_memory_recall_tool(
     async def recall_memories_for_prompt(
         prompt: str,
         source: str,
-        parent_turn_seq: int | str,
+        parent_turn_seq: str,
         is_spawned_agent: bool = False,
     ) -> dict[str, Any]:
         session_id = get_current_session_id()

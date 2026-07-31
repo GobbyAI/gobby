@@ -100,9 +100,13 @@ async def test_inline_recall_accepts_templated_parent_turn_sequence(
         captured_variables.append(variables)
 
     monkeypatch.setattr(MemoryRecallRunner, "run", capture_run)
+    registry = _registry(temp_db)
+    schema = registry.get_schema("recall_memories_for_prompt")
+    assert schema is not None
+    assert schema["inputSchema"]["properties"]["parent_turn_seq"]["type"] == "string"
 
     with session_context_for_test(SESSION_ID):
-        result = await _registry(temp_db).call(
+        result = await registry.call(
             "recall_memories_for_prompt",
             {
                 "prompt": "Implement the requested memory recall change.",
