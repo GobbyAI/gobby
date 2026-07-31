@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -310,3 +312,28 @@ def test_hub_backup_epoch_refuses_non_orchestrator_invocation(
 
     assert result.exit_code != 0
     assert "hub-maintenance" in result.output
+
+
+def test_epoch_backup_failure_surfaces_child_error_after_config_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stderr = (
+        "Ignoring removed config_store keys: code_index.auto_index_on_commit\n"
+        "Error: Docker pg_dump failed: pg_dump: FATAL: maintenance epoch is active\n"
+    )
+    completed = subprocess.CompletedProcess[str](
+        args=["python", "-m", "gobby.cli", "hub-backup"],
+        returncode=1,
+        stdout="",
+        stderr=stderr,
+    )
+    monkeypatch.setattr(command.subprocess, "run", lambda *_args, **_kwargs: completed)
+    ctx = click.Context(command.hub_maintenance)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        command._run_epoch_backup(ctx, uuid.uuid4())
+
+    assert str(excinfo.value) == (
+        "Epoch-bound hub backup failed: "
+        "Docker pg_dump failed: pg_dump: FATAL: maintenance epoch is active"
+    )

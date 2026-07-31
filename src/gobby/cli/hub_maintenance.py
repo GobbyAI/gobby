@@ -258,7 +258,7 @@ def _run_epoch_backup(ctx: click.Context, epoch_id: object) -> BackupEvidence:
         env=maintenance_child_environment(str(epoch_id)),
     )
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        detail = _child_cli_failure_detail(result)
         raise click.ClickException(f"Epoch-bound hub backup failed: {detail}")
     try:
         output = json.loads(result.stdout)
@@ -275,6 +275,16 @@ def _run_epoch_backup(ctx: click.Context, epoch_id: object) -> BackupEvidence:
     with manifest_path.open("rb") as manifest_file:
         digest = hashlib.file_digest(manifest_file, "sha256").hexdigest()
     return BackupEvidence(manifest_path=manifest_path, manifest_sha256=digest)
+
+
+def _child_cli_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+    stderr = result.stderr.strip()
+    lines = stderr.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index].strip()
+        if line.startswith("Error: "):
+            return "\n".join([line.removeprefix("Error: "), *lines[index + 1 :]]).strip()
+    return stderr or result.stdout.strip() or "unknown error"
 
 
 def _load_campaign_executor(campaign: Campaign) -> CampaignExecutor:

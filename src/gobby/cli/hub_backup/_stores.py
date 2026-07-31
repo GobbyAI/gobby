@@ -7,6 +7,7 @@ here proves a backup is restorable, it only makes one.
 
 from __future__ import annotations
 
+import os
 import subprocess  # nosec B404 # fixed docker/pg_dump/redis-cli argv, never shell=True
 import time
 from collections.abc import Sequence
@@ -28,6 +29,7 @@ from gobby.cli.postgres_backup import (
     _raise_for_subprocess_error,
     _sha256_file,
 )
+from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 POSTGRES_DUMP_RELPATH = "postgres/gobby.dump"
 GLOBALS_DUMP_RELPATH = "postgres/globals.sql"
@@ -152,7 +154,7 @@ def dump_postgres(
 
     dump_path = _prepare_artifact_path(backup_root, POSTGRES_DUMP_RELPATH)
     _capture_stdout(
-        ["docker", "exec", POSTGRES_CONTAINER, "pg_dump", "-U", user, "-d", database, "-Fc"],
+        _postgres_client_command("pg_dump", "-U", user, "-d", database, "-Fc"),
         dump_path,
         action="Docker pg_dump",
         timeout=dump_timeout,
@@ -160,7 +162,7 @@ def dump_postgres(
 
     globals_path = _prepare_artifact_path(backup_root, GLOBALS_DUMP_RELPATH)
     _capture_stdout(
-        ["docker", "exec", POSTGRES_CONTAINER, "pg_dumpall", "-U", user, "--globals-only"],
+        _postgres_client_command("pg_dumpall", "-U", user, "--globals-only"),
         globals_path,
         action="Docker pg_dumpall --globals-only",
         timeout=dump_timeout,
@@ -177,6 +179,13 @@ def dump_postgres(
         "archive_list_checked": True,
     }
     return artifacts, details
+
+
+def _postgres_client_command(client: str, *args: str) -> list[str]:
+    command = ["docker", "exec"]
+    if os.environ.get(MAINTENANCE_EPOCH_ENV):
+        command.extend(["-e", "PGOPTIONS"])
+    return [*command, POSTGRES_CONTAINER, client, *args]
 
 
 def _server_version(database_url: str) -> str:
