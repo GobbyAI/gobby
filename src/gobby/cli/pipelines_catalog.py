@@ -100,6 +100,11 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     if pipeline.inputs:
         click.echo("\nInputs:")
         for input_name, input_def in pipeline.inputs.items():
+            if not isinstance(input_def, dict):
+                # Shorthand form: the value is the input's default, e.g. `provider: "claude"`.
+                default_tag = f" (default: {input_def})" if input_def is not None else ""
+                click.echo(f"  - {input_name}{default_tag}")
+                continue
             required = input_def.get("required", False)
             req_tag = " (required)" if required else ""
             click.echo(f"  - {input_name}{req_tag}")

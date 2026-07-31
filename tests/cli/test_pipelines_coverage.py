@@ -157,6 +157,32 @@ class TestShowPipeline:
 
     @patch("gobby.cli.pipelines.get_project_path", return_value=None)
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    def test_show_shorthand_inputs(
+        self, mock_loader: MagicMock, mock_pp: MagicMock, runner: CliRunner
+    ) -> None:
+        """Inputs declared as bare keys or default values render without crashing."""
+        pipeline = MagicMock()
+        pipeline.name = "expand"
+        pipeline.description = "Expansion"
+        pipeline.inputs = {
+            "task_id": {"required": True, "description": "Task ID to expand"},
+            "model": None,
+            "provider": "claude",
+            "wait_timeout": 600,
+        }
+        pipeline.outputs = {}
+        pipeline.steps = []
+        mock_loader.return_value.load_pipeline_sync.return_value = pipeline
+
+        result = runner.invoke(pipelines, ["show", "expand"])
+        assert result.exit_code == 0
+        assert "task_id (required)" in result.output
+        assert "- model" in result.output
+        assert "provider (default: claude)" in result.output
+        assert "wait_timeout (default: 600)" in result.output
+
+    @patch("gobby.cli.pipelines.get_project_path", return_value=None)
+    @patch("gobby.cli.pipelines.get_workflow_loader")
     def test_show_json(self, mock_loader: MagicMock, mock_pp: MagicMock, runner: CliRunner) -> None:
         pipeline = MagicMock()
         pipeline.name = "test"
