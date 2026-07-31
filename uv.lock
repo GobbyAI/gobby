@@ -88,25 +88,6 @@ wheels = [
 ]
 
 [[package]]
-name = "anthropic"
-version = "0.76.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "docstring-parser" },
-    { name = "httpx" },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/be/d11abafaa15d6304826438170f7574d750218f49a106c54424a40cef4494/anthropic-0.76.0.tar.gz", hash = "sha256:e0cae6a368986d5cf6df743dfbb1b9519e6a9eee9c6c942ad8121c0b34416ffe", size = 495483, upload-time = "2026-01-13T18:41:14.908Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/70/7b0fd9c1a738f59d3babe2b4212031c34ab7d0fda4ffef15b58a55c5bcea/anthropic-0.76.0-py3-none-any.whl", hash = "sha256:81efa3113901192af2f0fe977d3ec73fdadb1e691586306c4256cd6d5ccc331c", size = 390309, upload-time = "2026-01-13T18:41:13.483Z" },
-]
-
-[[package]]
 name = "antlr4-python3-runtime"
 version = "4.9.3"
 source = { registry = "https://pypi.org/simple" }
@@ -897,15 +878,6 @@ wheels = [
 ]
 
 [[package]]
-name = "docstring-parser"
-version = "0.16"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/08/12/9c22a58c0b1e29271051222d8906257616da84135af9ed167c9e28f85cb3/docstring_parser-0.16.tar.gz", hash = "sha256:538beabd0af1e2db0146b6bd3caa526c35a34d61af9fd2887f3a8a27a739aa6e", size = 26565, upload-time = "2024-03-15T10:39:44.419Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/7c/e9fcff7623954d86bdc17782036cbf715ecab1bec4847c008557affe1ca8/docstring_parser-0.16-py3-none-any.whl", hash = "sha256:bf0a1387354d3691d102edef7ec124f219ef639982d096e26e3b60aeffa90637", size = 36533, upload-time = "2024-03-15T10:39:41.527Z" },
-]
-
-[[package]]
 name = "einops"
 version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1001,7 +973,6 @@ version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
-    { name = "anthropic" },
     { name = "argon2-cffi" },
     { name = "chatterbox-tts" },
     { name = "claude-agent-sdk" },
@@ -1021,22 +992,17 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-exporter-prometheus" },
-    { name = "opentelemetry-instrumentation-anthropic" },
-    { name = "opentelemetry-instrumentation-logging" },
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
-    { name = "opentelemetry-semantic-conventions" },
     { name = "psutil" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "py-machineid" },
     { name = "pydantic" },
-    { name = "pygments" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "qdrant-client" },
     { name = "regex" },
-    { name = "tomli-w" },
     { name = "tomlkit" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "wcwidth" },
@@ -1062,6 +1028,7 @@ dev = [
     { name = "pip" },
     { name = "pip-audit" },
     { name = "pre-commit" },
+    { name = "pygments" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1080,7 +1047,6 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "aioimaplib", marker = "extra == 'email'", specifier = ">=1.0" },
     { name = "aiosmtplib", marker = "extra == 'email'", specifier = ">=5.1.1" },
-    { name = "anthropic", specifier = ">=0.75.0" },
     { name = "argon2-cffi", specifier = ">=23.1.0" },
     { name = "chatterbox-tts" },
     { name = "claude-agent-sdk", specifier = ">=0.1.81" },
@@ -1100,22 +1066,17 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.28.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.28.0" },
     { name = "opentelemetry-exporter-prometheus", specifier = ">=0.49b0" },
-    { name = "opentelemetry-instrumentation-anthropic", specifier = ">=0.34.0" },
-    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.49b0" },
     { name = "opentelemetry-instrumentation-openai", specifier = ">=0.34.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.28.0" },
-    { name = "opentelemetry-semantic-conventions", specifier = ">=0.49b0" },
     { name = "psutil", specifier = ">=6.1.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "py-machineid", specifier = ">=0.6.0" },
     { name = "pydantic", specifier = ">=2.9.0" },
-    { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qdrant-client", specifier = ">=1.12.0" },
     { name = "regex", specifier = ">=2026.1.15" },
-    { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "tomlkit", specifier = ">=0.13.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "wcwidth", specifier = ">=0.2.14" },
@@ -1136,6 +1097,7 @@ dev = [
     { name = "pip", specifier = ">=26.1.2" },
     { name = "pip-audit", specifier = ">=2.7.0" },
     { name = "pre-commit", specifier = ">=4.0.0" },
+    { name = "pygments", specifier = ">=2.20.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
@@ -2534,34 +2496,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/41/0f/7e6b713ac117c1f5e4e3300748af699b9902a2e5e34c9cf443dde25a01fa/opentelemetry_instrumentation-0.60b1.tar.gz", hash = "sha256:57ddc7974c6eb35865af0426d1a17132b88b2ed8586897fee187fd5b8944bd6a", size = 31706, upload-time = "2025-12-11T13:36:42.515Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/77/d2/6788e83c5c86a2690101681aeef27eeb2a6bf22df52d3f263a22cee20915/opentelemetry_instrumentation-0.60b1-py3-none-any.whl", hash = "sha256:04480db952b48fb1ed0073f822f0ee26012b7be7c3eac1a3793122737c78632d", size = 33096, upload-time = "2025-12-11T13:35:33.067Z" },
-]
-
-[[package]]
-name = "opentelemetry-instrumentation-anthropic"
-version = "0.53.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "opentelemetry-semantic-conventions-ai" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/15/e7/9050358579c1d6df5c86eb11e8db20886bf0971ea75ca1d6906bf779444d/opentelemetry_instrumentation_anthropic-0.53.0.tar.gz", hash = "sha256:de8d405f5ed2f6af5f368e028e6ad07504acecd20b133b84a9fa45827deaba15", size = 688599, upload-time = "2026-03-04T07:49:01.3Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/65/9067a48fd0e4fee07d5501e94fa7d624b3b511198b43dfd63e1bd875d57b/opentelemetry_instrumentation_anthropic-0.53.0-py3-none-any.whl", hash = "sha256:e89f19457cb697fd94d63f29883f38d640603a7a0351c25052f3674f41af1c99", size = 18466, upload-time = "2026-03-04T07:48:25.605Z" },
-]
-
-[[package]]
-name = "opentelemetry-instrumentation-logging"
-version = "0.60b1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/60/a6/4515895b383113677fd2ad21813df5e56108a2df14ebb7916c962c9a0234/opentelemetry_instrumentation_logging-0.60b1.tar.gz", hash = "sha256:98f4b9c7aeb9314a30feee7c002c7ea9abea07c90df5f97fb058b850bc45b89a", size = 9968, upload-time = "2025-12-11T13:37:03.974Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/f9/8a4ce3901bc52277794e4b18c4ac43dc5929806eff01d22812364132f45f/opentelemetry_instrumentation_logging-0.60b1-py3-none-any.whl", hash = "sha256:f2e18cbc7e1dd3628c80e30d243897fdc93c5b7e0c8ae60abd2b9b6a99f82343", size = 12577, upload-time = "2025-12-11T13:36:08.123Z" },
 ]
 
 [[package]]

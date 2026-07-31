@@ -3,7 +3,7 @@ name = "gobby"
 version = "0.5.0"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Droid, Grok, Qwen, and AGY. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
-license = "FSL-1.1-ALv2"
+license = { text = "FSL-1.1-ALv2" }
 authors = [
     { name = "Josh Wilhelmi", email = "josh@gobby.ai" }
 ]
@@ -19,7 +19,6 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
-    "anthropic>=0.75.0",
     # click <8.3.3 has PYSEC-2026-2132.
     "click>=8.3.3",
     "fastapi>=0.136.0,!=0.136.3",
@@ -36,7 +35,6 @@ dependencies = [
     "claude-agent-sdk>=0.1.81",
     "wcwidth>=0.2.14",
     "tomlkit>=0.13.3",
-    "tomli-w>=1.0.0",
     "msgspec>=0.20.0",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
@@ -47,8 +45,6 @@ dependencies = [
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
     # CVE-2026-42561 and later DoS advisories fixed in 0.0.30/0.0.31.
     "python-multipart>=0.0.31",
-    # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
-    "pygments>=2.20.0",
     # cryptography <48.0.1 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
     # and the later advisory fixed in 48.0.1.
     "cryptography>=48.0.1",
@@ -63,10 +59,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.28.0",
     "opentelemetry-exporter-otlp-proto-http>=1.28.0",
     "opentelemetry-exporter-prometheus>=0.49b0",
-    "opentelemetry-instrumentation-logging>=0.49b0",
-    "opentelemetry-semantic-conventions>=0.49b0",
     # LLM provider instrumentation for OpenTelemetry tracing
-    "opentelemetry-instrumentation-anthropic>=0.34.0",
     "opentelemetry-instrumentation-openai>=0.34.0",
     "yake>=0.7.3",
     "chatterbox-tts",
@@ -299,6 +292,8 @@ dev = [
     "pip>=26.1.2",  # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, PYSEC-2026-196
     "pip-audit>=2.7.0",
     "pre-commit>=4.0.0",
+    # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
+    "pygments>=2.20.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",

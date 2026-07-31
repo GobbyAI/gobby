@@ -320,7 +320,7 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
     from gobby.telemetry.instrumentors import _instrumented
 
     telemetry_config.llm_tracing.enabled = True
-    telemetry_config.llm_tracing.providers = ["anthropic"]
+    telemetry_config.llm_tracing.providers = ["openai"]
 
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -328,16 +328,26 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
             message="'asyncio.iscoroutinefunction' is deprecated.*",
             category=DeprecationWarning,
         )
-        from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
+        warnings.filterwarnings(
+            "ignore",
+            message="'return' in a 'finally' block",
+            category=SyntaxWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="Support for class-based `config` is deprecated.*",
+            category=DeprecationWarning,
+        )
+        from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 
-        instrumentor = AnthropicInstrumentor()
+        instrumentor = OpenAIInstrumentor()
         try:
             daemon_init_telemetry(telemetry_config, logging_config)
 
             assert instrumentor.is_instrumented_by_opentelemetry
         finally:
             instrumentor.uninstrument()
-            _instrumented.discard("anthropic")
+            _instrumented.discard("openai")
 
 
 def test_shutdown_telemetry_has_no_logging_bridge_and_shuts_down_providers() -> None:
