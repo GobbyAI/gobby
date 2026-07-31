@@ -24,6 +24,7 @@ from gobby.config.bootstrap import (
 from gobby.config.bootstrap_io import write_bootstrap_yaml
 from gobby.paths import get_gobby_home
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -253,8 +254,16 @@ async def ensure_isolation_code_index(
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
+    api_token: str | None = None,
 ) -> CodeIndexPreflightResult:
-    """Prepare and verify `gcode` access inside an isolated workspace."""
+    """Prepare and verify `gcode` access inside an isolated workspace.
+
+    ``api_token`` authenticates only the daemon-owned preflight probes, via
+    their subprocess environment. It is never written to the runtime home or
+    the wrapper script and never returned in the agent env additions: the
+    runtime home deliberately carries no ``local_cli_token`` (#19289), and the
+    spawned agent authenticates with its own run-scoped capability instead.
+    """
 
     workspace = Path(isolated_path)
     if not workspace.is_dir():
@@ -273,6 +282,7 @@ async def ensure_isolation_code_index(
         runtime_root=runtime_root,
     )
     gcode_command = result.wrapper_path or gcode_bin
+    probe_env = {GOBBY_AGENT_API_TOKEN_ENV: api_token} if api_token else None
 
     await _run_gcode(
         [gcode_command, "projects", "--quiet", "--format", "json"],
@@ -280,6 +290,7 @@ async def ensure_isolation_code_index(
         timeout=config_probe_timeout,
         timeout_code="gcode_index_unavailable_timeout",
         failure_code="gcode_index_unavailable",
+        env=probe_env,
     )
     await _run_gcode(
         [gcode_command, "index", "--quiet", "--project", str(workspace)],
@@ -287,6 +298,7 @@ async def ensure_isolation_code_index(
         timeout=timeout,
         timeout_code="gcode_index_timeout",
         failure_code="gcode_index_failed",
+        env=probe_env,
     )
     await _run_gcode(
         [
@@ -304,6 +316,7 @@ async def ensure_isolation_code_index(
         timeout=search_smoke_timeout,
         timeout_code="gcode_search_content_timeout",
         failure_code="gcode_search_content_failed",
+        env=probe_env,
     )
     return result
 
@@ -445,6 +458,7 @@ async def _run_gcode(
     timeout: float,
     timeout_code: str,
     failure_code: str,
+    env: Mapping[str, str] | None = None,
 ) -> None:
     proc: asyncio.subprocess.Process | None = None
     try:
@@ -453,6 +467,7 @@ async def _run_gcode(
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, **env} if env is not None else None,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.CancelledError:

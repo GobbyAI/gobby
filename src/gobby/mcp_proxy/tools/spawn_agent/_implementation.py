@@ -32,6 +32,7 @@ from gobby.tasks.state_semantics import (
     is_task_actionable,
     is_task_reviewable,
 )
+from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -527,6 +528,7 @@ async def spawn_agent_impl(
         agent_name=requested_agent_name,
         initial_variables=initial_variables,
         task_category=task_category,
+        api_token=read_local_api_token(),
     )
     if code_index_preflight.error is not None:
         await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)

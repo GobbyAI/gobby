@@ -217,6 +217,7 @@ class TestSpawnAgentIsolation:
                 database_url=None,
                 daemon_bind_host=None,
                 daemon_port=None,
+                api_token=ANY,
             )
             assert mock_execute.await_args.args[0].extra_env == {"PATH": "/isolated/bin:/usr/bin"}
             mock_execute.assert_awaited_once()
@@ -398,6 +399,7 @@ class TestSpawnAgentIsolation:
                 database_url=None,
                 daemon_bind_host=None,
                 daemon_port=None,
+                api_token=ANY,
             )
             mock_execute.assert_awaited_once()
 

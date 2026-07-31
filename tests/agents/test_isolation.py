@@ -203,6 +203,63 @@ class TestEnsureIsolationCodeIndex:
             assert linked.resolve() == (source_home / name).resolve()
 
     @pytest.mark.asyncio
+    async def test_api_token_reaches_probe_subprocess_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        source_home.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ) as create_proc,
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                database_url="postgresql://gobby:secret@localhost/gobby",
+                daemon_bind_host="127.0.0.1",
+                daemon_port=61234,
+                runtime_root=runtime_root,
+                api_token="operator-token-value",
+            )
+
+        assert create_proc.await_count == 3
+        for call in create_proc.await_args_list:
+            env = call.kwargs["env"]
+            assert env["GOBBY_AGENT_API_TOKEN"] == "operator-token-value"
+        # The credential is ephemeral: never in the runtime home, the wrapper,
+        # or the env additions handed to the spawned agent.
+        assert result.runtime_home is not None
+        assert not (Path(result.runtime_home) / "local_cli_token").exists()
+        wrapper = workspace / ".gobby" / "bin" / "gcode"
+        assert "operator-token-value" not in wrapper.read_text()
+        assert "GOBBY_AGENT_API_TOKEN" not in result.env
+
+    @pytest.mark.asyncio
+    async def test_no_api_token_inherits_daemon_env_untouched(self, tmp_path: Path) -> None:
+        proc = self._proc()
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ) as create_proc,
+        ):
+            await ensure_isolation_code_index(str(tmp_path))
+
+        for call in create_proc.await_args_list:
+            assert call.kwargs.get("env") is None
+
+    @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
         proc_ok = self._proc()
         proc_fail = self._proc(returncode=2, stderr=b"parse failed")

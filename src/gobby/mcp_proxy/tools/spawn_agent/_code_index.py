@@ -23,6 +23,7 @@ class CodeIndexSpawnPreparation:
 async def prepare_isolation_code_index(
     cwd: str,
     daemon_config: Any | None,
+    api_token: str | None = None,
 ) -> tuple[dict[str, str] | None, dict[str, str]]:
     """Run code-index preflight and return a warning plus child env additions."""
     try:
@@ -31,6 +32,7 @@ async def prepare_isolation_code_index(
             database_url=getattr(daemon_config, "database_url", None),
             daemon_bind_host=getattr(daemon_config, "bind_host", None),
             daemon_port=getattr(daemon_config, "daemon_port", None),
+            api_token=api_token,
         )
         env = getattr(preflight, "env", {})
         return None, env if isinstance(env, dict) else {}
@@ -57,6 +59,7 @@ async def prepare_spawn_code_index(
     agent_name: str | None,
     initial_variables: dict[str, Any] | None,
     task_category: str | None,
+    api_token: str | None = None,
 ) -> CodeIndexSpawnPreparation:
     """Prepare code-index access for a spawn, returning env additions or spawn failure."""
     if _requires_planning_code_index(agent_name, initial_variables):
@@ -66,6 +69,7 @@ async def prepare_spawn_code_index(
                 database_url=getattr(daemon_config, "database_url", None),
                 daemon_bind_host=getattr(daemon_config, "bind_host", None),
                 daemon_port=getattr(daemon_config, "daemon_port", None),
+                api_token=api_token,
             )
         except Exception as exc:
             reason = str(exc)
@@ -79,7 +83,7 @@ async def prepare_spawn_code_index(
         return CodeIndexSpawnPreparation(env=env if isinstance(env, dict) else {})
 
     if isolation in {"worktree", "clone"} and task_category != "docs":
-        warning, env = await prepare_isolation_code_index(cwd, daemon_config)
+        warning, env = await prepare_isolation_code_index(cwd, daemon_config, api_token)
         return CodeIndexSpawnPreparation(warning=warning, env=env)
 
     return CodeIndexSpawnPreparation(env={})

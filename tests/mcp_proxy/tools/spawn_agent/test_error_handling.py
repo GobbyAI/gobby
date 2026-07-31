@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -939,6 +939,7 @@ test"""
             database_url=daemon_config.database_url,
             daemon_bind_host=daemon_config.bind_host,
             daemon_port=daemon_config.daemon_port,
+            api_token=ANY,
         )
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
