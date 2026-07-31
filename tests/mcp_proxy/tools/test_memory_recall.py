@@ -1,9 +1,9 @@
-"""Tests for mandatory batch memory recall retrieval."""
+"""Tests for deterministic memory recall overflow retrieval."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import cast
+import json
+from typing import Any, cast
 
 import pytest
 
@@ -13,8 +13,12 @@ from gobby.hooks.memory_recall_delivery import (
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
-from gobby.mcp_proxy.tools.memory_recall import register_memory_recall_tool
+from gobby.mcp_proxy.tools.memory_recall import (
+    MAX_DIRECT_MCP_SERIALIZED_CHARS,
+    register_memory_recall_tool,
+)
 from gobby.memory.manager import MemoryManager
+from gobby.memory.recall import MemoryRecallRunner
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -26,26 +30,12 @@ OTHER_SESSION_ID = "4e8c86db-b06c-41cf-8866-c2722ac87658"
 PROJECT_ID = "4a0cc9e8-ab87-48c0-9c55-84831e47c510"
 
 
-@dataclass
-class FakeMemory:
-    id: str
-    content: str
-    memory_type: str = "fact"
-    tags: list[str] | None = None
-
-
 class FakeMemoryManager:
-    def __init__(self, db: HubDatabase, memories: list[FakeMemory]) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
-        self.memories = {memory.id: memory for memory in memories}
-        self.calls: list[tuple[str, str | None]] = []
-        self.failure_memory_id: str | None = None
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> FakeMemory | None:
-        self.calls.append((memory_id, project_id))
-        if memory_id == self.failure_memory_id:
-            raise RuntimeError("database unavailable")
-        return self.memories.get(memory_id)
+    async def search_memories(self, **_kwargs: Any) -> list[Any]:
+        return []
 
 
 def _create_sessions(db: HubDatabase) -> None:
@@ -71,219 +61,166 @@ def _create_sessions(db: HubDatabase) -> None:
 
 def _queue(
     db: HubDatabase,
-    *,
-    recall_request_id: str,
-    origin_turn_seq: int,
-    memory_ids: list[str],
+    request_id: str,
+    turn_seq: int,
+    memories: list[dict[str, str]],
 ) -> None:
-    queued = MemoryRecallDeliveryQueue(db).queue(
+    assert MemoryRecallDeliveryQueue(db).queue(
         SESSION_ID,
-        recall_request_id=recall_request_id,
-        origin_turn_seq=origin_turn_seq,
+        recall_request_id=request_id,
+        origin_turn_seq=turn_seq,
         project_id=PROJECT_ID,
-        memories=[
-            {
-                "id": memory_id,
-                "similarity": 0.9 - (rank / 100),
-                "search_via": "semantic",
-            }
-            for rank, memory_id in enumerate(memory_ids)
-        ],
+        memories=memories,
     )
-    assert queued is True
 
 
-def _registry(manager: FakeMemoryManager) -> InternalToolRegistry:
+def _registry(db: HubDatabase) -> InternalToolRegistry:
     registry = InternalToolRegistry("test-memory-recall")
-    register_memory_recall_tool(registry, cast(MemoryManager, manager))
+    register_memory_recall_tool(
+        registry,
+        cast(MemoryManager, FakeMemoryManager(db)),
+    )
     return registry
 
 
 @pytest.mark.asyncio
-async def test_returns_all_memories_in_rank_order_and_completes_request(
+async def test_inline_recall_accepts_templated_parent_turn_sequence(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_sessions(temp_db)
+    captured_variables: list[dict[str, Any]] = []
+
+    async def capture_run(
+        _runner: MemoryRecallRunner,
+        _event: Any,
+        _session_id: str,
+        variables: dict[str, Any],
+    ) -> None:
+        captured_variables.append(variables)
+
+    monkeypatch.setattr(MemoryRecallRunner, "run", capture_run)
+
+    with session_context_for_test(SESSION_ID):
+        result = await _registry(temp_db).call(
+            "recall_memories_for_prompt",
+            {
+                "prompt": "Implement the requested memory recall change.",
+                "source": "codex",
+                "parent_turn_seq": "7",
+            },
+        )
+
+    assert result == {"success": True, "skipped": True, "memories": []}
+    assert captured_variables == [{"parent_turn_seq": 7, "is_spawned_agent": False}]
+
+
+@pytest.mark.asyncio
+async def test_small_overflow_returns_body_and_completes_on_final_chunk(
     temp_db: HubDatabase,
 ) -> None:
     _create_sessions(temp_db)
     _queue(
         temp_db,
-        recall_request_id="request-ranked",
-        origin_turn_seq=11,
-        memory_ids=["memory-first", "memory-second"],
-    )
-    SessionVariableManager(temp_db).set_variable(
-        SESSION_ID,
-        "injected_memory_ids",
-        ["existing-memory"],
-    )
-    manager = FakeMemoryManager(
-        temp_db,
+        "request-small",
+        11,
         [
-            FakeMemory("memory-first", "First body.", tags=["first"]),
-            FakeMemory("memory-second", "Second body.", memory_type="pattern", tags=[]),
+            {
+                "id": "memory-1",
+                "content": "Exact body.",
+                "memory_type": "pattern",
+                "similarity": "hidden",
+            }
         ],
     )
-    registry = _registry(manager)
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "injected_memory_ids", ["existing"])
 
     with session_context_for_test(SESSION_ID):
-        result = await registry.call(
+        result = await _registry(temp_db).call(
             "get_recall_memories",
-            {"recall_request_id": "request-ranked"},
-        )
-        repeated = await registry.call(
-            "get_recall_memories",
-            {"recall_request_id": "request-ranked"},
-        )
-
-    assert result == repeated
-    assert result["success"] is True
-    assert result["origin_turn_seq"] == 11
-    assert result["missing_memory_ids"] == []
-    assert result["total_content_chars"] == len("First body.Second body.")
-    assert [memory["id"] for memory in result["memories"]] == [
-        "memory-first",
-        "memory-second",
-    ]
-    assert result["memories"][0] == {
-        "rank": 1,
-        "id": "memory-first",
-        "content": "First body.",
-        "type": "fact",
-        "tags": ["first"],
-        "similarity": 0.9,
-        "search_via": "semantic",
-    }
-    assert manager.calls == [
-        ("memory-first", PROJECT_ID),
-        ("memory-second", PROJECT_ID),
-        ("memory-first", PROJECT_ID),
-        ("memory-second", PROJECT_ID),
-    ]
-
-    variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
-    delivery = variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]
-    assert delivery["status"] == "complete"
-    assert delivery["completed_at"]
-    assert variables["injected_memory_ids"] == [
-        "existing-memory",
-        "memory-first",
-        "memory-second",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_missing_memories_are_reported_without_deadlocking(
-    temp_db: HubDatabase,
-) -> None:
-    _create_sessions(temp_db)
-    _queue(
-        temp_db,
-        recall_request_id="request-missing",
-        origin_turn_seq=12,
-        memory_ids=["memory-present", "memory-deleted"],
-    )
-    manager = FakeMemoryManager(temp_db, [FakeMemory("memory-present", "Present.")])
-
-    with session_context_for_test(SESSION_ID):
-        result = await _registry(manager).call(
-            "get_recall_memories",
-            {"recall_request_id": "request-missing"},
+            {"recall_request_id": "request-small"},
         )
 
     assert result["success"] is True
-    assert result["missing_memory_ids"] == ["memory-deleted"]
-    assert [memory["id"] for memory in result["memories"]] == ["memory-present"]
+    assert result["final_chunk"] is True
+    assert result["memories"] == [
+        {
+            "id": "memory-1",
+            "memory_type": "pattern",
+            "content": "Exact body.",
+            "content_offset": 0,
+            "memory_complete": True,
+        }
+    ]
+    assert "similarity" not in result["memories"][0]
     variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
     assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
-    assert variables["injected_memory_ids"] == ["memory-present"]
+    assert variables["injected_memory_ids"] == ["existing", "memory-1"]
 
 
 @pytest.mark.asyncio
-async def test_all_missing_memories_still_complete_request(temp_db: HubDatabase) -> None:
-    _create_sessions(temp_db)
-    _queue(
-        temp_db,
-        recall_request_id="request-all-missing",
-        origin_turn_seq=13,
-        memory_ids=["memory-deleted"],
-    )
-
-    with session_context_for_test(SESSION_ID):
-        result = await _registry(FakeMemoryManager(temp_db, [])).call(
-            "get_recall_memories",
-            {"recall_request_id": "request-all-missing"},
-        )
-
-    assert result["success"] is True
-    assert result["memories"] == []
-    assert result["missing_memory_ids"] == ["memory-deleted"]
-    variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
-    assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
-    assert variables["injected_memory_ids"] == []
-
-
-@pytest.mark.asyncio
-async def test_retrieval_failure_leaves_request_pending_for_retry(
+async def test_large_overflow_reconstructs_every_character_below_chunk_budget(
     temp_db: HubDatabase,
 ) -> None:
     _create_sessions(temp_db)
+    bodies = ["αβγ" * 8_000, "tail-" + ("z" * 15_000)]
     _queue(
         temp_db,
-        recall_request_id="request-retry",
-        origin_turn_seq=13,
-        memory_ids=["memory-retry"],
-    )
-    manager = FakeMemoryManager(temp_db, [FakeMemory("memory-retry", "Retry body.")])
-    manager.failure_memory_id = "memory-retry"
-    registry = _registry(manager)
-
-    with session_context_for_test(SESSION_ID):
-        failed = await registry.call(
-            "get_recall_memories",
-            {"recall_request_id": "request-retry"},
-        )
-        failed_variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
-        manager.failure_memory_id = None
-        succeeded = await registry.call(
-            "get_recall_memories",
-            {"recall_request_id": "request-retry"},
-        )
-
-    assert failed["success"] is False
-    assert "database unavailable" in failed["error"]
-    assert failed_variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "pending"
-    assert succeeded["success"] is True
-    variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
-    assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
-
-
-@pytest.mark.asyncio
-async def test_pending_requests_must_be_retrieved_oldest_first(
-    temp_db: HubDatabase,
-) -> None:
-    _create_sessions(temp_db)
-    _queue(
-        temp_db,
-        recall_request_id="request-first",
-        origin_turn_seq=14,
-        memory_ids=["memory-first"],
-    )
-    _queue(
-        temp_db,
-        recall_request_id="request-second",
-        origin_turn_seq=15,
-        memory_ids=["memory-second"],
-    )
-    manager = FakeMemoryManager(
-        temp_db,
+        "request-large",
+        12,
         [
-            FakeMemory("memory-first", "First."),
-            FakeMemory("memory-second", "Second."),
+            {"id": "memory-1", "content": bodies[0], "memory_type": "fact"},
+            {"id": "memory-2", "content": bodies[1], "memory_type": "context"},
         ],
     )
-    registry = _registry(manager)
+    registry = _registry(temp_db)
+    reconstructed = {"memory-1": "", "memory-2": ""}
+    chunks: list[dict[str, Any]] = []
 
     with session_context_for_test(SESSION_ID):
-        out_of_order = await registry.call(
+        while True:
+            chunk = await registry.call(
+                "get_recall_memories",
+                {"recall_request_id": "request-large"},
+            )
+            chunks.append(chunk)
+            segment = chunk["memories"][0]
+            reconstructed[segment["id"]] += segment["content"]
+            variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+            if chunk["final_chunk"]:
+                assert variables["injected_memory_ids"] == ["memory-1", "memory-2"]
+                break
+            assert variables.get("injected_memory_ids", []) == []
+            assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "pending"
+
+    assert reconstructed == {"memory-1": bodies[0], "memory-2": bodies[1]}
+    assert [chunk["chunk_index"] for chunk in chunks] == list(range(len(chunks)))
+    assert all(
+        len(json.dumps(chunk, ensure_ascii=False, separators=(",", ":")))
+        < MAX_DIRECT_MCP_SERIALIZED_CHARS
+        for chunk in chunks
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_requests_complete_oldest_first(temp_db: HubDatabase) -> None:
+    _create_sessions(temp_db)
+    _queue(
+        temp_db,
+        "request-first",
+        13,
+        [{"id": "first", "content": "first", "memory_type": "fact"}],
+    )
+    _queue(
+        temp_db,
+        "request-second",
+        14,
+        [{"id": "second", "content": "second", "memory_type": "fact"}],
+    )
+    registry = _registry(temp_db)
+
+    with session_context_for_test(SESSION_ID):
+        rejected = await registry.call(
             "get_recall_memories",
             {"recall_request_id": "request-second"},
         )
@@ -296,10 +233,10 @@ async def test_pending_requests_must_be_retrieved_oldest_first(
             {"recall_request_id": "request-second"},
         )
 
-    assert out_of_order["success"] is False
-    assert out_of_order["expected_recall_request_id"] == "request-first"
-    assert first["success"] is True
-    assert second["success"] is True
+    assert rejected["success"] is False
+    assert rejected["expected_recall_request_id"] == "request-first"
+    assert first["final_chunk"] is True
+    assert second["final_chunk"] is True
 
 
 @pytest.mark.asyncio
@@ -307,13 +244,11 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
     _create_sessions(temp_db)
     _queue(
         temp_db,
-        recall_request_id="request-session",
-        origin_turn_seq=16,
-        memory_ids=["memory-session"],
+        "request-session",
+        15,
+        [{"id": "memory", "content": "body", "memory_type": "fact"}],
     )
-    registry = _registry(
-        FakeMemoryManager(temp_db, [FakeMemory("memory-session", "Session body.")])
-    )
+    registry = _registry(temp_db)
 
     with session_context_for_test(OTHER_SESSION_ID):
         wrong_session = await registry.call(
@@ -331,61 +266,10 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
     assert "ambient Gobby session" in no_session["error"]
 
 
-@pytest.mark.asyncio
-async def test_queue_get_failure_returns_standard_error(
+def test_main_memory_registry_includes_inline_and_overflow_tools(
     temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_get(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("queue unavailable")
+    registry = create_memory_registry(cast(MemoryManager, FakeMemoryManager(temp_db)))
 
-    monkeypatch.setattr(MemoryRecallDeliveryQueue, "get", fail_get)
-    with session_context_for_test(SESSION_ID):
-        result = await _registry(FakeMemoryManager(temp_db, [])).call(
-            "get_recall_memories",
-            {"recall_request_id": "request-failed"},
-        )
-
-    assert result == {
-        "success": False,
-        "recall_request_id": "request-failed",
-        "error": "Memory retrieval failed: queue unavailable",
-    }
-
-
-@pytest.mark.asyncio
-async def test_queue_pending_failure_returns_standard_error(
-    temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _create_sessions(temp_db)
-    _queue(
-        temp_db,
-        recall_request_id="request-pending-failed",
-        origin_turn_seq=1,
-        memory_ids=["memory-1"],
-    )
-
-    def fail_pending(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("pending unavailable")
-
-    monkeypatch.setattr(MemoryRecallDeliveryQueue, "pending", fail_pending)
-    with session_context_for_test(SESSION_ID):
-        result = await _registry(FakeMemoryManager(temp_db, [])).call(
-            "get_recall_memories",
-            {"recall_request_id": "request-pending-failed"},
-        )
-
-    assert result == {
-        "success": False,
-        "recall_request_id": "request-pending-failed",
-        "error": "Memory retrieval failed: pending unavailable",
-    }
-
-
-def test_main_memory_registry_includes_batch_recall_tool(temp_db: HubDatabase) -> None:
-    manager = FakeMemoryManager(temp_db, [])
-
-    registry = create_memory_registry(cast(MemoryManager, manager))
-
+    assert registry.get_tool("recall_memories_for_prompt") is not None
     assert registry.get_tool("get_recall_memories") is not None

@@ -24,7 +24,6 @@ from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
-from gobby.hooks.memory_recall_dispatcher import MemoryRecallDispatcher
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
@@ -165,15 +164,6 @@ class HookManager:
                 self._inter_session_msg_manager = InterSessionMessageManager(self._database)
             except Exception as e:
                 self.logger.warning("Failed to create InterSessionMessageManager: %s", e)
-        self._memory_recall_dispatcher = MemoryRecallDispatcher(
-            config=self._config,
-            database=self._database,
-            memory_manager=self._memory_manager,
-            llm_service=self._llm_service,
-            loop=self._loop,
-            logger=self.logger,
-        )
-
         # Response metadata enrichment service
         from gobby.hooks.event_enrichment import EventEnricher
 
@@ -470,9 +460,6 @@ class HookManager:
                 return self._complete_response(
                     event, blocking_response, workflow_context, preserve_original=True
                 )
-            if event.event_type == HookEventType.BEFORE_AGENT:
-                self._memory_recall_dispatcher.schedule(event)
-
             webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
             if webhook_block:
                 return self._complete_response(
@@ -520,6 +507,20 @@ class HookManager:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
                 self.logger.exception("Response enrichment failed: %s", e)
+
+        try:
+            from gobby.workflows.engine.delivery_formatting import (
+                finalize_staged_memory_delivery,
+            )
+
+            finalize_staged_memory_delivery(
+                event,
+                observer_response,
+                database=self._database,
+                logger=self.logger,
+            )
+        except Exception as e:
+            self.logger.exception("Staged memory delivery failed: %s", e)
 
         if preserve_original:
             observer_response.decision = original_decision
@@ -732,7 +733,6 @@ class HookManager:
         self._health_monitor.stop()
 
         self._close_webhook_dispatcher_sync()
-        self._memory_recall_dispatcher.shutdown()
         self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):
@@ -753,7 +753,6 @@ class HookManager:
         self._health_monitor.stop()
 
         await self._close_webhook_dispatcher_async()
-        await self._memory_recall_dispatcher.shutdown_async()
         self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):

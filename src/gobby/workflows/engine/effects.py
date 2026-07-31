@@ -153,27 +153,19 @@ class EffectsMixin(DeliveryFormattingMixin):
                             else None
                         )
 
-                        if (
-                            effect.server == "gobby-review-learning"
-                            and effect.tool
-                            in {
-                                "recall_review_lessons_for_files",
-                                "recall_review_lessons_by_class",
-                            }
-                            and isinstance(raw_result, dict)
-                        ):
-                            scope_label = (
-                                "matched lesson class"
-                                if effect.tool == "recall_review_lessons_by_class"
-                                else "matched file"
+                        memory_result_handled = False
+                        if isinstance(raw_result, dict) and isinstance(event_obj, HookEvent):
+                            memory_result_handled, formatted = await offload(
+                                self._format_memory_backed_result,
+                                server=effect.server,
+                                tool=effect.tool,
+                                result=raw_result,
+                                event=event_obj,
+                                platform_session_id=platform_session_id,
+                                variables=variables,
                             )
-                            formatted = await offload(
-                                self._format_review_lessons_result,
-                                raw_result,
-                                platform_session_id,
-                                variables,
-                                scope_label,
-                            )
+                        if memory_result_handled:
+                            pass
                         elif (effect.server, effect.tool) == (
                             "gobby-agents",
                             "cancel_stale_helpers",

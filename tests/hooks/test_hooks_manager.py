@@ -544,28 +544,6 @@ class TestHookManagerBeforeAgent:
         response = hook_manager_with_mocks.handle(event)
         assert response.decision == "allow"
 
-    def test_before_agent_schedules_memory_recall(
-        self,
-        hook_manager_with_mocks: HookManager,
-        sample_session_start_event: HookEvent,
-    ) -> None:
-        hook_manager_with_mocks.handle(sample_session_start_event)
-        dispatcher = MagicMock()
-        hook_manager_with_mocks._memory_recall_dispatcher = dispatcher
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-external-id-123",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={"prompt": "Help me write a function"},
-            machine_id="test-machine-id",
-        )
-
-        response = hook_manager_with_mocks.handle(event)
-
-        assert response.decision == "allow"
-        dispatcher.schedule.assert_called_once_with(event)
-
 
 class TestHookManagerToolEvents:
     """Tests for tool event handling."""

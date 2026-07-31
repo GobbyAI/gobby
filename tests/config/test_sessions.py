@@ -13,17 +13,14 @@ pytestmark = pytest.mark.unit
 
 
 def test_memory_recall_config_shape(temp_dir: Path) -> None:
-    """Memory recall config exposes daemon-owned runner controls."""
+    """Memory recall config exposes only classifier and search controls."""
     assert set(MemoryRecallConfig.model_fields) == {
         "profile",
         "candidates",
         "enabled",
         "timeout",
         "candidate_limit",
-        "selected_limit",
         "min_score",
-        "query_synthesis_threshold",
-        "query_max_chars",
     }
     cfg = MemoryRecallConfig()
     assert cfg.enabled is True
@@ -31,10 +28,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert "claude/haiku" in candidate_labels(cfg.candidates)
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
-    assert cfg.selected_limit == 3
     assert cfg.min_score == 0.0
-    assert cfg.query_synthesis_threshold == 8_000
-    assert cfg.query_max_chars == 1_200
     assert DaemonConfig().memory_recall.enabled is True
     assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
     with pytest.raises(ValueError):
@@ -51,10 +45,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
                     "candidates": ["endpoint:lm-studio/llama"],
                     "timeout": 12,
                     "candidate_limit": 5,
-                    "selected_limit": 2,
                     "min_score": 0.75,
-                    "query_synthesis_threshold": 100,
-                    "query_max_chars": 80,
                 }
             }
         )
@@ -66,10 +57,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     )
     assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
-    assert disabled_config.memory_recall.selected_limit == 2
     assert disabled_config.memory_recall.min_score == 0.75
-    assert disabled_config.memory_recall.query_synthesis_threshold == 100
-    assert disabled_config.memory_recall.query_max_chars == 80
 
     default_config_file = temp_dir / "default.yaml"
     default_config_file.write_text(yaml.safe_dump({"daemon_port": 60999}))

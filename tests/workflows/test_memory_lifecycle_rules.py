@@ -262,19 +262,55 @@ class TestResetMemoryTrackingOnStart:
 
 
 class TestMemoryRecallOnPrompt:
-    """Legacy raw recall rule is neutralized; daemon-owned recall handles prompts."""
+    """Substantive recall runs synchronously once per parent turn."""
 
-    def test_neutralized_and_inert(self, db, manager) -> None:
+    def test_inline_rule_uses_single_recall_tool_and_attempt_watermark(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("memory-recall-on-prompt")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_start"
-        assert body.when == "false"
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert "memory_recall_attempted_turn_seq" in body.when
         assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "legacy_memory_recall_rule_disabled"
-        assert body.effects[0].value is True
+        assert body.effects[0].variable == "memory_recall_attempted_turn_seq"
+        recall = body.effects[1]
+        assert recall.type == "mcp_call"
+        assert recall.server == "gobby-memory"
+        assert recall.tool == "recall_memories_for_prompt"
+        assert recall.background is False
+        assert recall.inject_result is True
         assert all(effect.tool != "search_memories" for effect in body.effects)
+
+    def test_duplicate_hook_for_same_parent_turn_is_rejected(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("memory-recall-on-prompt")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        first = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": False,
+                    "parent_turn_seq": 7,
+                }
+            },
+            {},
+        )
+        duplicate = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": False,
+                    "parent_turn_seq": 7,
+                    "memory_recall_attempted_turn_seq": 7,
+                }
+            },
+            {},
+        )
+
+        assert first.evaluate(body.when) is True
+        assert duplicate.evaluate(body.when) is False
 
 
 # ═══════════════════════════════════════════════════════════════════════

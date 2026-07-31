@@ -175,26 +175,21 @@ class MemoryUsefulnessConfig(FeatureDefaultConfig):
 
 
 class MemoryRecallConfig(FeatureDefaultConfig):
-    """Daemon-owned memory recall runner configuration."""
+    """Inline substantive-prompt memory recall configuration."""
 
     enabled: bool = Field(
         default=True,
-        description="Enable the LLM-driven memory recall runner.",
+        description="Enable inline substantive-prompt memory recall.",
     )
     timeout: int = Field(
         default=60,
         gt=0,
-        description="Timeout in seconds for memory recall LLM calls.",
+        description="Timeout in seconds for the FEATURE_LOW substantive classifier.",
     )
     candidate_limit: int = Field(
         default=8,
         gt=0,
-        description="Maximum candidate memories to pass to the recall selector.",
-    )
-    selected_limit: int = Field(
-        default=3,
-        gt=0,
-        description="Maximum memories to surface from daemon-owned recall.",
+        description="Maximum ranked candidates returned by the single hybrid search.",
     )
     min_score: float = Field(
         default=0.0,
@@ -203,22 +198,9 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         description=(
             "Minimum decayed semantic similarity for recall candidates. Applies only "
             "to hits carrying a numeric similarity; keyword/RRF-ranked hits pass "
-            "through to the LLM selector, which is the quality gate. Default 0.0 "
-            "keeps the full score distribution flowing for adaptive tuning (#17099)."
+            "through in direct hybrid-search order. Default 0.0 keeps the full score "
+            "distribution flowing for adaptive tuning (#17099)."
         ),
-    )
-    query_synthesis_threshold: int = Field(
-        default=8_000,
-        gt=0,
-        description=(
-            "Prompt length in characters above which memory recall synthesizes a compact "
-            "search query before candidate retrieval."
-        ),
-    )
-    query_max_chars: int = Field(
-        default=1_200,
-        gt=0,
-        description="Maximum characters in a synthesized or fallback memory recall query.",
     )
 
 

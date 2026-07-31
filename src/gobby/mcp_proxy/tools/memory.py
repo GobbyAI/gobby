@@ -839,7 +839,12 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    register_memory_recall_tool(registry, memory_manager)
+    register_memory_recall_tool(
+        registry,
+        memory_manager,
+        llm_service=llm_service,
+        config=config.memory_recall if config is not None else None,
+    )
     register_memory_dream_tools(
         registry,
         coordinator_resolver=dream_coordinator_resolver or (lambda: None),

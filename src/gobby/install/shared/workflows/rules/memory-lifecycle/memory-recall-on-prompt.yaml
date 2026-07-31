@@ -2,12 +2,26 @@ tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
   memory-recall-on-prompt:
-    description: "Neutralized legacy raw memory recall rule; daemon-owned recall handles turn_start"
+    description: "Recall project memories inline for substantive parent-user prompts"
     event: turn_start
     enabled: true
     priority: 10
-    when: "false"
+    when: >
+      not variables.get('is_spawned_agent')
+      and variables.get('parent_turn_seq') is not none
+      and variables.get('memory_recall_attempted_turn_seq')
+          != variables.get('parent_turn_seq')
     effects:
       - type: set_variable
-        variable: legacy_memory_recall_rule_disabled
-        value: true
+        variable: memory_recall_attempted_turn_seq
+        value: "{{ variables.get('parent_turn_seq') }}"
+      - type: mcp_call
+        server: gobby-memory
+        tool: recall_memories_for_prompt
+        arguments:
+          prompt: "{{ event.data.get('prompt') or '' }}"
+          source: "{{ event.source.value }}"
+          parent_turn_seq: "{{ variables.get('parent_turn_seq') }}"
+          is_spawned_agent: false
+        background: false
+        inject_result: true

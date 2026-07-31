@@ -1,28 +1,95 @@
-"""Mandatory batch retrieval for daemon-selected memory recalls."""
+"""Inline memory recall and deterministic overflow retrieval tools."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
+from gobby.config.sessions import MemoryRecallConfig
+from gobby.hooks.events import HookEvent, HookEventType, parse_session_source
 from gobby.hooks.memory_recall_delivery import MemoryRecallDeliveryQueue
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.memory.manager import MemoryManager
+from gobby.memory.recall import MemoryRecallRunner
+from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
+
+if TYPE_CHECKING:
+    from gobby.memory.manager import MemoryManager
+
+MAX_DIRECT_MCP_SERIALIZED_CHARS = 11_900
 
 
 def register_memory_recall_tool(
     registry: InternalToolRegistry,
     memory_manager: MemoryManager,
+    *,
+    llm_service: Any | None = None,
+    config: MemoryRecallConfig | None = None,
 ) -> None:
-    """Register the session-scoped batch recall retrieval tool."""
+    """Register inline recall and overflow-only retrieval."""
+    recall_config = config or MemoryRecallConfig()
     queue = MemoryRecallDeliveryQueue(memory_manager.db)
+    runner = MemoryRecallRunner(
+        db=memory_manager.db,
+        memory_manager=memory_manager,
+        llm_service=llm_service,
+        config=recall_config,
+    )
+
+    @registry.tool(
+        name="recall_memories_for_prompt",
+        description=(
+            "Classify one parent-user prompt and return up to three direct hybrid-search "
+            "memory results for inline hook delivery."
+        ),
+    )
+    async def recall_memories_for_prompt(
+        prompt: str,
+        source: str,
+        parent_turn_seq: int | str,
+        is_spawned_agent: bool = False,
+    ) -> dict[str, Any]:
+        session_id = get_current_session_id()
+        if not session_id:
+            return {"success": False, "error": "No ambient Gobby session is available."}
+        try:
+            normalized_parent_turn_seq = int(parent_turn_seq)
+        except ValueError:
+            return {"success": False, "error": "parent_turn_seq must be an integer."}
+
+        project_context = get_project_context() or {}
+        project_id = project_context.get("id")
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=session_id,
+            source=parse_session_source(source),
+            timestamp=datetime.now(UTC),
+            data={"prompt": prompt},
+            project_id=project_id if isinstance(project_id, str) else None,
+            metadata={"_platform_session_id": session_id},
+        )
+        variables = {
+            "parent_turn_seq": normalized_parent_turn_seq,
+            "is_spawned_agent": is_spawned_agent,
+        }
+        result = await runner.run(event, session_id, variables)
+        if result is None:
+            return {"success": True, "skipped": True, "memories": []}
+        return {
+            "success": True,
+            "recall_request_id": result.recall_request_id,
+            "origin_turn_seq": result.origin_turn_seq,
+            "project_id": event.project_id,
+            "memories": result.memories,
+        }
 
     @registry.tool(
         name="get_recall_memories",
         description=(
-            "Retrieve every memory selected for one pending recall request in rank order. "
-            "Uses the ambient Gobby session and completes the recall gate only after success."
+            "Retrieve the next deterministic chunk for the oldest pending memory recall "
+            "overflow. Completion and the injected-ID ledger update occur on the final chunk."
         ),
     )
     def get_recall_memories(recall_request_id: str) -> dict[str, Any]:
@@ -33,100 +100,127 @@ def register_memory_recall_tool(
                 "recall_request_id": recall_request_id,
                 "error": "No ambient Gobby session is available.",
             }
-
         try:
             delivery = queue.get(session_id, recall_request_id)
+            pending = queue.pending(session_id)
         except Exception as exc:
-            return {
-                "success": False,
-                "recall_request_id": recall_request_id,
-                "error": f"Memory retrieval failed: {exc}",
-            }
+            return _retrieval_error(recall_request_id, f"Memory retrieval failed: {exc}")
         if delivery is None:
+            return _retrieval_error(
+                recall_request_id,
+                "Recall request was not found for the current session.",
+            )
+        if delivery.get("status") != "pending":
+            return _retrieval_error(recall_request_id, "Recall request is already complete.")
+        if not pending or pending[0].get("recall_request_id") != recall_request_id:
+            expected = pending[0].get("recall_request_id") if pending else None
             return {
-                "success": False,
-                "recall_request_id": recall_request_id,
-                "error": "Recall request was not found for the current session.",
+                **_retrieval_error(
+                    recall_request_id,
+                    "Recall requests must be retrieved oldest-first.",
+                ),
+                "expected_recall_request_id": expected,
             }
-
-        if delivery.get("status") == "pending":
-            try:
-                pending = queue.pending(session_id)
-            except Exception as exc:
-                return {
-                    "success": False,
-                    "recall_request_id": recall_request_id,
-                    "error": f"Memory retrieval failed: {exc}",
-                }
-            if not pending or pending[0].get("recall_request_id") != recall_request_id:
-                expected = pending[0].get("recall_request_id") if pending else None
-                return {
-                    "success": False,
-                    "recall_request_id": recall_request_id,
-                    "expected_recall_request_id": expected,
-                    "error": "Recall requests must be retrieved oldest-first.",
-                }
 
         try:
-            memories, missing_memory_ids = _retrieve_memories(memory_manager, delivery)
-        except Exception as exc:
-            return {
-                "success": False,
-                "recall_request_id": recall_request_id,
-                "error": f"Memory retrieval failed: {exc}",
-            }
-
-        if delivery.get("status") == "pending" and not queue.complete(
+            payload, next_cursor = _next_chunk(delivery)
+        except (TypeError, ValueError) as exc:
+            return _retrieval_error(recall_request_id, f"Memory retrieval failed: {exc}")
+        if not queue.advance(
             session_id,
             delivery,
-            delivered_memory_ids=[memory["id"] for memory in memories],
+            next_cursor=next_cursor,
+            final_chunk=payload["final_chunk"],
         ):
-            return {
-                "success": False,
-                "recall_request_id": recall_request_id,
-                "error": "Recall request changed before it could be completed; retry the call.",
-            }
-
-        return {
-            "success": True,
-            "recall_request_id": recall_request_id,
-            "origin_turn_seq": delivery["origin_turn_seq"],
-            "memories": memories,
-            "missing_memory_ids": missing_memory_ids,
-            "total_content_chars": sum(len(memory["content"]) for memory in memories),
-        }
+            return _retrieval_error(
+                recall_request_id,
+                "Recall request changed before the chunk was committed; retry the call.",
+            )
+        return payload
 
 
-def _retrieve_memories(
-    memory_manager: MemoryManager,
+def _next_chunk(
     delivery: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    references = delivery.get("references")
-    if not isinstance(references, list):
-        return [], []
+    *,
+    max_serialized_chars: int = MAX_DIRECT_MCP_SERIALIZED_CHARS,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    memories = delivery.get("memories")
+    cursor = delivery.get("cursor")
+    if not isinstance(memories, list) or not isinstance(cursor, Mapping):
+        raise TypeError("invalid queued delivery")
+    memory_index = cursor.get("memory_index")
+    content_offset = cursor.get("content_offset")
+    chunk_index = cursor.get("chunk_index")
+    if not all(isinstance(value, int) and value >= 0 for value in cursor.values()):
+        raise TypeError("invalid queued cursor")
+    if not isinstance(memory_index, int) or memory_index >= len(memories):
+        raise ValueError("queued cursor is past the final memory")
+    if not isinstance(content_offset, int) or not isinstance(chunk_index, int):
+        raise TypeError("invalid queued cursor")
 
-    project_id = delivery.get("project_id")
-    memories: list[dict[str, Any]] = []
-    missing_memory_ids: list[str] = []
-    for reference in references:
-        if not isinstance(reference, Mapping):
-            continue
-        memory_id = reference.get("memory_id")
-        if not isinstance(memory_id, str) or not memory_id:
-            continue
-        memory = memory_manager.get_memory(memory_id, project_id=project_id)
-        if memory is None:
-            missing_memory_ids.append(memory_id)
-            continue
+    memory = memories[memory_index]
+    if not isinstance(memory, Mapping):
+        raise TypeError("invalid queued memory")
+    memory_id = memory.get("id")
+    content = memory.get("content")
+    memory_type = memory.get("memory_type")
+    if not isinstance(memory_id, str) or not isinstance(content, str):
+        raise TypeError("invalid queued memory body")
+    if content_offset > len(content):
+        raise ValueError("queued content offset is out of range")
+
+    def build(segment_end: int) -> tuple[dict[str, Any], dict[str, int]]:
+        memory_complete = segment_end == len(content)
+        next_memory_index = memory_index + 1 if memory_complete else memory_index
+        next_content_offset = 0 if memory_complete else segment_end
+        final_chunk = memory_complete and next_memory_index == len(memories)
         payload = {
-            "rank": reference.get("rank"),
-            "id": memory_id,
-            "content": memory.content,
-            "type": memory.memory_type,
-            "tags": memory.tags,
+            "success": True,
+            "recall_request_id": delivery["recall_request_id"],
+            "chunk_index": chunk_index,
+            "final_chunk": final_chunk,
+            "memories": [
+                {
+                    "id": memory_id,
+                    "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+                    "content": content[content_offset:segment_end],
+                    "content_offset": content_offset,
+                    "memory_complete": memory_complete,
+                }
+            ],
         }
-        payload.update(
-            {key: value for key, value in reference.items() if key not in {"memory_id", "rank"}}
-        )
-        memories.append(payload)
-    return memories, missing_memory_ids
+        next_cursor = {
+            "memory_index": next_memory_index,
+            "content_offset": next_content_offset,
+            "chunk_index": chunk_index + 1,
+        }
+        return payload, next_cursor
+
+    low = content_offset
+    high = len(content)
+    best: tuple[dict[str, Any], dict[str, int]] | None = None
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = build(middle)
+        if _serialized_chars(candidate[0]) < max_serialized_chars:
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    if best is None or (
+        best[1]["memory_index"] == memory_index and best[1]["content_offset"] == content_offset
+    ):
+        raise ValueError("chunk metadata leaves no room for memory content")
+    return best
+
+
+def _serialized_chars(payload: Mapping[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _retrieval_error(recall_request_id: str, error: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "recall_request_id": recall_request_id,
+        "error": error,
+    }

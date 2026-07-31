@@ -1,4 +1,4 @@
-"""Durable queue state for self-directed memory recall retrieval."""
+"""Durable overflow queue for inline memory recall delivery."""
 
 from __future__ import annotations
 
@@ -17,18 +17,10 @@ MEMORY_RECALL_DELIVERIES_VARIABLE = "memory_recall_deliveries"
 MAX_MEMORY_RECALL_DELIVERIES = 16
 _PENDING = "pending"
 _COMPLETE = "complete"
-_REFERENCE_METADATA_FIELDS = (
-    "similarity",
-    "search_via",
-    "ranking_score",
-    "raw_semantic_score",
-    "temporal_decay_factor",
-    "ranking_mode",
-)
 
 
 class MemoryRecallDeliveryQueue:
-    """Persist and complete ranked memory recall requests for one session."""
+    """Persist only memory bodies that overflow a hook-context budget."""
 
     def __init__(self, database: HubDatabase) -> None:
         self._database = database
@@ -43,16 +35,21 @@ class MemoryRecallDeliveryQueue:
         project_id: str | None,
         memories: Sequence[Mapping[str, Any]],
     ) -> bool:
-        """Upsert a pending delivery for a parent turn."""
-        references = _memory_references(memories)
-        if not references:
+        """Upsert one pending overflow delivery for a parent turn."""
+        bodies = _memory_bodies(memories)
+        if not bodies:
             return False
         delivery = {
             "recall_request_id": recall_request_id,
             "origin_turn_seq": origin_turn_seq,
             "project_id": project_id,
             "status": _PENDING,
-            "references": references,
+            "memories": bodies,
+            "cursor": {
+                "memory_index": 0,
+                "content_offset": 0,
+                "chunk_index": 0,
+            },
         }
         self._variables.upsert_bounded_list_variable(
             session_id,
@@ -64,39 +61,40 @@ class MemoryRecallDeliveryQueue:
         return True
 
     def pending(self, session_id: str) -> list[dict[str, Any]]:
-        """Return valid pending deliveries in persisted order."""
-        stored = self._stored(session_id)
+        """Return valid pending deliveries oldest-first."""
         return [
             dict(delivery)
-            for delivery in stored
+            for delivery in self._stored(session_id)
             if isinstance(delivery, Mapping)
             and delivery.get("status") == _PENDING
-            and _valid_delivery_identity(delivery)
-            and _delivery_memory_ids(delivery)
+            and _valid_delivery(delivery)
         ]
 
     def get(self, session_id: str, recall_request_id: str) -> dict[str, Any] | None:
-        """Return a valid pending or completed delivery for this session."""
+        """Return one valid delivery owned by the current session."""
         for delivery in self._stored(session_id):
             if (
                 isinstance(delivery, Mapping)
                 and delivery.get("recall_request_id") == recall_request_id
                 and delivery.get("status") in {_PENDING, _COMPLETE}
-                and _valid_delivery_identity(delivery)
-                and _delivery_memory_ids(delivery)
+                and _valid_delivery(delivery)
             ):
                 return dict(delivery)
         return None
 
-    def complete(
+    def advance(
         self,
         session_id: str,
         delivery: Mapping[str, Any],
         *,
-        delivered_memory_ids: Sequence[str],
+        next_cursor: Mapping[str, int],
+        final_chunk: bool,
     ) -> bool:
-        """Atomically complete one unchanged delivery and track returned memory IDs."""
-        if not _valid_delivery_identity(delivery):
+        """Advance one unchanged cursor and complete only after its final chunk."""
+        if not _valid_delivery(delivery):
+            return False
+        expected_cursor = _cursor(delivery)
+        if expected_cursor is None or not _valid_cursor(next_cursor):
             return False
 
         now = datetime.now(UTC).isoformat()
@@ -114,51 +112,40 @@ class MemoryRecallDeliveryQueue:
             if not isinstance(stored, list):
                 return False
 
-            expected_request_id = delivery["recall_request_id"]
-            expected_origin_turn_seq = delivery["origin_turn_seq"]
-            allowed_memory_ids = set(_delivery_memory_ids(delivery))
-            returned_memory_ids = {
-                memory_id
-                for memory_id in delivered_memory_ids
-                if isinstance(memory_id, str) and memory_id in allowed_memory_ids
-            }
             matched = False
-            changed = False
             updated: list[Any] = []
             for stored_delivery in stored:
                 if not isinstance(stored_delivery, Mapping):
                     updated.append(stored_delivery)
                     continue
-                if (
-                    stored_delivery.get("origin_turn_seq") != expected_origin_turn_seq
-                    or stored_delivery.get("recall_request_id") != expected_request_id
-                ):
+                if not _same_delivery(stored_delivery, delivery):
                     updated.append(dict(stored_delivery))
                     continue
                 matched = True
-                if stored_delivery.get("status") == _COMPLETE:
-                    updated.append(dict(stored_delivery))
-                    continue
                 if stored_delivery.get("status") != _PENDING:
                     return False
-                completed = dict(stored_delivery)
-                completed["status"] = _COMPLETE
-                completed["completed_at"] = now
-                updated.append(completed)
-                changed = True
+                if _cursor(stored_delivery) != expected_cursor:
+                    return False
+                changed = dict(stored_delivery)
+                changed["cursor"] = dict(next_cursor)
+                if final_chunk:
+                    changed["status"] = _COMPLETE
+                    changed["completed_at"] = now
+                updated.append(changed)
 
             if not matched:
                 return False
-            if not changed:
-                return True
             variables[MEMORY_RECALL_DELIVERIES_VARIABLE] = updated
-            injected = variables.get("injected_memory_ids", [])
-            existing_ids = (
-                {value for value in injected if isinstance(value, str) and value}
-                if isinstance(injected, list)
-                else set()
-            )
-            variables["injected_memory_ids"] = sorted(existing_ids | returned_memory_ids)
+            if final_chunk:
+                existing = variables.get("injected_memory_ids", [])
+                existing_ids = (
+                    {value for value in existing if isinstance(value, str) and value}
+                    if isinstance(existing, list)
+                    else set()
+                )
+                variables["injected_memory_ids"] = sorted(
+                    existing_ids | set(_delivery_memory_ids(delivery))
+                )
             conn.execute(
                 "UPDATE session_variables SET variables = %s, updated_at = %s "
                 "WHERE session_id = %s",
@@ -174,42 +161,74 @@ class MemoryRecallDeliveryQueue:
         return stored if isinstance(stored, list) else []
 
 
-def _memory_references(memories: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    references: list[dict[str, Any]] = []
+def _memory_bodies(memories: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    bodies: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for memory in memories:
         memory_id = memory.get("id")
-        if not isinstance(memory_id, str) or not memory_id:
+        content = memory.get("content")
+        if (
+            not isinstance(memory_id, str)
+            or not memory_id
+            or memory_id in seen
+            or not isinstance(content, str)
+        ):
             continue
-        reference: dict[str, Any] = {
-            "memory_id": memory_id,
-            "rank": len(references) + 1,
-        }
-        for field in _REFERENCE_METADATA_FIELDS:
-            if field in memory and memory[field] is not None:
-                reference[field] = memory[field]
-        references.append(reference)
-    return references
+        seen.add(memory_id)
+        memory_type = memory.get("memory_type")
+        bodies.append(
+            {
+                "id": memory_id,
+                "content": content,
+                "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+            }
+        )
+    return bodies
 
 
-def _valid_delivery_identity(delivery: Mapping[str, Any]) -> bool:
-    request_id = delivery.get("recall_request_id")
-    origin_turn_seq = delivery.get("origin_turn_seq")
+def _valid_delivery(delivery: Mapping[str, Any]) -> bool:
     return (
-        isinstance(request_id, str)
-        and bool(request_id)
-        and isinstance(origin_turn_seq, int)
-        and not isinstance(origin_turn_seq, bool)
+        isinstance(delivery.get("recall_request_id"), str)
+        and bool(delivery.get("recall_request_id"))
+        and isinstance(delivery.get("origin_turn_seq"), int)
+        and bool(_delivery_memory_ids(delivery))
+        and _cursor(delivery) is not None
+    )
+
+
+def _same_delivery(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return left.get("recall_request_id") == right.get("recall_request_id") and left.get(
+        "origin_turn_seq"
+    ) == right.get("origin_turn_seq")
+
+
+def _cursor(delivery: Mapping[str, Any]) -> dict[str, int] | None:
+    value = delivery.get("cursor")
+    if not isinstance(value, Mapping) or not _valid_cursor(value):
+        return None
+    return {
+        "memory_index": value["memory_index"],
+        "content_offset": value["content_offset"],
+        "chunk_index": value["chunk_index"],
+    }
+
+
+def _valid_cursor(value: Mapping[str, Any]) -> bool:
+    return all(
+        isinstance(value.get(key), int) and value[key] >= 0
+        for key in ("memory_index", "content_offset", "chunk_index")
     )
 
 
 def _delivery_memory_ids(delivery: Mapping[str, Any]) -> list[str]:
-    references = delivery.get("references")
-    if not isinstance(references, list):
+    memories = delivery.get("memories")
+    if not isinstance(memories, list):
         return []
     return [
-        memory_id
-        for reference in references
-        if isinstance(reference, Mapping)
-        and isinstance((memory_id := reference.get("memory_id")), str)
-        and bool(memory_id)
+        memory["id"]
+        for memory in memories
+        if isinstance(memory, Mapping)
+        and isinstance(memory.get("id"), str)
+        and memory.get("id")
+        and isinstance(memory.get("content"), str)
     ]
