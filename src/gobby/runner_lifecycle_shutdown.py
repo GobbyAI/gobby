@@ -705,7 +705,10 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
+    from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
+
     await _settle_terminal_delivery_barrier()
+    await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(

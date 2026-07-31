@@ -174,8 +174,8 @@ class MetricsEventStore:
         since: datetime | None = None,
         session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Get aggregate rule evaluation stats."""
-        conditions = ["event_type = 'rule_eval'"]
+        """Get aggregate historical rule blocks; allow data is process telemetry."""
+        conditions = ["event_type = 'rule_eval'", "result = 'block'"]
         params: list[Any] = []
 
         if since:
@@ -190,14 +190,12 @@ class MetricsEventStore:
             f"""
             SELECT
                 name AS rule_name,
-                COUNT(*) AS eval_count,
-                SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) AS block_count,
-                SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END) AS allow_count,
+                COUNT(*) AS block_count,
                 AVG(latency_ms) AS avg_latency_ms
             FROM metrics_events
             WHERE {where}
             GROUP BY name
-            ORDER BY eval_count DESC
+            ORDER BY block_count DESC
             """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
@@ -308,6 +306,8 @@ class MetricsEventStore:
 
         conditions = ["event_type = %s"]
         params: list[Any] = [event_type]
+        if event_type == "rule_eval":
+            conditions.append("result = 'block'")
 
         if delta:
             since = utc_now() - delta
@@ -333,6 +333,9 @@ class MetricsEventStore:
             tuple(params),
         )
         buckets = self._bucket_timeseries_rows(rows, bucket_label)
+        if event_type == "rule_eval":
+            for bucket in buckets:
+                bucket.pop("allow_count", None)
 
         result: dict[str, Any] = {
             "range": range_key,
@@ -407,6 +410,20 @@ class MetricsEventStore:
             params.append(name)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        if event_type == "rule_eval":
+            block_where = f"{where} AND block_count > 0"
+            rows = self.db.fetchall(
+                f"""
+                SELECT
+                    event_type, project_id, server_name, name, block_count
+                FROM metrics_events_archive
+                {block_where}
+                ORDER BY block_count DESC
+                """,  # nosec # where contains only fixed predicates; values are bound.
+                tuple(params),
+            )
+            return [dict(row) for row in rows]
 
         rows = self.db.fetchall(
             f"""

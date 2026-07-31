@@ -2,6 +2,7 @@
 
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -151,7 +152,10 @@ class TestSessionManagerLifecycle:
         assert all(transition.session_id == session.id for transition in transitions)
         assert all(transition.project_id == sample_project["id"] for transition in transitions)
         assert all(transition.source == "claude" for transition in transitions)
-        assert all(transition.transitioned_at.utcoffset().total_seconds() == 0 for transition in transitions)
+        assert all(
+            transition.transitioned_at.utcoffset().total_seconds() == 0
+            for transition in transitions
+        )
 
     def test_same_status_updates_do_not_emit_semantic_transitions(
         self,
@@ -321,6 +325,36 @@ class TestSessionManagerLifecycle:
         assert persisted is not None
         assert persisted.status == "deleted"
         assert events == []
+
+    def test_activity_status_respects_terminal_revival_horizon(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="old-terminal-activity",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session.id,),
+        )
+
+        updated = session_manager.update_status_from_activity(session.id, "active")
+
+        assert updated is not None
+        assert updated.status == "expired"
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] is True
 
     @pytest.mark.parametrize("invalid_status", ["expired", "completed"])
     def test_activity_status_rejects_non_activity_targets(
@@ -562,6 +596,37 @@ class TestSessionManagerLifecycle:
         assert row["transcript_processed"] is False
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
+
+    def test_revive_expired_terminal_session_respects_revival_horizon(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="past-revival-horizon",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+        expired_at = datetime.now(UTC) - timedelta(hours=25)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (expired_at, session.id),
+        )
+
+        revived = session_manager.revive_expired_terminal_session(session.id)
+
+        assert revived is not None
+        assert revived.status == "expired"
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] is True
 
     def test_revive_superseded_terminal_session_keeps_newest_owner_active(
         self,

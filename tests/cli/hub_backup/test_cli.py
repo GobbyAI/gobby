@@ -46,6 +46,7 @@ from gobby.cli.hub_backup._verify import RoleExpectation
 from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
@@ -473,6 +474,34 @@ class TestManifest:
         assert manifest.source_identity.pg_system_identifier == SYSTEM_IDENTIFIER
         assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes"}
         assert len(manifest.artifacts) == 4 + len(HUB_VOLUMES)
+
+    def test_manifest_includes_allow_audit_logs_with_checksums(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        logs_dir = harness.gobby_home / "logs"
+        logs_dir.mkdir(parents=True)
+        runtime.config.logging.dir = str(logs_dir)
+        source_lines = {
+            RULE_ALLOW_AUDIT_LOG_FILENAME: b'{"result":"allow"}\n',
+            f"{RULE_ALLOW_AUDIT_LOG_FILENAME}.1": b'{"result":"allow","rotated":true}\n',
+        }
+        for filename, content in source_lines.items():
+            (logs_dir / filename).write_bytes(content)
+
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+        records = {
+            artifact.path: artifact
+            for artifact in manifest.artifacts
+            if artifact.path.startswith("logs/")
+        }
+        assert set(records) == {f"logs/{filename}" for filename in source_lines}
+        for filename, content in source_lines.items():
+            record = records[f"logs/{filename}"]
+            assert record.sha256 == hashlib.sha256(content).hexdigest()
+            assert (backup_root / record.path).read_bytes() == content
 
     def test_every_store_records_archive_and_restore_verification(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path

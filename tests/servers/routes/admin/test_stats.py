@@ -52,7 +52,7 @@ def test_stats_no_filters(test_app):
                 return [{"name": "test_tool", "cnt": 5}]
         if "FROM metrics_events" in query and "event_type = 'rule_eval'" in query:
             if "GROUP BY name" in query:
-                return [{"name": "rule1", "cnt": 2, "blocks": 0}]
+                return [{"name": "rule1", "blocks": 2}]
         if (
             "FROM metrics_events" in query
             and "event_type IN ('skill_search', 'skill_invoke')" in query
@@ -69,7 +69,7 @@ def test_stats_no_filters(test_app):
         if "FROM metrics_events" in query and "event_type = 'tool_call'" in query:
             return {"cnt": 5}
         if "FROM metrics_events" in query and "event_type = 'rule_eval'" in query:
-            return {"cnt": 2, "blocks": 0}
+            return {"blocks": 2}
         if (
             "FROM metrics_events" in query
             and "event_type IN ('skill_search', 'skill_invoke')" in query
@@ -91,6 +91,17 @@ def test_stats_no_filters(test_app):
     assert data["sessions"]["by_source"]["cli"]["active"] == 1
     assert data["memory"]["by_type"]["fact"] == 4
     assert data["metrics"]["tools"]["total_calls"] == 5
+    assert data["metrics"]["rules"] == {
+        "block_count": 2,
+        "top_5": [{"name": "rule1", "blocks": 2}],
+    }
+    rule_queries = [
+        call.args[0]
+        for call in (*db.fetchall.call_args_list, *db.fetchone.call_args_list)
+        if "event_type = 'rule_eval'" in call.args[0]
+    ]
+    assert rule_queries
+    assert all("result = 'block'" in query for query in rule_queries)
 
 
 def test_stats_with_filters(test_app):

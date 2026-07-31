@@ -35,6 +35,7 @@ from gobby.cli.hub_backup._stores import (
     HUB_VOLUMES,
     POSTGRES_DUMP_RELPATH,
     VOLUME_ARCHIVE_DIR,
+    archive_rule_allow_audit_logs,
     collect_postgres_identity,
     collect_row_count_probes,
     collect_source_roles,
@@ -68,6 +69,7 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
+from gobby.config.logging import resolved_logs_dir
 from gobby.paths import get_gobby_home
 from gobby.storage.maintenance_epoch import (
     MAINTENANCE_EPOCH_ENV,
@@ -158,6 +160,7 @@ def hub_backup(
         manifest = _run_backup(
             backup_root=backup_root,
             gobby_home=gobby_home,
+            logs_dir=resolved_logs_dir(ctx.obj.config.logging),
             database_url=database_url,
             qdrant_url=qdrant_url,
             qdrant_api_key=qdrant_api_key,
@@ -248,6 +251,7 @@ def _run_backup(
     *,
     backup_root: Path,
     gobby_home: Path,
+    logs_dir: Path,
     database_url: str,
     qdrant_url: str | None,
     qdrant_api_key: str | None,
@@ -267,6 +271,7 @@ def _run_backup(
     artifacts.extend(falkordb_artifacts)
     volume_artifacts, volume_details = _archive_volumes(gobby_home, backup_root)
     artifacts.extend(volume_artifacts)
+    artifacts.extend(archive_rule_allow_audit_logs(logs_dir, backup_root))
 
     stores = _verify_stores(
         backup_root=backup_root,

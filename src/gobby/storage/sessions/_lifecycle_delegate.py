@@ -8,6 +8,7 @@ from gobby.sessions.status_events import SessionStatusTransition
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.session_lifecycle import SessionStateCleanupResult
 
 
 class _ManagerState(Protocol):
@@ -48,6 +49,12 @@ class _LifecycleDelegateMixin:
         )
 
         return _prune_compact(self.db, retention_hours)
+
+    def cleanup_expired_session_state(self: _ManagerState) -> SessionStateCleanupResult:
+        """Clear state belonging to sessions past the revival horizon."""
+        from gobby.storage.session_lifecycle import cleanup_expired_session_state
+
+        return cleanup_expired_session_state(self.db)
 
     def pause_inactive_active_sessions(self: _ManagerState, timeout_minutes: int = 30) -> int:
         """Pause active sessions inactive too long. Delegates to session_lifecycle."""

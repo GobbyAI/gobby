@@ -212,7 +212,7 @@ async def _assert_evaluation(
 
 
 @pytest.mark.asyncio
-async def test_rule_evaluation_metrics_are_flushed_once_per_evaluation(
+async def test_allow_rule_evaluations_do_not_write_historical_metrics(
     db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
 ) -> None:
@@ -240,9 +240,37 @@ async def test_rule_evaluation_metrics_are_flushed_once_per_evaluation(
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
     assert response.decision == "allow"
-    record_events.assert_called_once()
-    records = record_events.call_args.args[0]
-    assert {record.name for record in records} == {"metric-rule-one", "metric-rule-two"}
+    record_events.assert_not_called()
+    assert metrics.query_events(event_type="rule_eval") == []
+
+
+@pytest.mark.asyncio
+async def test_block_rule_evaluation_remains_in_historical_metrics(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "blocking-metric-rule",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            effects=[RuleEffect(type="block", reason="blocked")],
+        ),
+    )
+    metrics = MetricsEventStore(db)
+    engine = RuleEngine(db, metrics_event_store=metrics)
+
+    response = await engine.evaluate(
+        _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"}),
+        session_id=SESSION_ID,
+        variables={},
+    )
+
+    assert response.decision == "block"
+    records = metrics.query_events(event_type="rule_eval")
+    assert [(record["name"], record["result"]) for record in records] == [
+        ("blocking-metric-rule", "block")
+    ]
 
 
 class TestRuleEngineLoadRules:

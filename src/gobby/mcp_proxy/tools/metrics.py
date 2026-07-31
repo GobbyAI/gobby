@@ -355,36 +355,33 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_rule_metrics",
-        description="Get rule evaluation stats: which rules fire, block vs allow counts, latency.",
+        description="Get historical rule block counts and block latency.",
     )
     def get_rule_metrics(
         hours: int = 24,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Get aggregate rule evaluation metrics.
+        """Get aggregate historical rule block metrics.
 
         Args:
             hours: Lookback period in hours (default: 24).
             session_id: Optional session ID to filter by.
 
         Returns:
-            Per-rule stats with eval count, block/allow breakdown, latency.
+            Per-rule block counts and latency. Allow outcomes live in process telemetry.
         """
         if event_store is None:
             return {"success": False, "error": "Event store not configured"}
         try:
             since = datetime.now(UTC) - timedelta(hours=hours)
             stats = event_store.get_rule_stats(since=since, session_id=session_id)
-            total_evals = sum(r["eval_count"] for r in stats)
             total_blocks = sum(r["block_count"] for r in stats)
             return {
                 "success": True,
                 "hours": hours,
                 "rules": stats,
                 "summary": {
-                    "total_evals": total_evals,
                     "total_blocks": total_blocks,
-                    "total_allows": total_evals - total_blocks,
                     "unique_rules": len(stats),
                 },
             }

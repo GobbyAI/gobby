@@ -51,6 +51,7 @@ SYSTEM_SESSION_EXTERNAL_ID = "system"
 SYSTEM_SESSION_MACHINE_ID = "system"
 SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
+SESSION_REVIVAL_HORIZON_HOURS = 24
 
 
 def ensure_system_session(db: HubDatabase) -> None:
