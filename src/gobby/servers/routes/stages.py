@@ -75,9 +75,6 @@ class SetTaskTypeDefaultsRequest(BaseModel):
     stages: list[TaskTypeDefaultStageView]
 
 
-router = APIRouter(tags=["stages"])
-
-
 def create_stages_router(server: HTTPServer) -> APIRouter:
     """Create stage registry routes bound to the server's task manager."""
     stage_router = APIRouter(tags=["stages"])

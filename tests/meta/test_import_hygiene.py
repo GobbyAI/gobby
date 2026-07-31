@@ -18,6 +18,22 @@ HOOKS_DIR = SRC_GOBBY_DIR / "hooks"
 TESTS_DIR = REPO_ROOT / "tests"
 SESSIONS_DIR = REPO_ROOT / "src" / "gobby" / "storage" / "sessions"
 STORAGE_TASKS_DIR = REPO_ROOT / "src" / "gobby" / "storage" / "tasks"
+DEAD_PYTHON_PATHS = (
+    "src/gobby/cli/pipelines_runtime.py",
+    "src/gobby/code_index/prune_storage.py",
+    "src/gobby/plans/convergence_regression.py",
+    "src/gobby/postgres_pgsearch_assets.py",
+    "src/gobby/servers/routes/stage_routes.py",
+    "src/gobby/skills/injector.py",
+    "src/gobby/utils/mathutil2.py",
+    "src/gobby/workflows/summary_actions.py",
+    "src/gobby/workflows/task_actions.py",
+    "tests/plans/test_convergence_regression.py",
+    "tests/skills/test_injector.py",
+    "tests/utils/test_mathutil2.py",
+    "tests/workflows/test_summary_actions.py",
+    "tests/workflows/test_task_actions.py",
+)
 
 
 def _iter_python_files(*roots: Path) -> list[Path]:
@@ -74,6 +90,12 @@ def test_no_file_references_old_session_manager_names() -> None:
     offenders = {token: hits for token, hits in offenders.items() if hits}
 
     assert not offenders, f"Found deprecated session-manager names in: {offenders}"
+
+
+def test_dead_python_files_stay_absent() -> None:
+    existing = [path for path in DEAD_PYTHON_PATHS if (REPO_ROOT / path).exists()]
+
+    assert not existing, f"Dead Python files were restored: {existing}"
 
 
 def test_no_session_storage_attribute_in_hooks() -> None:

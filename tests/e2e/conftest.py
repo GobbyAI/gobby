@@ -1352,7 +1352,9 @@ def _snapshot_dir(path: Path) -> dict[str, float]:
         for filename in files:
             file_path = root_path / filename
             try:
-                snapshot[str(file_path.relative_to(path))] = file_path.stat().st_mtime
+                snapshot[str(file_path.relative_to(path))] = file_path.stat(
+                    follow_symlinks=False
+                ).st_mtime
             except FileNotFoundError:
                 continue
     return snapshot
@@ -1404,7 +1406,9 @@ def _is_worktree_tool_artifact(rel_path: str) -> bool:
     """Return true for tool caches created inside a concurrent task worktree."""
     return rel_path.startswith("worktrees/") and (
         "/__pycache__/" in rel_path
+        or "/.mypy_cache/" in rel_path
         or "/.ruff_cache/" in rel_path
+        or "/target/" in rel_path
         or rel_path.endswith((".pyc", ".pyo"))
     )
 

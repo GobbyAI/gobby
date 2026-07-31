@@ -45,7 +45,6 @@ src/gobby/
 ├── app_context.py                      # Application context (shared state)
 ├── paths.py                            # Path resolution utilities
 ├── gwiki_gateway.py                    # gwiki CLI gateway
-├── postgres_pgsearch_assets.py         # pg_search asset management
 ├── shutdown_intent.py                  # Shutdown intent tracking
 └── system_automation.py                # System automation loops
 ```
