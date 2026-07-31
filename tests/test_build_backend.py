@@ -154,7 +154,6 @@ def test_stage_ui_builds_in_cleaned_isolated_copy(
     generated_directories = (
         "node_modules",
         "dist",
-        "dist-setup",
         "coverage",
         "playwright-report",
         "test-results",

@@ -52,6 +52,21 @@ def _configured_install_state() -> InstallState:
     )
 
 
+def _record_qdrant_success(
+    _installer: object,
+    results: dict[str, dict[str, Any]],
+) -> None:
+    results["qdrant"] = {"success": True}
+
+
+def _record_falkordb_success(
+    _installer: object,
+    _password: str | None,
+    results: dict[str, dict[str, Any]],
+) -> None:
+    results["falkordb"] = {"success": True}
+
+
 # ---------------------------------------------------------------------------
 # _echo_install_details / _echo_uninstall_details
 # ---------------------------------------------------------------------------
@@ -154,7 +169,9 @@ class TestInstallCommand:
         ):
             yield
 
-    def test_install_config_only_skips_hooks_and_services(self, runner: CliRunner) -> None:
+    def test_install_config_only_skips_hooks_and_provisions_services(
+        self, runner: CliRunner
+    ) -> None:
         with (
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -173,17 +190,25 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_git_hooks") as mock_git_hooks,
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_voice_install") as mock_voice,
-            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=_record_qdrant_success,
+            ) as mock_qdrant,
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=_record_falkordb_success,
+            ) as mock_falkordb,
             patch("gobby.cli.install._maybe_start_daemon_after_install") as mock_start,
         ):
             result = runner.invoke(install, ["--config-only"], catch_exceptions=False)
 
         assert result.exit_code == 0
-        assert "Configuration and database initialization complete." in result.output
+        assert "Configuration and required infrastructure complete." in result.output
         mock_setup.assert_called_once_with(Path.cwd(), configure_ide_settings=False)
         mock_should_init.assert_not_called()
         mock_ide_consent.assert_not_called()
+        mock_qdrant.assert_called_once()
+        mock_falkordb.assert_called_once()
         for skipped in (
             mock_agy,
             mock_claude,
@@ -194,8 +219,6 @@ class TestInstallCommand:
             mock_git_hooks,
             mock_embedding,
             mock_voice,
-            mock_qdrant,
-            mock_falkordb,
             mock_start,
         ):
             skipped.assert_not_called()
@@ -274,11 +297,33 @@ class TestInstallCommand:
                 "tracked_files": [],
             },
         }
-        result = runner.invoke(install, ["--hooks"], catch_exceptions=False)
+        with (
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=Path("/fake/personal/.gobby/project.json"),
+            ) as personal_identity,
+            patch("gobby.cli.install._should_initialize_project") as initialize_project,
+            patch("gobby.cli.install._install_required_stack") as required_stack,
+            patch("gobby.cli.install.load_full_config_from_db") as load_config,
+            patch("gobby.cli.install._run_voice_install") as voice_install,
+            patch("gobby.cli.install._echo_install_summary") as full_summary,
+        ):
+            result = runner.invoke(install, ["--hooks"], catch_exceptions=False)
+
         assert result.exit_code == 0
         assert "pre-commit" in result.output
         assert "Wiki branch setup:" in result.output
         assert "/fake/repo-wiki" in result.output
+        assert "Git hook maintenance complete." in result.output
+        mock_install.assert_called_once()
+        personal_identity.assert_called_once_with()
+        initialize_project.assert_not_called()
+        required_stack.assert_not_called()
+        load_config.assert_not_called()
+        voice_install.assert_not_called()
+        full_summary.assert_not_called()
+        _config.assert_not_called()
+        _setup.assert_not_called()
 
     def test_install_claude_targeted_skips_embedding_and_services(
         self,
@@ -299,8 +344,14 @@ class TestInstallCommand:
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
-            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=_record_qdrant_success,
+            ) as mock_qdrant,
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=_record_falkordb_success,
+            ) as mock_falkordb,
         ):
             result = runner.invoke(install, ["--claude"], catch_exceptions=False)
 
@@ -345,8 +396,14 @@ class TestInstallCommand:
             patch(
                 "gobby.cli.install._run_embedding_install", return_value="lmstudio"
             ) as mock_embedding,
-            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=_record_qdrant_success,
+            ) as mock_qdrant,
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=_record_falkordb_success,
+            ) as mock_falkordb,
             patch(
                 "gobby.cli.install.apply_managed_service_restart_policy",
                 return_value={"success": True},
@@ -355,7 +412,7 @@ class TestInstallCommand:
             result = runner.invoke(install, install_args, catch_exceptions=False)
 
         assert result.exit_code == 0
-        assert "Gobby Hooks Installation" in result.output
+        assert "Gobby Installation" in result.output
         assert (
             "Components to configure: claude, postgres, qdrant, falkordb, git-hooks"
             in result.output
@@ -444,8 +501,14 @@ class TestInstallCommand:
             patch("gobby.cli.install._run_git_hooks_install"),
             patch("gobby.cli.install._run_embedding_install") as embedding,
             patch("gobby.cli.install._run_voice_install") as voice,
-            patch("gobby.cli.install._run_qdrant_install") as qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as falkordb,
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=_record_qdrant_success,
+            ) as qdrant,
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=_record_falkordb_success,
+            ) as falkordb,
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
             result = runner.invoke(
@@ -496,8 +559,14 @@ class TestInstallCommand:
             patch("gobby.cli.install._run_git_hooks_install"),
             patch("gobby.cli.install._run_embedding_install") as embedding,
             patch("gobby.cli.install._run_voice_install") as voice,
-            patch("gobby.cli.install._run_qdrant_install") as qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as falkordb,
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=_record_qdrant_success,
+            ) as qdrant,
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=_record_falkordb_success,
+            ) as falkordb,
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
             result = runner.invoke(
@@ -541,8 +610,8 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
         ):
             result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
-        assert result.exit_code == 1
-        assert "No supported" in result.output
+        assert result.exit_code == 0
+        assert "No supported AI coding CLIs detected; CLI hooks will be skipped." in result.output
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(

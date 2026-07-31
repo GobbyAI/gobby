@@ -39,19 +39,6 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if planned_shutdown::should_skip_dispatch(hook_type) {
-        return emit_action(continue_action());
-    }
-
-    if statusline::is_statusline_hook(cli, hook_type) {
-        let mut stdin_raw = Vec::with_capacity(4096);
-        if let Err(e) = std::io::stdin().read_to_end(&mut stdin_raw) {
-            eprintln!("ghook statusline: failed to read stdin: {e}");
-            return ExitCode::SUCCESS;
-        }
-        return statusline::handle(&stdin_raw);
-    }
-
     let is_critical = cfg.is_critical_hook(hook_type);
 
     // IMPORTANT: walk up for project context BEFORE any detach.
@@ -59,9 +46,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     // macOS would otherwise surprise us (plan :76).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project_root = gobby_core::project::find_project_root(&cwd);
-    let project_id = project_root
-        .as_ref()
-        .and_then(|r| gobby_core::project::read_project_id(r).ok());
+    let managed_by_environment = has_managed_environment();
 
     // Read stdin before detach too — detach closes the controlling TTY but
     // stdin pipes from the host CLI should still be intact; read now to
@@ -81,13 +66,29 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     let input_data = match parsed {
         Ok(v) => v,
         Err(e) => {
+            if project_root.is_none() && !managed_by_environment {
+                return emit_action(continue_action());
+            }
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
             emit_empty_json();
             return ExitCode::from(cfg.malformed_input_exit_code(hook_type));
         }
     };
 
-    let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
+    let context = managed_context(project_root.as_deref(), &input_data);
+    if !context.managed {
+        return emit_action(continue_action());
+    }
+
+    if planned_shutdown::should_skip_dispatch(hook_type) {
+        return emit_action(continue_action());
+    }
+
+    if statusline::is_statusline_hook(cli, hook_type) {
+        return statusline::handle(&stdin_raw);
+    }
+
+    let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
 
     let direct_post_after_enqueue_failure =
         |failure_detail: String| -> Result<HookAction, ExitCode> {
@@ -239,6 +240,46 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
 fn hooks_disabled_by_env() -> bool {
     std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ManagedContext {
+    managed: bool,
+    project_id: Option<String>,
+}
+
+fn has_managed_environment() -> bool {
+    ["GOBBY_PROJECT_ID", "GOBBY_SESSION_ID", "GOBBY_AGENT_RUN_ID"]
+        .into_iter()
+        .any(|name| env_nonempty(name).is_some())
+}
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn payload_project_id(input_data: &Value) -> Option<String> {
+    input_data
+        .get("project_id")
+        .and_then(Value::as_str)
+        .filter(|project_id| !project_id.is_empty())
+        .map(str::to_owned)
+}
+
+fn managed_context(project_root: Option<&Path>, input_data: &Value) -> ManagedContext {
+    let environment_project_id = env_nonempty("GOBBY_PROJECT_ID");
+    let filesystem_project_id =
+        project_root.and_then(|root| gobby_core::project::read_project_id(root).ok());
+    let payload_project_id = payload_project_id(input_data);
+
+    ManagedContext {
+        managed: project_root.is_some()
+            || has_managed_environment()
+            || payload_project_id.is_some(),
+        project_id: environment_project_id
+            .or(filesystem_project_id)
+            .or(payload_project_id),
+    }
 }
 
 fn build_dispatch_envelope(

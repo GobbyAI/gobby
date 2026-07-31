@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- Remove the dead Ink setup wizard, the `gobby setup` command, and the
+  `@gobby/setup` bundle. Use `gobby install` for first-run setup.
+- Remove the service-only `gobby install --falkordb` option. Default, `--all`,
+  and `--config-only` installs provision PostgreSQL, Qdrant, and FalkorDB as
+  one required stack.
 - Remove the `gobby-artifacts` MCP server and its `show_file` tool. The Web UI
   continues to render plans, FilesTab previews, and generated images through
   their independent UI-owned paths.

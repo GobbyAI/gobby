@@ -37,7 +37,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `hooks` | Manage hook endpoints and configuration. | `src/gobby/cli/extensions.py` |
 | `import` | Import project resources. | `src/gobby/cli/export_import.py` |
 | `init` | Initialize `.gobby/project.json`. | `src/gobby/cli/init.py` |
-| `install` | Install Gobby integrations and hooks. | `src/gobby/cli/install.py` |
+| `install` | Install required infrastructure, configuration, integrations, and hooks. | `src/gobby/cli/install.py` |
 | `linear` | Manage Linear integration. | `src/gobby/cli/linear.py` |
 | `mcp-proxy` | Inspect and call tools through the MCP proxy. | `src/gobby/cli/mcp_proxy.py` |
 | `mcp-server` | Run the stdio MCP server. | `src/gobby/cli/mcp.py` |
@@ -56,7 +56,6 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `secrets` | Manage stored secrets. | `src/gobby/cli/secrets.py` |
 | `service` | Manage service installation/runtime helpers. | `src/gobby/cli/service.py` |
 | `sessions` | Inspect stored sessions and transcripts. | `src/gobby/cli/sessions.py` |
-| `setup` | Run the first-run setup wizard. | `src/gobby/cli/setup.py` |
 | `skills` | Manage installed skills. | `src/gobby/cli/skills.py` |
 | `stages` | Manage the task stage registry. | `src/gobby/cli/stages.py` |
 | `start` | Start the daemon. | `src/gobby/cli/daemon.py` |
@@ -164,7 +163,7 @@ gobby uninstall [OPTIONS]
 | `--qwen` | Install QwenCode integration assets. |
 | `--hooks`, `--git-hooks` | Aliases for one flag: install repository git hooks (verification, JSONL export, code indexing). |
 | `--all` | Install all supported integrations. |
-| `--falkordb` | Install only the FalkorDB graph backend service. |
+| `--config-only` | Configure Gobby and provision required infrastructure without CLI or Git hooks. |
 | `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
@@ -178,12 +177,17 @@ gobby uninstall [OPTIONS]
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
 
-A full install requires a running Docker daemon and always provisions the
-managed PostgreSQL, Qdrant, and FalkorDB profiles. Those services are not tied
-to the embedding-provider choice. The installer applies `unless-stopped` to new
-and existing managed containers. Use `--no-container-restarts` when another
-supervisor owns their lifecycle. Re-running `gobby install --all` repairs the
-selected policy with `docker update` and refreshes the managed Compose file.
+Default, `--all`, and `--config-only` installs require a running Docker daemon
+and always provision the managed PostgreSQL, Qdrant, and FalkorDB profiles.
+Those services are independent of the embedding-provider choice. The installer
+applies `unless-stopped` to new and existing managed containers. Use
+`--no-container-restarts` when another supervisor owns their lifecycle.
+Re-running `gobby install --config-only` repairs the selected policy with
+`docker update` and refreshes the managed Compose file.
+
+CLI-targeted flags and `--hooks` are maintenance operations. In particular,
+`gobby install --hooks` only ensures the personal marker and reinstalls
+repository Git hooks; it skips daemon configuration and managed services.
 
 `gobby uninstall` options:
 

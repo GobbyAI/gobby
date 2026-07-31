@@ -50,7 +50,6 @@ export default defineConfig({
         'src/**/*.test.{ts,tsx}',
         'src/**/__tests__/**',
         'src/test/**',
-        'src/setup/**',
         'src/vite-env.d.ts',
       ],
 },

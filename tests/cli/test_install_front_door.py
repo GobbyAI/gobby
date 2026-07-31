@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -105,7 +106,6 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
 
     errors, warnings = daemon_module._run_install_preflight(
         is_full_install=True,
-        detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
         embedding_url=None,
         embedding_provider=None,
@@ -113,7 +113,6 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
     )
 
     assert any("Docker daemon" in error for error in errors)
-    assert any("At least one supported coding CLI" in error for error in errors)
     assert any("tmux" in error for error in errors)
     assert any("Git" in error for error in errors)
     assert any("Node.js" in error for error in errors)
@@ -142,7 +141,6 @@ def test_targeted_preflight_still_requires_user_managed_dependencies(
 
     errors, warnings = daemon_module._run_install_preflight(
         is_full_install=False,
-        detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
         embedding_url=None,
         embedding_provider=None,
@@ -174,13 +172,79 @@ def test_install_preflight_rejects_native_windows(
 
     errors, _warnings = daemon_module._run_install_preflight(
         is_full_install=False,
-        detected_clis=[],
         install_dir=Path("/installed/gobby"),
         embedding_url=None,
         embedding_provider=None,
     )
 
     assert errors == ["Native Windows is unsupported. Install and run Gobby inside WSL 2."]
+
+
+def test_required_stack_installs_all_services_and_applies_restart_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    postgres = MagicMock(return_value={"success": True})
+    qdrant = MagicMock(return_value={"success": True, "qdrant_url": "http://localhost:6333"})
+    falkordb = MagicMock(
+        return_value={
+            "success": True,
+            "url": "redis://localhost:6379",
+            "browser_url": "http://localhost:3000",
+            "password_source": "provided",
+        }
+    )
+    restart = MagicMock(return_value={"success": True})
+    monkeypatch.setattr(install_module, "install_postgres", postgres)
+    monkeypatch.setattr(install_module, "install_qdrant", qdrant)
+    monkeypatch.setattr(install_module, "install_falkordb", falkordb)
+    monkeypatch.setattr(install_module, "apply_managed_service_restart_policy", restart)
+    results: dict[str, dict[str, Any]] = {}
+
+    install_module._install_required_stack(
+        results,
+        falkordb_password="secret",
+        container_restarts=True,
+    )
+
+    assert set(results) == {"postgres", "qdrant", "falkordb", "container-restarts"}
+    assert results["postgres"] == {"success": True}
+    assert results["qdrant"]["qdrant_url"] == "http://localhost:6333"
+    assert results["falkordb"]["password_source"] == "provided"
+    assert results["container-restarts"] == {"success": True}
+    postgres.assert_called_once_with()
+    qdrant.assert_called_once_with()
+    falkordb.assert_called_once_with(password="secret")
+    restart.assert_called_once_with(enabled=True)
+
+
+def test_required_stack_reports_dependent_failures_after_postgres_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        install_module,
+        "install_postgres",
+        lambda: {"success": False, "error": "postgres failed"},
+    )
+    qdrant = MagicMock()
+    falkordb = MagicMock()
+    restart = MagicMock()
+    monkeypatch.setattr(install_module, "install_qdrant", qdrant)
+    monkeypatch.setattr(install_module, "install_falkordb", falkordb)
+    monkeypatch.setattr(install_module, "apply_managed_service_restart_policy", restart)
+    results: dict[str, dict[str, Any]] = {}
+
+    install_module._install_required_stack(
+        results,
+        falkordb_password=None,
+        container_restarts=True,
+    )
+
+    assert all(not result["success"] for result in results.values())
+    assert "PostgreSQL" in results["qdrant"]["error"]
+    assert "PostgreSQL" in results["falkordb"]["error"]
+    qdrant.assert_not_called()
+    falkordb.assert_not_called()
+    restart.assert_not_called()
 
 
 def test_full_install_exits_before_provisioning_without_docker(
@@ -209,7 +273,7 @@ def test_full_install_exits_before_provisioning_without_docker(
     install_postgres.assert_not_called()
 
 
-def test_all_with_only_repository_hooks_is_not_a_full_install(
+def test_all_with_only_repository_hooks_still_owns_required_stack(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -236,13 +300,109 @@ def test_all_with_only_repository_hooks_is_not_a_full_install(
     assert result.exit_code == 1
     assert "stop after classification" in result.output
     preflight.assert_called_once_with(
-        is_full_install=False,
-        detected_clis=[],
+        is_full_install=True,
         install_dir=tmp_path,
         embedding_url=None,
         embedding_provider=None,
-        managed_services=False,
+        managed_services=True,
     )
+
+
+def test_default_install_completes_required_stack_without_detected_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for detector in (
+        "_is_claude_code_installed",
+        "_is_grok_cli_installed",
+        "_is_agy_cli_installed",
+        "_is_qwen_cli_installed",
+        "_is_codex_cli_installed",
+        "_is_droid_cli_installed",
+    ):
+        monkeypatch.setattr(install_module, detector, lambda: False)
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(
+        install_module,
+        "ensure_personal_project_identity",
+        lambda: tmp_path / "personal/.gobby/project.json",
+    )
+    monkeypatch.setattr(
+        install_module,
+        "_ensure_daemon_config",
+        lambda: {"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+    )
+    required_stack = MagicMock(
+        side_effect=lambda results, **_kwargs: results.update(
+            {
+                "postgres": {"success": True},
+                "qdrant": {"success": True},
+                "falkordb": {"success": True},
+                "container-restarts": {"success": True},
+            }
+        )
+    )
+    monkeypatch.setattr(install_module, "_install_required_stack", required_stack)
+    monkeypatch.setattr(install_module, "run_daemon_setup", MagicMock())
+    monkeypatch.setattr(
+        install_module, "_should_initialize_project", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(install_module, "load_full_config_from_db", lambda: None)
+    monkeypatch.setattr(
+        importlib.import_module("gobby.storage.hub.runtime"),
+        "runtime_hub_database",
+        MagicMock(side_effect=RuntimeError("test hub unavailable")),
+    )
+    monkeypatch.setattr(install_module, "_configure_secret_kek_posture", lambda *_a, **_k: None)
+    monkeypatch.setattr(install_module, "_provision_local_api_token", lambda *_args: None)
+    monkeypatch.setattr(
+        install_module,
+        "prepare_install_state",
+        lambda *_args: install_module.empty_install_state(),
+    )
+    monkeypatch.setattr(install_module, "should_configure_section", lambda *_a, **_k: False)
+    summary = MagicMock(return_value=True)
+    monkeypatch.setattr(install_module, "_echo_install_summary", summary)
+    monkeypatch.setattr(install_module, "_echo_migration_notice", lambda *_args: None)
+    start_daemon = MagicMock()
+    monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", start_daemon)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--no-interactive", "-C", str(tmp_path)],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert "No supported AI coding CLIs detected; CLI hooks will be skipped." in result.output
+    required_stack.assert_called_once()
+    summary.assert_called_once()
+    start_daemon.assert_called_once_with(no_interactive=True)
+
+
+def test_install_fails_when_personal_identity_cannot_be_written(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(
+        install_module,
+        "ensure_personal_project_identity",
+        MagicMock(side_effect=PermissionError("read-only marker")),
+    )
+    ensure_config = MagicMock()
+    monkeypatch.setattr(install_module, "_ensure_daemon_config", ensure_config)
+
+    result = CliRunner().invoke(
+        install_module.install,
+        ["--codex", "--no-interactive", "-C", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Failed to establish personal project identity: read-only marker" in result.output
+    ensure_config.assert_not_called()
 
 
 def test_config_only_requires_git_before_provisioning(
@@ -290,6 +450,22 @@ def test_config_only_allows_non_repository_personal_workspace(
         "_ensure_daemon_config",
         lambda: {"created": False, "path": str(config_path)},
     )
+    monkeypatch.setattr(
+        install_module,
+        "ensure_personal_project_identity",
+        lambda: tmp_path / "personal/.gobby/project.json",
+    )
+    required_stack = MagicMock(
+        side_effect=lambda results, **_kwargs: results.update(
+            {
+                "postgres": {"success": True},
+                "qdrant": {"success": True},
+                "falkordb": {"success": True},
+                "container-restarts": {"success": True},
+            }
+        )
+    )
+    monkeypatch.setattr(install_module, "_install_required_stack", required_stack)
     run_setup = MagicMock()
     monkeypatch.setattr(install_module, "run_daemon_setup", run_setup)
 
@@ -300,7 +476,8 @@ def test_config_only_allows_non_repository_personal_workspace(
 
     assert not (tmp_path / ".git").exists()
     assert result.exit_code == 0
-    assert "Configuration and database initialization complete." in result.output
+    assert "Configuration and required infrastructure complete." in result.output
+    required_stack.assert_called_once()
     run_setup.assert_called_once()
 
 

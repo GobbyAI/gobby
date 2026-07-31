@@ -67,7 +67,6 @@ def _port_available(port: int, host: str = "0.0.0.0") -> bool:  # nosec B104
 def _run_install_preflight(
     *,
     is_full_install: bool,
-    detected_clis: list[str],
     install_dir: Path,
     embedding_url: str | None,
     embedding_provider: str | None,
@@ -88,11 +87,6 @@ def _run_install_preflight(
     if is_full_install:
         if not _docker_daemon_available():
             errors.append("Docker daemon is required for full install. Start Docker and retry.")
-        if not detected_clis:
-            errors.append(
-                "At least one supported coding CLI is required for full install "
-                "(Claude Code, AGY, Codex, Grok, Qwen, or Droid)."
-            )
         if _is_source_checkout_install(install_dir) and shutil.which("uv") is None:
             errors.append("uv is required when installing from a source checkout.")
 

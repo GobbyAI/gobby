@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -471,11 +470,7 @@ def _run_qdrant_install(
     installer: Callable[..., dict[str, Any]],
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for Qdrant (default, Docker-gated)."""
-    if not shutil.which("docker"):
-        click.echo("Docker not found — Qdrant will run in embedded mode")
-        return
-
+    """Run install + echo for required Qdrant infrastructure."""
     click.echo("-" * 40)
     click.echo("Qdrant Vector Database")
     click.echo("-" * 40)

@@ -344,8 +344,7 @@ installer probes `/v1/embeddings` on the target endpoint to detect the dim. If
 only the endpoint changed and the LM Studio or Ollama default model is still in
 use, a failed probe falls back to that provider's default dim and the health
 check verifies it. Custom models and generic `openai-compatible` endpoints must
-probe successfully or pass `--embedding-dim` explicitly. The setup wizard
-exposes the same override knobs interactively.
+probe successfully or pass `--embedding-dim` explicitly.
 
 The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
 choice for any local hardware. For users with capable local hardware,

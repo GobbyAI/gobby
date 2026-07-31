@@ -138,6 +138,7 @@ class TestCLICommands:
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "Gobby" in result.output
+        assert "setup" not in cli.commands
 
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help."""
@@ -173,7 +174,7 @@ class TestCLICommands:
         """Test install --help displays help."""
         result = runner.invoke(cli, ["install", "--help"])
         assert result.exit_code == 0
-        assert "Install Gobby hooks" in result.output
+        assert "Install Gobby configuration, required infrastructure" in result.output
 
     def test_uninstall_help(self, runner: CliRunner) -> None:
         """Test uninstall --help displays help."""

@@ -305,6 +305,7 @@ fn lifecycle_hooks_enqueue_exact_agent_run_identity() -> TestResult {
             RunGhookExtras {
                 env: &[("GOBBY_AGENT_RUN_ID", RUN_ID)],
                 args: &["--enqueue-only"],
+                cwd: None,
             },
         )?;
 
@@ -349,6 +350,7 @@ fn lifecycle_hook_preserves_provider_context_and_replaces_untrusted_run_id() -> 
         RunGhookExtras {
             env: &[("GOBBY_AGENT_RUN_ID", RUN_ID)],
             args: &["--enqueue-only"],
+            cwd: None,
         },
     )?;
 
@@ -376,6 +378,7 @@ fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
         RunGhookExtras {
             env: &[("GOBBY_AGENT_RUN_ID", "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764")],
             args: &["--enqueue-only"],
+            cwd: None,
         },
     )?;
 
@@ -391,7 +394,164 @@ fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
 }
 
 #[test]
-fn unmanaged_hook_omits_agent_run_header() -> TestResult {
+fn unmanaged_hook_returns_continue_without_side_effects() -> TestResult {
+    for stdin in [VALID_STDIN, "not json"] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let daemon_url = closed_local_url()?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("PreToolUse"),
+            &daemon_url,
+            stdin,
+            RunGhookExtras {
+                env: &[],
+                args: &["--enqueue-only"],
+                cwd: Some(cwd.path()),
+            },
+        )?;
+
+        assert!(output.status.success());
+        assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+        assert_stderr_empty(&output, "unmanaged hook")?;
+        assert!(inbox_envelopes(gobby_home.path())?.is_empty());
+        assert!(read_failure_artifacts(gobby_home.path())?.is_empty());
+        assert!(!gobby_home.path().join("hooks/inbox/quarantine").exists());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn malformed_project_markers_manage_and_fail_closed() -> TestResult {
+    for marker in ["project.json", "gcode.json"] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let project_root = tempfile::tempdir()?;
+        let nested = project_root.path().join("nested");
+        fs::create_dir_all(project_root.path().join(".gobby"))?;
+        fs::create_dir_all(&nested)?;
+        fs::write(project_root.path().join(".gobby").join(marker), "{not json")?;
+
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("SessionStart"),
+            &closed_local_url()?,
+            "not json",
+            RunGhookExtras {
+                env: &[],
+                args: &[],
+                cwd: Some(&nested),
+            },
+        )?;
+
+        assert_eq!(output.status.code(), Some(2), "{marker}");
+        assert_json_stdout(&output, serde_json::json!({}))?;
+        assert!(
+            gobby_home.path().join("hooks/inbox/quarantine").exists(),
+            "{marker}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn managed_identity_evidence_enqueues_outside_project_folders() -> TestResult {
+    for (env, stdin, expected_project_id) in [
+        (
+            vec![("GOBBY_PROJECT_ID", "environment-project")],
+            VALID_STDIN,
+            Some("environment-project"),
+        ),
+        (
+            vec![("GOBBY_SESSION_ID", "managed-session")],
+            VALID_STDIN,
+            None,
+        ),
+        (
+            vec![("GOBBY_AGENT_RUN_ID", "managed-run")],
+            VALID_STDIN,
+            None,
+        ),
+        (
+            vec![],
+            r#"{"project_id":"payload-project","session_id":"provider-session"}"#,
+            Some("payload-project"),
+        ),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("PreToolUse"),
+            &closed_local_url()?,
+            stdin,
+            RunGhookExtras {
+                env: &env,
+                args: &["--enqueue-only"],
+                cwd: Some(cwd.path()),
+            },
+        )?;
+
+        assert!(output.status.success());
+        let envelope = read_single_inbox_envelope(gobby_home.path())?;
+        assert_eq!(
+            envelope["headers"]
+                .get("X-Gobby-Project-Id")
+                .and_then(Value::as_str),
+            expected_project_id
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn environment_project_id_overrides_filesystem_identity() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let project_root = tempfile::tempdir()?;
+    fs::create_dir_all(project_root.path().join(".gobby"))?;
+    fs::write(
+        project_root.path().join(".gobby/project.json"),
+        r#"{"id":"filesystem-project"}"#,
+    )?;
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &closed_local_url()?,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[("GOBBY_PROJECT_ID", "environment-project")],
+            args: &["--enqueue-only"],
+            cwd: Some(project_root.path()),
+        },
+    )?;
+
+    assert!(output.status.success());
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    assert_eq!(
+        envelope["headers"]["X-Gobby-Project-Id"],
+        "environment-project"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn managed_hook_without_agent_run_env_omits_agent_run_header() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let daemon_url = closed_local_url()?;
@@ -405,6 +565,7 @@ fn unmanaged_hook_omits_agent_run_header() -> TestResult {
         RunGhookExtras {
             env: &[],
             args: &["--enqueue-only"],
+            cwd: None,
         },
     )?;
 
@@ -980,6 +1141,7 @@ fn enqueue_only_session_end_returns_without_contacting_slow_daemon() -> TestResu
         RunGhookExtras {
             env: &[],
             args: &["--enqueue-only"],
+            cwd: None,
         },
     )?;
 
@@ -1024,6 +1186,7 @@ fn enqueue_only_failure_does_not_fall_back_to_direct_post() -> TestResult {
         RunGhookExtras {
             env: &[],
             args: &["--enqueue-only"],
+            cwd: None,
         },
     )?;
 
@@ -1160,6 +1323,7 @@ fn run_ghook_with_dirs(
         RunGhookExtras {
             env: extra_env,
             args: &[],
+            cwd: None,
         },
     )
 }
@@ -1167,6 +1331,7 @@ fn run_ghook_with_dirs(
 struct RunGhookExtras<'a> {
     env: &'a [(&'a str, &'a str)],
     args: &'a [&'a str],
+    cwd: Option<&'a Path>,
 }
 
 fn run_ghook_with_dirs_and_args(
@@ -1187,6 +1352,8 @@ fn run_ghook_with_dirs_and_args(
         .env_remove("GOBBY_PORT")
         .env_remove("GOBBY_DAEMON_PORT")
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_PROJECT_ID")
+        .env_remove("GOBBY_SESSION_ID")
         .env_remove("GOBBY_AGENT_RUN_ID")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
@@ -1196,6 +1363,9 @@ fn run_ghook_with_dirs_and_args(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(cwd) = extras.cwd {
+        command.current_dir(cwd);
+    }
     if let Some(cli) = cli {
         command.args(["--cli", cli]);
     }

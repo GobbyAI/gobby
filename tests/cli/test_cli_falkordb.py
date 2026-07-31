@@ -33,11 +33,11 @@ def _param_by_name(command: click.Command, name: str) -> click.Option:
 
 
 class TestFalkorDBInstallFlags:
-    def test_install_exposes_falkordb_target_and_password_flags(self) -> None:
+    def test_install_exposes_only_falkordb_password_modifier(self) -> None:
         from gobby.cli.install import install
 
         option_names = _option_names(install)
-        assert "--falkordb" in option_names
+        assert "--falkordb" not in option_names
         assert "--falkordb-password-stdin" in option_names
         assert "--falkordb-password" not in option_names
 
@@ -52,7 +52,7 @@ class TestFalkorDBInstallFlags:
         result = runner.invoke(install, ["--help"])
 
         assert result.exit_code == 0
-        assert "--falkordb" in result.output
+        assert "--falkordb " not in result.output
         assert "--falkordb-password-stdin" in result.output
         assert "--falkordb-password " not in result.output
         assert "--neo4j" not in result.output
@@ -69,54 +69,20 @@ class TestFalkorDBInstallFlags:
         legacy = _param_by_name(uninstall, "neo4j_flag")
         assert legacy.hidden is True
 
-    def test_falkordb_target_runs_only_falkordb_service(self, runner: CliRunner) -> None:
-        from gobby.cli.install import install, install_falkordb
+    def test_removed_falkordb_target_is_rejected(self, runner: CliRunner) -> None:
+        from gobby.cli.install import install
 
-        with (
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
-            patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
-            patch("gobby.cli.install._ensure_daemon_config") as mock_config,
-            patch("gobby.cli.install.run_daemon_setup") as mock_setup,
-            patch("gobby.cli.install._run_standard_cli_install") as mock_cli,
-            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
-            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
-            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_voice_install") as mock_voice,
-            patch(
-                "gobby.cli.install.apply_managed_service_restart_policy",
-                return_value={"success": True},
-            ) as mock_restart_policy,
-        ):
-            result = runner.invoke(
-                install,
-                ["--falkordb", "--falkordb-password-stdin"],
-                input="secret",
-                catch_exceptions=False,
-            )
+        result = runner.invoke(install, ["--falkordb"])
 
-        assert result.exit_code == 0
-        mock_falkordb.assert_called_once()
-        assert mock_falkordb.call_args.args[0] is install_falkordb
-        assert mock_falkordb.call_args.args[1] == "secret"
-        mock_restart_policy.assert_called_once_with(
-            enabled=True,
-            containers=("services-falkordb-1",),
-        )
-        mock_summary.assert_called_once()
-        mock_config.assert_not_called()
-        mock_setup.assert_not_called()
-        mock_cli.assert_not_called()
-        mock_hooks.assert_not_called()
-        mock_embedding.assert_not_called()
-        mock_qdrant.assert_not_called()
-        mock_voice.assert_not_called()
+        assert result.exit_code == 2
+        assert "No such option '--falkordb'" in result.output
 
     def test_falkordb_password_stdin_rejects_empty_input(self, runner: CliRunner) -> None:
         from gobby.cli.install import install
 
         result = runner.invoke(
             install,
-            ["--falkordb", "--falkordb-password-stdin"],
+            ["--falkordb-password-stdin"],
             input="",
         )
 
@@ -139,7 +105,7 @@ class TestFalkorDBInstallFlags:
         ):
             result = runner.invoke(
                 install,
-                ["--falkordb", "--falkordb-password-stdin", "--no-interactive"],
+                ["--falkordb-password-stdin", "--no-interactive"],
                 input="has space",
                 env={"GOBBY_HOME": str(gobby_home)},
             )
@@ -165,7 +131,7 @@ class TestLegacyNeo4jFlagErrors:
 
         assert result.exit_code == 2
         assert MIGRATION_MESSAGE in result.output
-        assert "gobby install --falkordb" in result.output
+        assert "gobby install --config-only --falkordb-password-stdin" in result.output
         assert "gobby uninstall" in result.output
         assert "--falkordb" not in result.output.split("gobby uninstall", maxsplit=1)[-1]
 

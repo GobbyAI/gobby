@@ -160,7 +160,6 @@ src/gobby/
 │                                       #   (TaskValidator), state_semantics.py, prompts/
 ├── telemetry/                          # Logging/telemetry configuration
 ├── test_quality/                       # Test quality analysis
-├── ui/                                 # UI support (setup wizard backend, ui modes)
 ├── utils/                              # Utilities: git.py, daemon_client.py, sql.py,
 │                                       #   session_refs.py, tool_summarizer.py, id.py
 ├── voice/                              # Voice chat support (stt.py)

@@ -21,6 +21,7 @@ from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import ensure_personal_project_identity
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -91,10 +92,7 @@ from .installers import (
     uninstall_grok,
     uninstall_qwen,
 )
-from .installers.container_restart import (
-    FALKORDB_CONTAINER,
-    apply_managed_service_restart_policy,
-)
+from .installers.container_restart import apply_managed_service_restart_policy
 from .utils import get_install_dir, load_full_config_from_db
 
 logger = logging.getLogger(__name__)
@@ -224,6 +222,36 @@ def _resolve_ide_settings_consent(
     )
 
 
+def _install_required_stack(
+    results: dict[str, dict[str, Any]],
+    *,
+    falkordb_password: str | None,
+    container_restarts: bool,
+) -> None:
+    """Provision PostgreSQL, Qdrant, and FalkorDB as one required stack."""
+    results["postgres"] = install_postgres()
+    if results["postgres"].get("success"):
+        _run_qdrant_install(install_qdrant, results)
+        _run_falkordb_install(install_falkordb, falkordb_password, results)
+    else:
+        error = "Skipped because required PostgreSQL installation failed."
+        results["qdrant"] = {"success": False, "error": error}
+        results["falkordb"] = {"success": False, "error": error}
+
+    required_services_succeeded = all(
+        results[name].get("success", False) for name in ("postgres", "qdrant", "falkordb")
+    )
+    if required_services_succeeded:
+        results["container-restarts"] = apply_managed_service_restart_policy(
+            enabled=container_restarts,
+        )
+    else:
+        results["container-restarts"] = {
+            "success": False,
+            "error": "Skipped because required infrastructure installation failed.",
+        }
+
+
 @click.command("install")
 @click.option(
     "--claude",
@@ -273,20 +301,13 @@ def _resolve_ide_settings_consent(
     "all_flag",
     is_flag=True,
     default=False,
-    help="Install hooks for all detected CLIs (default behavior when no flags specified)",
+    help="Install required infrastructure and hooks for all detected CLIs",
 )
 @click.option(
     "--config-only",
     "config_only_flag",
     is_flag=True,
-    help="Initialize daemon configuration and database without installing hooks or services",
-)
-@click.option(
-    "--falkordb",
-    "falkordb_flag",
-    is_flag=True,
-    default=False,
-    help="Install only the FalkorDB service",
+    help="Configure Gobby and required infrastructure without installing CLI or Git hooks",
 )
 @click.option(
     "--falkordb-password-stdin",
@@ -404,7 +425,6 @@ def install(
     hooks_flag: bool,
     all_flag: bool,
     config_only_flag: bool,
-    falkordb_flag: bool,
     falkordb_password_stdin: bool,
     voice_flag: bool,
     project_flag: bool,
@@ -419,14 +439,15 @@ def install(
     container_restarts_flag: bool,
     working_dir: Path | None,
 ) -> None:
-    """Install Gobby hooks to AI coding CLIs and Git.
+    """Install Gobby configuration, required infrastructure, and integrations.
 
-    By default (no flags), installs hooks globally (one-time setup).
+    By default (no flags), provisions the required stack and installs hooks
+    globally for detected CLIs.
     Use --project to install per-project instead (legacy behavior).
     Use --claude, --grok, --agy, --qwen, --codex, or --droid to install only
     to specific CLIs.
-    Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
-    Use --config-only to initialize daemon configuration and database only.
+    Use --hooks alone to reinstall Git hooks without configuration or infrastructure setup.
+    Use --config-only to configure Gobby and required infrastructure without hooks.
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
@@ -456,7 +477,6 @@ def install(
         and not codex_flag
         and not droid_flag
         and not hooks_flag
-        and not falkordb_flag
         and not all_flag
         and not config_only_flag
     ):
@@ -502,7 +522,20 @@ def install(
         if droid_flag:
             clis_to_install.append("droid")
 
-    is_full_install = all_flag and bool(clis_to_install)
+    is_full_install = all_flag or config_only_flag
+    hooks_only_maintenance = (
+        hooks_flag
+        and not clis_to_install
+        and not is_full_install
+        and not voice_flag
+        and not falkordb_password_stdin
+        and not any(
+            value is not None
+            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
+        )
+        and auth_mode is None
+        and ide_settings_flag is None
+    )
 
     # Get install directory info
     install_dir = get_install_dir()
@@ -510,26 +543,13 @@ def install(
 
     preflight_errors, preflight_warnings = _run_install_preflight(
         is_full_install=is_full_install,
-        detected_clis=clis_to_install,
         install_dir=install_dir,
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
-        managed_services=is_full_install or falkordb_flag,
+        managed_services=is_full_install,
     )
     if no_supported_cli:
-        click.echo("No supported AI coding CLIs detected.")
-        click.echo("\nSupported CLIs:")
-        click.echo("  - Claude Code: npm install -g @anthropic-ai/claude-code")
-        click.echo("  - Grok CLI:    install the Grok CLI")
-        click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
-        click.echo("  - Codex CLI:   npm install -g @openai/codex")
-        click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
-        click.echo("  - AGY CLI:     install Google Antigravity CLI")
-        click.echo(
-            "\nYou can still install manually with --claude, --grok, --qwen, "
-            "--agy, --codex, or --droid flags."
-        )
-        sys.exit(1)
+        click.echo("No supported AI coding CLIs detected; CLI hooks will be skipped.")
     for warning in preflight_warnings:
         click.echo(f"Warning: {warning}")
     if preflight_errors:
@@ -537,15 +557,18 @@ def install(
             click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
-    if falkordb_flag:
-        service_results: dict[str, dict[str, Any]] = {}
-        _run_falkordb_install(install_falkordb, falkordb_password, service_results)
-        service_results["container-restarts"] = apply_managed_service_restart_policy(
-            enabled=container_restarts_flag,
-            containers=(FALKORDB_CONTAINER,),
-        )
-        if not _echo_install_summary(service_results, no_interactive_flag):
+    try:
+        personal_marker = ensure_personal_project_identity()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(f"Failed to establish personal project identity: {exc}") from exc
+    click.echo(f"Personal project identity: {personal_marker}")
+
+    if hooks_only_maintenance:
+        hook_results: dict[str, dict[str, Any]] = {}
+        _run_git_hooks_install(install_git_hooks, project_path, hook_results)
+        if not hook_results["git-hooks"].get("success", False):
             sys.exit(1)
+        click.echo("Git hook maintenance complete.")
         return
 
     initialize_project_after_setup = not config_only_flag and _should_initialize_project(
@@ -554,10 +577,10 @@ def install(
     )
 
     click.echo("=" * 60)
-    click.echo("  Gobby Hooks Installation")
+    click.echo("  Gobby Installation")
     click.echo("=" * 60)
     if mode == "global":
-        click.echo("\nScope: Global (hooks installed to ~/.gobby/hooks/)")
+        click.echo("\nScope: Global (~/.gobby/)")
     else:
         click.echo(f"\nScope: Project ({project_path})")
     if is_dev_mode:
@@ -574,13 +597,13 @@ def install(
         _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
         click.echo(f"Daemon API authentication mode: {auth_mode}")
     if is_full_install:
-        postgres_result = install_postgres()
-        results["postgres"] = postgres_result
-        if not postgres_result.get("success"):
-            click.echo(
-                f"Error: PostgreSQL installation failed: {postgres_result.get('error', 'unknown error')}",
-                err=True,
-            )
+        _install_required_stack(
+            results,
+            falkordb_password=falkordb_password,
+            container_restarts=container_restarts_flag,
+        )
+        if not all(result.get("success", False) for result in results.values()):
+            _echo_install_summary(results, True)
             sys.exit(1)
     configure_ide_settings = False
     if not config_only_flag:
@@ -592,7 +615,9 @@ def install(
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
     if config_only_flag:
-        click.echo("Configuration and database initialization complete.")
+        if not _echo_install_summary(results, True):
+            sys.exit(1)
+        click.echo("Configuration and required infrastructure complete.")
         return
 
     toggles = list(clis_to_install)
@@ -699,13 +724,6 @@ def install(
                 secret_store=secret_store,
                 reconfigure=install_state.voice.configured,
                 current_enabled=install_state.voice.enabled,
-            )
-
-        if is_full_install:
-            _run_qdrant_install(install_qdrant, results)
-            _run_falkordb_install(install_falkordb, falkordb_password, results)
-            results["container-restarts"] = apply_managed_service_restart_policy(
-                enabled=container_restarts_flag,
             )
 
         # Migration detection

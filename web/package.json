@@ -14,8 +14,6 @@
     "lint:tokens": "node scripts/lint-tokens.mjs",
     "patch:tailwind-node-dep0205": "node scripts/patch-tailwind-node-dep0205.mjs",
     "postinstall": "node scripts/patch-tailwind-node-dep0205.mjs && node scripts/patch-jsx-a11y-minimatch.mjs && node scripts/copy-vad-assets.cjs && node scripts/copy-ghostty-wasm.cjs",
-    "setup": "tsx src/setup/cli.tsx",
-    "build:setup": "node scripts/build-setup.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -49,10 +47,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "he": "^1.2.0",
-    "ink": "^5.2.0",
-    "ink-select-input": "^6.0.0",
-    "ink-spinner": "^5.0.0",
-    "ink-text-input": "^6.0.0",
     "js-yaml": "^4.2.0",
     "marked": "^17.0.1",
     "mermaid": "^11.16.0",
@@ -78,9 +72,6 @@
     "minimatch": "10.2.5",
     "picomatch": ">=4.0.4",
     "protobufjs": ">=7.6.3 <8",
-    "tsx": {
-      "esbuild": ">=0.28.1"
-    },
     "undici": ">=7.28.0 <8",
     "ws": ">=8.21.0"
   },
@@ -100,7 +91,6 @@
     "@types/three": "^0.182.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^4.1.8",
-    "esbuild": "^0.25.0",
     "eslint": "^9.39.4",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.0-canary-404b38c7-20260408",
@@ -110,15 +100,12 @@
     "postcss": "^8.5.23",
     "stylelint": "^17.11.1",
     "tailwindcss": "^4.3.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.58.1",
     "vite": "^6.4.3",
     "vitest": "^4.1.8"
   },
   "allowScripts": {
-    "esbuild@0.25.12": true,
-    "esbuild@0.28.1": true,
     "fsevents@2.3.3": true,
     "fsevents@2.3.2": true,
     "protobufjs@7.6.5": true

@@ -67,11 +67,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/hooks/useUsage.ts",
   "src/hooks/useVoice.ts",
   "src/hooks/useWorkflows.ts",
-  "src/setup/steps/Bootstrap.tsx",
-  "src/setup/steps/CliHooks.tsx",
-  "src/setup/steps/PersonalWorkspace.tsx",
-  "src/setup/steps/ProjectDiscovery.tsx",
-  "src/setup/steps/SystemCheck.tsx",
 ];
 
 const IMMUTABILITY_EXEMPTIONS = [
@@ -80,7 +75,7 @@ const IMMUTABILITY_EXEMPTIONS = [
 ];
 
 export default defineConfig([
-  globalIgnores(["dist/", "dist-setup/", "coverage/", ".vite/"]),
+  globalIgnores(["dist/", "coverage/", ".vite/"]),
   {
     files: ["src/**/*.{ts,tsx}"],
     extends: [

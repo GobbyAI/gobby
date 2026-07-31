@@ -79,13 +79,12 @@ required managed services:
 uv run gobby install
 ```
 
-Targeted datastore repair commands remain available:
+Use `--config-only` to configure and repair the required stack without touching
+CLI or Git hooks:
 
 ```bash
-uv run gobby postgres install
-uv run gobby install --falkordb
-printf '%s' 'your-password' | uv run gobby install --falkordb --falkordb-password-stdin
-uv run gobby qdrant install --port 6333
+uv run gobby install --config-only
+printf '%s' 'your-password' | uv run gobby install --config-only --falkordb-password-stdin
 ```
 
 ## Embeddings
@@ -182,7 +181,7 @@ uv run gobby qdrant install --port 6333
 Set or rotate the password during install:
 
 ```bash
-printf '%s' 'your-password' | uv run gobby install --falkordb --falkordb-password-stdin
+printf '%s' 'your-password' | uv run gobby install --config-only --falkordb-password-stdin
 ```
 
 The configured auth value is stored in Gobby configuration, and the Compose

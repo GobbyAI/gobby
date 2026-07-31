@@ -69,7 +69,6 @@ _WHEEL_CONTENT_MANIFEST: str = "gobby/install/bundled_content_manifest.json"
 _UI_BUILD_IGNORES: tuple[str, ...] = (
     "node_modules",
     "dist",
-    "dist-setup",
     "coverage",
     "playwright-report",
     "test-results",

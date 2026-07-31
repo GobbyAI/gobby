@@ -129,10 +129,21 @@ class TestSecretKekPostureInstall:
 @pytest.fixture(autouse=True)
 def _mock_ext_services_and_prompts() -> Iterator[None]:
     """Prevent real Docker service installers and interactive API-key prompts."""
+
+    def qdrant_success(_installer: object, results: dict[str, dict[str, object]]) -> None:
+        results["qdrant"] = {"success": True}
+
+    def falkordb_success(
+        _installer: object,
+        _password: str | None,
+        results: dict[str, dict[str, object]],
+    ) -> None:
+        results["falkordb"] = {"success": True}
+
     with (
         patch("gobby.cli.install.run_daemon_setup"),
-        patch("gobby.cli.install._run_qdrant_install"),
-        patch("gobby.cli.install._run_falkordb_install"),
+        patch("gobby.cli.install._run_qdrant_install", side_effect=qdrant_success),
+        patch("gobby.cli.install._run_falkordb_install", side_effect=falkordb_success),
         patch(
             "gobby.cli.install.apply_managed_service_restart_policy",
             return_value={"success": True},
@@ -332,7 +343,7 @@ class TestInstallCommand:
         """Test install --help displays help text."""
         result = runner.invoke(cli, ["install", "--help"])
         assert result.exit_code == 0
-        assert "Install Gobby hooks" in result.output
+        assert "Install Gobby configuration, required infrastructure" in result.output
         assert "--claude" in result.output
         assert "--agy" in result.output
         assert "--qwen" in result.output

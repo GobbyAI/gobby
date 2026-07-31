@@ -38,7 +38,6 @@ from .runtime import CliRuntime
 from .secrets import secrets
 from .service import service
 from .sessions import sessions
-from .setup import setup
 from .skills import skills
 from .stages import stages
 from .sync import sync
@@ -96,7 +95,6 @@ cli.add_command(health)
 cli.add_command(embeddings)
 cli.add_command(mcp_server)
 cli.add_command(init)
-cli.add_command(setup)
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(tasks)

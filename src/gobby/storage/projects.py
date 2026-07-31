@@ -27,8 +27,12 @@ def personal_project_path(gobby_home: Path | None = None) -> Path:
     return (gobby_home or get_gobby_home()) / "personal"
 
 
-def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) -> "Project":
-    """Ensure the `_personal` project has a real local folder and repo_path."""
+def ensure_personal_project_identity(
+    *,
+    gobby_home: Path | None = None,
+    created_at: datetime | None = None,
+) -> Path:
+    """Ensure the personal workspace has a valid DB-independent project marker."""
     path = personal_project_path(gobby_home)
     path.mkdir(parents=True, exist_ok=True)
     try:
@@ -36,6 +40,65 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
     except OSError as exc:
         logger.debug("Failed to chmod personal project path %s: %s", path, exc)
 
+    project_file = path / ".gobby" / "project.json"
+    data: Any = None
+    if project_file.exists():
+        try:
+            data = json.loads(project_file.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Rewriting corrupt personal project.json %s: %s", project_file, exc)
+        if _is_valid_personal_identity(data):
+            return project_file
+        logger.warning(
+            "Repairing personal project.json %s: expected id %s and name _personal",
+            project_file,
+            PERSONAL_PROJECT_ID,
+        )
+
+    existing_created_at = data.get("created_at") if isinstance(data, dict) else None
+    marker_created_at = (
+        created_at.isoformat()
+        if created_at is not None
+        else existing_created_at
+        if _is_iso_datetime(existing_created_at)
+        else utc_now().isoformat()
+    )
+    payload = {
+        "id": PERSONAL_PROJECT_ID,
+        "name": "_personal",
+        "created_at": marker_created_at,
+    }
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+    project_file.write_text(json.dumps(payload, indent=2) + "\n")
+
+    repaired = json.loads(project_file.read_text())
+    if not _is_valid_personal_identity(repaired):
+        raise RuntimeError(f"Failed to establish personal project identity at {project_file}")
+    return project_file
+
+
+def _is_valid_personal_identity(data: Any) -> bool:
+    return (
+        isinstance(data, dict)
+        and data.get("id") == PERSONAL_PROJECT_ID
+        and data.get("name") == "_personal"
+        and _is_iso_datetime(data.get("created_at"))
+    )
+
+
+def _is_iso_datetime(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) -> "Project":
+    """Ensure the `_personal` project has a real local folder and repo_path."""
+    path = personal_project_path(gobby_home)
     project_manager = LocalProjectManager(db)
     now = utc_now()
     with db.transaction() as txn:
@@ -54,38 +117,11 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
         raise RuntimeError("Personal project not found after transactional upsert")
-    _ensure_personal_identity_file(path, project.created_at or now)
+    ensure_personal_project_identity(
+        gobby_home=gobby_home,
+        created_at=project.created_at or now,
+    )
     return project
-
-
-def _ensure_personal_identity_file(path: Path, created_at: datetime) -> None:
-    """Materialize `.gobby/project.json` so on-disk consumers (gwiki, gcode)
-    can resolve the personal workspace identity without DB access."""
-    project_file = path / ".gobby" / "project.json"
-    if project_file.exists():
-        try:
-            data = json.loads(project_file.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Rewriting corrupt personal project.json %s: %s", project_file, exc)
-            data = None
-        if isinstance(data, dict) and data.get("id") == PERSONAL_PROJECT_ID:
-            return
-        if data is not None:
-            logger.warning(
-                "Repairing personal project.json %s: expected id %s",
-                project_file,
-                PERSONAL_PROJECT_ID,
-            )
-    payload = {
-        "id": PERSONAL_PROJECT_ID,
-        "name": "_personal",
-        "created_at": created_at.isoformat(),
-    }
-    try:
-        project_file.parent.mkdir(parents=True, exist_ok=True)
-        project_file.write_text(json.dumps(payload, indent=2) + "\n")
-    except OSError as exc:
-        logger.warning("Failed to write personal project.json %s: %s", project_file, exc)
 
 
 @normalize_datetime_model(

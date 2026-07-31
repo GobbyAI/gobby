@@ -386,7 +386,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 config_only_flag=False,
-                falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
                 project_flag=False,
@@ -458,7 +457,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 config_only_flag=False,
-                falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
                 project_flag=False,
@@ -525,7 +523,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 config_only_flag=False,
-                falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
                 project_flag=False,
@@ -602,8 +599,18 @@ class TestInstallCommandSharedStores:
             ) as mock_embedding,
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
-            patch("gobby.cli.install._run_qdrant_install"),
-            patch("gobby.cli.install._run_falkordb_install"),
+            patch(
+                "gobby.cli.install._run_qdrant_install",
+                side_effect=lambda _installer, results: results.update(
+                    {"qdrant": {"success": True}}
+                ),
+            ),
+            patch(
+                "gobby.cli.install._run_falkordb_install",
+                side_effect=lambda _installer, _password, results: results.update(
+                    {"falkordb": {"success": True}}
+                ),
+            ),
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
@@ -617,7 +624,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=True,
                 config_only_flag=False,
-                falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
                 project_flag=False,

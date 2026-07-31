@@ -18,6 +18,7 @@ from gobby.storage.projects import (
     SYSTEM_PROJECT_NAMES,
     LocalProjectManager,
     ensure_personal_project,
+    ensure_personal_project_identity,
     personal_project_path,
 )
 
@@ -46,6 +47,29 @@ class TestConstants:
 
 class TestPersonalProjectEnsure:
     """Tests for the backed personal system project."""
+
+    def test_identity_helper_creates_marker_without_database(self, tmp_path: Path) -> None:
+        project_file = ensure_personal_project_identity(gobby_home=tmp_path)
+
+        data = json.loads(project_file.read_text())
+        assert data == {
+            "id": PERSONAL_PROJECT_ID,
+            "name": "_personal",
+            "created_at": data["created_at"],
+        }
+
+    def test_identity_helper_propagates_write_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        def fail_write(_path: Path, _content: str) -> int:
+            raise PermissionError("read-only marker")
+
+        monkeypatch.setattr(Path, "write_text", fail_write)
+
+        with pytest.raises(PermissionError, match="read-only marker"):
+            ensure_personal_project_identity(gobby_home=tmp_path)
 
     def test_ensure_personal_project_creates_folder_and_repo_path(
         self,
