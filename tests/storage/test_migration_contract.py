@@ -20,6 +20,7 @@ RECONCILE_DRIFT_V2_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "356_reconcile_live_hub_schema_drift_v2.sql"
 )
 DROP_DEAD_TABLES_MIGRATION = SRC_ROOT / "storage" / "migrations" / "357_drop_dead_tables.sql"
+DROP_DEAD_COLUMNS_MIGRATION = SRC_ROOT / "storage" / "migrations" / "358_drop_dead_columns.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -597,6 +598,33 @@ def test_drop_dead_tables_migration_is_destructive_and_dual_shape_safe() -> None
         normalized,
         tuple(f"DROP TABLE IF EXISTS {table_name};" for table_name in table_names),
     )
+
+
+def test_drop_dead_columns_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_DEAD_COLUMNS_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+    columns = (
+        ("tasks", "assignee"),
+        ("task_artifacts", "last_reviewed_plan_hash"),
+        ("task_artifacts", "plan_review_attempts"),
+        ("task_artifacts", "qa_attempts"),
+        ("task_artifacts", "epic_qa_attempts"),
+        ("task_artifacts", "merge_attempts"),
+        ("inter_session_messages", "read_at"),
+    )
+    indexes = (
+        "idx_token_events_event_at",
+        "idx_token_events_model_family",
+        "idx_token_events_project_event",
+    )
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    for table_name, column_name in columns:
+        assert f"Evidence block: {table_name}.{column_name}" in migration
+        assert f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS {column_name};" in normalized
+    for index_name in indexes:
+        assert f"Evidence block: {index_name}" in migration
+        assert f"DROP INDEX IF EXISTS {index_name};" in normalized
 
 
 def test_reconcile_live_hub_schema_drift_v2_matches_canonical_schema() -> None:
