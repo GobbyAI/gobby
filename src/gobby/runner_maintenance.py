@@ -320,7 +320,7 @@ async def tmux_window_name_repair_loop(
                     exc_info=True,
                 )
         if renamed:
-            logger.info("tmux window repair: renamed %s window(s)", renamed)
+            logger.debug("tmux window repair: renamed %s window(s)", renamed)
 
     # Run once on startup, then loop.
     try:

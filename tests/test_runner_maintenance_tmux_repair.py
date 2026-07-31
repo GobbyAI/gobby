@@ -218,7 +218,9 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repair_loop_releases_ownerless_inactive_title() -> None:
+async def test_repair_loop_releases_ownerless_inactive_title(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     stale = SimpleNamespace(
         id="stale",
         status="expired",
@@ -232,6 +234,7 @@ async def test_repair_loop_releases_ownerless_inactive_title() -> None:
     enforce = AsyncMock()
     release = AsyncMock(return_value=True)
     with (
+        caplog.at_level("DEBUG", logger="gobby.runner_maintenance"),
         patch("gobby.runner_maintenance.resolve_tmux_repair_owner", owner),
         patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
         patch("gobby.runner_maintenance.release_window_name_if_unowned", release),
@@ -240,6 +243,13 @@ async def test_repair_loop_releases_ownerless_inactive_title() -> None:
 
     enforce.assert_not_awaited()
     release.assert_awaited_once_with(stale)
+    repair_records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "tmux window repair: renamed 1 window(s)"
+    ]
+    assert len(repair_records) == 1
+    assert repair_records[0].levelname == "DEBUG"
 
 
 @pytest.mark.asyncio
