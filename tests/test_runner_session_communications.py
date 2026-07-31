@@ -218,4 +218,5 @@ async def test_session_bridge_registers_without_websocket(
     await asyncio.to_thread(listener, transition)
     await asyncio.wait_for(delivered.wait(), timeout=1.0)
 
+    assert listener in session_manager._status_transition_listeners
     communications_manager.send_event.assert_awaited_once()

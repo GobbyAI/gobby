@@ -93,6 +93,11 @@ The router is mounted at `/api/comms` when communications are enabled.
 | `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel by UUID. |
 | `GET` | `/api/comms/channels/{channel_id}/status` | Get active, polling, capability, and initialization state. |
 | `GET` | `/api/comms/messages` | List stored messages with filters. |
+| `POST` | `/api/comms/subscriptions` | Create an event subscription. |
+| `GET` | `/api/comms/subscriptions` | List event subscriptions. |
+| `GET` | `/api/comms/subscriptions/{id}` | Get an event subscription. |
+| `PATCH` | `/api/comms/subscriptions/{id}` | Partially update an event subscription. |
+| `DELETE` | `/api/comms/subscriptions/{id}` | Delete an event subscription. |
 
 `POST /api/comms/send` accepts `channel_name`, `content`, optional
 `session_id`, and optional `metadata`. It returns the stored message on
@@ -143,6 +148,11 @@ When the manager is available, the proxy registers `gobby-communications`:
 | `link_identity` | `channel`, `external_user_id`, `session_id` |
 | `list_identities` | Optional `session_id`, optional `channel` |
 | `unlink_identity` | `identity_id` |
+| `create_event_subscription` | `name`, `channel`, `event_pattern`; optional project/global/session scope, priority, enabled |
+| `list_event_subscriptions` | Optional channel, project/global scope, enabled, event pattern filters |
+| `get_event_subscription` | `subscription_id` |
+| `update_event_subscription` | `subscription_id` and changed fields |
+| `delete_event_subscription` | `subscription_id` |
 
 `send_message` does not expose arbitrary metadata. Supply a channel
 `default_destination`, pass a linked `session_id`, or use the HTTP endpoint
@@ -357,6 +367,113 @@ config `poll_interval` when set, otherwise
 Discord Gateway reception is enabled by default. Set `enable_gateway: false`
 when using only interaction webhooks.
 
+## Event subscriptions
+
+Public interfaces call these records **event subscriptions**. Internal storage
+keeps the `CommsRoutingRule` and `comms_routing_rules` names.
+
+Create a subscription for the project resolved from the CLI's current working
+directory:
+
+```bash
+gobby comms subscriptions create gobby-telegram-agent-paused \
+  --channel gobby-telegram \
+  --event session.agent.paused
+```
+
+`--project <name-or-uuid>` overrides cwd inference. Global scope is always
+explicit:
+
+```bash
+gobby comms subscriptions create global-agent-pauses \
+  --channel operations \
+  --event 'session.agent.*' \
+  --global
+```
+
+The remaining CLI operations are:
+
+```bash
+gobby comms subscriptions list --project gobby
+gobby comms subscriptions get <subscription-id>
+gobby comms subscriptions update <subscription-id> --priority 10 --disabled
+gobby comms subscriptions delete <subscription-id>
+```
+
+HTTP creation requires exactly one of `project_id` or `global_scope=true`:
+
+```bash
+curl -X POST http://127.0.0.1:60887/api/comms/subscriptions \
+  -H "Authorization: Bearer $GOBBY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "gobby-telegram-agent-expired",
+    "channel": "gobby-telegram",
+    "event_pattern": "session.agent.expired",
+    "project_id": "<project-uuid>",
+    "priority": 0,
+    "enabled": true
+  }'
+```
+
+MCP creation infers project scope from the calling session:
+
+```python
+call_tool("gobby-communications", "create_event_subscription", {
+    "name": "gobby-telegram-agent-paused",
+    "channel": "gobby-telegram",
+    "event_pattern": "session.agent.paused",
+})
+
+call_tool("gobby-communications", "list_event_subscriptions", {
+    "project": "gobby",
+    "enabled": True,
+})
+call_tool("gobby-communications", "get_event_subscription", {
+    "subscription_id": "<subscription-id>",
+})
+call_tool("gobby-communications", "update_event_subscription", {
+    "subscription_id": "<subscription-id>",
+    "priority": 10,
+})
+call_tool("gobby-communications", "delete_event_subscription", {
+    "subscription_id": "<subscription-id>",
+})
+```
+
+A Telegram responder session inherits the responder project configured on its
+channel. That binding controls MCP caller inference and responder work. Outbound
+event delivery is controlled separately by each subscription's project,
+global, and optional session scope.
+
+Scope rules:
+
+- Project subscriptions match events from one project.
+- Session scope further restricts a project subscription to one session in
+  that project.
+- Global subscriptions use `project_id=None` internally and cannot carry a
+  session ID.
+- CLI creation fails when cwd has no project unless `--project` or `--global`
+  is supplied. MCP creation fails without a calling-session project unless
+  `global_scope=true` is supplied.
+
+Event patterns use glob matching. A pattern without wildcard characters is an
+exact match; patterns such as `session.agent.*` match multiple event names.
+Every matching channel receives the event. Lower priority values route first.
+Disabled subscriptions remain visible to administrative lists and do not
+deliver. Deterministic source event IDs suppress replayed delivery once per
+channel.
+
+Session lifecycle events are:
+
+- `session.agent.paused`
+- `session.agent.expired`
+- `session.interactive.paused`
+- `session.interactive.expired`
+
+Subscription timestamps are stored in UTC and presented to users as local ISO
+timestamps.
+
 ## Inbound identity and session behavior
 
 Inbound messages are verified, normalized, deduplicated by platform message
@@ -381,10 +498,6 @@ source = comms
 
 Identity records keep sender attribution. Group context belongs to the group
 session instead of one sender's identity.
-
-Routing rules for daemon events are stored in `comms_routing_rules`.
-`MessageRouter` matches glob patterns such as `task.*`, optionally scoped by
-project or session, and refreshes its cache every 30 seconds.
 
 ## Troubleshooting
 

@@ -1,6 +1,7 @@
 """Tests for local communications store."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -33,8 +34,8 @@ def test_channel_crud(comms_store: LocalCommunicationsStore) -> None:
         enabled=True,
         config_json={"api_key": "secret"},
         webhook_secret="wh_secret",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     saved = comms_store.create_channel(channel)
     assert str(uuid.UUID(saved.id)) == saved.id
@@ -339,8 +340,8 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
             priority=20,
             enabled=False,
             config_json={},
-            created_at="2024-01-01T00:00:01Z",
-            updated_at="2024-01-01T00:00:01Z",
+            created_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC),
         )
     )
     comms_store.create_routing_rule(
@@ -353,8 +354,8 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
             priority=0,
             enabled=True,
             config_json={},
-            created_at="2024-01-01T00:00:02Z",
-            updated_at="2024-01-01T00:00:02Z",
+            created_at=datetime(2024, 1, 1, 0, 0, 2, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, 0, 0, 2, tzinfo=UTC),
         )
     )
 

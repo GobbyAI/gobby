@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -488,3 +488,110 @@ async def test_send_message_exposes_inline_keyboard_metadata(
             "callback_ttl_seconds": 45,
         },
     )
+
+
+def test_create_event_subscription_uses_responder_session_project(
+    registry: Any,
+    mock_manager: MagicMock,
+) -> None:
+    rule = MagicMock()
+    contract = {
+        "id": "sub-1",
+        "name": "Agent pauses",
+        "scope": {"kind": "project", "project_id": "responder-project"},
+        "created_at": "2026-07-30T18:00:00-05:00",
+        "updated_at": "2026-07-30T18:00:00-05:00",
+    }
+    mock_manager.get_session_project_id.return_value = "responder-project"
+    mock_manager.create_event_subscription.return_value = rule
+    mock_manager.event_subscription_to_dict.return_value = contract
+    handler = registry.get_tool("create_event_subscription")
+
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id",
+        return_value="telegram-responder-session",
+    ):
+        result = handler(
+            name="Agent pauses",
+            channel="telegram",
+            event_pattern="session.agent.paused",
+        )
+
+    assert result == {"success": True, "subscription": contract}
+    mock_manager.get_session_project_id.assert_called_once_with(
+        "telegram-responder-session"
+    )
+    mock_manager.create_event_subscription.assert_called_once_with(
+        name="Agent pauses",
+        channel="telegram",
+        event_pattern="session.agent.paused",
+        project_id="responder-project",
+        global_scope=False,
+        session_id=None,
+        priority=0,
+        enabled=True,
+    )
+
+
+def test_create_event_subscription_requires_caller_context_or_explicit_global(
+    registry: Any,
+    mock_manager: MagicMock,
+) -> None:
+    handler = registry.get_tool("create_event_subscription")
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id",
+        return_value=None,
+    ):
+        missing = handler(
+            name="Agent pauses",
+            channel="telegram",
+            event_pattern="session.agent.paused",
+        )
+
+    assert missing == {"success": False, "error": "Calling session context is required"}
+    mock_manager.create_event_subscription.assert_not_called()
+
+    rule = MagicMock()
+    contract = {"id": "sub-global", "scope": {"kind": "global", "project_id": None}}
+    mock_manager.create_event_subscription.return_value = rule
+    mock_manager.event_subscription_to_dict.return_value = contract
+    explicit_global = handler(
+        name="Global agent pauses",
+        channel="telegram",
+        event_pattern="session.agent.paused",
+        global_scope=True,
+    )
+
+    assert explicit_global == {"success": True, "subscription": contract}
+    assert mock_manager.create_event_subscription.call_args.kwargs["project_id"] is None
+    assert mock_manager.create_event_subscription.call_args.kwargs["global_scope"] is True
+
+
+def test_event_subscription_mcp_crud_uses_shared_contract(
+    registry: Any,
+    mock_manager: MagicMock,
+) -> None:
+    rule = MagicMock()
+    contract = {"id": "sub-1", "scope": {"kind": "project", "project_id": "project-1"}}
+    mock_manager.list_event_subscriptions.return_value = [rule]
+    mock_manager.get_event_subscription.return_value = rule
+    mock_manager.update_event_subscription.return_value = rule
+    mock_manager.event_subscription_to_dict.return_value = contract
+
+    listed = registry.get_tool("list_event_subscriptions")(
+        channel="telegram",
+        enabled=False,
+        event_pattern="session.agent.paused",
+    )
+    fetched = registry.get_tool("get_event_subscription")("sub-1")
+    updated = registry.get_tool("update_event_subscription")(
+        "sub-1",
+        priority=10,
+        enabled=False,
+    )
+    deleted = registry.get_tool("delete_event_subscription")("sub-1")
+
+    assert listed == {"success": True, "subscriptions": [contract]}
+    assert fetched == {"success": True, "subscription": contract}
+    assert updated == {"success": True, "subscription": contract}
+    assert deleted == {"success": True, "deleted": "sub-1"}

@@ -5,6 +5,7 @@ Commands for managing communications channels and sending messages.
 """
 
 import json
+import urllib.parse
 from typing import Any
 
 import click
@@ -366,10 +367,11 @@ def subscriptions_list_cmd(
 
     client = get_daemon_client(ctx)
     try:
+        query = urllib.parse.urlencode(params)
+        endpoint = f"/api/comms/subscriptions?{query}" if query else "/api/comms/subscriptions"
         response = client.call_http_api(
-            "/api/comms/subscriptions",
+            endpoint,
             method="GET",
-            params=params,
         )
         if response.status_code != 200:
             print_error(f"Failed to list subscriptions: {response.text}")

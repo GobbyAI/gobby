@@ -292,3 +292,135 @@ def test_comms_channels_remove(mock_daemon_client: MagicMock) -> None:
     assert mock_daemon_client.call_http_api.call_count == 2
     mock_daemon_client.call_http_api.assert_any_call("/api/comms/channels", method="GET")
     mock_daemon_client.call_http_api.assert_any_call("/api/comms/channels/cc_123", method="DELETE")
+
+
+def test_comms_subscriptions_create_uses_cwd_project(
+    mock_daemon_client: MagicMock,
+) -> None:
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"id": "sub-1", "scope": {"kind": "project"}}
+    mock_daemon_client.call_http_api.return_value = response
+
+    with patch(
+        "gobby.cli.communications.resolve_project_ref",
+        return_value="cwd-project-id",
+    ) as resolve_project:
+        result = CliRunner().invoke(
+            comms,
+            [
+                "subscriptions",
+                "create",
+                "Agent pauses",
+                "--channel",
+                "telegram",
+                "--event",
+                "session.agent.paused",
+            ],
+        )
+
+    assert result.exit_code == 0
+    resolve_project.assert_called_once_with(None)
+    mock_daemon_client.call_http_api.assert_called_once_with(
+        "/api/comms/subscriptions",
+        method="POST",
+        json_data={
+            "name": "Agent pauses",
+            "channel": "telegram",
+            "event_pattern": "session.agent.paused",
+            "project_id": "cwd-project-id",
+            "global_scope": False,
+            "session_id": None,
+            "priority": 0,
+            "enabled": True,
+        },
+    )
+
+
+def test_comms_subscriptions_create_requires_project_or_explicit_global(
+    mock_daemon_client: MagicMock,
+) -> None:
+    with patch("gobby.cli.communications.resolve_project_ref", return_value=None):
+        missing = CliRunner().invoke(
+            comms,
+            [
+                "subscriptions",
+                "create",
+                "Agent pauses",
+                "--channel",
+                "telegram",
+                "--event",
+                "session.agent.paused",
+            ],
+        )
+
+    assert missing.exit_code == 1
+    assert "No project context found; pass --project or --global." in missing.output
+    mock_daemon_client.call_http_api.assert_not_called()
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"id": "sub-global", "scope": {"kind": "global"}}
+    mock_daemon_client.call_http_api.return_value = response
+    explicit_global = CliRunner().invoke(
+        comms,
+        [
+            "subscriptions",
+            "create",
+            "Global agent pauses",
+            "--channel",
+            "telegram",
+            "--event",
+            "session.agent.paused",
+            "--global",
+        ],
+    )
+
+    assert explicit_global.exit_code == 0
+    payload = mock_daemon_client.call_http_api.call_args.kwargs["json_data"]
+    assert payload["project_id"] is None
+    assert payload["global_scope"] is True
+
+
+def test_comms_subscriptions_list_get_update_and_delete(
+    mock_daemon_client: MagicMock,
+) -> None:
+    runner = CliRunner()
+    response = MagicMock(status_code=200)
+    mock_daemon_client.call_http_api.return_value = response
+
+    response.json.return_value = [{"id": "sub-1"}]
+    listed = runner.invoke(
+        comms,
+        ["subscriptions", "list", "--channel", "telegram", "--disabled"],
+    )
+    assert listed.exit_code == 0
+    mock_daemon_client.call_http_api.assert_called_with(
+        "/api/comms/subscriptions?channel=telegram&enabled=False",
+        method="GET",
+    )
+
+    response.json.return_value = {"id": "sub-1"}
+    fetched = runner.invoke(comms, ["subscriptions", "get", "sub-1"])
+    assert fetched.exit_code == 0
+    mock_daemon_client.call_http_api.assert_called_with(
+        "/api/comms/subscriptions/sub-1",
+        method="GET",
+    )
+
+    updated = runner.invoke(
+        comms,
+        ["subscriptions", "update", "sub-1", "--priority", "10", "--disabled"],
+    )
+    assert updated.exit_code == 0
+    mock_daemon_client.call_http_api.assert_called_with(
+        "/api/comms/subscriptions/sub-1",
+        method="PATCH",
+        json_data={"priority": 10, "enabled": False},
+    )
+
+    response.json.return_value = {"status": "ok", "deleted": "sub-1"}
+    deleted = runner.invoke(comms, ["subscriptions", "delete", "sub-1"])
+    assert deleted.exit_code == 0
+    mock_daemon_client.call_http_api.assert_called_with(
+        "/api/comms/subscriptions/sub-1",
+        method="DELETE",
+    )

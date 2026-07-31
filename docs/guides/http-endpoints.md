@@ -591,8 +591,21 @@ daemon config.
 | `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel. |
 | `GET` | `/api/comms/channels/{channel_id}/status` | Channel status. |
 | `GET` | `/api/comms/messages` | List communication messages. |
+| `POST` | `/api/comms/subscriptions` | Create a project-scoped or explicit-global event subscription. |
+| `GET` | `/api/comms/subscriptions` | List event subscriptions, including disabled subscriptions by default. |
+| `GET` | `/api/comms/subscriptions/{id}` | Get one event subscription. |
+| `PATCH` | `/api/comms/subscriptions/{id}` | Partially update an event subscription. |
+| `DELETE` | `/api/comms/subscriptions/{id}` | Delete an event subscription. |
 | `GET` | `/api/comms/webhooks/{channel_name}` | Verify a channel webhook. |
 | `POST` | `/api/comms/webhooks/{channel_name}` | Receive a channel webhook. |
+
+Subscription creation requires exactly one scope declaration:
+`project_id="<uuid>"` or `global_scope=true`. A global subscription cannot set
+`session_id`; a session-scoped subscription must reference a session in its
+selected project. The response contract includes subscription ID and name,
+channel ID and name, `scope.kind` and `scope.project_id`, event pattern,
+optional session ID, priority, enabled state, and locally presented ISO
+timestamps.
 
 ## Error Handling
 

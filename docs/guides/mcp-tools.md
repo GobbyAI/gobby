@@ -191,7 +191,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `gobby-hub` | Cross-project queries | 5 |
 | `gobby-voice` | Whisper STT vocabulary | 4 |
 | `gobby-wiki` | Wiki search, ingest, research | 12 |
-| `gobby-communications` | Channels, identities, messaging | 9 |
+| `gobby-communications` | Channels, identities, messaging, event subscriptions | 16 |
 
 ---
 
@@ -1007,6 +1007,38 @@ reports.
 | `delete_cron_job` | Delete a job and its run history. |
 | `run_cron_job` | Trigger an immediate run, bypassing the schedule. |
 | `list_cron_runs` | List run history for a job. |
+
+---
+
+## Communications (`gobby-communications`)
+
+16 tools for channel administration, delivery, identities, and event
+subscriptions.
+
+| Tool | Description |
+| :--- | :--- |
+| `send_message` | Send a message through a configured channel. |
+| `send_attachment` | Send a workspace attachment through a configured channel. |
+| `list_channels` | List configured channels. |
+| `get_messages` | List persisted inbound or outbound messages. |
+| `add_channel` | Add and initialize a channel. |
+| `remove_channel` | Remove a channel. |
+| `set_channel_project` | Bind a responder channel to a project. |
+| `send_proactive_message` | Send to an explicit platform conversation. |
+| `link_identity` | Link a platform identity to a session. |
+| `list_identities` | List linked platform identities. |
+| `unlink_identity` | Remove a platform identity's session link. |
+| `create_event_subscription` | Create a project-scoped, session-scoped, or explicit-global subscription. |
+| `list_event_subscriptions` | List subscriptions with channel, scope, enabled, and event-pattern filters. |
+| `get_event_subscription` | Get one subscription by ID. |
+| `update_event_subscription` | Partially update one subscription by ID. |
+| `delete_event_subscription` | Delete one subscription by ID. |
+
+`create_event_subscription` infers project scope from the calling session when
+`project` and `global_scope` are omitted. Telegram responder sessions therefore
+inherit the responder project configured on their channel. Use
+`global_scope=true` explicitly for global routing. Outbound subscription scope
+remains independent from the channel's responder-project binding.
 
 ---
 

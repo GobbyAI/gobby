@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -34,6 +34,7 @@ from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.utils.datetime import datetime_to_local_iso
 
 
 def make_config() -> CommunicationsConfig:
@@ -2259,6 +2260,8 @@ def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None
     assert public["channel_id"] == channel.id
     assert public["channel_name"] == "Telegram"
     assert public["scope"] == {"kind": "project", "project_id": "project-1"}
+    assert public["created_at"] == datetime_to_local_iso(updated.created_at)
+    assert public["updated_at"] == datetime_to_local_iso(updated.updated_at)
     assert "config_json" not in public
 
     manager._router._rules_cache = [updated]
@@ -2305,7 +2308,7 @@ def test_event_subscription_create_rejects_invalid_contract(
     kwargs.update(overrides)
 
     with pytest.raises(ValueError, match=message):
-        manager.create_event_subscription(**kwargs)
+        cast(Any, manager.create_event_subscription)(**kwargs)
 
 
 def test_event_subscription_session_must_belong_to_selected_project() -> None:

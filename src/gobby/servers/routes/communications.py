@@ -274,7 +274,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
                 priority=request.priority,
                 enabled=request.enabled,
             )
-            return comms_manager.event_subscription_to_dict(rule)
+            return cast("dict[str, Any]", comms_manager.event_subscription_to_dict(rule))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -310,7 +310,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="Communications manager not available")
         try:
             rule = comms_manager.get_event_subscription(subscription_id)
-            return comms_manager.event_subscription_to_dict(rule)
+            return cast("dict[str, Any]", comms_manager.event_subscription_to_dict(rule))
         except EventSubscriptionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -326,7 +326,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         changes = request.model_dump(exclude_unset=True)
         try:
             rule = comms_manager.update_event_subscription(subscription_id, **changes)
-            return comms_manager.event_subscription_to_dict(rule)
+            return cast("dict[str, Any]", comms_manager.event_subscription_to_dict(rule))
         except EventSubscriptionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
