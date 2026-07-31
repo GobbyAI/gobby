@@ -13,29 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.utils.url_sanitize import sanitize_url
+
 logger = logging.getLogger(__name__)
 CLONES_ROOT = Path.home() / ".gobby" / "clones"
-
-
-def _sanitize_url(url: str) -> str:
-    """Remove credentials from URL for safe logging.
-
-    Args:
-        url: URL that may contain credentials
-
-    Returns:
-        URL with credentials removed
-    """
-    from urllib.parse import urlparse, urlunparse
-
-    parsed = urlparse(url)
-    if parsed.username or parsed.password:
-        # Replace userinfo with placeholder
-        netloc = parsed.hostname or ""
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        parsed = parsed._replace(netloc=netloc)
-    return urlunparse(parsed)
 
 
 @dataclass
@@ -257,7 +238,7 @@ class CloneGitManager:
 
             # Sanitize URL in command before logging to avoid exposing credentials
             safe_cmd = cmd.copy()
-            safe_cmd[safe_cmd.index(remote_url)] = _sanitize_url(remote_url)
+            safe_cmd[safe_cmd.index(remote_url)] = sanitize_url(remote_url)
             logger.debug("Running: %s", " ".join(safe_cmd))
 
             result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
@@ -351,7 +332,7 @@ class CloneGitManager:
 
             # Sanitize URL in command before logging to avoid exposing credentials
             safe_cmd = cmd.copy()
-            safe_cmd[safe_cmd.index(remote_url)] = _sanitize_url(remote_url)
+            safe_cmd[safe_cmd.index(remote_url)] = sanitize_url(remote_url)
             logger.debug("Running: %s", " ".join(safe_cmd))
 
             result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments

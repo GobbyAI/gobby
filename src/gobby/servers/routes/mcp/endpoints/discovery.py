@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 from fastapi import Depends, HTTPException, Request
 from mcp.types import ListToolsResult
 
+from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 
 if TYPE_CHECKING:
@@ -58,18 +59,6 @@ def _object_attr(value: object, attr: str) -> object | None:
     return getattr(value, attr, None)
 
 
-def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
-    if not text:
-        return ""
-    if max_chars <= 0:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    if max_chars == 1:
-        return "…"
-    return f"{text[: max_chars - 1]}…"
-
-
 def _response_tool_briefs(tool_briefs: list[ToolBrief]) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], tool_briefs)
 
@@ -88,7 +77,7 @@ def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
             name = _object_attr(tool, "name")
             brief = _object_attr(tool, "brief") or _object_attr(tool, "description") or ""
         if name:
-            tools.append({"name": str(name), "brief": _truncate_tool_brief(str(brief))})
+            tools.append({"name": str(name), "brief": truncate_tool_brief(str(brief))})
     return tools
 
 
@@ -203,7 +192,7 @@ async def _list_external_server_tools(
         tool_briefs: list[ToolBrief] = [
             {
                 "name": tool["name"],
-                "brief": _truncate_tool_brief(tool.get("description")),
+                "brief": truncate_tool_brief(tool.get("description")),
             }
             for tool in discovered_tools
         ]

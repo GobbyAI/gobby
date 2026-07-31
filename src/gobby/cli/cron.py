@@ -11,6 +11,7 @@ import click
 import httpx
 from croniter import croniter
 
+from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_client
@@ -48,20 +49,6 @@ def _resolve_job_id(storage: CronJobStorage, job_ref: str) -> str:
 
 def _get_daemon_client(_ctx: click.Context) -> DaemonClient:
     return get_daemon_client()
-
-
-def _daemon_error_message(response: Any) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        text = getattr(response, "text", "")
-        return f"HTTP {response.status_code}: {text}" if text else f"HTTP {response.status_code}"
-
-    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
-    if isinstance(detail, dict):
-        message = detail.get("message") or detail.get("error") or detail.get("detail")
-        return str(message) if message is not None else str(detail)
-    return str(detail)
 
 
 class ParsedSchedule(NamedTuple):
@@ -222,7 +209,7 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
         raise click.ClickException(f"Daemon unavailable: {exc}") from exc
 
     if response.status_code != 200:
-        raise click.ClickException(_daemon_error_message(response))
+        raise click.ClickException(_daemon_error_message(_daemon_error_detail(response)))
 
     payload = response.json()
     if not isinstance(payload, dict) or not isinstance(payload.get("run"), dict):

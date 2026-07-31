@@ -30,9 +30,6 @@ def truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
     return f"{text[: max_chars - 1]}…"
 
 
-_truncate_tool_brief = truncate_tool_brief
-
-
 def load_tools_from_db(
     mcp_db_manager: _CachedToolsManager,
     server_name: str,

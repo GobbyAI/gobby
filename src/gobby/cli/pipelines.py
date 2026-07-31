@@ -8,13 +8,14 @@ import asyncio  # noqa: F401 - facade for split pipeline modules
 import getpass
 import json
 import logging
-from pathlib import Path
+from pathlib import Path  # noqa: F401 - facade for pipelines_import
 from typing import Any
 
 import click
 import httpx
 import yaml  # noqa: F401 - used by pipelines_import through this module facade
 
+from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
 from gobby.cli.pipelines_catalog import list_pipelines, run_pipeline, show_pipeline
 from gobby.cli.pipelines_import import import_pipeline
 from gobby.cli.pipelines_runs import (
@@ -26,6 +27,7 @@ from gobby.cli.pipelines_runs import (
     search_executions,
     show_pipeline_run,
 )
+from gobby.cli.workflows.common import get_project_path as get_project_path
 from gobby.cli.workflows.common import get_workflow_loader
 from gobby.utils.daemon_url import DaemonUrlError
 from gobby.utils.json_helpers import json_dumps
@@ -39,14 +41,6 @@ logger = logging.getLogger(__name__)
 def _cli_actor() -> str:
     """Return the stable local actor recorded for CLI decisions."""
     return getpass.getuser()
-
-
-def get_project_path() -> Path | None:
-    """Get current project path if in a gobby project."""
-    cwd = Path.cwd()
-    if (cwd / ".gobby").exists():
-        return cwd
-    return None
 
 
 def _get_project_id() -> str:
@@ -91,24 +85,6 @@ def get_pipeline_executor() -> Any:
     )
 
 
-def _daemon_error_message(response: Any) -> str:
-    status_code = getattr(response, "status_code", "unknown")
-    fallback = str(getattr(response, "text", "") or "").strip() or f"HTTP {status_code}"
-    try:
-        payload = response.json()
-    except Exception:
-        return fallback
-
-    if isinstance(payload, dict):
-        detail = payload.get("detail") or payload.get("error") or payload.get("message")
-        if isinstance(detail, str) and detail.strip():
-            return detail.strip()
-        if detail:
-            return json_dumps(detail)
-
-    return fallback
-
-
 def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[str, Any] | None:
     """Try to run pipeline via daemon HTTP API. Returns None only if unavailable."""
     try:
@@ -129,7 +105,8 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
                 raise SystemExit(1) from None
             return result
         click.echo(
-            f"Pipeline execution failed in daemon: {_daemon_error_message(response)}",
+            "Pipeline execution failed in daemon: "
+            f"{_daemon_error_message(_daemon_error_detail(response))}",
             err=True,
         )
         raise SystemExit(1)
@@ -174,7 +151,8 @@ def _try_daemon_approval(action: str, token: str) -> dict[str, Any] | None:
                 raise SystemExit(1) from None
             return result
         click.echo(
-            f"Pipeline {action} failed in daemon: {_daemon_error_message(response)}",
+            f"Pipeline {action} failed in daemon: "
+            f"{_daemon_error_message(_daemon_error_detail(response))}",
             err=True,
         )
         raise SystemExit(1)

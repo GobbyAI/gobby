@@ -4,11 +4,16 @@ Tests for CloneGitManager with shallow_clone, sync_clone, delete_clone methods.
 Uses mock subprocess calls to test git command execution.
 """
 
+import logging
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.clones.git import CloneGitManager
 
 pytestmark = pytest.mark.unit
 
@@ -81,6 +86,27 @@ class TestCloneGitManagerShallowClone:
         assert "clone" in cmd
         assert "--depth" in cmd
         assert "1" in cmd
+
+    def test_shallow_clone_redacts_query_and_preserves_ipv6(
+        self,
+        manager: CloneGitManager,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        caplog.set_level(logging.DEBUG, logger="gobby.clones.git")
+
+        manager.shallow_clone(
+            remote_url=("https://user:password@[2001:db8::1]:8443/repo.git?token=secret#fragment"),
+            clone_path=tmp_path / "test_clone",
+            branch="main",
+        )
+
+        assert "https://[2001:db8::1]:8443/repo.git" in caplog.text
+        assert "password" not in caplog.text
+        assert "token=secret" not in caplog.text
+        assert "fragment" not in caplog.text
 
     def test_shallow_clone_sets_pull_rebase(self, manager, mock_run, tmp_path: Path) -> None:
         """Shallow clone sets pull.rebase=true after successful clone."""

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
+
+from gobby.utils.http_retry import parse_retry_after
 
 if TYPE_CHECKING:
     from gobby.communications.attachments import AttachmentManager
@@ -24,12 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_RETRY_AFTER_DELAY_SECONDS = 120.0
-
-
-def _clamp_retry_after_delay(delay: float) -> float:
-    if not math.isfinite(delay):
-        return _MAX_RETRY_AFTER_DELAY_SECONDS
-    return min(max(0.0, delay), _MAX_RETRY_AFTER_DELAY_SECONDS)
 
 
 class BaseChannelAdapter(ABC):
@@ -289,19 +282,12 @@ class BaseChannelAdapter(ABC):
                     break
                 retry_after = response.headers.get("Retry-After")
                 delay = backoff_base * (2**attempt)  # default fallback
-                if retry_after:
-                    try:
-                        delay = _clamp_retry_after_delay(float(retry_after))
-                    except ValueError:
-                        try:
-                            dt = parsedate_to_datetime(retry_after)
-                            if dt.tzinfo is None:
-                                dt = dt.replace(tzinfo=UTC)
-                            delay = _clamp_retry_after_delay(
-                                (dt - datetime.now(UTC)).total_seconds()
-                            )
-                        except (ValueError, TypeError):
-                            pass  # keep exponential backoff default
+                parsed_retry_after = parse_retry_after(
+                    retry_after,
+                    max_delay=_MAX_RETRY_AFTER_DELAY_SECONDS,
+                )
+                if parsed_retry_after is not None:
+                    delay = parsed_retry_after
                 if self._rate_limit_callback is not None:
                     self._rate_limit_callback(delay, False)
                 logger.warning(

@@ -26,6 +26,7 @@ import aiohttp
 from aiohttp.abc import AbstractResolver, ResolveResult
 from aiohttp.resolver import DefaultResolver
 
+from gobby.utils.url_sanitize import sanitize_url
 from gobby.workflows.webhook import MAX_RETRY_BACKOFF_SECONDS, RetryConfig
 
 logger = logging.getLogger(__name__)
@@ -468,7 +469,7 @@ class WebhookExecutor:
                     diagnostics={
                         "captured_bytes": exc.captured_bytes,
                         "total_bytes": exc.total_bytes,
-                        "url": _sanitize_url(url),
+                        "url": sanitize_url(url),
                     },
                 )
 
@@ -548,13 +549,3 @@ class _ResponseTooLargeError(Exception):
         super().__init__(f"Response body exceeds {MAX_RESPONSE_BYTES} bytes")
         self.captured_bytes = captured_bytes
         self.total_bytes = total_bytes
-
-
-def _sanitize_url(url: str) -> str:
-    """Remove URL credentials, query parameters, and fragments from diagnostics."""
-    parsed = urlsplit(url)
-    hostname = parsed.hostname or ""
-    if ":" in hostname:
-        hostname = f"[{hostname}]"
-    netloc = f"{hostname}:{parsed.port}" if parsed.port is not None else hostname
-    return parsed._replace(netloc=netloc, query="", fragment="").geturl()

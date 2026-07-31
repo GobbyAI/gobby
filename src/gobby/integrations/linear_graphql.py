@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 import httpx
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.utils.http_retry import parse_retry_after
 
 __all__ = ["LinearGraphQLClient", "LinearGraphQLError"]
 
@@ -467,27 +466,13 @@ def _is_retryable_status(status_code: int) -> bool:
 
 def _retry_delay(attempt: int, response: httpx.Response | None = None) -> float:
     if response is not None:
-        retry_after = response.headers.get("Retry-After")
-        parsed_retry_after = _parse_retry_after(retry_after)
+        parsed_retry_after = parse_retry_after(
+            response.headers.get("Retry-After"),
+            max_delay=_MAX_RETRY_DELAY_SECONDS,
+        )
         if parsed_retry_after is not None:
-            return parsed_retry_after
+            return _bounded_retry_after_delay(parsed_retry_after)
     return float(min(_INITIAL_RETRY_DELAY_SECONDS * (2**attempt), _MAX_RETRY_DELAY_SECONDS))
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        return _bounded_retry_after_delay(max(0.0, float(value)))
-    except ValueError:
-        pass
-    try:
-        retry_at = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(tzinfo=UTC)
-    return _bounded_retry_after_delay(max(0.0, (retry_at - datetime.now(UTC)).total_seconds()))
 
 
 def _bounded_retry_after_delay(delay: float) -> float:
