@@ -16,6 +16,9 @@ POSTGRES_BASELINE_SCHEMA = SRC_ROOT / "storage" / "postgres_baseline_schema.sql"
 RECONCILE_DRIFT_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "306_reconcile_live_hub_schema_drift.sql"
 )
+RECONCILE_DRIFT_V2_MIGRATION = (
+    SRC_ROOT / "storage" / "migrations" / "356_reconcile_live_hub_schema_drift_v2.sql"
+)
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -570,6 +573,30 @@ def test_reconcile_cron_display_name_migration_is_dual_shape_safe() -> None:
         (
             "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS display_name TEXT;",
             "DROP TABLE IF EXISTS tmux_input_requests, tmux_input_pane_states;",
+        ),
+    )
+
+
+def test_reconcile_live_hub_schema_drift_v2_matches_canonical_schema() -> None:
+    migration = RECONCILE_DRIFT_V2_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    _assert_contains_all(
+        "live hub schema drift v2 reconciliation",
+        normalized,
+        (
+            "CREATE TABLE IF NOT EXISTS memory_dream_truth_state",
+            "ALTER COLUMN memory_type SET DEFAULT 'fact'",
+            "ALTER COLUMN dream_due_version TYPE BIGINT",
+            "ALTER COLUMN total_chars TYPE BIGINT",
+            "ADD CONSTRAINT cron_jobs_name_key UNIQUE (name)",
+            "ADD CONSTRAINT projects_linear_sync_enabled_check",
+            "ADD CONSTRAINT project_github_triage_configs_sync_enabled_check",
+            "ADD CONSTRAINT project_github_triage_configs_triage_enabled_check",
+            "DROP INDEX IF EXISTS idx_inter_session_messages_unread",
+            "DROP COLUMN IF EXISTS read_at",
+            "DROP COLUMN IF EXISTS assignee",
         ),
     )
 
