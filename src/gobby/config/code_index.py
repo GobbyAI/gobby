@@ -14,6 +14,16 @@ _LEGACY_SUMMARY_KEYS = {
     "summary_candidates": "candidates",
     "summary_max_concurrency": "max_concurrency",
 }
+_REMOVED_KEYS = frozenset(
+    {
+        "auto_index_on_commit",
+        "content_extensions",
+        "exclude_patterns",
+        "languages",
+        "max_file_size_bytes",
+        "qdrant_collection_prefix",
+    }
+)
 
 
 class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
@@ -48,10 +58,6 @@ class CodeIndexConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="Enable code indexing via tree-sitter AST parsing",
-    )
-    auto_index_on_commit: bool = Field(
-        default=True,
-        description="Auto-reindex changed files on git commit",
     )
     maintenance_interval_seconds: int = Field(
         default=3600,
@@ -97,29 +103,6 @@ class CodeIndexConfig(BaseModel):
             "before purging its index"
         ),
     )
-    max_file_size_bytes: int = Field(
-        default=1_000_000,
-        ge=1,
-        description="Skip files larger than this",
-    )
-    exclude_patterns: list[str] = Field(
-        default=[
-            "node_modules",
-            ".vite",
-            ".git",
-            "__pycache__",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytest_cache",
-            ".tox",
-            ".eggs",
-            "vendor",
-            "build",
-            "dist",
-            ".venv",
-        ],
-        description="Glob patterns to exclude from indexing",
-    )
     embedding_enabled: bool = Field(
         default=True,
         description="Enable Qdrant vector embeddings for semantic search",
@@ -127,31 +110,6 @@ class CodeIndexConfig(BaseModel):
     graph_enabled: bool = Field(
         default=True,
         description="Enable FalkorDB call/import graph",
-    )
-    qdrant_collection_prefix: str = Field(
-        default="code_symbols_",
-        description="Qdrant collection name prefix",
-    )
-    languages: list[str] = Field(
-        default=[
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "rust",
-            "java",
-            "php",
-            "dart",
-            "csharp",
-            "c",
-            "cpp",
-            "elixir",
-            "ruby",
-            "markdown",
-            "yaml",
-            "json",
-        ],
-        description="Languages to index",
     )
     symbol_summary: CodeIndexSymbolSummaryConfig = Field(
         default_factory=CodeIndexSymbolSummaryConfig,
@@ -187,30 +145,6 @@ class CodeIndexConfig(BaseModel):
         gt=0,
         description="Maximum vector-sync breaker backoff",
     )
-    content_extensions: list[str] = Field(
-        default=[
-            ".html",
-            ".css",
-            ".scss",
-            ".less",
-            ".toml",
-            ".cfg",
-            ".ini",
-            ".sh",
-            ".bash",
-            ".zsh",
-            ".fish",
-            ".sql",
-            ".graphql",
-            ".proto",
-            ".txt",
-            ".rst",
-            ".csv",
-            ".gitignore",
-            ".editorconfig",
-        ],
-        description="Additional file extensions to index for content search only (no AST parsing)",
-    )
 
     @model_validator(mode="before")
     @classmethod
@@ -219,6 +153,8 @@ class CodeIndexConfig(BaseModel):
         if isinstance(data, dict):
             updated = dict(data)
             updated.pop("sync_worker_vector_batch_size", None)
+            for key in _REMOVED_KEYS:
+                updated.pop(key, None)
             if any(key in updated for key in _LEGACY_SUMMARY_KEYS):
                 existing_summary = updated.get("symbol_summary")
                 symbol_summary = (

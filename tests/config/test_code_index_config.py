@@ -73,8 +73,6 @@ def test_code_index_config_still_rejects_unknown_fields() -> None:
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
-        pytest.param("max_file_size_bytes", 0, id="zero-max-file-size"),
-        pytest.param("max_file_size_bytes", -1, id="negative-max-file-size"),
         pytest.param("sync_worker_interval_seconds", 0, id="zero-sync-interval"),
         pytest.param("sync_worker_interval_seconds", -0.1, id="negative-sync-interval"),
         pytest.param("sync_worker_batch_size", 0, id="zero-sync-batch"),

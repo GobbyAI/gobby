@@ -69,7 +69,6 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
-    ContextInjectionConfig,
     DigestConfig,
     MemoryRecallConfig,
     MemoryUsefulnessConfig,
@@ -262,10 +261,6 @@ class DaemonConfig(BaseModel):
     compact_handoff: CompactHandoffConfig = Field(
         default_factory=CompactHandoffConfig,
         description="Compact handoff context configuration",
-    )
-    context_injection: ContextInjectionConfig = Field(
-        default_factory=ContextInjectionConfig,
-        description="Context injection configuration for subagent spawning",
     )
     mcp_client_proxy: MCPClientProxyConfig = Field(
         default_factory=MCPClientProxyConfig,
@@ -462,53 +457,21 @@ class DaemonConfig(BaseModel):
         description="Base directory for git worktrees (survives reboots, unlike /tmp).",
     )
 
-    def get_recommend_tools_config(self) -> RecommendToolsConfig:
-        """Get recommend_tools configuration."""
-        return self.recommend_tools
-
     def get_tool_result_offload_config(self) -> ToolResultOffloadConfig:
         """Get tool_result_offload configuration."""
         return self.tool_result_offload
-
-    def get_tool_summarizer_config(self) -> ToolSummarizerConfig:
-        """Get tool_summarizer configuration."""
-        return self.tool_summarizer
 
     def get_import_mcp_server_config(self) -> ImportMCPServerConfig:
         """Get import_mcp_server configuration."""
         return self.import_mcp_server
 
-    def get_mcp_client_proxy_config(self) -> MCPClientProxyConfig:
-        """Get MCP client proxy configuration."""
-        return self.mcp_client_proxy
-
-    def get_memory_config(self) -> MemoryConfig:
-        """Get memory configuration."""
-        return self.memory
-
-    def get_memory_backup_config(self) -> MemoryBackupConfig:
-        """Get memory backup configuration."""
-        return self.memory_backup
-
-    def get_skills_config(self) -> SkillsConfig:
-        """Get skills configuration."""
-        return self.skills
-
     def get_gobby_tasks_config(self) -> GobbyTasksConfig:
         """Get gobby-tasks configuration."""
         return self.gobby_tasks
 
-    def get_metrics_config(self) -> MetricsConfig:
-        """Get metrics configuration."""
-        return self.metrics
-
     def get_verification_defaults(self) -> ProjectVerificationConfig:
         """Get default verification commands configuration."""
         return self.verification_defaults
-
-    def get_project_verification_synthesis_config(self) -> ProjectVerificationSynthesisConfig:
-        """Get project verification synthesis configuration."""
-        return self.project_verification_synthesis
 
     def get_search_config(self) -> SearchConfig:
         """Get search configuration."""
@@ -556,18 +519,6 @@ class DaemonConfig(BaseModel):
             candidates = profile_defaults.get(feature_config.profile)
             if candidates is not None:
                 feature_config.candidates = validate_feature_candidates(candidates)
-        return self
-
-    @model_validator(mode="after")
-    def validate_collection_prefix_consistency(self) -> DaemonConfig:
-        """Ensure databases.qdrant and code_index collection prefixes match."""
-        if self.databases.qdrant.collection_prefix != self.code_index.qdrant_collection_prefix:
-            raise ValueError(
-                f"databases.qdrant.collection_prefix "
-                f"({self.databases.qdrant.collection_prefix!r}) must match "
-                f"code_index.qdrant_collection_prefix "
-                f"({self.code_index.qdrant_collection_prefix!r})"
-            )
         return self
 
 

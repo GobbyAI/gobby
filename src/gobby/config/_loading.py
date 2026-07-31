@@ -35,6 +35,26 @@ _LEGACY_KEYS_TO_DROP = frozenset(
 _REMOVED_CONFIG_STORE_KEYS = frozenset(
     {
         "databases.falkordb.requirepass",
+        "code_index.auto_index_on_commit",
+        "code_index.content_extensions",
+        "code_index.exclude_patterns",
+        "code_index.languages",
+        "code_index.max_file_size_bytes",
+        "code_index.qdrant_collection_prefix",
+        "communications.inbound_enabled",
+        "communications.outbound_enabled",
+        "gobby-tasks.expansion.codebase_research_enabled",
+        "gobby-tasks.expansion.research_max_steps",
+        "gobby-tasks.expansion.research_model",
+        "gobby-tasks.expansion.research_system_prompt",
+        "gobby-tasks.expansion.research_timeout",
+        "gobby-tasks.expansion.web_research_enabled",
+        "gobby_tasks.expansion.codebase_research_enabled",
+        "gobby_tasks.expansion.research_max_steps",
+        "gobby_tasks.expansion.research_model",
+        "gobby_tasks.expansion.research_system_prompt",
+        "gobby_tasks.expansion.research_timeout",
+        "gobby_tasks.expansion.web_research_enabled",
         "gobby_tasks.validation.issue_similarity_threshold",
         "gobby_tasks.validation.build_command",
         "gobby_tasks.validation.max_consecutive_errors",
@@ -43,7 +63,7 @@ _REMOVED_CONFIG_STORE_KEYS = frozenset(
         "gobby_tasks.validation.run_build_first",
     }
 )
-_REMOVED_CONFIG_STORE_PREFIXES = ("local.",)
+_REMOVED_CONFIG_STORE_PREFIXES = ("context_injection.", "local.")
 _UI_MODE_CONFIG_KEY = "ui.mode"
 _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS = {
     "code_index.summary_enabled": "code_index.symbol_summary.enabled",

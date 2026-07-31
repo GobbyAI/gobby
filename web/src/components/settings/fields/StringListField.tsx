@@ -13,7 +13,7 @@ export interface StringListFieldProps {
 
 /**
  * Ordered editable list of strings — the primitive for the audit's
- * `array<string>` "fix" rows (cors_origins, exclude_patterns, candidates, …)
+ * `array<string>` "fix" rows (cors_origins, candidates, path lists, …)
  * that today fall back to a single free-text input.
  */
 export function StringListField({

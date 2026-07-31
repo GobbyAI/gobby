@@ -1,4 +1,4 @@
-"""Red tests for the Phase 3 build configuration contract."""
+"""Tests for build configuration loading."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import yaml
 pytestmark = pytest.mark.unit
 
 
-def test_build_config_defaults_include_dispatch_knobs() -> None:
+def test_build_config_defaults_include_agent_limit() -> None:
     from gobby.config.build import SKIPPABLE_STAGES, BuildConfig
 
     cfg = BuildConfig()
@@ -29,17 +29,10 @@ def test_build_config_defaults_include_dispatch_knobs() -> None:
             "merge",
         }
     )
-    assert cfg.default_skip_stages == ()
-    assert cfg.default_isolation == "worktree"
-    assert cfg.stage_caps == {}
-    assert cfg.default_target_branch is None
-    assert cfg.clones_dir == Path.home() / ".gobby" / "clones"
-    assert cfg.cleanup_clones_on_merge is True
     assert cfg.max_active_agents == 10
-    assert cfg.dispatch_interval_seconds == 60
 
 
-def test_load_build_config_merges_defaults_global_project_and_flags(
+def test_load_build_config_merges_agent_limit_from_global_project_and_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -49,55 +42,22 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     project_root = tmp_path / "project"
     (home / ".gobby").mkdir(parents=True)
     (project_root / ".gobby").mkdir(parents=True)
-    (home / ".gobby" / "build.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "default_skip_stages": ["research"],
-                "default_isolation": "clone",
-                "default_max_review_rounds": 5,
-                "default_target_branch": "main",
-                "clones_dir": str(home / "custom-clones"),
-                "max_active_agents": 4,
-            }
-        )
-    )
-    (project_root / ".gobby" / "build.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "default_skip_stages": ["epic_qa"],
-                "cleanup_clones_on_merge": False,
-                "dispatch_interval_seconds": 15,
-            }
-        )
-    )
+    (home / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 4}))
+    (project_root / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 3}))
     monkeypatch.setattr(build_config.Path, "home", lambda: home)
 
     cfg = build_config.load_build_config(
         project_root=project_root,
-        flag_overrides={
-            "default_isolation": "none",
-            "default_target_branch": "release/0.4",
-            "max_active_agents": 2,
-        },
+        flag_overrides={"max_active_agents": 2},
     )
 
-    assert cfg.default_skip_stages == ("epic_qa",)
-    assert cfg.default_isolation == "none"
-    assert cfg.stage_caps["pr"].max_review_rounds == 5
-    assert cfg.stage_caps["pr"].max_work_attempts is None
-    assert cfg.default_target_branch == "release/0.4"
-    assert cfg.clones_dir == home / "custom-clones"
-    assert cfg.cleanup_clones_on_merge is False
     assert cfg.max_active_agents == 2
-    assert cfg.dispatch_interval_seconds == 15
 
 
-@pytest.mark.parametrize("field_name", ["max_active_agents", "dispatch_interval_seconds"])
 @pytest.mark.parametrize("invalid_value", [0, -1])
-def test_load_build_config_rejects_non_positive_dispatch_knobs(
+def test_load_build_config_rejects_non_positive_agent_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    field_name: str,
     invalid_value: int,
 ) -> None:
     from gobby.config import build as build_config
@@ -105,11 +65,13 @@ def test_load_build_config_rejects_non_positive_dispatch_knobs(
     home = tmp_path / "home"
     project_root = tmp_path / "project"
     (project_root / ".gobby").mkdir(parents=True)
-    (project_root / ".gobby" / "build.yaml").write_text(yaml.safe_dump({field_name: invalid_value}))
+    (project_root / ".gobby" / "build.yaml").write_text(
+        yaml.safe_dump({"max_active_agents": invalid_value})
+    )
     monkeypatch.setattr(build_config.Path, "home", lambda: home)
 
     with pytest.raises(
         ValueError,
-        match=rf"^{field_name} must be greater than or equal to 1$",
+        match=r"^max_active_agents must be greater than or equal to 1$",
     ):
         build_config.load_build_config(project_root=project_root)

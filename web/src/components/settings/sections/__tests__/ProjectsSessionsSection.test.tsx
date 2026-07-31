@@ -79,15 +79,6 @@ function makeConfigValues(): Record<string, unknown> {
       enabled: true,
       refresh_timeout_seconds: 300,
     },
-    context_injection: {
-      enabled: true,
-      default_source: 'summary_markdown',
-      max_file_size: 51200,
-      max_content_size: 51200,
-      max_transcript_messages: 100,
-      truncation_suffix: '\n\n[truncated]',
-      context_template: null,
-    },
     chat_history: {
       max_message_chars: 2000,
       max_total_chars: 30000,
@@ -184,7 +175,7 @@ describe('ProjectsSessionsSection', () => {
     )
   })
 
-  it('reads session lifecycle, context injection, and chat history config rows', () => {
+  it('reads session lifecycle and chat history config rows', () => {
     renderSection(makeContext())
 
     expect(
@@ -193,9 +184,7 @@ describe('ProjectsSessionsSection', () => {
     expect(screen.getByLabelText('Transcript archive directory')).toHaveValue(
       '~/.gobby/session_transcripts',
     )
-    expect(screen.getByLabelText('Default context source')).toHaveValue(
-      'summary_markdown',
-    )
+    expect(screen.queryByLabelText('Default context source')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Max total characters')).toHaveValue(30000)
   })
 

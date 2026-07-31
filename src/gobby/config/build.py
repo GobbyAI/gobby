@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import yaml
 
@@ -60,22 +60,11 @@ _LEGACY_CAP_DESTINATIONS: Mapping[str, tuple[str, str]] = {
 }
 
 
-def _default_clones_dir() -> Path:
-    return Path.home() / ".gobby" / "clones"
-
-
 @dataclass(frozen=True)
 class BuildConfig:
-    """Configuration for build orchestration and dispatch defaults."""
+    """Configuration for build agent dispatch."""
 
-    default_skip_stages: tuple[str, ...] = ()
-    default_isolation: Isolation = "worktree"
-    stage_caps: dict[str, StageCapOverride] = field(default_factory=dict)
-    default_target_branch: str | None = None
-    clones_dir: Path = field(default_factory=_default_clones_dir)
-    cleanup_clones_on_merge: bool = True
     max_active_agents: int = 10
-    dispatch_interval_seconds: int = 60
 
 
 def load_build_config(
@@ -98,19 +87,7 @@ def load_build_config(
 
 
 def _config_to_mapping(cfg: BuildConfig) -> dict[str, Any]:
-    return {
-        "default_skip_stages": cfg.default_skip_stages,
-        "default_isolation": cfg.default_isolation,
-        "stage_caps": {
-            stage_name: _stage_cap_to_mapping(stage_cap)
-            for stage_name, stage_cap in cfg.stage_caps.items()
-        },
-        "default_target_branch": cfg.default_target_branch,
-        "clones_dir": cfg.clones_dir,
-        "cleanup_clones_on_merge": cfg.cleanup_clones_on_merge,
-        "max_active_agents": cfg.max_active_agents,
-        "dispatch_interval_seconds": cfg.dispatch_interval_seconds,
-    }
+    return {"max_active_agents": cfg.max_active_agents}
 
 
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
@@ -134,42 +111,13 @@ def _merge_config(target: dict[str, Any], updates: Mapping[str, Any]) -> None:
         if key in _LEGACY_CAP_DESTINATIONS:
             _merge_legacy_cap(target, key, value)
             continue
-        if key == "stage_caps":
-            target["stage_caps"] = _merge_stage_caps(target.get("stage_caps", {}), value)
-            continue
         target[key] = value
 
 
 def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
     return BuildConfig(
-        default_skip_stages=_normalize_stages(
-            raw.get("default_skip_stages", ()), "default_skip_stages"
-        ),
-        default_isolation=_normalize_isolation(
-            raw.get("default_isolation", "worktree"), "default_isolation"
-        ),
-        stage_caps=_normalize_stage_caps(raw.get("stage_caps", {}), "stage_caps"),
-        default_target_branch=_normalize_optional_str(
-            raw.get("default_target_branch"), "default_target_branch"
-        ),
-        clones_dir=_normalize_path(
-            raw.get("clones_dir", Path.home() / ".gobby" / "clones"), "clones_dir"
-        ),
-        cleanup_clones_on_merge=_normalize_bool(
-            raw.get("cleanup_clones_on_merge", True), "cleanup_clones_on_merge"
-        ),
         max_active_agents=_normalize_int(raw.get("max_active_agents", 10), "max_active_agents"),
-        dispatch_interval_seconds=_normalize_int(
-            raw.get("dispatch_interval_seconds", 60), "dispatch_interval_seconds"
-        ),
     )
-
-
-def _stage_cap_to_mapping(stage_cap: StageCapOverride) -> dict[str, int | None]:
-    return {
-        "max_work_attempts": stage_cap.max_work_attempts,
-        "max_review_rounds": stage_cap.max_review_rounds,
-    }
 
 
 def _merge_legacy_cap(target: dict[str, Any], field_name: str, value: Any) -> None:
@@ -208,86 +156,12 @@ def _merge_stage_caps(existing: Any, updates: Any) -> dict[str, Any]:
     return merged
 
 
-def _normalize_stage_caps(value: Any, field_name: str) -> dict[str, StageCapOverride]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{field_name} must be a mapping")
-    normalized: dict[str, StageCapOverride] = {}
-    for stage_name, raw_override in _string_key_mapping(value, field_name).items():
-        if not isinstance(raw_override, Mapping):
-            raise ValueError(f"{field_name}.{stage_name} must be a mapping")
-        override = _string_key_mapping(raw_override, f"{field_name}.{stage_name}")
-        max_work_attempts = _normalize_optional_int(
-            override.get("max_work_attempts"),
-            f"{field_name}.{stage_name}.max_work_attempts",
-        )
-        max_review_rounds = _normalize_optional_int(
-            override.get("max_review_rounds"),
-            f"{field_name}.{stage_name}.max_review_rounds",
-        )
-        if max_work_attempts is None and max_review_rounds is None:
-            continue
-        normalized[stage_name] = StageCapOverride(
-            stage_name=stage_name,
-            max_work_attempts=max_work_attempts,
-            max_review_rounds=max_review_rounds,
-        )
-    return normalized
-
-
-def _normalize_stages(value: Any, field_name: str) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)):
-        raise ValueError(f"{field_name} must be a list of stages")
-
-    stages: list[str] = []
-    for stage in value:
-        if not isinstance(stage, str):
-            raise ValueError(f"{field_name} must contain only strings")
-        if stage not in SKIPPABLE_STAGES:
-            raise ValueError(f"unknown skippable stage for {field_name}: {stage}")
-        stages.append(stage)
-    return tuple(stages)
-
-
-def _normalize_isolation(value: Any, field_name: str) -> Isolation:
-    if value not in ("none", "worktree", "clone"):
-        raise ValueError(f"{field_name} must be one of: none, worktree, clone")
-    return cast(Isolation, value)
-
-
-def _normalize_bool(value: Any, field_name: str) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean")
-    return value
-
-
 def _normalize_int(value: Any, field_name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{field_name} must be an integer")
     if value < 1:
         raise ValueError(f"{field_name} must be greater than or equal to 1")
     return value
-
-
-def _normalize_optional_int(value: Any, field_name: str) -> int | None:
-    if value is None:
-        return None
-    return _normalize_int(value, field_name)
-
-
-def _normalize_optional_str(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string")
-    return value
-
-
-def _normalize_path(value: Any, field_name: str) -> Path:
-    if isinstance(value, Path):
-        return value.expanduser()
-    if isinstance(value, str):
-        return Path(value).expanduser()
-    raise ValueError(f"{field_name} must be a path")
 
 
 def _string_key_mapping(value: Mapping[Any, Any], source: str) -> dict[str, Any]:

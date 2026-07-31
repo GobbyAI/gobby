@@ -53,7 +53,6 @@ from gobby.config.features import (
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
-    ContextInjectionConfig,
     DigestConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
@@ -492,8 +491,8 @@ class TestDaemonConfig:
     def test_sub_config_access(self) -> None:
         """Test accessing sub-configurations."""
         config = DaemonConfig()
-        assert config.get_recommend_tools_config() == config.recommend_tools
-        assert config.get_mcp_client_proxy_config() == config.mcp_client_proxy
+        assert config.get_import_mcp_server_config() is config.import_mcp_server
+        assert config.get_gobby_tasks_config() is config.gobby_tasks
 
     def test_get_verification_defaults(self) -> None:
         """Test get_verification_defaults returns verification_defaults config."""
@@ -502,13 +501,6 @@ class TestDaemonConfig:
         assert verification_config is config.verification_defaults
 
         assert isinstance(verification_config, ProjectVerificationConfig)
-
-    def test_get_project_verification_synthesis_config(self) -> None:
-        """Test get_project_verification_synthesis_config returns synthesis config."""
-        config = DaemonConfig()
-        synthesis_config = config.get_project_verification_synthesis_config()
-        assert synthesis_config is config.project_verification_synthesis
-        assert isinstance(synthesis_config, ProjectVerificationSynthesisConfig)
 
     def test_rejects_removed_conductor_section(self) -> None:
         """Stale top-level conductor config should fail loudly."""
@@ -2031,28 +2023,6 @@ class TestCompactHandoffConfig:
         assert config.refresh_timeout_seconds == 45.0
 
 
-class TestContextInjectionConfig:
-    """Tests for ContextInjectionConfig."""
-
-    def test_default_values(self) -> None:
-        """Test default context injection config."""
-        config = ContextInjectionConfig()
-        assert config.enabled is True
-        assert config.default_source == "summary_markdown"
-        assert config.max_file_size == 51200
-        assert config.max_content_size == 51200
-        assert config.max_transcript_messages == 100
-
-    def test_positive_validation(self) -> None:
-        """Test positive value validation."""
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_file_size=0)
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_content_size=-1)
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_transcript_messages=0)
-
-
 class TestToolSummarizerConfig:
     """Tests for ToolSummarizerConfig."""
 
@@ -2234,7 +2204,6 @@ class TestDaemonConfigComposition:
 
         # Session
         assert isinstance(config.compact_handoff, CompactHandoffConfig)
-        assert isinstance(config.context_injection, ContextInjectionConfig)
         assert isinstance(config.session_summary, SessionSummaryConfig)
         assert isinstance(config.session_lifecycle, SessionLifecycleConfig)
         assert isinstance(config.message_tracking, MessageTrackingConfig)
@@ -2275,18 +2244,10 @@ class TestDaemonConfigComposition:
         """Test all getter methods return correct configs."""
         config = DaemonConfig()
 
-        assert config.get_recommend_tools_config() is config.recommend_tools
-        assert config.get_tool_summarizer_config() is config.tool_summarizer
+        assert config.get_tool_result_offload_config() is config.tool_result_offload
         assert config.get_import_mcp_server_config() is config.import_mcp_server
-        assert config.get_mcp_client_proxy_config() is config.mcp_client_proxy
-        assert config.get_memory_config() is config.memory
-        assert config.get_memory_backup_config() is config.memory_backup
         assert config.get_gobby_tasks_config() is config.gobby_tasks
-        assert config.get_metrics_config() is config.metrics
-        assert (
-            config.get_project_verification_synthesis_config()
-            is config.project_verification_synthesis
-        )
+        assert config.get_search_config() is config.search
 
     def test_yaml_round_trip(self, temp_dir: Path) -> None:
         """Test config survives YAML export and reimport."""
@@ -2342,7 +2303,6 @@ class TestAllConfigClassesInstantiate:
             WebSocketSettings(),
             TelemetrySettings(),
             CompactHandoffConfig(),
-            ContextInjectionConfig(),
             SessionSummaryConfig(),
             ToolSummarizerConfig(),
             RecommendToolsConfig(),
@@ -2368,6 +2328,6 @@ class TestAllConfigClassesInstantiate:
             DaemonConfig(),
         ]
 
-        assert len(configs) == 27
+        assert len(configs) == 26
         for config in configs:
             assert config is not None

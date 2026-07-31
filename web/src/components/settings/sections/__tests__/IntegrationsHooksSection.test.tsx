@@ -24,8 +24,6 @@ function makeConfigValues(): Record<string, unknown> {
         poll_interval_seconds: 30,
         retention_days: 90,
       },
-      inbound_enabled: true,
-      outbound_enabled: false,
       auto_create_sessions: true,
     },
     hook_extensions: {
@@ -90,11 +88,11 @@ describe('IntegrationsHooksSection', () => {
       'https://gobby.example/webhooks',
     )
     expect(
-      screen.getByRole('switch', { name: 'Enable inbound communications' }),
-    ).toBeChecked()
+      screen.queryByRole('switch', { name: 'Enable inbound communications' }),
+    ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('switch', { name: 'Enable outbound communications' }),
-    ).not.toBeChecked()
+      screen.queryByRole('switch', { name: 'Enable outbound communications' }),
+    ).not.toBeInTheDocument()
     expect(
       screen.getByRole('switch', {
         name: 'Auto-create sessions for inbound messages',
@@ -216,7 +214,9 @@ describe('IntegrationsHooksSection', () => {
     renderSection(ctx)
 
     fireEvent.click(
-      screen.getByRole('switch', { name: 'Enable outbound communications' }),
+      screen.getByRole('switch', {
+        name: 'Auto-create sessions for inbound messages',
+      }),
     )
     const save = screen.getByRole('button', { name: 'Save' })
     await waitFor(() => expect(save).toBeEnabled())
@@ -224,7 +224,7 @@ describe('IntegrationsHooksSection', () => {
 
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     expect(ctx.saveConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ 'communications.outbound_enabled': true }),
+      expect.objectContaining({ 'communications.auto_create_sessions': false }),
     )
   })
 

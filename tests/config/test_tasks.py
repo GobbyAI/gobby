@@ -184,12 +184,8 @@ class TestTaskExpansionConfigDefaults:
             FeatureProfile.HIGH
         )
         assert config.prompt_path is None
-        assert config.codebase_research_enabled is True
-        assert config.research_model is None
-        assert config.research_max_steps == 10
         assert config.default_strategy == "auto"
         assert config.timeout == 300.0
-        assert config.research_timeout == 60.0
 
     def test_default_pattern_criteria(self) -> None:
         """Test TaskExpansionConfig includes default pattern_criteria."""
@@ -229,9 +225,8 @@ class TestTaskExpansionConfigCustom:
         """Test setting custom timeouts."""
         from gobby.config.tasks import TaskExpansionConfig
 
-        config = TaskExpansionConfig(timeout=600.0, research_timeout=120.0)
+        config = TaskExpansionConfig(timeout=600.0)
         assert config.timeout == 600.0
-        assert config.research_timeout == 120.0
 
 
 class TestTaskExpansionConfigValidation:
@@ -247,15 +242,11 @@ class TestTaskExpansionConfigValidation:
     @pytest.mark.parametrize(
         ("field_name", "value"),
         [
-            pytest.param("research_max_steps", 0, id="zero-research-steps"),
-            pytest.param("research_max_steps", -1, id="negative-research-steps"),
             pytest.param("timeout", 0, id="zero-timeout"),
             pytest.param("timeout", -0.1, id="negative-timeout"),
-            pytest.param("research_timeout", 0, id="zero-research-timeout"),
-            pytest.param("research_timeout", -0.1, id="negative-research-timeout"),
         ],
     )
-    def test_non_positive_research_limits_rejected(
+    def test_non_positive_timeout_rejected(
         self,
         field_name: str,
         value: int | float,

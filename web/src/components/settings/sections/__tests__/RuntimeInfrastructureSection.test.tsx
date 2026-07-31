@@ -87,7 +87,6 @@ function makeConfigValues(): Record<string, unknown> {
     },
     code_index: {
       enabled: true,
-      auto_index_on_commit: true,
       maintenance_interval_seconds: 3600,
       maintenance_index_timeout_seconds: 900,
       nightly_full_reindex_enabled: true,
@@ -97,12 +96,8 @@ function makeConfigValues(): Record<string, unknown> {
       nightly_full_reindex_concurrency: 1,
       maintenance_log_file: '~/.gobby/logs/code-index-maintenance.log',
       missing_root_purge_observations: 3,
-      max_file_size_bytes: 1_000_000,
-      exclude_patterns: ['node_modules', 'dist'],
       embedding_enabled: true,
       graph_enabled: true,
-      qdrant_collection_prefix: 'gobby_code',
-      languages: ['python', 'typescript'],
       symbol_summary: {
         enabled: false,
         batch_size: 16,
@@ -113,7 +108,6 @@ function makeConfigValues(): Record<string, unknown> {
       },
       sync_worker_interval_seconds: 30,
       sync_worker_batch_size: 50,
-      content_extensions: ['.md', '.txt'],
     },
     indexing: {
       respect_gitignore: true,
@@ -238,23 +232,20 @@ describe('RuntimeInfrastructureSection', () => {
     expect(screen.queryByLabelText('Memory graph node limit')).not.toBeInTheDocument()
   })
 
-  it('renders the code-index list rows as string lists and the summary profile as a select', () => {
+  it('renders kept code-index summary fields and omits retired controls', () => {
     renderSection(makeContext())
 
-    expect(screen.getByLabelText('Exclude pattern item 1')).toHaveValue(
-      'node_modules',
-    )
-    expect(screen.getByLabelText('Indexed language item 2')).toHaveValue(
-      'typescript',
-    )
-    expect(screen.getByLabelText('Content extension item 1')).toHaveValue('.md')
     expect(screen.getByLabelText('Summary candidate item 1')).toHaveValue(
       'anthropic/claude-haiku',
     )
-
     const profile = screen.getByLabelText('Code summary capability profile')
     expect(profile).toHaveValue('feature_low')
     expect(within(profile).getAllByRole('option')).toHaveLength(3)
+    expect(screen.queryByLabelText('Re-index on commit')).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('Maximum indexed file size (bytes)'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Qdrant collection prefix')).not.toBeInTheDocument()
   })
 
   it('renders the digest rows with a schema-enum profile select', () => {

@@ -32,8 +32,6 @@ const OWNED_PATHS: readonly string[] = [
   'communications.channel_defaults.retry_count',
   'communications.channel_defaults.poll_interval_seconds',
   'communications.channel_defaults.retention_days',
-  'communications.inbound_enabled',
-  'communications.outbound_enabled',
   'communications.auto_create_sessions',
   'hook_extensions.websocket.enabled',
   'hook_extensions.websocket.broadcast_events',
@@ -101,7 +99,7 @@ function CommunicationsGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
       title="Communications"
-      hint="Inbound/outbound messaging channels and the base URL channels call back to."
+      hint="Messaging channels and the base URL channels call back to."
     >
       <SwitchConfigField
         fields={fields}
@@ -115,18 +113,6 @@ function CommunicationsGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Webhook base URL"
         ariaLabel="Communications webhook base URL"
         placeholder="https://your-host/communications"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="communications.inbound_enabled"
-        label="Accept inbound messages"
-        ariaLabel="Enable inbound communications"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="communications.outbound_enabled"
-        label="Send outbound messages"
-        ariaLabel="Enable outbound communications"
       />
       <SwitchConfigField
         fields={fields}

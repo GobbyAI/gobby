@@ -123,28 +123,6 @@ class TaskExpansionConfig(FeatureDefaultConfig):
         default=None,
         description="Path to custom system prompt template (e.g., 'expansion/system')",
     )
-    codebase_research_enabled: bool = Field(
-        default=True,
-        description="Enable agentic codebase research for context gathering",
-    )
-    research_model: str | None = Field(
-        default=None,
-        description="Model to use for research agent (defaults to expansion model if None)",
-    )
-    research_max_steps: int = Field(
-        default=10,
-        ge=1,
-        description="Maximum number of steps for research agent loop",
-    )
-    research_system_prompt: str = Field(
-        default="You are a senior developer researching a codebase. Use tools to find relevant code.",
-        description="System prompt for the research agent",
-    )
-
-    web_research_enabled: bool = Field(
-        default=True,
-        description="Enable web research for task expansion using MCP tools",
-    )
     default_strategy: Literal["auto", "phased", "sequential", "parallel"] = Field(
         default="auto",
         description="Default expansion strategy: auto (LLM decides), phased, sequential, or parallel",
@@ -153,11 +131,6 @@ class TaskExpansionConfig(FeatureDefaultConfig):
         default=300.0,
         gt=0,
         description="Maximum time in seconds for entire task expansion (default: 5 minutes)",
-    )
-    research_timeout: float = Field(
-        default=60.0,
-        gt=0,
-        description="Maximum time in seconds for research phase (default: 60 seconds)",
     )
     pattern_criteria: PatternCriteriaConfig = Field(
         default_factory=PatternCriteriaConfig,
