@@ -1,9 +1,4 @@
-"""Tests for secrets store with real Fernet encryption and PostgreSQL.
-
-Uses temp_db fixture for real database operations and mock_machine_id
-for deterministic key derivation. Only external I/O (machine ID lookup)
-is mocked.
-"""
+"""Tests for secrets store with real Fernet encryption and PostgreSQL."""
 
 from __future__ import annotations
 
@@ -11,92 +6,31 @@ import multiprocessing
 import os
 import stat
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
 
+from gobby.storage import secrets as secrets_module
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secret_names import SECRET_NAME_PATTERN
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
+    SECRET_MATERIAL_FILENAMES,
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
-    InvalidSecretSaltError,
     SecretDecryptionError,
     SecretInfo,
     SecretKeyUnavailable,
-    SecretMigrationError,
     SecretStore,
-    _derive_fernet_key,
     _get_or_create_kek_file_key,
-    _get_or_create_salt,
 )
 
 pytestmark = pytest.mark.unit
-
-
-def _create_salt_with_publish_barrier(
-    home: str,
-    candidate: bytes,
-    barrier: Any,
-    result_queue: Any,
-) -> None:
-    """Create a salt after synchronizing both processes at atomic publication."""
-    os.environ["GOBBY_HOME"] = home
-    from gobby.storage import secrets as secrets_module
-
-    original_link = secrets_module.os.link
-    original_urandom = secrets_module.os.urandom
-    original_exists = secrets_module.Path.exists
-    original_read_bytes = secrets_module.Path.read_bytes
-    salt_file = secrets_module.Path(home) / ".secret_salt"
-    is_first_lookup = True
-
-    def deterministic_urandom(size: int) -> bytes:
-        return candidate if size == len(candidate) else original_urandom(size)
-
-    def synchronized_exists(path: Path) -> bool:
-        nonlocal is_first_lookup
-        exists = original_exists(path)
-        if is_first_lookup and path == salt_file:
-            is_first_lookup = False
-            barrier.wait(timeout=10)
-        return exists
-
-    def synchronized_read_bytes(path: Path) -> bytes:
-        nonlocal is_first_lookup
-        if not is_first_lookup or path != salt_file:
-            return original_read_bytes(path)
-
-        try:
-            salt = original_read_bytes(path)
-        except FileNotFoundError:
-            is_first_lookup = False
-            barrier.wait(timeout=10)
-            raise
-        is_first_lookup = False
-        barrier.wait(timeout=10)
-        return salt
-
-    def synchronized_link(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
-        barrier.wait(timeout=10)
-        original_link(src, dst, *args, **kwargs)
-
-    secrets_module.os.urandom = deterministic_urandom
-    secrets_module.Path.exists = synchronized_exists
-    secrets_module.Path.read_bytes = synchronized_read_bytes
-    secrets_module.os.link = synchronized_link
-    try:
-        result_queue.put(("ok", secrets_module._get_or_create_salt()))
-    except Exception as exc:
-        result_queue.put(("error", repr(exc)))
 
 
 def _create_kek_with_publish_barrier(
@@ -130,37 +64,6 @@ def _create_kek_with_publish_barrier(
         secrets_module.os.link = original_link
 
 
-def _create_salt_with_paused_write(
-    home: str,
-    partial_ready: Any,
-    release_write: Any,
-    result_queue: Any,
-) -> None:
-    """Pause a real child process after its first byte reaches the temp file."""
-    os.environ["GOBBY_HOME"] = home
-    from gobby.storage import secrets as secrets_module
-
-    original_write = secrets_module.os.write
-    is_first_write = True
-
-    def paused_write(fd: int, data: Any) -> int:
-        nonlocal is_first_write
-        if is_first_write:
-            is_first_write = False
-            written = original_write(fd, data[:1])
-            partial_ready.set()
-            if not release_write.wait(timeout=10):
-                raise TimeoutError("test did not release the paused salt write")
-            return written
-        return original_write(fd, data)
-
-    secrets_module.os.write = paused_write
-    try:
-        result_queue.put(("ok", secrets_module._get_or_create_salt()))
-    except Exception as exc:
-        result_queue.put(("error", repr(exc)))
-
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -177,36 +80,6 @@ def salt_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def store(temp_db: HubDatabase, salt_dir: Path, mock_machine_id: str) -> SecretStore:
     """SecretStore backed by real DB, real encryption, temp salt, mocked machine ID."""
     return SecretStore(temp_db)
-
-
-def _insert_legacy_secret(
-    db: HubDatabase,
-    name: str,
-    plaintext: str | None = None,
-    *,
-    machine_id: str = "machine-A",
-    encrypted_value: str | None = None,
-) -> str:
-    normalized = SecretStore._normalize_name(name)
-    token = encrypted_value
-    if token is None:
-        salt = _get_or_create_salt()
-        legacy = Fernet(_derive_fernet_key(machine_id, salt))
-        token = legacy.encrypt((plaintext or "").encode("utf-8")).decode("utf-8")
-    db.execute(
-        """INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-        (
-            str(uuid.uuid4()),
-            normalized,
-            token,
-            "general",
-            None,
-            "2026-01-01T00:00:00+00:00",
-            "2026-01-01T00:00:00+00:00",
-        ),
-    )
-    return token
 
 
 def _synchronize_empty_key_material_loads(
@@ -281,133 +154,6 @@ class TestSecretInfo:
         assert hasattr(info, "__slots__")
         with pytest.raises(AttributeError):
             setattr(info, "nonexistent", "value")  # noqa: B010 - intentionally exercises slots
-
-
-# =============================================================================
-# _get_or_create_salt
-# =============================================================================
-
-
-class TestGetOrCreateSalt:
-    def test_creates_salt_file(self, salt_dir: Path) -> None:
-        salt_file = salt_dir / ".secret_salt"
-        assert not salt_file.exists()
-        salt = _get_or_create_salt()
-        assert isinstance(salt, bytes)
-        assert len(salt) == 16
-        assert salt_file.exists()
-
-    def test_returns_existing_salt(self, salt_dir: Path) -> None:
-        # Create salt first time
-        salt1 = _get_or_create_salt()
-        # Read it again
-        salt2 = _get_or_create_salt()
-        assert salt1 == salt2
-
-    def test_salt_file_permissions(self, salt_dir: Path) -> None:
-        """Salt file should be created with 0600 permissions."""
-        _get_or_create_salt()
-        salt_file = salt_dir / ".secret_salt"
-        mode = oct(salt_file.stat().st_mode & 0o777)
-        assert mode == "0o600"
-
-    @pytest.mark.parametrize("invalid_salt", [b"", b"x" * 15, b"x" * 17])
-    def test_rejects_invalid_salt_length(self, salt_dir: Path, invalid_salt: bytes) -> None:
-        salt_file = salt_dir / ".secret_salt"
-        salt_file.write_bytes(invalid_salt)
-
-        with pytest.raises(
-            InvalidSecretSaltError,
-            match=rf"expected 16 bytes, found {len(invalid_salt)}",
-        ):
-            _get_or_create_salt()
-
-    def test_racing_processes_converge_on_one_salt(self, salt_dir: Path) -> None:
-        context = multiprocessing.get_context("spawn")
-        barrier = context.Barrier(2)
-        result_queue = context.Queue()
-        candidates = [b"a" * 16, b"b" * 16]
-        processes = [
-            context.Process(
-                target=_create_salt_with_publish_barrier,
-                args=(str(salt_dir), candidate, barrier, result_queue),
-            )
-            for candidate in candidates
-        ]
-
-        try:
-            for process in processes:
-                process.start()
-            for process in processes:
-                process.join(timeout=15)
-
-            assert [process.exitcode for process in processes] == [0, 0]
-            results = [result_queue.get(timeout=2) for _ in processes]
-        finally:
-            for process in processes:
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-            result_queue.close()
-            result_queue.join_thread()
-
-        assert [status for status, _ in results] == ["ok", "ok"]
-        salts = [value for _, value in results]
-        assert salts[0] == salts[1]
-        assert salts[0] in candidates
-        assert (salt_dir / ".secret_salt").read_bytes() == salts[0]
-        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
-
-    def test_failed_write_removes_temp_file(
-        self,
-        salt_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        def fail_write(fd: int, data: Any) -> int:
-            raise OSError("injected write failure")
-
-        monkeypatch.setattr(os, "write", fail_write)
-
-        with pytest.raises(OSError, match="injected write failure"):
-            _get_or_create_salt()
-
-        assert not (salt_dir / ".secret_salt").exists()
-        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
-
-    def test_partial_temp_write_is_never_observable_as_salt(self, salt_dir: Path) -> None:
-        context = multiprocessing.get_context("spawn")
-        partial_ready = context.Event()
-        release_write = context.Event()
-        result_queue = context.Queue()
-        process = context.Process(
-            target=_create_salt_with_paused_write,
-            args=(str(salt_dir), partial_ready, release_write, result_queue),
-        )
-
-        try:
-            process.start()
-            assert partial_ready.wait(timeout=10)
-            assert not (salt_dir / ".secret_salt").exists()
-            temp_files = list(salt_dir.glob("..secret_salt.*.tmp"))
-            assert len(temp_files) == 1
-            assert temp_files[0].stat().st_size == 1
-
-            release_write.set()
-            process.join(timeout=15)
-            assert process.exitcode == 0
-            status, salt = result_queue.get(timeout=2)
-        finally:
-            release_write.set()
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=5)
-            result_queue.close()
-            result_queue.join_thread()
-
-        assert status == "ok"
-        assert len(salt) == 16
-        assert (salt_dir / ".secret_salt").read_bytes() == salt
-        assert list(salt_dir.glob("..secret_salt.*.tmp")) == []
 
 
 class TestGetOrCreateKekFile:
@@ -491,26 +237,19 @@ def test_secret_material_paths_follow_gobby_home_changes(
     monkeypatch.setenv("HOME", str(fallback_home))
 
     monkeypatch.setenv("GOBBY_HOME", str(first_home))
-    first_salt = _get_or_create_salt()
     first_kek = _get_or_create_kek_file_key()
 
     monkeypatch.setenv("GOBBY_HOME", str(second_home))
-    second_salt = _get_or_create_salt()
     second_kek = _get_or_create_kek_file_key()
 
-    assert (first_home / ".secret_salt").read_bytes() == first_salt
     assert (first_home / ".secret_kek").read_bytes() == first_kek
-    assert (second_home / ".secret_salt").read_bytes() == second_salt
     assert (second_home / ".secret_kek").read_bytes() == second_kek
-    assert first_salt != second_salt
     assert first_kek != second_kek
     assert not (fallback_home / ".gobby").exists()
 
     monkeypatch.setenv("GOBBY_HOME", str(first_home))
-    assert _get_or_create_salt() == first_salt
     assert _get_or_create_kek_file_key() == first_kek
     monkeypatch.setenv("GOBBY_HOME", str(second_home))
-    assert _get_or_create_salt() == second_salt
     assert _get_or_create_kek_file_key() == second_kek
 
 
@@ -522,23 +261,15 @@ def test_secret_material_paths_treat_blank_gobby_home_as_unset(
     monkeypatch.setenv("HOME", str(user_home))
     monkeypatch.setenv("GOBBY_HOME", " \t")
 
-    salt = _get_or_create_salt()
     kek = _get_or_create_kek_file_key()
 
-    assert (user_home / ".gobby" / ".secret_salt").read_bytes() == salt
     assert (user_home / ".gobby" / ".secret_kek").read_bytes() == kek
 
 
-# =============================================================================
-# _derive_fernet_key
-# =============================================================================
-
-
-def test_secret_store_explicit_home_binds_kek_and_legacy_salt(
+def test_secret_store_explicit_home_binds_kek(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    mock_machine_id: str,
 ) -> None:
     ambient_home = tmp_path / "ambient-home"
     explicit_home = tmp_path / "explicit-home"
@@ -546,66 +277,25 @@ def test_secret_store_explicit_home_binds_kek_and_legacy_salt(
 
     store = SecretStore(temp_db, gobby_home=explicit_home)
     store.set("bound_secret", "value")
-    store._legacy_fernet()
 
     assert SecretStore(temp_db, gobby_home=explicit_home).get("bound_secret") == "value"
     assert (explicit_home / ".secret_kek").exists()
-    assert (explicit_home / ".secret_salt").exists()
     assert not (ambient_home / ".secret_kek").exists()
-    assert not (ambient_home / ".secret_salt").exists()
 
 
 def test_secret_store_default_home_binds_ambient_home(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    mock_machine_id: str,
 ) -> None:
     ambient_home = tmp_path / "ambient-home"
     monkeypatch.setenv("GOBBY_HOME", str(ambient_home))
 
     store = SecretStore(temp_db)
     store._kek_fernet(POSTURE_KEY_FILE)
-    store._legacy_fernet()
 
     assert store.gobby_home == ambient_home
     assert (ambient_home / ".secret_kek").exists()
-    assert (ambient_home / ".secret_salt").exists()
-
-
-class TestDeriveFernetKey:
-    def test_returns_valid_fernet_key(self) -> None:
-        salt = os.urandom(16)
-        key = _derive_fernet_key("test-machine-id", salt)
-        assert isinstance(key, bytes)
-        # Fernet keys are 32 bytes base64url-encoded = 44 bytes
-        assert len(key) == 44
-
-    def test_deterministic(self) -> None:
-        salt = b"fixed-salt-12345"
-        key1 = _derive_fernet_key("machine-1", salt)
-        key2 = _derive_fernet_key("machine-1", salt)
-        assert key1 == key2
-
-    def test_different_machine_id_different_key(self) -> None:
-        salt = b"fixed-salt-12345"
-        key1 = _derive_fernet_key("machine-1", salt)
-        key2 = _derive_fernet_key("machine-2", salt)
-        assert key1 != key2
-
-    def test_different_salt_different_key(self) -> None:
-        key1 = _derive_fernet_key("machine-1", b"salt-aaaaaaaaaa01")
-        key2 = _derive_fernet_key("machine-1", b"salt-bbbbbbbbbb02")
-        assert key1 != key2
-
-    def test_key_works_with_fernet(self) -> None:
-        from cryptography.fernet import Fernet
-
-        salt = os.urandom(16)
-        key = _derive_fernet_key("test-id", salt)
-        f = Fernet(key)
-        encrypted = f.encrypt(b"hello")
-        assert f.decrypt(encrypted) == b"hello"
 
 
 # =============================================================================
@@ -625,14 +315,16 @@ class TestGetFernet:
         f2 = store._get_fernet()
         assert f1 is f2
 
-    def test_key_file_envelope_does_not_require_machine_id(
+    def test_machine_id_legacy_surfaces_are_removed(
         self,
         temp_db: HubDatabase,
         salt_dir: Path,
     ) -> None:
-        with patch("gobby.storage.secrets.get_machine_id", return_value=None):
-            s = SecretStore(temp_db)
-            assert s._get_fernet() is not None
+        assert not hasattr(secrets_module, "get_machine_id")
+        assert not hasattr(secrets_module, "_derive_fernet_key")
+        assert not hasattr(SecretStore, "migrate_legacy_machine_id_secrets")
+        assert SECRET_MATERIAL_FILENAMES == (".secret_kek",)
+        assert SecretStore(temp_db)._get_fernet() is not None
 
 
 # =============================================================================
@@ -856,16 +548,15 @@ class TestSecretStoreEnvelope:
         with pytest.raises(SecretKeyUnavailable, match=SECRET_KEK_PASSPHRASE_ENV):
             SecretStore(temp_db)._get_fernet()
 
-    def test_machine_id_change_does_not_break_envelope_decryption(
+    def test_envelope_decryption_is_independent_of_machine_identity(
         self,
         temp_db: HubDatabase,
         salt_dir: Path,
     ) -> None:
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
-            SecretStore(temp_db).set("KEY", "secret")
+        SecretStore(temp_db).set("KEY", "secret")
 
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"):
-            assert SecretStore(temp_db).get("KEY") == "secret"
+        assert not hasattr(secrets_module, "get_machine_id")
+        assert SecretStore(temp_db).get("KEY") == "secret"
 
     def test_posture_swap_rewraps_dek_without_reencrypting_secret_rows(
         self,
@@ -911,101 +602,8 @@ class TestSecretStoreEnvelope:
         monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
         assert SecretStore(temp_db).get("KEY") == "secret"
 
-    def test_lazy_get_fernet_refuses_to_initialize_with_legacy_rows(
-        self,
-        temp_db: HubDatabase,
-        salt_dir: Path,
-    ) -> None:
-        _insert_legacy_secret(temp_db, "KEY", "secret")
 
-        with pytest.raises(RuntimeError, match="run ensure_ready"):
-            SecretStore(temp_db)._get_fernet()
-
-
-class TestSecretStoreLegacyMigration:
-    def test_dry_run_reports_without_writing(
-        self,
-        temp_db: HubDatabase,
-        salt_dir: Path,
-    ) -> None:
-        original = _insert_legacy_secret(temp_db, "KEY", "secret")
-
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
-            report = SecretStore(temp_db).migrate_legacy_machine_id_secrets(dry_run=True)
-
-        assert report.dry_run is True
-        assert report.migrated == 1
-        assert report.entries[0].status == "would_migrate"
-        assert (
-            temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-            is None
-        )
-        row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", ("key",))
-        assert row is not None
-        assert row["encrypted_value"] == original
-
-    def test_migrates_legacy_machine_bound_secret(
-        self,
-        temp_db: HubDatabase,
-        salt_dir: Path,
-    ) -> None:
-        original = _insert_legacy_secret(temp_db, "KEY", "secret")
-
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
-            report = SecretStore(temp_db).migrate_legacy_machine_id_secrets()
-
-        assert report.migrated == 1
-        assert report.entries[0].status == "migrated"
-        assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-        row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", ("key",))
-        assert row is not None
-        assert row["encrypted_value"] != original
-
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"):
-            assert SecretStore(temp_db).get("KEY") == "secret"
-
-    def test_required_legacy_secret_failure_raises(
-        self,
-        temp_db: HubDatabase,
-        salt_dir: Path,
-    ) -> None:
-        _insert_legacy_secret(temp_db, "KEY", encrypted_value="not-a-fernet-token")
-
-        with (
-            patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"),
-            pytest.raises(SecretMigrationError) as exc_info,
-        ):
-            SecretStore(temp_db).ensure_ready(required_secret_names={"key"})
-
-        assert exc_info.value.report.failed == 1
-        assert exc_info.value.report.entries[0].required is True
-        assert (
-            temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-            is None
-        )
-
-    def test_optional_legacy_secret_failure_skips_for_reentry(
-        self,
-        temp_db: HubDatabase,
-        salt_dir: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        _insert_legacy_secret(temp_db, "KEY", encrypted_value="not-a-fernet-token")
-
-        with (
-            patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"),
-            caplog.at_level("WARNING", logger="gobby.storage.secrets"),
-        ):
-            report = SecretStore(temp_db).ensure_ready()
-
-        assert report.skipped == 1
-        assert report.entries[0].status == "skipped"
-        assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
-        with pytest.raises(SecretDecryptionError):
-            SecretStore(temp_db).get("KEY")
-        assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
-        assert "KEY" not in caplog.text
-
+class TestSecretStoreReferences:
     def test_find_secret_references_normalizes_explicit_refs(self) -> None:
         refs = SecretStore.find_secret_references(
             [

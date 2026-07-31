@@ -91,7 +91,6 @@ class TestPackCommand:
         fake_home.mkdir()
         (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
         (fake_home / "local_cli_token").write_text("token\n")
-        (fake_home / ".secret_salt").write_bytes(b"salt")
         (fake_home / ".secret_kek").write_text("kek-key\n")
 
         mock_home.return_value = fake_home
@@ -109,7 +108,7 @@ class TestPackCommand:
             names = tar.getnames()
             assert "gobby/manifest.json" in names
             assert "gobby/bootstrap.yaml" in names
-            assert "gobby/.secret_salt" in names
+            assert "gobby/.secret_salt" not in names
             assert "gobby/.secret_kek" in names
             assert "gobby/hub-postgres.db" not in names
             assert "gobby/local_cli_token" not in names

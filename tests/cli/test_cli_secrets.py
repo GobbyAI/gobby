@@ -12,13 +12,15 @@ from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
-    SecretMigrationEntry,
-    SecretMigrationReport,
 )
 
 pytestmark = pytest.mark.unit
 
 secrets_module = importlib.import_module("gobby.cli.secrets")
+
+
+def test_migrate_command_is_removed() -> None:
+    assert "migrate" not in secrets_module.secrets.commands
 
 
 class _StoreContext:
@@ -30,33 +32,6 @@ class _StoreContext:
 
     def __exit__(self, *args: object) -> None:
         return None
-
-
-def test_migrate_dry_run_prints_report(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = MagicMock()
-    store.migrate_legacy_machine_id_secrets.return_value = SecretMigrationReport(
-        dry_run=True,
-        key_material_created=False,
-        entries=[
-            SecretMigrationEntry(
-                name="api_key",
-                status="would_migrate",
-                required=False,
-            )
-        ],
-    )
-    monkeypatch.setattr(secrets_module, "_SecretStoreContext", lambda: _StoreContext(store))
-
-    result = CliRunner().invoke(
-        secrets_module.secrets,
-        ["migrate", "--dry-run"],
-        catch_exceptions=False,
-    )
-
-    assert result.exit_code == 0
-    store.migrate_legacy_machine_id_secrets.assert_called_once_with(dry_run=True)
-    assert "Secret dry run: total=1, migrated=1, skipped=0, failed=0" in result.output
-    assert "api_key: would_migrate" in result.output
 
 
 def test_rekey_passphrase_uses_new_env(monkeypatch: pytest.MonkeyPatch) -> None:

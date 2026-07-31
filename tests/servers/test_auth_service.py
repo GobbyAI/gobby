@@ -21,7 +21,6 @@ import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.ui import AuthConfig
-from gobby.runner_init import storage as storage_module
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import (
@@ -33,7 +32,6 @@ from gobby.storage.auth import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.secrets import SecretStore
 from gobby.utils.local_token import issue_agent_api_token
 
 pytestmark = pytest.mark.unit
@@ -100,24 +98,6 @@ def test_password_hash_is_salted_argon2id() -> None:
     assert first_hash != second_hash
     assert verify_password_hash("correct-password", first_hash) is True
     assert verify_password_hash("wrong-password", first_hash) is False
-
-
-def test_legacy_password_migration(temp_db: HubDatabase, tmp_path: Path) -> None:
-    config_store = ConfigStore(temp_db)
-    secret_store = SecretStore(temp_db)
-    config_store.set("auth.username", "legacy-user")
-    config_store.set_secret("auth.password", "legacy-password", secret_store)
-
-    migrated = storage_module._migrate_legacy_auth_password(config_store, secret_store)
-
-    assert migrated is True
-    assert config_store.get("auth.password") is None
-    assert secret_store.get("password") is None
-    password_hash = config_store.get("auth.password_hash")
-    assert isinstance(password_hash, str)
-    assert password_hash.startswith("$argon2id$v=19$m=65536,t=3,p=4$")
-    service = AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
-    assert service.verify_password("legacy-user", "legacy-password") is True
 
 
 def test_auth_config_ignores_removed_credentials() -> None:

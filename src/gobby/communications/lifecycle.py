@@ -49,7 +49,6 @@ class AdapterLifecycleOperations:
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
         manager = self._manager
-        await self._migrate_plaintext_webhook_secrets()
         await self.ensure_gobby_chat_channel()
 
         channels = await asyncio.to_thread(manager._store.list_channels, enabled_only=True)
@@ -64,34 +63,6 @@ class AdapterLifecycleOperations:
             except Exception as e:
                 logger.exception("Failed to initialize channel %r: %s", channel.name, e)
         logger.info("CommunicationsManager started (%s channels active)", len(manager._adapters))
-
-    async def _migrate_plaintext_webhook_secrets(self) -> None:
-        """Move legacy plaintext webhook secrets into SecretStore before activation."""
-        manager = self._manager
-        channels = await asyncio.to_thread(manager._store.list_channels, enabled_only=False)
-        migrated = 0
-        for channel in channels:
-            secret = channel.webhook_secret
-            if not secret or secret.startswith("$secret:"):
-                continue
-
-            secret_name = _integration_secret_name(
-                channel.channel_type, "webhook_secret", channel.name
-            )
-            await asyncio.to_thread(
-                manager._secret_store.set,
-                name=secret_name,
-                plaintext_value=secret,
-                category="integration",
-                description=f"{channel.channel_type} channel '{channel.name}': webhook_secret",
-            )
-            channel.webhook_secret = f"$secret:{secret_name}"
-            channel.updated_at = datetime.now(UTC)
-            await asyncio.to_thread(manager._store.update_channel, channel)
-            migrated += 1
-
-        if migrated:
-            logger.info("Migrated %d plaintext communications webhook secret(s)", migrated)
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""

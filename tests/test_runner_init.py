@@ -155,15 +155,12 @@ class TestGobbyRunnerInit:
         websocket_server.broadcast_trace_event.assert_awaited_once()
         assert runner._pending_tasks == set()
 
-    def test_required_secret_migration_failure_aborts_startup(self) -> None:
-        """Required legacy secret migration errors must not be swallowed by config load."""
+    def test_secret_envelope_initialization_failure_aborts_startup(self) -> None:
         mock_config = DaemonConfig(database_url="$secret:DB_URL")
         mock_db = MagicMock()
         mock_store = MagicMock()
-        mock_store.find_secret_references.return_value = {"api_key", "db_url"}
-        mock_store.ensure_ready.side_effect = RuntimeError("required secret migration failed")
+        mock_store.ensure_ready.side_effect = RuntimeError("secret envelope initialization failed")
         mock_config_store = MagicMock()
-        mock_config_store.get_all.return_value = {"mcp.servers.x.header": "$secret:API_KEY"}
 
         with (
             patch("gobby.runner_init.storage.load_config", return_value=mock_config),
@@ -173,15 +170,14 @@ class TestGobbyRunnerInit:
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
             patch("gobby.storage.config_store.ConfigStore", return_value=mock_config_store),
-            pytest.raises(RuntimeError, match="required secret migration failed"),
+            pytest.raises(RuntimeError, match="secret envelope initialization failed"),
         ):
             GobbyRunner()
 
-        mock_store.find_secret_references.assert_called_once()
-        secret_inputs = list(mock_store.find_secret_references.call_args.args[0])
-        assert "$secret:API_KEY" in secret_inputs
-        assert "$secret:DB_URL" in secret_inputs
-        mock_store.ensure_ready.assert_called_once_with(required_secret_names={"api_key", "db_url"})
+        assert mock_store.ensure_ready.call_count == 1
+        assert mock_store.ensure_ready.call_args.args == ()
+        assert mock_store.ensure_ready.call_args.kwargs == {}
+        assert mock_config_store.method_calls == []
 
     def test_init_provisions_local_api_token_after_secret_envelope_setup(
         self,
