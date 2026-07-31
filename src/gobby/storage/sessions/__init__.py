@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ._constants import (
     SYSTEM_SESSION_EXTERNAL_ID,
     SYSTEM_SESSION_ID,
@@ -13,6 +15,9 @@ from ._constants import (
     ensure_system_session,
     logger,
 )
+
+if TYPE_CHECKING:
+    from ._manager import SessionManager
 
 __all__ = [
     "SessionManager",
