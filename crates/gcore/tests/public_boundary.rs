@@ -21,7 +21,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]"#,
         r#"falkor = ["dep:redis"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
@@ -32,7 +32,6 @@ fn cargo_features_define_public_boundary() {
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
         r#"postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }"#,
-        r#"postgres-types = { version = "0.2", optional = true }"#,
         r#"postgres-openssl = { version = "0.5", optional = true }"#,
         r#"openssl = { version = "0.10", features = ["vendored"] }"#,
         r#"redis = { version = "0.32", optional = true, default-features = false }"#,
@@ -53,6 +52,10 @@ fn cargo_features_define_public_boundary() {
             "Cargo.toml is missing expected public-boundary snippet: {expected}"
         );
     }
+    assert!(
+        !manifest.contains("postgres-types"),
+        "Cargo.toml must not declare the retired postgres-types dependency"
+    );
 }
 
 #[test]

@@ -2048,11 +2048,9 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "dirs 6.0.0",
  "gix",
  "glob",
  "gobby-core",
- "ignore",
  "insta",
  "libc",
  "log",
@@ -2117,7 +2115,6 @@ dependencies = [
  "openssl",
  "postgres",
  "postgres-openssl",
- "postgres-types",
  "rand 0.8.6",
  "redis",
  "reqwest",
@@ -2141,7 +2138,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "dirs 6.0.0",
  "gobby-core",
  "jsonschema",
  "libc",
@@ -2170,7 +2166,6 @@ dependencies = [
  "gobby-core",
  "html-escape",
  "libc",
- "linked-hash-map",
  "log",
  "minijinja",
  "pdf-extract",
@@ -2801,12 +2796,6 @@ name = "libyaml-rs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
-
-[[package]]
-name = "linked-hash-map"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
 
 [[package]]
 name = "linux-raw-sys"

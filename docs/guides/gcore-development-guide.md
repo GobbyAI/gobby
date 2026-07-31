@@ -212,7 +212,7 @@ The crate's default feature set is empty:
 ```toml
 [features]
 default = []
-postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]
+postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]
 falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
@@ -234,7 +234,7 @@ Feature rationale:
 
 | Feature | Enables | Why gated |
 |---------|---------|-----------|
-| `postgres` | `postgres`, `postgres-types`, `postgres-openssl`, `base64`, `scrypt` | Hub validation, adapter code, and datastore-backed secret/config helpers are only needed by datastore consumers. Lightweight binaries should not inherit PostgreSQL. |
+| `postgres` | `postgres`, `postgres-openssl`, `base64`, `scrypt` | Hub validation, adapter code, and datastore-backed secret/config helpers are only needed by datastore consumers. Lightweight binaries should not inherit PostgreSQL. |
 | `falkor` | `falkordb`, `urlencoding` | Graph helpers need FalkorDB. `urlencoding` is included because FalkorDB connection URLs must encode passwords safely. |
 | `qdrant` | `reqwest` with `blocking` and `json` | Vector search/storage helpers need HTTP. Other consumers should not pull reqwest. |
 | `indexing` | `ignore`, `sha2` | File walking and content hashing are useful for indexing consumers only. |

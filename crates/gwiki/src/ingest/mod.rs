@@ -6,22 +6,24 @@ pub mod document;
 pub mod file;
 pub mod git;
 pub mod image;
-pub mod mediawiki;
+mod immutable;
 pub mod pdf;
 pub mod session;
 pub(crate) mod session_archive;
 pub mod url;
 pub mod video;
-pub mod wayback;
 
-use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use immutable::{
+    prepare_immutable_path, validate_existing_raw_bytes, write_immutable, write_immutable_file,
+};
+
 use crate::WikiError;
 use crate::indexer;
-use crate::paths::{raw_source_path, safe_vault_relative_path};
+use crate::paths::raw_source_path;
 use crate::sources::SourceRecord;
 pub(crate) use crate::sources::atomic::sync_parent_dir;
 use crate::store::WikiIndexStore;
@@ -377,279 +379,6 @@ pub(crate) fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(), WikiError> {
-    let path = prepare_immutable_path(vault_root, relative)?;
-
-    if path.exists() {
-        return validate_existing_raw_bytes(&path, relative, bytes);
-    }
-    let mut temp_file = create_raw_temp_file(&path)?;
-    if let Err(error) = temp_file.write_all(bytes) {
-        return Err(WikiError::Io {
-            action: "write raw source temp file",
-            path: Some(temp_file.path().to_path_buf()),
-            source: error,
-        });
-    }
-    if let Err(error) = temp_file.as_file().sync_all() {
-        return Err(WikiError::Io {
-            action: "sync raw source temp file",
-            path: Some(temp_file.path().to_path_buf()),
-            source: error,
-        });
-    }
-    match temp_file.persist_noclobber(&path) {
-        Ok(_) => sync_parent_dir(&path),
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            validate_existing_raw_bytes(&path, relative, bytes)
-        }
-        Err(error) => Err(WikiError::Io {
-            action: "write raw source",
-            path: Some(path),
-            source: error.error,
-        }),
-    }
-}
-
-fn write_immutable_file(
-    vault_root: &Path,
-    relative: &Path,
-    source_path: &Path,
-    content_hash: &str,
-) -> Result<(), WikiError> {
-    let source_hash = validate_source_file_hash(source_path, content_hash)?;
-    let path = prepare_immutable_path(vault_root, relative)?;
-
-    if path.exists() {
-        return validate_existing_raw_file(&path, relative, &source_hash);
-    }
-    let mut temp_file = create_raw_temp_file(&path)?;
-    let mut source = std::fs::File::open(source_path).map_err(|error| WikiError::Io {
-        action: "open raw source",
-        path: Some(source_path.to_path_buf()),
-        source: error,
-    })?;
-    if let Err(error) = std::io::copy(&mut source, &mut temp_file) {
-        return Err(WikiError::Io {
-            action: "write raw source temp file",
-            path: Some(temp_file.path().to_path_buf()),
-            source: error,
-        });
-    }
-    if let Err(error) = temp_file.as_file().sync_all() {
-        return Err(WikiError::Io {
-            action: "sync raw source temp file",
-            path: Some(temp_file.path().to_path_buf()),
-            source: error,
-        });
-    }
-    match temp_file.persist_noclobber(&path) {
-        Ok(_) => sync_parent_dir(&path),
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            validate_existing_raw_file(&path, relative, &source_hash)
-        }
-        Err(error) => Err(WikiError::Io {
-            action: "write raw source",
-            path: Some(path),
-            source: error.error,
-        }),
-    }
-}
-
-fn prepare_immutable_path(vault_root: &Path, relative: &Path) -> Result<PathBuf, WikiError> {
-    let relative = safe_vault_relative_path(relative)?;
-    let root = vault_root.canonicalize().map_err(|error| WikiError::Io {
-        action: "resolve vault root",
-        path: Some(vault_root.to_path_buf()),
-        source: error,
-    })?;
-    let candidate = root.join(&relative);
-    let parent = candidate
-        .parent()
-        .ok_or_else(|| raw_path_outside_vault(&relative))?;
-    let parent = canonicalize_existing_prefix(parent)?;
-    if !parent.starts_with(&root) {
-        return Err(raw_path_outside_vault(&relative));
-    }
-    std::fs::create_dir_all(&parent).map_err(|error| WikiError::Io {
-        action: "create raw source directory",
-        path: Some(parent.clone()),
-        source: error,
-    })?;
-    let parent = parent.canonicalize().map_err(|error| WikiError::Io {
-        action: "resolve raw source directory",
-        path: Some(parent),
-        source: error,
-    })?;
-    if !parent.starts_with(&root) {
-        return Err(raw_path_outside_vault(&relative));
-    }
-    let file_name = candidate
-        .file_name()
-        .ok_or_else(|| raw_path_outside_vault(&relative))?;
-    let path = parent.join(file_name);
-    match std::fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(WikiError::InvalidInput {
-                field: "raw_path",
-                message: format!(
-                    "immutable raw source path {} must not be a symbolic link",
-                    relative.display()
-                ),
-            });
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(WikiError::Io {
-                action: "inspect raw source path",
-                path: Some(path),
-                source: error,
-            });
-        }
-    }
-    Ok(path)
-}
-
-fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, WikiError> {
-    let mut current = path;
-    let mut missing_suffix = Vec::new();
-    loop {
-        match std::fs::symlink_metadata(current) {
-            Ok(_) => break,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                let Some(name) = current.file_name() else {
-                    break;
-                };
-                missing_suffix.push(name.to_os_string());
-                let Some(parent) = current.parent() else {
-                    break;
-                };
-                current = parent;
-            }
-            Err(error) => {
-                return Err(WikiError::Io {
-                    action: "inspect raw source directory",
-                    path: Some(current.to_path_buf()),
-                    source: error,
-                });
-            }
-        }
-    }
-
-    let mut resolved = current.canonicalize().map_err(|error| WikiError::Io {
-        action: "resolve raw source directory",
-        path: Some(current.to_path_buf()),
-        source: error,
-    })?;
-    for component in missing_suffix.iter().rev() {
-        resolved.push(component);
-    }
-    Ok(resolved)
-}
-
-fn raw_path_outside_vault(relative: &Path) -> WikiError {
-    WikiError::InvalidInput {
-        field: "raw_path",
-        message: format!(
-            "immutable raw source path {} must stay inside the vault",
-            relative.display()
-        ),
-    }
-}
-
-fn validate_existing_raw_bytes(
-    path: &Path,
-    relative: &Path,
-    bytes: &[u8],
-) -> Result<(), WikiError> {
-    let existing_hash =
-        gobby_core::indexing::file_content_hash(path).map_err(|error| WikiError::Io {
-            action: "hash existing raw source",
-            path: Some(path.to_path_buf()),
-            source: error,
-        })?;
-    if existing_hash == gobby_core::indexing::content_hash(bytes) {
-        return Ok(());
-    }
-    Err(immutable_exists_error(relative))
-}
-
-fn validate_existing_raw_file(
-    path: &Path,
-    relative: &Path,
-    source_hash: &str,
-) -> Result<(), WikiError> {
-    let existing_hash =
-        gobby_core::indexing::file_content_hash(path).map_err(|error| WikiError::Io {
-            action: "hash existing raw source",
-            path: Some(path.to_path_buf()),
-            source: error,
-        })?;
-    if existing_hash == source_hash {
-        return Ok(());
-    }
-    Err(immutable_exists_error(relative))
-}
-
-fn validate_source_file_hash(source_path: &Path, content_hash: &str) -> Result<String, WikiError> {
-    let source_hash =
-        gobby_core::indexing::file_content_hash(source_path).map_err(|error| WikiError::Io {
-            action: "hash raw source",
-            path: Some(source_path.to_path_buf()),
-            source: error,
-        })?;
-    if source_hash == content_hash {
-        return Ok(source_hash);
-    }
-    Err(WikiError::InvalidInput {
-        field: "content_hash",
-        message: format!(
-            "declared content hash does not match source file {}",
-            source_path.display()
-        ),
-    })
-}
-
-fn immutable_exists_error(relative: &Path) -> WikiError {
-    WikiError::InvalidInput {
-        field: "raw_path",
-        message: format!(
-            "immutable raw source already exists at {}",
-            relative.display()
-        ),
-    }
-}
-
-fn create_raw_temp_file(path: &Path) -> Result<tempfile::NamedTempFile, WikiError> {
-    let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    else {
-        return Err(WikiError::Io {
-            action: "create raw source temp file",
-            path: Some(path.to_path_buf()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "raw source target has no parent directory",
-            ),
-        });
-    };
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("source");
-    tempfile::Builder::new()
-        .prefix(&format!(".{file_name}."))
-        .suffix(".tmp")
-        .tempfile_in(parent)
-        .map_err(|source| WikiError::Io {
-            action: "create raw source temp file",
-            path: Some(parent.to_path_buf()),
-            source,
-        })
-}
-
 /// Syncs the containing directory on Unix so the atomic rename is durable.
 /// Non-Unix platforms keep the file sync but skip directory `sync_all`.
 pub(crate) fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
@@ -699,14 +428,8 @@ mod tests {
     use crate::ScopeIdentity;
     use crate::api::IngestFileOptions;
     use crate::ingest::file;
-    use crate::ingest::wayback::{self, WaybackCaptureSnapshot};
-    use crate::sources::{
-        CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
-    };
-    use crate::store::{
-        MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
-        WikiIngestionEvent, WikiLink, WikiSource,
-    };
+    use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceRecord};
+    use crate::store::{MemoryWikiStore, WikiIngestionEvent};
 
     fn no_ai_context() -> AiContext {
         let mut source = EnvOnlySource;
@@ -1011,134 +734,5 @@ mod tests {
                 .all(|ingestion| ingestion.path == Path::new("raw/INDEX.md")),
             "interactive ingest must not reconcile unrelated vault pages"
         );
-    }
-
-    #[derive(Debug, Default)]
-    struct RawFirstStore {
-        vault_root: PathBuf,
-        expected_raw_path: PathBuf,
-        inner: MemoryWikiStore,
-        observed_index_write: bool,
-    }
-
-    impl RawFirstStore {
-        fn new(vault_root: &Path, expected_raw_path: impl Into<PathBuf>) -> Self {
-            Self {
-                vault_root: vault_root.to_path_buf(),
-                expected_raw_path: expected_raw_path.into(),
-                inner: MemoryWikiStore::default(),
-                observed_index_write: false,
-            }
-        }
-
-        fn assert_raw_exists_before_index(&mut self) {
-            self.observed_index_write = true;
-            assert!(
-                self.vault_root.join(&self.expected_raw_path).is_file(),
-                "external connector must write raw source before derived index rows"
-            );
-        }
-    }
-
-    impl WikiIndexStore for RawFirstStore {
-        fn indexed_hashes(
-            &mut self,
-        ) -> Result<std::collections::BTreeMap<PathBuf, String>, StoreError> {
-            self.inner.indexed_hashes()
-        }
-
-        fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
-            self.inner.indexed_hash(path)
-        }
-
-        fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.upsert_document(document)
-        }
-
-        fn replace_chunks(
-            &mut self,
-            path: &Path,
-            chunks: Vec<WikiChunk>,
-        ) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.replace_chunks(path, chunks)
-        }
-
-        fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.replace_links(path, links)
-        }
-
-        fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.upsert_source(source)
-        }
-
-        fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.record_ingestion(ingestion)
-        }
-
-        fn record_file_hash(
-            &mut self,
-            path: PathBuf,
-            content_hash: String,
-        ) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.record_file_hash(path, content_hash)
-        }
-
-        fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner.delete_derived_rows(path)
-        }
-
-        fn delete_derived_rows_and_record_ingestion(
-            &mut self,
-            ingestion: WikiIngestion,
-        ) -> Result<(), StoreError> {
-            self.assert_raw_exists_before_index();
-            self.inner
-                .delete_derived_rows_and_record_ingestion(ingestion)
-        }
-    }
-
-    #[test]
-    fn external_connectors_write_raw_first() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let snapshot = WaybackCaptureSnapshot {
-            original_url: "https://example.com/reference".to_string(),
-            capture_url: "https://web.archive.org/web/20260529120000/https://example.com/reference"
-                .to_string(),
-            capture_timestamp: "20260529120000".to_string(),
-            fetched_at: "2026-05-29T18:30:00Z".to_string(),
-            body: b"<html><body>Archived reference.</body></html>".to_vec(),
-            content_type: Some("text/html".to_string()),
-        };
-        let expected_record = SourceManifest::register(
-            temp.path(),
-            SourceDraft {
-                location: snapshot.capture_url.clone(),
-                kind: SourceKind::Wayback,
-                fetched_at: snapshot.fetched_at.clone(),
-                last_verified_at: snapshot.fetched_at.clone(),
-                fetch_provenance: crate::sources::FetchProvenance::Stub,
-                content: snapshot.body.clone(),
-                title: Some(snapshot.original_url.clone()),
-                citation: Some(snapshot.capture_url.clone()),
-                license: None,
-                ingestion_method: IngestionMethod::Manual,
-                compile_status: CompileStatus::Pending,
-            },
-        )
-        .expect("predict wayback record");
-        let expected_raw_path = PathBuf::from("raw").join(format!("{}.md", expected_record.id));
-        std::fs::remove_file(temp.path().join("raw/INDEX.md")).expect("remove predicted manifest");
-        let mut store = RawFirstStore::new(temp.path(), expected_raw_path);
-
-        wayback::ingest_capture(temp.path(), &mut store, snapshot).expect("ingest wayback");
-
-        assert!(store.observed_index_write);
     }
 }
