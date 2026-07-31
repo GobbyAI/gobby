@@ -17,6 +17,7 @@ from .embeddings import embeddings
 from .export_import import export_cmd, import_cmd
 from .extensions import hooks, webhooks
 from .github import github
+from .hub_backup.cli import hub_backup
 from .init import init
 from .install import install, uninstall
 from .linear import linear
@@ -133,6 +134,7 @@ cli.add_command(qdrant)
 cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)
+cli.add_command(hub_backup)
 cli.add_command(comms)
 cli.add_command(build_command)
 cli.add_command(plan)

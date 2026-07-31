@@ -1,0 +1,668 @@
+"""Tests for the `gobby hub-backup` orchestration command.
+
+No real Docker, daemon, or datastore is touched. Every collaborator the command
+orchestrates is replaced by a recording fake, so these tests pin the
+orchestration contract — step order, cleanup guarantees, and manifest
+contents — rather than any store-driver or verifier behaviour.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import click
+import pytest
+from click.testing import CliRunner, Result
+
+from gobby.cli import cli as root_cli
+from gobby.cli.daemon import ServiceStartResult
+from gobby.cli.hub_backup import cli as hub_cli
+from gobby.cli.hub_backup._manifest import (
+    MANIFEST_FORMAT,
+    MANIFEST_NAME,
+    MANIFEST_VERSION,
+    ArtifactRecord,
+    SourceIdentity,
+    VerificationState,
+    load_manifest,
+)
+from gobby.cli.hub_backup._stores import (
+    FALKORDB_DUMP_RELPATH,
+    GLOBALS_DUMP_RELPATH,
+    HUB_VOLUMES,
+    POSTGRES_DUMP_RELPATH,
+    VOLUME_ARCHIVE_DIR,
+)
+from gobby.cli.hub_backup._verify import RoleExpectation
+from gobby.cli.runtime import CliRuntime
+from gobby.config.app import DaemonConfig
+
+pytestmark = pytest.mark.unit
+
+DATABASE_PASSWORD = "n0t-a-real-password"
+DATABASE_URL = f"postgresql://gobby:{DATABASE_PASSWORD}@localhost:60891/gobby"
+QDRANT_URL = "http://localhost:6333"
+QDRANT_API_KEY = "not-a-real-qdrant-api-key"
+SYSTEM_IDENTIFIER = "7412345678901234567"
+DATABASE_OID = 16401
+STARTING_HEAD = 187
+
+ROW_PROBES = {"tasks": 1204, "sessions": 88}
+QDRANT_COLLECTION = "gobby_memories"
+QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
+QDRANT_POINTS = 4211
+FALKORDB_GRAPHS = ["gobby_kg"]
+
+SOURCE_ROLES: list[dict[str, object]] = [
+    {"rolname": "gobby", "rolsuper": False, "rolcanlogin": True},
+    {"rolname": "gobby_ro", "rolsuper": False, "rolcanlogin": False},
+]
+
+CONTRACT_ORDER = [
+    "which:docker",
+    "inspect:gobby-postgres",
+    "inspect:services-qdrant-1",
+    "inspect:services-falkordb-1",
+    "disk_usage",
+    "resolve_database_url",
+    "require_managed_docker_postgres",
+    "daemon_is_running",
+    "stop_daemon",
+    "collect_postgres_identity",
+    "collect_row_count_probes",
+    "collect_source_roles",
+    "dump_postgres",
+    "snapshot_qdrant",
+    "dump_falkordb",
+    "services_stop",
+    "tar_volumes",
+    "services_start",
+    "verify_postgres_restore",
+    "verify_qdrant_restore",
+    "verify_falkordb_restore",
+    "verify_volume_archives",
+    "start_daemon",
+]
+
+
+class _DiskUsage(NamedTuple):
+    total: int
+    used: int
+    free: int
+
+
+class _StepFailure(click.ClickException):
+    """Injected failure proving the command's cleanup paths still run."""
+
+
+def _artifact(name: str, relpath: str) -> ArtifactRecord:
+    return ArtifactRecord(
+        name=name,
+        path=relpath,
+        sha256=hashlib.sha256(name.encode("utf-8")).hexdigest(),
+        size_bytes=4096,
+    )
+
+
+def _verified(method: str) -> VerificationState:
+    return VerificationState(
+        verified=True,
+        method=method,
+        timestamp="2026-07-31T12:00:00+00:00",
+    )
+
+
+class _Harness:
+    """Recording stand-in for every collaborator `hub-backup` orchestrates."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.gobby_home = tmp_path / "gobby-home"
+        self.calls: list[str] = []
+        self.running: list[str] = list(hub_cli.REQUIRED_CONTAINERS)
+        self.docker_path: str | None = "/usr/local/bin/docker"
+        self.free_bytes: int = 500 * 1024**3
+        self.daemon_running: bool = True
+        self.fail_at: str | None = None
+        self.services_stop_result: bool = True
+        self.services_start_outcome: str = "success"
+
+        self.gobby_home_seen: Path | None = None
+        self.managed_url_seen: str | None = None
+        self.dump_url_seen: str | None = None
+        self.backup_root_seen: Path | None = None
+        self.qdrant_snapshot_settings: tuple[str | None, str | None] | None = None
+        self.qdrant_verify_settings: tuple[str | None, str | None] | None = None
+        self.shutdown_source_seen: str | None = None
+        self.postgres_paths_seen: tuple[Path, Path] | None = None
+        self.probes_seen: dict[str, int] | None = None
+        self.roles_seen: list[RoleExpectation] | None = None
+        self.snapshots_seen: dict[str, Path] | None = None
+        self.point_counts_seen: dict[str, int] | None = None
+        self.rdb_path_seen: Path | None = None
+        self.graphs_seen: list[str] | None = None
+        self.archives_seen: dict[str, Path] | None = None
+
+    # -- recording --------------------------------------------------------
+
+    def _step(self, name: str) -> None:
+        self.calls.append(name)
+        if self.fail_at == name:
+            raise _StepFailure(f"injected failure at {name}")
+
+    # -- preflight --------------------------------------------------------
+
+    def which(self, name: str) -> str | None:
+        self._step(f"which:{name}")
+        return self.docker_path
+
+    def disk_usage(self, path: Any) -> _DiskUsage:
+        self._step("disk_usage")
+        return _DiskUsage(total=self.free_bytes * 2, used=self.free_bytes, free=self.free_bytes)
+
+    def subprocess_run(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert args[:2] == ["docker", "inspect"], f"unexpected command: {args}"
+        assert kwargs.get("timeout"), f"missing subprocess timeout: {args}"
+        container = args[-1]
+        self._step(f"inspect:{container}")
+        running = container in self.running
+        return subprocess.CompletedProcess(
+            args,
+            0 if running else 1,
+            b"true\n" if running else b"",
+            b"" if running else b"No such object",
+        )
+
+    # -- database resolution ----------------------------------------------
+
+    def resolve_database_url(self, gobby_home: Path) -> str:
+        self._step("resolve_database_url")
+        self.gobby_home_seen = gobby_home
+        return DATABASE_URL
+
+    def require_managed_docker_postgres(self, *, database_url: str) -> None:
+        self._step("require_managed_docker_postgres")
+        self.managed_url_seen = database_url
+
+    # -- daemon lifecycle --------------------------------------------------
+
+    def daemon_is_running(self) -> bool:
+        self._step("daemon_is_running")
+        return self.daemon_running
+
+    def stop_daemon(
+        self,
+        quiet: bool = False,
+        *,
+        shutdown_intent: str = "stop",
+        shutdown_source: str = "cli_stop",
+    ) -> bool:
+        self._step("stop_daemon")
+        self.shutdown_source_seen = shutdown_source
+        return True
+
+    def start_daemon(self) -> None:
+        self._step("start_daemon")
+
+    # -- source facts ------------------------------------------------------
+
+    def collect_postgres_identity(self, database_url: str) -> tuple[SourceIdentity, int]:
+        self._step("collect_postgres_identity")
+        identity = SourceIdentity(
+            pg_system_identifier=SYSTEM_IDENTIFIER,
+            database_name="gobby",
+            database_oid=DATABASE_OID,
+        )
+        return identity, STARTING_HEAD
+
+    def collect_row_count_probes(self, database_url: str) -> dict[str, int]:
+        self._step("collect_row_count_probes")
+        return dict(ROW_PROBES)
+
+    def collect_source_roles(self, database_url: str) -> list[dict[str, object]]:
+        self._step("collect_source_roles")
+        return [dict(role) for role in SOURCE_ROLES]
+
+    # -- store drivers -----------------------------------------------------
+
+    def dump_postgres(
+        self, database_url: str, backup_root: Path
+    ) -> tuple[list[ArtifactRecord], dict[str, object]]:
+        self._step("dump_postgres")
+        self.dump_url_seen = database_url
+        self.backup_root_seen = backup_root
+        artifacts = [
+            _artifact("postgres-dump", POSTGRES_DUMP_RELPATH),
+            _artifact("postgres-globals", GLOBALS_DUMP_RELPATH),
+        ]
+        return artifacts, {"postgres_version": "16.4", "archive_list_checked": True}
+
+    def snapshot_qdrant(
+        self, url: str | None, api_key: str | None, backup_root: Path
+    ) -> tuple[list[ArtifactRecord], dict[str, object]]:
+        self._step("snapshot_qdrant")
+        self.qdrant_snapshot_settings = (url, api_key)
+        artifacts = [_artifact(f"qdrant-{QDRANT_COLLECTION}", QDRANT_SNAPSHOT_RELPATH)]
+        details: dict[str, object] = {
+            "collections": {
+                QDRANT_COLLECTION: {
+                    "points": QDRANT_POINTS,
+                    "snapshot": QDRANT_SNAPSHOT_RELPATH,
+                }
+            }
+        }
+        return artifacts, details
+
+    def dump_falkordb(self, backup_root: Path) -> tuple[list[ArtifactRecord], dict[str, object]]:
+        self._step("dump_falkordb")
+        artifacts = [_artifact("falkordb-rdb", FALKORDB_DUMP_RELPATH)]
+        return artifacts, {"graphs": list(FALKORDB_GRAPHS), "dbsize": 12}
+
+    def services_stop(self, gobby_home: Path) -> bool:
+        self._step("services_stop")
+        return self.services_stop_result
+
+    def services_start(self, gobby_home: Path) -> ServiceStartResult:
+        self._step("services_start")
+        detail = "" if self.services_start_outcome == "success" else "compose up failed"
+        if self.services_start_outcome == "success":
+            return ServiceStartResult("success", detail)
+        if self.services_start_outcome == "skipped":
+            return ServiceStartResult("skipped", detail)
+        return ServiceStartResult("failed", detail)
+
+    def tar_volumes(
+        self, backup_root: Path, volumes: Any = HUB_VOLUMES
+    ) -> tuple[list[ArtifactRecord], dict[str, object]]:
+        self._step("tar_volumes")
+        names = list(volumes)
+        artifacts = [
+            _artifact(f"volume-{name}", f"{VOLUME_ARCHIVE_DIR}/{name}.tar.gz") for name in names
+        ]
+        return artifacts, {"volumes": names}
+
+    # -- verifiers ---------------------------------------------------------
+
+    def verify_postgres_restore(
+        self,
+        dump_path: Path,
+        globals_path: Path,
+        *,
+        expected_probes: dict[str, int],
+        expected_roles: list[RoleExpectation],
+    ) -> tuple[VerificationState, dict[str, object]]:
+        self._step("verify_postgres_restore")
+        self.postgres_paths_seen = (dump_path, globals_path)
+        self.probes_seen = dict(expected_probes)
+        self.roles_seen = list(expected_roles)
+        return _verified("pg-scratch-restore"), {"tables_checked": len(expected_probes)}
+
+    def verify_qdrant_restore(
+        self,
+        url: str | None,
+        api_key: str | None,
+        snapshots: dict[str, Path],
+        expected_counts: dict[str, int],
+    ) -> tuple[VerificationState, dict[str, object]]:
+        self._step("verify_qdrant_restore")
+        self.qdrant_verify_settings = (url, api_key)
+        self.snapshots_seen = dict(snapshots)
+        self.point_counts_seen = dict(expected_counts)
+        return _verified("qdrant-snapshot-recover"), {"collections_checked": len(snapshots)}
+
+    def verify_falkordb_restore(
+        self, rdb_path: Path, expected_graphs: list[str]
+    ) -> tuple[VerificationState, dict[str, object]]:
+        self._step("verify_falkordb_restore")
+        self.rdb_path_seen = rdb_path
+        self.graphs_seen = list(expected_graphs)
+        return _verified("falkordb-scratch-load"), {"graphs_verified": len(expected_graphs)}
+
+    def verify_volume_archives(
+        self, archives: dict[str, Path]
+    ) -> tuple[VerificationState, dict[str, object]]:
+        self._step("verify_volume_archives")
+        self.archives_seen = dict(archives)
+        counts = dict.fromkeys(archives, 9)
+        return _verified("tar-extract"), {"archives": counts}
+
+    # -- wiring ------------------------------------------------------------
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(shutil, "which", self.which)
+        monkeypatch.setattr(shutil, "disk_usage", self.disk_usage)
+        monkeypatch.setattr(subprocess, "run", self.subprocess_run)
+        monkeypatch.setattr(hub_cli, "get_gobby_home", lambda: self.gobby_home)
+        replacements: dict[str, object] = {
+            "_resolve_database_url": self.resolve_database_url,
+            "_require_managed_docker_postgres": self.require_managed_docker_postgres,
+            "_daemon_is_running": self.daemon_is_running,
+            "stop_daemon": self.stop_daemon,
+            "_start_daemon": self.start_daemon,
+            "collect_postgres_identity": self.collect_postgres_identity,
+            "collect_row_count_probes": self.collect_row_count_probes,
+            "collect_source_roles": self.collect_source_roles,
+            "dump_postgres": self.dump_postgres,
+            "snapshot_qdrant": self.snapshot_qdrant,
+            "dump_falkordb": self.dump_falkordb,
+            "_services_stop": self.services_stop,
+            "_services_start": self.services_start,
+            "tar_volumes": self.tar_volumes,
+            "verify_postgres_restore": self.verify_postgres_restore,
+            "verify_qdrant_restore": self.verify_qdrant_restore,
+            "verify_falkordb_restore": self.verify_falkordb_restore,
+            "verify_volume_archives": self.verify_volume_archives,
+        }
+        for name, replacement in replacements.items():
+            monkeypatch.setattr(hub_cli, name, replacement)
+
+
+@pytest.fixture
+def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
+    instance = _Harness(tmp_path)
+    instance.install(monkeypatch)
+    return instance
+
+
+@pytest.fixture
+def runtime() -> CliRuntime:
+    config = DaemonConfig()
+    config.databases.qdrant.url = QDRANT_URL
+    config.databases.qdrant.api_key = QDRANT_API_KEY
+    return CliRuntime(config_file=None, config=config)
+
+
+def _invoke(runtime: CliRuntime, *args: str) -> Result:
+    return CliRunner().invoke(hub_cli.hub_backup, list(args), obj=runtime)
+
+
+def _run_ok(runtime: CliRuntime, backup_root: Path, *extra: str) -> Result:
+    result = _invoke(runtime, "--output", str(backup_root), *extra)
+    assert result.exit_code == 0, result.output
+    return result
+
+
+class TestRegistration:
+    def test_hub_backup_is_registered_on_the_root_cli(self) -> None:
+        assert "hub-backup" in root_cli.commands
+        assert root_cli.commands["hub-backup"] is hub_cli.hub_backup
+
+
+class TestOrchestration:
+    def test_full_success_follows_the_contract_order(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        _run_ok(runtime, tmp_path / "backup")
+
+        assert harness.calls == CONTRACT_ORDER
+
+    def test_resolved_dsn_flows_into_the_managed_check_and_the_dump(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        _run_ok(runtime, tmp_path / "backup")
+
+        assert harness.gobby_home_seen == harness.gobby_home
+        assert harness.managed_url_seen == DATABASE_URL
+        assert harness.dump_url_seen == DATABASE_URL
+        assert harness.shutdown_source_seen == "cli_hub_backup"
+
+    def test_qdrant_settings_come_from_the_cli_runtime_config(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        _run_ok(runtime, tmp_path / "backup")
+
+        assert harness.qdrant_snapshot_settings == (QDRANT_URL, QDRANT_API_KEY)
+        assert harness.qdrant_verify_settings == (QDRANT_URL, QDRANT_API_KEY)
+
+    def test_verifiers_receive_driver_derived_expectations(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        assert harness.postgres_paths_seen == (
+            backup_root / POSTGRES_DUMP_RELPATH,
+            backup_root / GLOBALS_DUMP_RELPATH,
+        )
+        assert harness.probes_seen == ROW_PROBES
+        assert harness.roles_seen == [
+            RoleExpectation(rolname="gobby", rolsuper=False, rolcanlogin=True),
+            RoleExpectation(rolname="gobby_ro", rolsuper=False, rolcanlogin=False),
+        ]
+        assert harness.snapshots_seen == {QDRANT_COLLECTION: backup_root / QDRANT_SNAPSHOT_RELPATH}
+        assert harness.point_counts_seen == {QDRANT_COLLECTION: QDRANT_POINTS}
+        assert harness.rdb_path_seen == backup_root / FALKORDB_DUMP_RELPATH
+        assert harness.graphs_seen == FALKORDB_GRAPHS
+        assert harness.archives_seen == {
+            volume: backup_root / VOLUME_ARCHIVE_DIR / f"{volume}.tar.gz" for volume in HUB_VOLUMES
+        }
+
+
+class TestManifest:
+    def test_manifest_is_written_schema_valid_and_owner_only(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        manifest_path = backup_root / MANIFEST_NAME
+        assert manifest_path.is_file()
+        assert manifest_path.stat().st_mode & 0o777 == 0o600
+
+        manifest = load_manifest(manifest_path)
+        assert manifest.manifest_format == MANIFEST_FORMAT
+        assert manifest.manifest_version == MANIFEST_VERSION
+        assert manifest.epoch_id is None
+        assert manifest.backup_starting_head == STARTING_HEAD
+        assert manifest.row_count_probes == ROW_PROBES
+        assert manifest.source_identity.pg_system_identifier == SYSTEM_IDENTIFIER
+        assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes"}
+        assert len(manifest.artifacts) == 4 + len(HUB_VOLUMES)
+
+    def test_every_store_records_archive_and_restore_verification(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+        methods = {key: store.archive_verified.method for key, store in manifest.stores.items()}
+        assert methods == {
+            "postgres": "pg-restore-list+sha256",
+            "qdrant": "snapshot-download+sha256",
+            "falkordb": "bgsave-rdb-copy+sha256",
+            "volumes": "tar-archive+sha256",
+        }
+        for store in manifest.stores.values():
+            assert store.archive_verified.verified is True
+            assert store.archive_verified.timestamp
+            assert store.restore_verified.verified is True
+
+    def test_manifest_carries_driver_reported_details(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+        assert manifest.stores["postgres"].details["postgres_version"] == "16.4"
+        assert manifest.stores["falkordb"].details["graphs"] == FALKORDB_GRAPHS
+        assert manifest.stores["volumes"].details["volumes"] == list(HUB_VOLUMES)
+
+    def test_manifest_never_contains_the_dsn_or_password(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        payload = (backup_root / MANIFEST_NAME).read_text(encoding="utf-8")
+        assert DATABASE_PASSWORD not in payload
+        assert "postgresql://" not in payload
+        assert QDRANT_API_KEY not in payload
+        assert "api_key" not in payload
+        assert "password" not in payload
+
+
+class TestOutputDirectory:
+    def test_explicit_output_directory_is_created_owner_only(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "nested" / "backup"
+        _run_ok(runtime, backup_root)
+
+        assert backup_root.is_dir()
+        assert backup_root.stat().st_mode & 0o777 == 0o700
+
+    def test_default_output_directory_is_timestamped_under_gobby_home(
+        self, harness: _Harness, runtime: CliRuntime
+    ) -> None:
+        result = _invoke(runtime)
+        assert result.exit_code == 0, result.output
+
+        hub_dir = harness.gobby_home / "backups" / "hub"
+        created = sorted(hub_dir.iterdir())
+        assert len(created) == 1
+        assert re.fullmatch(r"\d{8}T\d{6}Z", created[0].name)
+        assert created[0].stat().st_mode & 0o777 == 0o700
+        assert hub_dir.stat().st_mode & 0o777 == 0o700
+        assert (created[0] / MANIFEST_NAME).is_file()
+
+
+class TestEpoch:
+    def test_epoch_is_recorded_and_suppresses_the_daemon_restart(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root, "--epoch", "e1")
+
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+        assert manifest.epoch_id == "e1"
+        assert "stop_daemon" in harness.calls
+        assert "start_daemon" not in harness.calls
+
+
+class TestCleanup:
+    def test_daemon_is_stopped_before_any_dump_and_restarted_after_a_failure(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.fail_at = "dump_postgres"
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert harness.calls.index("stop_daemon") < harness.calls.index("dump_postgres")
+        assert harness.calls[-1] == "start_daemon"
+        assert "snapshot_qdrant" not in harness.calls
+
+    def test_services_are_restarted_when_tar_volumes_fails(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.fail_at = "tar_volumes"
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert harness.calls.index("services_stop") < harness.calls.index("tar_volumes")
+        assert harness.calls.index("tar_volumes") < harness.calls.index("services_start")
+        assert "verify_postgres_restore" not in harness.calls
+        assert harness.calls[-1] == "start_daemon"
+
+    def test_failed_service_restart_after_a_clean_archive_is_fatal(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.services_start_outcome = "failed"
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert "verify_postgres_restore" not in harness.calls
+        assert harness.calls[-1] == "start_daemon"
+
+    def test_refuses_to_archive_volumes_while_services_are_still_up(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.services_stop_result = False
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert "tar_volumes" not in harness.calls
+
+    def test_daemon_is_not_restarted_when_it_was_not_running(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.daemon_running = False
+
+        _run_ok(runtime, tmp_path / "backup")
+
+        assert "start_daemon" not in harness.calls
+
+
+class TestPreflight:
+    def test_missing_container_aborts_before_stopping_the_daemon(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.running = ["gobby-postgres", "services-qdrant-1"]
+        backup_root = tmp_path / "backup"
+
+        result = _invoke(runtime, "--output", str(backup_root))
+
+        assert result.exit_code != 0
+        assert "services-falkordb-1" in result.output
+        assert "stop_daemon" not in harness.calls
+        assert "resolve_database_url" not in harness.calls
+        assert not backup_root.exists()
+
+    def test_the_postgres_test_container_is_not_required(self, harness: _Harness) -> None:
+        assert "gobby-postgres-test-1" not in hub_cli.REQUIRED_CONTAINERS
+
+    def test_missing_docker_cli_aborts(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.docker_path = None
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert "Docker" in result.output
+        assert harness.calls == ["which:docker"]
+
+    def test_insufficient_free_space_aborts(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        harness.free_bytes = hub_cli.MIN_FREE_BYTES - 1
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+        assert result.exit_code != 0
+        assert "space" in result.output.lower()
+        assert "stop_daemon" not in harness.calls
+
+
+class TestJsonOutput:
+    def test_json_output_reports_the_manifest_path_and_summary(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        result = _run_ok(runtime, backup_root, "--json")
+
+        payload = json.loads(result.output)
+        assert payload["manifest"] == str(backup_root / MANIFEST_NAME)
+        assert payload["backup_root"] == str(backup_root)
+        assert payload["epoch_id"] is None
+        assert payload["artifacts"] == 4 + len(HUB_VOLUMES)
+        assert sorted(payload["stores"]) == ["falkordb", "postgres", "qdrant", "volumes"]
+
+    def test_json_output_never_leaks_the_dsn(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        result = _run_ok(runtime, tmp_path / "backup", "--json")
+
+        assert DATABASE_PASSWORD not in result.output
+        assert "postgresql://" not in result.output

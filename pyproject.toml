@@ -44,6 +44,7 @@ dependencies = [
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "falkordb>=1.1.0",
+    "jsonschema>=4.23.0",
     "faster-whisper>=1.0.0",
     "qdrant-client>=1.12.0",
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
