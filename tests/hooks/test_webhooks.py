@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections.abc import Iterator
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -15,8 +16,20 @@ from gobby.hooks.webhooks import (
     WebhookDispatcher,
     WebhookResult,
 )
+from gobby.utils.webhook_transport import DEFAULT_MAX_BACKOFF_SECONDS, WebhookTransport
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def public_webhook_dns() -> Iterator[None]:
+    """Keep unit tests deterministic while exercising pinned request construction."""
+    with patch.object(
+        WebhookTransport,
+        "_lookup_addresses",
+        new=AsyncMock(return_value=("93.184.216.34",)),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -285,12 +298,10 @@ class TestWebhookDispatcherTrigger:
 
         def handle_request(request: httpx.Request) -> httpx.Response:
             requests.append(request)
-            if request.url.host == "origin.example":
-                return httpx.Response(
-                    302,
-                    headers={"Location": "http://target.internal/collect"},
-                )
-            return httpx.Response(200)
+            return httpx.Response(
+                302,
+                headers={"Location": "http://target.internal/collect"},
+            )
 
         endpoint = WebhookEndpointConfig(
             name="redirecting",
@@ -304,12 +315,14 @@ class TestWebhookDispatcherTrigger:
         with patch("gobby.hooks.webhooks.httpx.AsyncClient", return_value=client) as client_cls:
             results = await dispatcher.trigger(sample_event)
 
-        assert [request.url.host for request in requests] == ["origin.example"]
+        assert [request.url.host for request in requests] == ["93.184.216.34"]
+        assert requests[0].headers["host"] == "origin.example"
         assert requests[0].headers["Authorization"] == "Bearer secret"
         assert results[0].success is False
         assert results[0].attempts == 1
         client_cls.assert_called_once()
         assert client_cls.call_args.kwargs["follow_redirects"] is False
+        assert client_cls.call_args.kwargs["trust_env"] is False
         await dispatcher.close()
 
     @pytest.mark.asyncio
@@ -388,7 +401,8 @@ class TestWebhookDispatcherTrigger:
         mock_post.assert_awaited_once()
         call = mock_post.await_args
         request = call.args[0]
-        assert str(request.url) == "https://hooks.example.com/hook"
+        assert str(request.url) == "https://93.184.216.34/hook"
+        assert request.headers["host"] == "hooks.example.com"
         assert request.headers["Authorization"] == "Bearer secret-token"
         assert request.headers["X-Unresolved"] == "${WEBHOOK_UNSET}"
         assert call.kwargs["stream"] is True
@@ -417,10 +431,10 @@ class TestWebhookDispatcherTrigger:
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_trigger_server_error_with_retry(
+    async def test_trigger_server_error_is_not_retried_for_post(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
     ):
-        """Test that 5xx errors trigger retries."""
+        """A POST response proves the request was sent, so 5xx is not retried."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
 
@@ -433,15 +447,16 @@ class TestWebhookDispatcherTrigger:
 
             assert len(results) == 1
             assert results[0].success is False
-            assert results[0].attempts == 3  # Initial + 2 retries
+            assert results[0].attempts == 1
+            mock_post.assert_awaited_once()
 
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_trigger_timeout_with_retry(
+    async def test_trigger_timeout_is_not_retried_for_post(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
     ):
-        """Test that timeouts trigger retries."""
+        """A generic timeout may happen after sending POST and is not retried."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
 
@@ -453,7 +468,8 @@ class TestWebhookDispatcherTrigger:
             assert len(results) == 1
             assert results[0].success is False
             assert results[0].error == "Request timeout"
-            assert results[0].attempts == 3
+            assert results[0].attempts == 1
+            mock_post.assert_awaited_once()
 
         await dispatcher.close()
 
@@ -596,7 +612,7 @@ class TestBlockingWebhooks:
 
         with (
             patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post,
-            patch("gobby.hooks.webhooks.asyncio.sleep", new_callable=AsyncMock),
+            patch("gobby.utils.webhook_transport.asyncio.sleep", new_callable=AsyncMock),
         ):
             if failure_mode == "client_error":
                 mock_post.return_value = httpx.Response(
@@ -614,10 +630,70 @@ class TestBlockingWebhooks:
 
         assert len(results) == 1
         assert results[0].success is False
-        assert results[0].attempts == (1 if failure_mode == "client_error" else 2)
+        expected_attempts = 2 if failure_mode == "connection_error" else 1
+        assert results[0].attempts == expected_attempts
         assert dispatcher.get_blocking_decision(results)[0] == expected_decision
 
         await dispatcher.close()
+
+
+async def test_dispatcher_allows_and_pins_private_endpoint(
+    sample_event: HookEvent,
+) -> None:
+    endpoint = WebhookEndpointConfig(
+        name="local-webhook",
+        url="http://localhost:8765/hook",
+        events=["session_start"],
+        retry_count=0,
+    )
+    dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+
+    with (
+        patch.object(
+            dispatcher._transport,
+            "_lookup_addresses",
+            new=AsyncMock(return_value=("127.0.0.1",)),
+        ),
+        patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as send,
+    ):
+        send.return_value = httpx.Response(204)
+        results = await dispatcher.trigger(sample_event)
+
+    assert send.await_args is not None
+    request = send.await_args.args[0]
+    assert results[0].success is True
+    assert request.url.host == "127.0.0.1"
+    assert request.headers["host"] == "localhost:8765"
+    assert dispatcher._transport.allow_private_addresses is True
+    await dispatcher.close()
+
+
+async def test_dispatcher_retry_backoff_is_capped(
+    sample_event: HookEvent,
+) -> None:
+    endpoint = WebhookEndpointConfig(
+        name="offline-webhook",
+        url="https://hooks.example/hook",
+        events=["session_start"],
+        retry_count=3,
+        retry_delay=30,
+    )
+    dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+
+    with (
+        patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as send,
+        patch("gobby.utils.webhook_transport.asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
+        send.side_effect = httpx.ConnectError("offline")
+        results = await dispatcher.trigger(sample_event)
+
+    assert results[0].attempts == 4
+    assert [call.args[0] for call in sleep.await_args_list] == [
+        30,
+        DEFAULT_MAX_BACKOFF_SECONDS,
+        DEFAULT_MAX_BACKOFF_SECONDS,
+    ]
+    await dispatcher.close()
 
 
 class TestWebhookResult:

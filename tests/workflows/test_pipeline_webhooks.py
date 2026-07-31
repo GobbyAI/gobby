@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import logging
-import socket
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.utils.webhook_transport import WebhookTransport, WebhookTransportResult
 from gobby.workflows.definitions import PipelineDefinition, WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 from gobby.workflows.pipeline_webhooks import WebhookNotifier
-from gobby.workflows.webhook_executor import MAX_RESPONSE_BYTES, WebhookExecutor, WebhookResult
 
 pytestmark = pytest.mark.unit
 
@@ -47,14 +46,16 @@ def pipeline() -> PipelineDefinition:
 
 @pytest.fixture
 def transport() -> MagicMock:
-    executor = MagicMock(spec=WebhookExecutor)
-    executor.execute = AsyncMock(return_value=WebhookResult(success=True, status_code=200))
-    return executor
+    transport = MagicMock(spec=WebhookTransport)
+    transport.execute = AsyncMock(
+        return_value=WebhookTransportResult(success=True, status_code=200)
+    )
+    return transport
 
 
 @pytest.fixture
 def notifier(transport: MagicMock) -> WebhookNotifier:
-    return WebhookNotifier(base_url="https://gobby.local", executor=transport)
+    return WebhookNotifier(base_url="https://gobby.local", transport=transport)
 
 
 async def test_approval_payload_does_not_expand_process_environment(
@@ -182,119 +183,8 @@ async def test_transport_failure_is_logged_without_raising(
     assert "unsafe webhook target" in caplog.text
 
 
-def _response(status: int, body: bytes = b"", headers: dict[str, str] | None = None) -> MagicMock:
-    response = MagicMock()
-    response.status = status
-    response.headers = headers or {}
-    response.get_encoding.return_value = "utf-8"
-    response.content.readexactly = AsyncMock(return_value=body[: MAX_RESPONSE_BYTES + 1])
-    response.__aenter__ = AsyncMock(return_value=response)
-    response.__aexit__ = AsyncMock(return_value=None)
-    return response
-
-
-def _session(response: MagicMock) -> MagicMock:
-    session = MagicMock()
-    session.request.return_value = response
-    session.__aenter__ = AsyncMock(return_value=session)
-    session.__aexit__ = AsyncMock(return_value=None)
-    return session
-
-
-async def test_private_target_is_rejected_without_network_io(
-    execution: PipelineExecution,
-    pipeline: PipelineDefinition,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    assert pipeline.webhooks is not None
-    assert pipeline.webhooks.on_complete is not None
-    pipeline.webhooks.on_complete.url = "http://internal.example/hook"
-    resolved = {
-        "hostname": "internal.example",
-        "host": "127.0.0.1",
-        "port": 80,
-        "family": socket.AF_INET,
-        "proto": 0,
-        "flags": 0,
-    }
+def test_default_notifier_uses_restricted_shared_transport() -> None:
     notifier = WebhookNotifier(base_url="https://gobby.local")
 
-    with (
-        patch(
-            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
-            new=AsyncMock(return_value=[resolved]),
-        ),
-        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession") as client_session,
-        caplog.at_level(logging.ERROR),
-    ):
-        await notifier.notify_complete(execution, pipeline)
-
-    client_session.assert_not_called()
-    assert "non-public address" in caplog.text
-
-
-async def test_redirect_response_is_not_followed(
-    execution: PipelineExecution,
-    pipeline: PipelineDefinition,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    response = _response(302, headers={"Location": "http://127.0.0.1/private"})
-    session = _session(response)
-    resolved = {
-        "hostname": "example.com",
-        "host": "93.184.216.34",
-        "port": 443,
-        "family": socket.AF_INET,
-        "proto": 0,
-        "flags": 0,
-    }
-    notifier = WebhookNotifier(base_url="https://gobby.local")
-
-    with (
-        patch(
-            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
-            new=AsyncMock(return_value=[resolved]),
-        ),
-        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=session),
-        caplog.at_level(logging.ERROR),
-    ):
-        await notifier.notify_complete(execution, pipeline)
-
-    assert session.request.call_count == 1
-    assert session.request.call_args.kwargs["allow_redirects"] is False
-    assert "Webhook request failed: 302" in caplog.text
-
-
-async def test_response_read_is_bounded_and_environment_header_stays_literal(
-    execution: PipelineExecution,
-    pipeline: PipelineDefinition,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert pipeline.webhooks is not None
-    assert pipeline.webhooks.on_complete is not None
-    pipeline.webhooks.on_complete.headers = {"Authorization": "Bearer ${PIPELINE_SECRET}"}
-    monkeypatch.setenv("PIPELINE_SECRET", "process-secret")
-    response = _response(200, b"x" * (MAX_RESPONSE_BYTES + 100))
-    session = _session(response)
-    resolved = {
-        "hostname": "example.com",
-        "host": "93.184.216.34",
-        "port": 443,
-        "family": socket.AF_INET,
-        "proto": 0,
-        "flags": 0,
-    }
-    notifier = WebhookNotifier(base_url="https://gobby.local")
-
-    with (
-        patch(
-            "gobby.workflows.webhook_executor.DefaultResolver.resolve",
-            new=AsyncMock(return_value=[resolved]),
-        ),
-        patch("gobby.workflows.webhook_executor.aiohttp.ClientSession", return_value=session),
-    ):
-        await notifier.notify_complete(execution, pipeline)
-
-    request = session.request.call_args.kwargs
-    assert request["headers"] == {"Authorization": "Bearer ${PIPELINE_SECRET}"}
-    response.content.readexactly.assert_awaited_once_with(MAX_RESPONSE_BYTES + 1)
+    assert isinstance(notifier.transport, WebhookTransport)
+    assert notifier.transport.allow_private_addresses is False

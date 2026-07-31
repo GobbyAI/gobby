@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.workflows.webhook_executor import WebhookExecutor
+from gobby.utils.webhook_transport import WebhookTransport
 
 if TYPE_CHECKING:
     from gobby.workflows.definitions import PipelineDefinition
@@ -27,15 +27,15 @@ class WebhookNotifier:
     the workflow webhook transport policy.
     """
 
-    def __init__(self, base_url: str, executor: WebhookExecutor | None = None) -> None:
+    def __init__(self, base_url: str, transport: WebhookTransport | None = None) -> None:
         """Initialize the webhook notifier.
 
         Args:
             base_url: Base URL for generating approve/reject URLs.
-            executor: Optional hardened webhook transport.
+            transport: Optional hardened webhook transport.
         """
         self.base_url = base_url.rstrip("/")
-        self.executor = executor or WebhookExecutor()
+        self.transport = transport or WebhookTransport()
 
     async def notify_approval_pending(
         self,
@@ -150,7 +150,7 @@ class WebhookNotifier:
             payload: JSON payload to send
         """
         try:
-            result = await self.executor.execute(
+            result = await self.transport.execute(
                 url=url,
                 method=method,
                 headers=headers,
