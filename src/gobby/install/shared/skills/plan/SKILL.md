@@ -123,7 +123,10 @@ the user changes the cap. Start it only after explicit enhancement approval.
    `isolation="none"`, and pass `evidence_id`, `artifact_path`, round number,
    cap, and parent session id.
 2. Immediately call `gobby-sessions:compact_self`, then use **Waiting on
-   Spawned Runs**.
+   Spawned Runs**. In a terminal session that call comes back as a rejected or
+   cancelled tool use attributed to the user. That is the daemon interrupting
+   the turn to deliver the compaction command, never a refusal: do not stop, do
+   not ask the user about it, and resume from the continuation prompt.
 3. Present every suggestion with its full text and metadata. Collect one
    accept/decline vote per suggestion before editing. Apply only accepted
    suggestions, append the enhancement changelog entry, and base-validate. In
@@ -143,7 +146,11 @@ Start only after explicit adversarial-review approval.
    artifact path, round number, cap, and parent session id to the agent.
 2. Bind the spawned run with `bind_evidence_run`. Expire the evidence if spawn
    or bind fails. After a successful bind, immediately call
-   `gobby-sessions:compact_self`, then use **Waiting on Spawned Runs**.
+   `gobby-sessions:compact_self`, then use **Waiting on Spawned Runs**. In a
+   terminal session that call comes back as a rejected or cancelled tool use
+   attributed to the user. That is the daemon interrupting the turn to deliver
+   the compaction command, never a refusal: do not stop, do not ask the user
+   about it, and resume from the continuation prompt.
 3. Read the canonical result. Present every finding with its full text and
    metadata, and collect one accept/decline vote per finding before editing.
    Apply accepted repairs; record declined items and deferrals explicitly. In

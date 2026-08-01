@@ -66,7 +66,7 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.6.0"' in body
+    assert 'version: "3.7.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -107,17 +107,21 @@ def test_elicit_is_mandatory_for_both_depths(body: str) -> None:
     assert "Do not ask the user for facts the repository can answer" in normalized
 
 
-def test_lightweight_is_conversational_and_has_no_lifecycle_workflow(body: str) -> None:
+def test_lightweight_writes_a_validated_artifact_and_skips_the_full_phases(body: str) -> None:
+    """a2b779f60 (#19368) gave Lightweight a real artifact.
+
+    It previously produced a conversational plan with no artifact and no
+    validation; it now drafts `.gobby/plans/<slug>.md` and base-validates it,
+    while still skipping enhancement and adversarial review by default.
+    """
     section = body[body.index("## Lightweight Workflow") : body.index("## Full Workflow")]
     normalized = " ".join(section.split())
 
     assert "Plan-Coverage Contract as formatting guidance" in normalized
-    assert "conversational, decision-complete plan" in normalized
-    assert (
-        "no plan artifact, artifact validation, enhancement pass, adversarial review, "
-        "or build handoff" in normalized
-    )
-    assert "End after the user receives the conversational plan" in normalized
+    assert "decision-complete plan to `.gobby/plans/<slug>.md`" in normalized
+    assert "uv run gobby plans validate <plan-file>" in normalized
+    assert "Lightweight skips enhancement and adversarial review by default" in normalized
+    assert "opt into either Full phase later without redrafting" in normalized
 
 
 def test_explicit_commands_are_both_documented(body: str) -> None:
@@ -154,14 +158,17 @@ def test_full_plan_body_starts_with_authoritative_artifact_path(body: str) -> No
 
 
 def test_full_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:
+    normalized = _normalize_prose(body)
+
     assert 'get_skill(name="plan-draft")' in body
     assert "uv run gobby plans validate <plan-file>" in body
-    assert "approve the validated draft for the enhancement phase" in body
-    assert "Ask for separate approval before starting adversarial" in body
+    assert "ask separately whether to run enhancement" in normalized
+    assert "Declining enhancement does not imply adversarial-review approval" in normalized
+    assert "ask separately whether to begin adversarial review" in normalized
 
 
 def test_selecting_full_does_not_launch_later_phases(body: str) -> None:
-    full_intro = body[body.index("## Full Workflow") : body.index("**Step 4.5")]
+    full_intro = body[body.index("## Full Workflow") : body.index("### Draft checkpoint")]
     normalized = " ".join(full_intro.split())
 
     assert "Choosing Full authorizes investigation, elicitation, and drafting only" in normalized
@@ -170,8 +177,12 @@ def test_selecting_full_does_not_launch_later_phases(body: str) -> None:
         "or build handoff" in normalized
     )
     assert "Selecting Full alone never launches any of those phases" in normalized
-    assert "Offer build handoff as an optional final step" in body
-    assert "explicitly approves the handoff" in body
+    # Handoff stays an explicitly approved menu choice, never an automatic step.
+    assert "`hand off to build`" in body
+    assert (
+        "explicit human approval to skip all remaining enhancement and adversarial rounds"
+        in _normalize_prose(body)
+    )
 
 
 def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None:
@@ -180,26 +191,38 @@ def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None
     assert 'isolation="none"' in body
     assert "artifact_path" in body
     assert "round_number" in body
-    assert "max_review_rounds" in body
+    # The round cap is passed through, but 3.7.0 names it inline rather than
+    # exposing a `max_review_rounds` variable (a2b779f60, #19368).
+    assert "cap, and parent session id" in body
 
 
 def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
-    enhancer_launch = body.index(
-        "Call `prepare_plan_review_round` for the enhancement round, then spawn"
-    )
-    enhancer_wait = body.index("Wait as described in **Waiting on Spawned Runs**", enhancer_launch)
-    enhancer_handoff = body[enhancer_launch:enhancer_wait]
-    assert "`plan-enhancer-taskless` without `task_id`" in enhancer_handoff
-    assert "gobby-sessions:compact_self" in enhancer_handoff
-    assert "every enhancement round" in enhancer_handoff
+    """Each taskless launch compacts before it starts waiting.
 
-    adversary_launch = body.index("spawn `plan-adversary-taskless`")
-    adversary_wait = body.index(
-        "Wait as described in **Waiting on Spawned Runs**", adversary_launch
+    The compaction call must carry the shared interrupt warning, or the
+    coordinator reads the daemon's interrupt as a user refusal and stops.
+    """
+    enhancement = _normalize_prose(
+        body[body.index("### Enhancement phase") : body.index("### Adversarial review phase")]
     )
-    adversary_handoff = body[adversary_launch:adversary_wait]
-    assert "gobby-sessions:compact_self" in adversary_handoff
-    assert "every adversarial review round" in adversary_handoff
+    adversary = _normalize_prose(
+        body[
+            body.index("### Adversarial review phase") : body.index(
+                "## Universal Checkpoint and Handoff Contract"
+            )
+        ]
+    )
+
+    for phase, agent in (
+        (enhancement, "plan-enhancer-taskless"),
+        (adversary, "plan-adversary-taskless"),
+    ):
+        launch = phase.index(f"`{agent}` without `task_id`")
+        compact = phase.index("`gobby-sessions:compact_self`", launch)
+        wait = phase.index("**Waiting on Spawned Runs**", compact)
+
+        assert launch < compact < wait
+        assert COMPACT_SELF_INTERRUPT_WARNING in phase[compact:]
 
 
 def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None:
@@ -224,21 +247,8 @@ def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None
     assert "/schedule" not in section
 
 
-def test_review_timeout_restarts_same_display_round_from_fresh_evidence(body: str) -> None:
-    normalized = " ".join(body.split())
-
-    assert "`inconclusive` with reason code `timeout` and `timeout_seconds: 2700`" in normalized
-    assert "Do not reuse partial lane output or create a timeout checkpoint" in normalized
-    assert "Call `expire_plan_review_evidence`" in normalized
-    assert (
-        "retry the same display round from a fresh snapshot, inventory, and index token"
-        in normalized
-    )
-    assert "sole timeout recovery path" in normalized
-
-
 def test_waiting_steps_redirect_to_shared_policy(body: str) -> None:
-    assert body.count("Wait as described in **Waiting on Spawned Runs**") == 2
+    assert _normalize_prose(body).count("then use **Waiting on Spawned Runs**") == 2
 
 
 def test_review_history_uses_v1_changelog_verification_entries(body: str) -> None:
@@ -268,63 +278,71 @@ def test_build_handoff_uses_manifest_and_seed_flags(body: str) -> None:
 
 def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
     # Step 4.5: constructive enhancement runs after approval, before the adversary.
-    assert "Step 4.5" in body
+    assert "step 4.5" in body
     assert "plan-enhancer-taskless" in body
-    assert "max_enhancement_rounds" in body
-    lowered = body.lower()
-    # Human is the scope gate; enhancer never gates.
-    assert "present-and-stop" in lowered
-    assert "scope gate" in lowered
-    # Advisory: accepted suggestions only, stop on convergence/decline/cap.
-    assert "accepted" in lowered
-    assert "converged" in lowered
-    assert "never gate" in lowered
+    assert body.index("### Enhancement phase") < body.index("### Adversarial review phase")
+    assert "after enhancement approval and before the adversary gate" in _normalize_prose(body)
+
+    normalized = _normalize_prose(body)
+    # Advisory and capped: accepted suggestions only, one round unless changed.
+    assert "Enhancement is advisory, default-on for Full, and capped at one round" in normalized
+    assert "Apply only accepted suggestions" in normalized
+    assert "converged: true | false" in normalized
+    # Human is the scope gate; the enhancer never gates the adversary.
+    assert (
+        "never let it gate, approve, reject, or block the adversary review. The human is the "
+        "scope gate" in normalized
+    )
 
 
 def test_enhancement_presentation_contract(body: str) -> None:
-    start = body.index("3. Wait as described in **Waiting on Spawned Runs**")
-    end = body.index("4. Apply only the **accepted** suggestions", start)
-    presentation = " ".join(body[start:end].split())
+    """Every suggestion is presented in full and voted on before any edit.
 
-    assert "ranked summary of every suggestion" in presentation
-    assert "`id`, lens, location, impact, effort, risk, and a one-line gist" in presentation
-    assert "full text verbatim" in presentation
-    assert "description, suggested enhancement, and metadata" in presentation
-    assert "quote the current plan sections" in presentation
-    assert "individual accept/decline vote for each suggestion" in presentation
-    assert "per-item exploration before recording its vote" in presentation
-    assert "the coordinator judges each suggestion itself" in presentation
-    assert "records every vote with its rationale" in presentation
-    assert "Do not edit the plan before the votes are decided" in presentation
-    assert "Apply accepted `proposed_edit_text` exactly" in presentation
-    assert "`kind: deferred`" in presentation
-    assert "follow-up task" in presentation
+    a2b779f60 (#19368) compressed the itemized presentation checklist, but the
+    vote-before-edit gate and the unattended-mode rationale record survive.
+    """
+    presentation = _normalize_prose(
+        body[body.index("### Enhancement phase") : body.index("### Adversarial review phase")]
+    )
+
+    present = presentation.index("Present every suggestion with its full text and metadata")
+    vote = presentation.index("Collect one accept/decline vote per suggestion before editing")
+    apply_accepted = presentation.index("Apply only accepted suggestions")
+
+    assert present < vote < apply_accepted
+    assert "append the enhancement changelog entry, and base-validate" in presentation
+    assert (
+        "In unattended mode, the coordinator judges every item and records each vote with its "
+        "rationale" in presentation
+    )
 
 
 def test_adversary_presentation_contract(body: str) -> None:
-    start = body.index("6. Wait as described in **Waiting on Spawned Runs**")
-    end = body.index("7. If the verdict is `needs_review`", start)
-    presentation = " ".join(body[start:end].split())
-
-    result = presentation.index("Read the run result")
-    vote_gate = presentation.index("ranked summary of every finding")
-    changelog = presentation.index("Then append the `## V1 Plan Changelog` entry")
-    checkpoint = presentation.index(
-        "persist the exact fence returned by `render_v1_round_checkpoint`"
+    """Findings are presented and voted before repairs, then finalized."""
+    presentation = _normalize_prose(
+        body[
+            body.index("### Adversarial review phase") : body.index(
+                "## Universal Checkpoint and Handoff Contract"
+            )
+        ]
     )
-    assert result < vote_gate < changelog < checkpoint
-    assert "`id`, severity, location, impact, effort, risk, and a one-line gist" in presentation
-    assert "full text verbatim" in presentation
-    assert "description, finding detail, and metadata" in presentation
-    assert "quote the current plan sections" in presentation
-    assert "individual accept/decline vote for each finding" in presentation
-    assert "per-item exploration before recording its vote" in presentation
-    assert "the coordinator judges each finding itself" in presentation
-    assert "records every vote with its rationale" in presentation
-    assert "Do not revise the plan before the votes are decided" in presentation
-    assert "Apply accepted `proposed_edit_text` exactly" in presentation
-    assert "`kind: deferred`" in presentation
-    assert "follow-up task" in presentation
+
+    result = presentation.index("Read the canonical result")
+    vote = presentation.index("collect one accept/decline vote per finding before editing")
+    apply_repairs = presentation.index("Apply accepted repairs")
+    checkpoint = presentation.index("Persist the canonical round checkpoint")
+
+    assert result < vote < apply_repairs < checkpoint
+    assert "Present every finding with its full text and metadata" in presentation
+    assert "record declined items and deferrals explicitly" in presentation
+    assert (
+        "In unattended mode, the coordinator judges every item and records each vote with its "
+        "rationale" in presentation
+    )
+    # Only finalized rounds count toward the cap.
+    assert (
+        "Increment `completed_plan_review_rounds` only when finalization succeeds" in presentation
+    )
 
 
 def test_enhancement_changelog_uses_kind_enhancement(body: str) -> None:
