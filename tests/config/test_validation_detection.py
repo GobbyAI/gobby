@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
     ValidationCommandMatcher,
     ValidationCommandWrapper,
@@ -15,7 +16,6 @@ from gobby.config.validation_detection import (
     load_project_validation_detection,
     resolve_validation_detection_config,
     save_project_validation_detection,
-    shell_command_segments,
 )
 
 pytestmark = pytest.mark.unit
@@ -156,6 +156,49 @@ def test_shell_command_segments_handle_glued_operators_and_redirections(
     segments: list[list[str]],
 ) -> None:
     assert shell_command_segments(command) == segments
+
+
+@pytest.mark.parametrize(
+    "command,segments",
+    [
+        ("cat > notes.md <<'EOF'\nuv run pytest tests/\nEOF", [["cat"]]),
+        ("cat > notes.md <<-EOF\n\tuv run pytest tests/\n\tEOF", [["cat"]]),
+        (
+            'cat > a <<"ONE" > b <<TWO\npytest a\nONE\npytest b\nTWO\ntrue',
+            [["cat"], ["true"]],
+        ),
+        # `<<<` is a herestring with no body, so the command still parses.
+        ("pytest <<<'inline input'", [["pytest"]]),
+    ],
+)
+def test_shell_command_segments_drop_heredoc_bodies(
+    command: str,
+    segments: list[list[str]],
+) -> None:
+    # A heredoc body is data, not a command sequence. Newline is a segment
+    # separator, so an unstripped body would let a merely quoted test runner be
+    # credited as a real validation run.
+    assert shell_command_segments(command) == segments
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat > notes.md <<'EOF'\nuv run pytest tests/\nEOF",
+        "cat > notes.md <<-EOF\n\tGOBBY_TEST_PROTECT=1 uv run pytest tests/\n\tEOF",
+    ],
+)
+def test_heredoc_bodies_are_not_validation_commands(command: str) -> None:
+    assert classify_validation_command(command) is None
+
+
+def test_newline_separated_command_after_directory_change_still_matches() -> None:
+    match = classify_validation_command(
+        "cd /tmp/repo\nGOBBY_TEST_PROTECT=1 uv run pytest tests/x.py -q"
+    )
+
+    assert match is not None
+    assert match.categories == ("test",)
 
 
 @pytest.mark.parametrize(
