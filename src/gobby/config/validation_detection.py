@@ -14,10 +14,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
-
 PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
-_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "|&", "&"}
-_SHELL_PUNCTUATION = ";&|<>"
+_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "|&", "&", "\n"}
+_SHELL_PUNCTUATION = ";&|<>\n"
 _SHELL_REDIRECTION_RE = re.compile(r"^(?:[<>]+|[<>]&|&[<>])$")
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
@@ -751,6 +750,7 @@ def _parse_shell_command(command: str) -> _ParsedShellCommand:
     """Tokenize a shell command while preserving control operators."""
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+        lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         lexer.commenters = ""
         tokens = list(lexer)

@@ -12,6 +12,7 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
+from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -287,6 +288,49 @@ async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
         (expected_outcome, exit_code, command)
     ]
     assert not evidence.degraded_capabilities
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q",
+        ("cd /tmp/repo\nGOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"),
+        ("cd /tmp/repo && GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_codex_direct_exec_command_recognizes_test_after_directory_change(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    transcript = tmp_path / "codex-direct-directory-change.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_direct_exec_pair(
+            command=command,
+            result={"exit_code": 0, "output": "1 passed"},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.categories, run.outcome) for run in evidence.validation_runs] == [
+        (command, ("test",), "success")
+    ]
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+    )
+    assert gate.passed
+    assert gate.details["fresh_run_count"] == 1
+    assert gate.details["latest_outcomes"] == {"test": "success"}
 
 
 @pytest.mark.asyncio
