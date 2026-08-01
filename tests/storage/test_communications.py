@@ -96,11 +96,11 @@ def test_delete_channel_cascades_routing_rules(store: LocalCommunicationsStore) 
             updated_at="2025-01-01T00:00:00Z",
         )
     )
-    assert len(store.list_routing_rules(channel_id=ch.id, enabled_only=False)) >= 1
+    assert len(store.list_routing_rules(channel_id=ch.id)) >= 1
 
     store.delete_channel(ch.id)
 
-    assert len(store.list_routing_rules(channel_id=ch.id, enabled_only=False)) == 0
+    assert len(store.list_routing_rules(channel_id=ch.id)) == 0
 
 
 def test_delete_channel_cascades_attachments(store: LocalCommunicationsStore) -> None:

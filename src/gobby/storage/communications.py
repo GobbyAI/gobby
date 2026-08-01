@@ -459,6 +459,9 @@ SELECT
 
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
         """Save a new routing rule to the database."""
+        if not rule.id:
+            rule.id = str(uuid.uuid4())
+
         with self.db.transaction() as conn:
             conn.execute(
                 """
