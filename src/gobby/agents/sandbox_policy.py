@@ -64,9 +64,118 @@ _PACKAGE_REGISTRY_DOMAINS = (
     "crates.io",
     "static.crates.io",
     "index.crates.io",
+    "static.rust-lang.org",
     "proxy.golang.org",
     "sum.golang.org",
     "repo1.maven.org",
+    "plugins.gradle.org",
+    "rubygems.org",
+    "api.nuget.org",
+    "repo.packagist.org",
+    "pub.dev",
+    "repo.hex.pm",
+    "luarocks.org",
+)
+
+# Toolchains that install under $HOME. sensitive_home_roots() denies all of
+# $HOME, so each of these needs an explicit grant or the language simply does
+# not work inside the sandbox (#19443: agents could build Python and nothing
+# else). Toolchains outside $HOME -- /opt/homebrew, /usr/local, Xcode,
+# /Library/Developer/CommandLineTools -- are never denied and need no entry
+# here, which is what scopes these tables to $HOME-relative paths.
+#
+# Coverage tracks the languages gcode indexes
+# (crates/gcode/src/index/languages.rs). Entries are $HOME-relative and joined
+# to Path.home() at resolution time.
+
+# Compilers, interpreters, and SDKs. Read-only: agents run these, never patch
+# them, and a writable toolchain would let one run's build poison the next.
+_TOOLCHAIN_READ_ROOTS: tuple[str, ...] = (
+    ".rustup",  # rust
+    ".pyenv",  # python
+    ".nvm",  # javascript, typescript
+    ".fnm",
+    ".volta",
+    ".bun",
+    ".deno",
+    ".sdkman",  # java, kotlin, scala
+    ".jenv",
+    ".konan",
+    "Library/Java",
+    ".rbenv",  # ruby
+    ".rvm",
+    ".dotnet",  # csharp
+    ".phpenv",  # php
+    "flutter",  # dart
+    ".swiftly",  # swift
+    "sdk",  # go, via `go install golang.org/dl/...`
+    ".asdf",  # multi-language version managers
+    ".mise",
+    ".local/share/mise",
+    ".local/bin",  # shared bin dir the above symlink into
+)
+
+# Package and build caches. These must be WRITABLE even with no network at
+# all: cargo takes a lock on $CARGO_HOME/.package-cache before it will do
+# anything, and `go build` cannot run without its build cache.
+_TOOLCHAIN_CACHE_ROOTS: tuple[str, ...] = (
+    ".cargo",  # rust
+    ".cache/uv",  # python
+    "Library/Caches/uv",
+    ".cache/pip",
+    "Library/Caches/pip",
+    ".npm",  # javascript, typescript
+    ".cache/npm",
+    ".pnpm-store",
+    "Library/pnpm",
+    ".yarn",
+    ".cache/yarn",
+    ".config/yarn",
+    "go",  # go: GOPATH module cache
+    ".cache/go-build",
+    "Library/Caches/go-build",
+    ".gradle",  # java, kotlin, scala
+    ".m2",
+    ".ivy2",
+    ".sbt",
+    ".cache/coursier",
+    "Library/Caches/Coursier",
+    ".gem",  # ruby
+    ".bundle",
+    ".nuget",  # csharp
+    ".local/share/NuGet",
+    ".composer",  # php
+    ".config/composer",
+    ".cache/composer",
+    ".pub-cache",  # dart
+    ".hex",  # elixir
+    ".mix",
+    ".luarocks",  # lua
+    ".cache/luarocks",
+    ".cache/ccache",  # c, cpp, objc
+    "Library/Caches/ccache",
+    ".cache/clangd",
+    ".swiftpm",  # swift
+    "Library/Caches/org.swift.swiftpm",
+)
+
+# Registry credentials that live INSIDE the granted roots above. Denied for
+# both read and write so a writable ~/.cargo never hands an agent the
+# crates.io publish token. These are deliberately not existence-filtered: the
+# file may be created after the policy is generated.
+_TOOLCHAIN_CREDENTIAL_PATHS: tuple[str, ...] = (
+    ".cargo/credentials",
+    ".cargo/credentials.toml",
+    ".npm/_auth",
+    ".gradle/gradle.properties",
+    ".m2/settings.xml",
+    ".m2/settings-security.xml",
+    ".gem/credentials",
+    ".nuget/NuGet/NuGet.Config",
+    ".composer/auth.json",
+    ".config/composer/auth.json",
+    ".pub-cache/credentials.json",
+    ".hex/hex.config",
 )
 
 
@@ -259,11 +368,30 @@ def _nearest_package_root(executable: Path) -> Path | None:
     return None
 
 
-def package_cache_paths() -> list[str]:
-    """Return capability-scoped package caches used by common managed agents."""
-    return canonical_paths(
-        ["~/.cache/uv", "~/.cache/pip", "~/.npm", "~/.cargo/registry", "~/.cargo/git"]
-    )
+def _existing_home_roots(relative_roots: tuple[str, ...]) -> list[str]:
+    """Resolve $HOME-relative roots, dropping the ones absent on this machine.
+
+    Existence filtering keeps the emitted policy tight: a machine with no Go
+    toolchain never gets a Go grant.
+    """
+    home = Path.home()
+    return canonical_paths([str(home / root) for root in relative_roots if (home / root).exists()])
+
+
+def toolchain_read_roots() -> list[str]:
+    """Return installed compiler, interpreter, and SDK roots under $HOME."""
+    return _existing_home_roots(_TOOLCHAIN_READ_ROOTS)
+
+
+def toolchain_cache_roots() -> list[str]:
+    """Return installed package and build caches that toolchains must write."""
+    return _existing_home_roots(_TOOLCHAIN_CACHE_ROOTS)
+
+
+def toolchain_credential_paths() -> list[str]:
+    """Return registry credentials nested inside granted toolchain roots."""
+    home = Path.home()
+    return canonical_paths([str(home / path) for path in _TOOLCHAIN_CREDENTIAL_PATHS])
 
 
 def allowed_domains(
@@ -303,10 +431,15 @@ def credential_env_vars(provider: str, api_base: str | None) -> list[SandboxCred
 
 
 def default_write_paths(config: SandboxConfig, workspace: Path) -> list[str]:
-    """Resolve writable workspace, operator, and package-cache roots."""
-    paths = [str(workspace), *config.extra_write_paths]
-    if config.allow_package_registries:
-        paths.extend(package_cache_paths())
+    """Resolve writable workspace, operator, and toolchain-cache roots.
+
+    Package and build caches are unconditional. ``allow_package_registries``
+    grants registry *network egress* in ``allowed_domains()``; it never gated
+    local cache writes correctly, because an offline `cargo build` still has
+    to take the $CARGO_HOME/.package-cache lock and `go build` still has to
+    write its build cache (#19443).
+    """
+    paths = [str(workspace), *config.extra_write_paths, *toolchain_cache_roots()]
     return canonical_paths(paths, base=workspace)
 
 

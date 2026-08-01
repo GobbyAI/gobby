@@ -1051,3 +1051,150 @@ class TestSharedTempRootsAreNotGranted:
         }
         assert shared_roots.isdisjoint(paths.write_paths)
         assert shared_roots.isdisjoint(paths.read_paths)
+
+
+class TestToolchainGrants:
+    """Every language gcode indexes needs its $HOME-rooted toolchain reachable."""
+
+    @staticmethod
+    def _fake_home(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        relative_roots: tuple[str, ...],
+    ) -> Path:
+        home = tmp_path / "home"
+        for relative in relative_roots:
+            (home / relative).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+        return home
+
+    def test_installed_toolchain_roots_are_readable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Rust, Go, JVM, Ruby, .NET and friends are denied without an explicit grant."""
+        installed = (
+            ".rustup",
+            ".cargo",
+            "go",
+            ".gradle",
+            ".m2",
+            ".nvm",
+            ".rbenv",
+            ".nuget",
+            ".pub-cache",
+            ".sdkman",
+        )
+        home = self._fake_home(monkeypatch, tmp_path, installed)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        for relative in installed:
+            assert str((home / relative).resolve()) in paths.read_paths, relative
+
+    def test_absent_toolchain_roots_are_not_emitted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Existence filtering keeps the emitted policy tight per machine."""
+        home = self._fake_home(monkeypatch, tmp_path, (".cargo",))
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        assert str((home / ".cargo").resolve()) in paths.read_paths
+        for absent in (".rustup", "go", ".gradle", ".m2", ".pub-cache"):
+            assert str((home / absent).resolve()) not in paths.read_paths, absent
+            assert str((home / absent).resolve()) not in paths.write_paths, absent
+
+    def test_build_caches_are_writable_without_registry_network(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """cargo and go cannot build at all without writing these, network or not."""
+        caches = (".cargo", ".cache/go-build", ".gradle", ".m2", ".npm", "go")
+        home = self._fake_home(monkeypatch, tmp_path, caches)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(
+                enabled=True,
+                backend="srt",
+                allow_network=False,
+                allow_package_registries=False,
+            ),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        for relative in caches:
+            assert str((home / relative).resolve()) in paths.write_paths, relative
+
+    def test_registry_flag_gates_network_only(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """allow_package_registries controls egress; local caches never depend on it."""
+        self._fake_home(monkeypatch, tmp_path, (".cargo", ".npm"))
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        offline = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+        networked = compute_sandbox_paths(
+            config=SandboxConfig(
+                enabled=True,
+                backend="srt",
+                allow_network=False,
+                allow_package_registries=True,
+            ),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        assert "registry.npmjs.org" not in offline.allowed_domains
+        assert "registry.npmjs.org" in networked.allowed_domains
+        assert set(offline.write_paths) == set(networked.write_paths)
+
+    def test_toolchain_credentials_stay_denied_inside_granted_roots(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A writable ~/.cargo must not hand the agent the crates.io publish token."""
+        home = self._fake_home(monkeypatch, tmp_path, (".cargo", ".gradle", ".m2", ".ssh"))
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        for secret in (
+            home / ".cargo" / "credentials.toml",
+            home / ".gradle" / "gradle.properties",
+            home / ".m2" / "settings.xml",
+        ):
+            resolved = str(secret.resolve())
+            assert resolved in paths.deny_read_paths, resolved
+            assert resolved in paths.deny_write_paths, resolved
+        assert str((home / ".ssh").resolve()) in paths.deny_write_paths
+        assert str((home / ".ssh").resolve()) not in paths.read_paths

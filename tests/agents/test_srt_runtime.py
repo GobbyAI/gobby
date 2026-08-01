@@ -236,7 +236,10 @@ def test_git_and_package_network_are_separate_capabilities(tmp_path: Path) -> No
     assert "github.com" in capable_paths.allowed_domains
     assert "registry.npmjs.org" in capable_paths.allowed_domains
     assert "blocked.example" in capable_paths.denied_domains
-    assert len(capable_paths.write_paths) > len(default_paths.write_paths)
+    # Both flags are network capabilities only. Local toolchain caches are
+    # writable either way: an offline `cargo build` still takes the
+    # $CARGO_HOME/.package-cache lock (#19443).
+    assert set(capable_paths.write_paths) == set(default_paths.write_paths)
 
 
 def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -> None:

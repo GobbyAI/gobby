@@ -609,6 +609,8 @@ def compute_sandbox_paths(
         sensitive_home_roots,
         sensitive_write_roots,
         tmux_socket_roots,
+        toolchain_credential_paths,
+        toolchain_read_roots,
     )
 
     workspace = Path(canonical_path(workspace_path))
@@ -627,6 +629,7 @@ def compute_sandbox_paths(
             str(workspace),
             *write_paths,
             *gobby_read_exceptions(policy_env),
+            *toolchain_read_roots(),
             *mcp_config_read_exceptions(workspace),
             *(
                 provider_read_exceptions(
@@ -642,11 +645,19 @@ def compute_sandbox_paths(
         base=workspace,
     )
     deny_read_paths = canonical_paths(
-        [*sensitive_home_roots(), *config.extra_deny_read_paths],
+        [
+            *sensitive_home_roots(),
+            *toolchain_credential_paths(),
+            *config.extra_deny_read_paths,
+        ],
         base=workspace,
     )
     deny_write_paths = canonical_paths(
-        [*sensitive_write_roots(), *config.extra_deny_write_paths],
+        [
+            *sensitive_write_roots(),
+            *toolchain_credential_paths(),
+            *config.extra_deny_write_paths,
+        ],
         base=workspace,
     )
     domains = allowed_domains(config, provider, api_base)
