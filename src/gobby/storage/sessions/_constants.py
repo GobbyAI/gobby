@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import utc_now
+
+if TYPE_CHECKING:
+    from gobby.storage.session_models import Session
 
 logger = logging.getLogger("gobby.storage.sessions")
 
@@ -52,6 +57,15 @@ SYSTEM_SESSION_MACHINE_ID = "system"
 SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
 SESSION_REVIVAL_HORIZON_HOURS = 24
+
+
+def past_terminal_revival_horizon(session: Session) -> bool:
+    """Report whether an expired terminal session is too old to revive."""
+    return (
+        session.session_type == "terminal"
+        and session.status == "expired"
+        and session.updated_at < utc_now() - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
+    )
 
 
 def ensure_system_session(db: HubDatabase) -> None:

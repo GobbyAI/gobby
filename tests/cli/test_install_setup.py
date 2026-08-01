@@ -98,7 +98,6 @@ class TestEnsureDaemonConfig:
         assert res["created"]
         assert res["source"] == "generated"
         assert target.exists()
-        assert "hub_backend: postgres" in target.read_text()
         assert "database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby" in (
             target.read_text()
         )

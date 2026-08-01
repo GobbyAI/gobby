@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
@@ -16,10 +15,10 @@ from gobby.terminal_ownership import (
 from gobby.utils.datetime import utc_now
 
 from ._constants import (
-    SESSION_REVIVAL_HORIZON_HOURS,
     SYSTEM_SESSION_ID,
     ensure_system_session,
     get_logger,
+    past_terminal_revival_horizon,
     validate_session_status_transition,
 )
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
@@ -28,14 +27,6 @@ from ._title_fields import _TitleFieldMixin
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-
-
-def _past_terminal_revival_horizon(session: Session) -> bool:
-    return (
-        session.session_type == "terminal"
-        and session.status == "expired"
-        and session.updated_at < utc_now() - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
-    )
 
 
 class _ManagerState(Protocol):
@@ -85,7 +76,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
             raise ValueError("Confirmed activity status must be 'active' or 'paused'")
 
         current = self.get(session_id)
-        if current is not None and _past_terminal_revival_horizon(current):
+        if current is not None and past_terminal_revival_horizon(current):
             return current
         now = utc_now()
         with self.db.transaction():
@@ -181,7 +172,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
             return None
         if current.session_type != "terminal":
             return current
-        if _past_terminal_revival_horizon(current):
+        if past_terminal_revival_horizon(current):
             return current
 
         identity = terminal_session_identity(current)
