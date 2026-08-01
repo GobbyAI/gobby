@@ -253,13 +253,29 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
         "sent",
         None,
         "msg_root",
-        {"tokens": 10, "platform_message_ids": ["msg_root", "msg_tail"]},
+        {
+            "tokens": 10,
+            "platform_message_ids": ["msg_root", "msg_tail"],
+            "platform_destination": "chat-a",
+        },
     )
-    alias = comms_store.get_message_by_platform_id("Msg", "msg_tail")
+    alias = comms_store.get_message_by_platform_id(
+        "Msg",
+        "msg_tail",
+        platform_destination="chat-a",
+    )
     assert alias is not None
     assert alias.id == saved.id
     assert alias.platform_message_id == "msg_root"
     assert alias.metadata_json["platform_message_ids"] == ["msg_root", "msg_tail"]
+    assert (
+        comms_store.get_message_by_platform_id(
+            "Msg",
+            "msg_tail",
+            platform_destination="chat-b",
+        )
+        is None
+    )
 
     comms_store.update_message_content(saved.id, "Edited response")
     edited = comms_store.get_message(saved.id)

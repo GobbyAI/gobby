@@ -328,7 +328,11 @@ class LocalCommunicationsStore:
         return CommsMessage.from_row(dict(row)) if row else None
 
     def get_message_by_platform_id(
-        self, channel_name: str, platform_message_id: str
+        self,
+        channel_name: str,
+        platform_message_id: str,
+        *,
+        platform_destination: str | None = None,
     ) -> CommsMessage | None:
         """Get a message by its platform ID on a specific channel."""
         sql = """
@@ -340,9 +344,13 @@ class LocalCommunicationsStore:
                  OR m.metadata_json->'platform_message_ids' ? %s
               )
         """
+        params: tuple[str, ...] = (channel_name, platform_message_id, platform_message_id)
+        if platform_destination is not None:
+            sql += " AND m.metadata_json->>'platform_destination' = %s"
+            params += (platform_destination,)
         row = self.db.fetchone(
             sql,
-            (channel_name, platform_message_id, platform_message_id),
+            params,
         )
         return CommsMessage.from_row(dict(row)) if row else None
 
