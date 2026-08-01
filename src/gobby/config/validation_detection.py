@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -13,12 +12,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gobby.config.shell_lexing import parse_shell_command, safe_split
+
 logger = logging.getLogger(__name__)
 
 PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
-_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "|&", "&"}
-_SHELL_PUNCTUATION = ";&|<>"
-_SHELL_REDIRECTION_RE = re.compile(r"^(?:[<>]+|[<>]&|&[<>])$")
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
 _NON_EXECUTING_VALIDATION_ARGS = [
@@ -34,7 +32,27 @@ _NON_EXECUTING_VALIDATION_ARGS = [
 ]
 _SELECTOR_VALIDATION_ARGS = ["-k", "-m", "--run", "-run", "--filter"]
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
-_UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "--color", "-p", "-C"]
+# Every entry consumes the token after it, so an option missing here is read as
+# the command and the run goes uncredited. List both forms of a spelling pair;
+# `-C` is uv's `--config-setting`, and `--directory` has no short form.
+_UV_RUN_OPTIONS_WITH_VALUES = [
+    "--cache-dir",
+    "--color",
+    "--config-setting",
+    "--directory",
+    "--env-file",
+    "--extra",
+    "--group",
+    "--package",
+    "--project",
+    "--python",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+    "-C",
+    "-p",
+    "-w",
+]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 
@@ -145,14 +163,6 @@ class _NormalizedCommandSegment:
     argv: tuple[str, ...]
     wrapper_chain: tuple[str, ...]
     shell_operators: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class _ParsedShellCommand:
-    """Tokenized shell segments and operators joining them."""
-
-    segments: tuple[tuple[str, ...], ...]
-    operators: tuple[str, ...]
 
 
 def default_validation_wrappers() -> list[str]:
@@ -514,7 +524,7 @@ def classify_validation_command(
         return None
 
     wrapper_rules = _iter_wrapper_rules(detection_config)
-    parsed = _parse_shell_command(command)
+    parsed = parse_shell_command(command)
     for segment_index, segment in enumerate(parsed.segments):
         normalized_segments = _normalize_segments(list(segment), wrapper_rules)
         for nested_index, normalized in enumerate(normalized_segments):
@@ -727,7 +737,7 @@ def _iter_matchers(config: ValidationDetectionConfig) -> Iterable[ValidationComm
 def _iter_wrapper_rules(config: ValidationDetectionConfig) -> list[ValidationCommandWrapper]:
     rules = [*default_validation_wrapper_rules(), *config.wrapper_rules]
     for wrapper in _unique_strings(config.recognized_wrappers):
-        wrapper_tokens = _safe_split(wrapper)
+        wrapper_tokens = safe_split(wrapper)
         rules.append(
             ValidationCommandWrapper(
                 id=f"recognized-wrapper-{_wrapper_id_suffix(wrapper)}",
@@ -740,49 +750,6 @@ def _iter_wrapper_rules(config: ValidationDetectionConfig) -> list[ValidationCom
             )
         )
     return rules
-
-
-def shell_command_segments(command: str) -> list[list[str]]:
-    """Split a shell command into token segments separated by shell operators."""
-    return [list(segment) for segment in _parse_shell_command(command).segments]
-
-
-def _parse_shell_command(command: str) -> _ParsedShellCommand:
-    """Tokenize a shell command while preserving control operators."""
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
-        lexer.whitespace_split = True
-        lexer.commenters = ""
-        tokens = list(lexer)
-    except ValueError:
-        return _ParsedShellCommand((), ())
-
-    segments: list[tuple[str, ...]] = []
-    operators: list[str] = []
-    current: list[str] = []
-    skip_redirection_target = False
-    for token in tokens:
-        if skip_redirection_target:
-            skip_redirection_target = False
-            continue
-        if token in _SHELL_SEGMENT_SEPARATORS:
-            if current:
-                segments.append(tuple(current))
-            current = []
-            operators.append(token)
-            continue
-        if _SHELL_REDIRECTION_RE.search(token):
-            if current and current[-1].isdigit():
-                current.pop()
-            skip_redirection_target = True
-            continue
-        current.append(token)
-    if current:
-        segments.append(tuple(current))
-    return _ParsedShellCommand(tuple(segments), tuple(operators))
-
-
-_command_segments = shell_command_segments
 
 
 def _normalize_segments(
@@ -840,7 +807,7 @@ def _matching_wrapper_prefixes(
 ) -> Iterable[tuple[int, ValidationCommandWrapper, list[str]]]:
     for index, wrapper in enumerate(wrappers):
         for prefix in wrapper.prefixes:
-            prefix_tokens = _safe_split(prefix)
+            prefix_tokens = safe_split(prefix)
             if prefix_tokens and _starts_with_command_prefix(tokens, prefix_tokens):
                 yield index, wrapper, prefix_tokens
 
@@ -867,7 +834,7 @@ def _unwrap_matched_rule(
     if not command_tokens:
         return [[]], ()
     if len(command_tokens) == 1:
-        parsed = _parse_shell_command(command_tokens[0])
+        parsed = parse_shell_command(command_tokens[0])
         return [list(segment) for segment in parsed.segments], parsed.operators
     return [command_tokens], ()
 
@@ -876,7 +843,7 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
     if not matcher.prefixes:
         return False
     for prefix in matcher.prefixes:
-        prefix_tokens = _safe_split(prefix)
+        prefix_tokens = safe_split(prefix)
         if not prefix_tokens or not _starts_with(tokens, prefix_tokens):
             continue
         if any(_tokens_include_arg(tokens, arg) for arg in matcher.forbidden_args_any):
@@ -902,13 +869,13 @@ def _matcher_requires_execution_confirmation(
     prefix_lengths = [
         len(prefix_tokens)
         for prefix in matcher.prefixes
-        if (prefix_tokens := _safe_split(prefix)) and _starts_with(tokens, prefix_tokens)
+        if (prefix_tokens := safe_split(prefix)) and _starts_with(tokens, prefix_tokens)
     ]
     arguments = tokens[max(prefix_lengths, default=0) :]
     if any(_tokens_include_arg(arguments, arg) for arg in matcher.evidence_weakening_args_any):
         return True
     for prefix in matcher.evidence_weakening_bare_args_after:
-        prefix_tokens = _safe_split(prefix)
+        prefix_tokens = safe_split(prefix)
         if not _starts_with(tokens, prefix_tokens):
             continue
         remaining = tokens[len(prefix_tokens) :]
@@ -947,13 +914,6 @@ def _looks_like_env_assignment(token: str) -> bool:
     return bool(name) and name.replace("_", "").isalnum() and not name[0].isdigit()
 
 
-def _safe_split(value: str) -> list[str]:
-    try:
-        return shlex.split(value)
-    except ValueError:
-        return value.split()
-
-
 def _starts_with_command_prefix(tokens: list[str], prefix: list[str]) -> bool:
     if len(tokens) < len(prefix):
         return False
@@ -971,7 +931,7 @@ def _starts_with(tokens: list[str], prefix: list[str]) -> bool:
 
 
 def _wrapper_id_suffix(wrapper: str) -> str:
-    pieces = _safe_split(wrapper) or [wrapper]
+    pieces = safe_split(wrapper) or [wrapper]
     suffix = "-".join(pieces)
     suffix = "".join(char if char.isalnum() else "-" for char in suffix).strip("-")
     return suffix or "custom"
