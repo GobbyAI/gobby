@@ -341,6 +341,7 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
+    _reap_stale_gcode_runtime_tokens(runtime_home.parent)
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
@@ -349,7 +350,6 @@ def _prepare_gcode_runtime(
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
         },
     )
-    (runtime_home / "local_cli_token").unlink(missing_ok=True)
     _link_runtime_assets(source_home, runtime_home)
 
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
@@ -375,6 +375,13 @@ def _runtime_home_for_workspace(workspace: Path, runtime_root: Path) -> Path:
         workspace_key = str(workspace)
     digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
     return runtime_root / digest
+
+
+def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
+    for runtime_home in runtime_root.iterdir():
+        if runtime_home.is_symlink() or not runtime_home.is_dir():
+            continue
+        (runtime_home / "local_cli_token").unlink(missing_ok=True)
 
 
 def _gcode_wrapper_script(runtime_home: Path, gcode_bin: Path) -> str:

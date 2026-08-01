@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.code_index import _reap_stale_gcode_runtime_tokens
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationContext,
@@ -149,7 +150,9 @@ class TestEnsureIsolationCodeIndex:
         assert "database_url_ref" not in bootstrap_text
         assert "bind_host: 127.0.0.1" in bootstrap_text
         assert "daemon_port: 61234" in bootstrap_text
-        assert not (Path(result.runtime_home) / "local_cli_token").exists()
+        runtime_token = Path(result.runtime_home) / "local_cli_token"
+        assert not runtime_token.exists()
+        assert not runtime_token.is_symlink()
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -200,6 +203,38 @@ class TestEnsureIsolationCodeIndex:
             linked = runtime_home / name
             assert linked.is_symlink(), f"{name} not linked into runtime home"
             assert linked.resolve() == (source_home / name).resolve()
+
+    def test_reaps_stale_runtime_credentials_only(self, tmp_path: Path) -> None:
+        runtime_root = tmp_path / "gcode-runtime"
+        symlink_home = runtime_root / "stale-symlink"
+        file_home = runtime_root / "stale-file"
+        live_home = runtime_root / "live"
+        for runtime_home in (symlink_home, file_home, live_home):
+            runtime_home.mkdir(parents=True)
+
+        source_token = tmp_path / "operator-token"
+        source_token.touch()
+        symlink_token = symlink_home / "local_cli_token"
+        symlink_token.symlink_to(source_token)
+        file_token = file_home / "local_cli_token"
+        file_token.touch()
+
+        preserved_files = {
+            symlink_home / "bootstrap.yaml": "symlink-home\n",
+            file_home / "bootstrap.yaml": "file-home\n",
+            live_home / "bootstrap.yaml": "live-home\n",
+        }
+        for path, contents in preserved_files.items():
+            path.write_text(contents)
+
+        _reap_stale_gcode_runtime_tokens(runtime_root)
+
+        assert not symlink_token.exists()
+        assert not symlink_token.is_symlink()
+        assert not file_token.exists()
+        assert source_token.exists()
+        for path, contents in preserved_files.items():
+            assert path.read_text() == contents
 
     @pytest.mark.asyncio
     async def test_api_token_reaches_probe_subprocess_env(
