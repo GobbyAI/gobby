@@ -292,10 +292,10 @@ chain (4.4 deletes the runtime path later).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/hub_backup/cli.py`
-- `src/gobby/cli/hub_backup/_manifest.py`
-- `src/gobby/cli/hub_backup/_stores.py`
-- `src/gobby/cli/hub_backup/_verify.py`
+- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: command orchestration spans the new backup CLI module
+- `src/gobby/cli/hub_backup/_manifest.py::*` — scope-reason: the v2 manifest model and serialization fill the new module
+- `src/gobby/cli/hub_backup/_stores.py::*` — scope-reason: per-store backup and restore drivers fill the new module
+- `src/gobby/cli/hub_backup/_verify.py::*` — scope-reason: scratch-restore verification fills the new module
 - `src/gobby/cli/postgres_backup.py::*` — scope-reason: v2 manifest rewrite touches the backup/verification surface broadly
 
 New package, split up front — command (`cli.py`), v2 manifest model +
@@ -385,7 +385,7 @@ max age (default 24h) and target-DB stable-identity match at apply time;
 
 Targets:
 - `src/gobby/storage/migrations.py::*` — scope-reason: destructive-marker directive, halt-before-destructive gate, contiguity guard, and batch resume land across the runner
-- `src/gobby/cli/schema.py`
+- `src/gobby/cli/schema.py::*` — scope-reason: destructive apply changes span the schema command surface
 - `tests/storage/test_migration_contract.py::*` — scope-reason: new destructive-gate, marker-audit, and batch-resume contract tests
 
 `MigrationRunner.apply_pending` (`storage/migrations.py:122-150`) applies
@@ -509,12 +509,12 @@ migrations being applied.
 
 Targets:
 - `src/gobby/storage/migrations/354_migration_bookkeeping.sql`
-- `src/gobby/storage/maintenance_epoch.py`
-- `src/gobby/cli/hub_maintenance.py`
+- `src/gobby/storage/maintenance_epoch.py::*` — scope-reason: epoch state, fencing, and ledgers span the new module
+- `src/gobby/cli/hub_maintenance.py::*` — scope-reason: run, status, resume, and abort span the new command module
 - `src/gobby/storage/hub/runtime.py::*` — scope-reason: every runtime hub-database entry point gains the courtesy epoch admission diagnostic
 - `src/gobby/runner_init/helpers.py::*` — scope-reason: daemon boot surfaces the courtesy epoch error instead of a raw connection failure
-- `src/gobby/cli/hub_backup/cli.py`
-- `tests/storage/test_maintenance_epoch.py`
+- `src/gobby/cli/hub_backup/cli.py::*` — scope-reason: maintenance-epoch integration spans backup command orchestration
+- `tests/storage/test_maintenance_epoch.py::*` — scope-reason: epoch, fence, and recovery coverage spans the focused test module
 
 Hub-wide quiescence is currently observed, not enforced (Codex F4,
 blocker): `gobby hub-backup` stops the LOCAL daemon, but a remote daemon
@@ -621,14 +621,13 @@ records it in the manifest (0.4).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/runner_maintenance.py::*` — scope-reason: whole module decomposed into a package; file deleted
 - `src/gobby/runner_maintenance/__init__.py`
-- `src/gobby/runner_maintenance/binaries.py`
-- `src/gobby/runner_maintenance/messaging.py`
-- `src/gobby/runner_maintenance/telemetry_loops.py`
-- `src/gobby/runner_maintenance/storage_hygiene.py`
-- `src/gobby/runner_maintenance/isolation.py`
-- `src/gobby/runner_maintenance/lifecycle.py`
+- `src/gobby/runner_maintenance/binaries.py::*` — scope-reason: extracted binary-maintenance loops fill the new module
+- `src/gobby/runner_maintenance/messaging.py::*` — scope-reason: extracted messaging-maintenance loops fill the new module
+- `src/gobby/runner_maintenance/telemetry_loops.py::*` — scope-reason: extracted telemetry loops fill the new module
+- `src/gobby/runner_maintenance/storage_hygiene.py::*` — scope-reason: extracted storage-hygiene loops fill the new module
+- `src/gobby/runner_maintenance/isolation.py::*` — scope-reason: extracted isolation maintenance fills the new module
+- `src/gobby/runner_maintenance/lifecycle.py::*` — scope-reason: extracted shutdown lifecycle fills the new module
 
 `runner_maintenance.py` sits at 998 lines (verified 2026-07-30), and
 2.4, 5.1, and 4.4 all add or change behavior there — the first of them
@@ -704,7 +703,6 @@ Targets:
 - `src/gobby/storage/migrations/357_drop_dead_tables.sql`
 - `src/gobby/workflows/engine/core.py::*` — scope-reason: rule_overrides read steps removed from the engine
 - `tests/storage/test_migration_contract.py::*` — scope-reason: dropped-table fixtures updated
-- `tests/storage/test_rule_overrides.py::*` — scope-reason: whole file deleted
 
 Migration 357 (destructive-marked — 0.5's gated path) drops, each
 re-verified by row count + code refs before drop:
@@ -722,7 +720,7 @@ re-verified by row count + code refs before drop:
   rewritten in 2.1.
 - `tool_embeddings` (+ moot `text_hash`) — identity sequence `last_value` NULL
   (never held a row, reset-proof); live feature uses the Qdrant collection.
-Delete `tests/storage/test_rule_overrides.py`; update contract-test fixtures
+Delete the obsolete rule-overrides test module; update contract-test fixtures
 (`test_migration_contract.py:537,580`, `tests/workflows/test_rule_engine.py:779,803,3372`,
 `tests/agents/test_merge_orchestrator_contract.py:187`).
 Kept-adjacent: `memories.source_session_id` path; Qdrant `tool_embeddings`
@@ -767,7 +765,7 @@ the ParadeDB case in 5.4).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/runner_maintenance/storage_hygiene.py`
+- `src/gobby/runner_maintenance/storage_hygiene.py::*` — scope-reason: schema leases and startup sweep span the storage-hygiene module
 - `tests/fixtures/postgres.py::*` — scope-reason: lease acquisition at schema creation + name-contract validation
 - `tests/storage/test_manager_surface_parity.py::*` — scope-reason: hardcoded never-dropped schema fixture replaced
 
@@ -808,15 +806,7 @@ P4's zero-persistent-Python-DDL claim holds.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/utils/mathutil2.py::*` — scope-reason: whole file deleted
-- `src/gobby/cli/pipelines_runtime.py::*` — scope-reason: whole file deleted
-- `src/gobby/code_index/prune_storage.py::*` — scope-reason: whole file deleted
-- `src/gobby/servers/routes/stage_routes.py::*` — scope-reason: whole shim deleted
 - `src/gobby/servers/routes/stages.py::*` — scope-reason: zero-route module-level router global removed; endpoints stay
-- `src/gobby/workflows/task_actions.py::*` — scope-reason: whole file deleted
-- `src/gobby/workflows/summary_actions.py::*` — scope-reason: whole file deleted
-- `src/gobby/postgres_pgsearch_assets.py::*` — scope-reason: whole file deleted
-- `src/gobby/skills/injector.py::*` — scope-reason: whole file deleted
 - `src/gobby/plans/convergence_regression.py`
 - `docs/architecture/source-tree.md`
 
@@ -885,7 +875,6 @@ note in the session transcript; counters alone are insufficient.
 
 Targets:
 - `src/gobby/cli/build.py::*` — scope-reason: unregistered command removal sweeps the click group wiring
-- `src/gobby/cli/export_import.py::*` — scope-reason: whole dead command group deleted
 - `src/gobby/cli/__init__.py::*` — scope-reason: export/import command registration removed from the CLI root
 - `src/gobby/cli/tasks/crud.py::*` — scope-reason: discarded flag removal touches the close command surface
 - `src/gobby/servers/routes/code_index.py::rebuild_graph`
@@ -958,8 +947,6 @@ via the existing removed-key-drop machinery. Rust reads none of
 
 Targets:
 - `src/gobby/config/_loading.py::*` — scope-reason: legacy config migrators removed
-- `src/gobby/config/wiki_migration.py::*` — scope-reason: whole file deleted
-- `src/gobby/config/feature_candidate_defaults.py::*` — scope-reason: stale-default deleter removed
 - `src/gobby/config/build.py::*` — scope-reason: _merge_legacy_cap removed
 - `src/gobby/config/code_index.py::*` — scope-reason: drop_removed_keys retired after its last run
 
@@ -997,13 +984,11 @@ default-seeding path (only the stale-row deleter dies).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/utils/url_sanitize.py`
-- `src/gobby/utils/http_retry.py`
+- `src/gobby/utils/url_sanitize.py::*` — scope-reason: shared sanitization implementation and tests span the new utility module
+- `src/gobby/utils/http_retry.py::*` — scope-reason: shared Retry-After parsing and tests span the new utility module
 - `src/gobby/clones/git.py::*` — scope-reason: leaking _sanitize_url variant replaced by the shared util
-- `src/gobby/workflows/webhook_executor.py::*` — scope-reason: canonical sanitize semantics extracted from this file before 2.11 deletes it
 - `src/gobby/mcp_proxy/manager.py::*` — scope-reason: duplicate truncate_tool_brief + legacy aliases removed; consumers re-point at server_registry
 - `src/gobby/cli/_build_daemon.py::_daemon_error_message`
-- `src/gobby/cli/cron.py::_daemon_error_message`
 - `src/gobby/cli/pipelines.py::*` — scope-reason: duplicate _daemon_error_message and get_project_path consolidated onto the canonical implementations
 - `src/gobby/communications/adapters/base.py::*` — scope-reason: Retry-After header parsing re-based onto the shared helper
 - `src/gobby/integrations/linear_graphql.py::*` — scope-reason: Retry-After header parsing re-based onto the shared helper
@@ -1048,17 +1033,16 @@ parser) — it stays.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/utils/webhook_transport.py`
-- `src/gobby/workflows/webhook_executor.py::*` — scope-reason: whole file deleted
+- `src/gobby/utils/webhook_transport.py::*` — scope-reason: transport policy, execution, and response handling span the new utility module
 - `src/gobby/workflows/pipeline_webhooks.py::*` — scope-reason: consumer re-bases onto the shared transport
 - `src/gobby/hooks/webhooks.py::*` — scope-reason: dispatcher send path re-bases onto the shared transport
 - `pyproject.toml`
 - `uv.lock`
 
 Two full webhook stacks exist: httpx `WebhookDispatcher` (`hooks/webhooks.py:76`,
-multiple consumers) and aiohttp `WebhookExecutor`
-(`workflows/webhook_executor.py:95`, sole consumer `pipeline_webhooks.py:14,38`).
-`webhook_executor.py` is the only aiohttp importer in src/gobby; the dep is
+multiple consumers) and an aiohttp `WebhookExecutor` whose sole consumer is
+`pipeline_webhooks.py:14,38`. The retired executor module is the only aiohttp
+importer in src/gobby; the dep is
 pinned `>=3.14.1` solely for its 2026 advisories. Design locked (behavior
 inventory 2026-07-31; Codex review — the earlier either/or is resolved and
 the HMAC claim corrected: neither stack signs requests, `import hmac`
@@ -1066,8 +1050,8 @@ appears only in inbound verifiers, so there is no signing behavior to
 preserve and none is added). One shared httpx `WebhookTransport`
 (`utils/webhook_transport.py`) carries the executor's transport semantics:
 scheme/host validation; resolve-time non-global-address blocking +
-pinned-DNS connection (rebinding defense, `webhook_executor.py:74-92,
-497-516`) with `trust_env=False` on the restricted transport — httpx
+pinned-DNS connection (rebinding defense) with `trust_env=False` on the
+restricted transport — httpx
 honors `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` by default (verified:
 `webhooks.py:105-110` sets no trust_env), and a proxy re-resolves the
 original hostname, bypassing the validated pinned IP entirely (Codex
@@ -1087,7 +1071,7 @@ and an uncapped backoff doubler (`webhooks.py:334-337`); gaining the
 pinning and the cap is the intended behavior change — while keeping its
 policy layer intact: event filtering, fixed payload shape, env-var
 expansion, fail-closed blocking semantics, 64 KiB response cap via the
-transport's bound parameter. Delete `webhook_executor.py`; remove
+transport's bound parameter. Delete the retired executor module; remove
 `aiohttp` from dependencies (+ its advisory comment).
 
 **Acceptance:**
@@ -1195,7 +1179,7 @@ them.
 Targets:
 - `pyproject.toml`
 - `uv.lock`
-- `tests/voice/test_lazy_import.py`
+- `tests/voice/test_lazy_import.py::*` — scope-reason: no-torch-at-import regression coverage spans the focused test module
 
 Josh's decision, not relitigated: chatterbox-tts STAYS required (agents
 reinstall without extras); the 9 `[tool.uv]` pins stay. Remove the no-op
@@ -1216,8 +1200,6 @@ while disabled.
 `kind: deliverable`
 
 Targets:
-- `crates/gwiki/src/ingest/mediawiki.rs::*` — scope-reason: whole file deleted
-- `crates/gwiki/src/ingest/wayback.rs::*` — scope-reason: whole file deleted
 - `crates/gwiki/src/ingest/mod.rs::*` — scope-reason: mod declarations + test-only call sites removed
 - `crates/gwiki/Cargo.toml`
 - `crates/gcode/Cargo.toml`
@@ -1227,10 +1209,11 @@ Targets:
 - `Cargo.lock`
 - `docs/guides/gcore-development-guide.md`
 
-Delete `mediawiki.rs` (157 lines — all external refs are under `#[cfg(test)]`)
-and `wayback.rs` (550 lines — sole external refs `ingest/mod.rs:702,1140` are
-under `#[cfg(test)]` at `:686`) plus their `mod` declarations and test-only
-call sites. Kept-adjacent: `SourceKind::MediaWiki`/`Wayback` variants
+Delete the retired MediaWiki ingestion module (157 lines — all external refs
+are under `#[cfg(test)]`) and Wayback ingestion module (550 lines — sole
+external refs `ingest/mod.rs:702,1140` are under `#[cfg(test)]` at `:686`),
+plus their `mod` declarations and test-only call sites. Kept-adjacent:
+`SourceKind::MediaWiki`/`Wayback` variants
 (`sources/types.rs:26-57`, `credibility.rs:218`) stay — live. Remove dead deps:
 `ignore` + `dirs` (gcode), `dirs` (ghook), `postgres-types` (gcore — also
 update the manifest string-assertions in `public_boundary.rs:24,35` and
@@ -1251,12 +1234,7 @@ Rebuild + reinstall all binaries.
 
 Targets:
 - `web/package.json::*` — scope-reason: dead deps removed; @types moved to devDependencies
-- `web/src/hooks/useAgentSpawn.ts::*` — scope-reason: whole file deleted
-- `web/src/hooks/useSessionTokenEvents.ts::*` — scope-reason: whole file deleted
-- `web/src/hooks/useAgentRuns.ts::*` — scope-reason: whole file deleted
 - `web/src/utils/isolationColors.ts`
-- `web/src/components/ui/Textarea.tsx::*` — scope-reason: whole file deleted
-- `web/src/hooks/useVoiceCapabilities.ts::*` — scope-reason: whole file deleted
 - `web/package-lock.json`
 - `pyproject.toml`
 - `uv.lock`
@@ -1281,16 +1259,6 @@ session transcript.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/dev.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/qa.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/merge-clone.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/merge-worktree.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/spawn-developer.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/spawn-qa.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/wiki-research.yaml::*` — scope-reason: retired never-run pipeline template deleted
-- `src/gobby/install/shared/workflows/pipelines/nightly-fixes.yaml::*` — scope-reason: abandoned pipeline template deleted
-- `src/gobby/install/shared/workflows/agents/nightly-linter.yaml::*` — scope-reason: retired agent template deleted
-- `src/gobby/install/shared/workflows/agents/nightly-test-fixer.yaml::*` — scope-reason: retired agent template deleted
 - `src/gobby/install/shared/workflows/rules/CLAUDE.md`
 - `src/gobby/install/shared/skills/gcode/SKILL.md`
 
@@ -1359,7 +1327,7 @@ Targets:
 - `src/gobby/storage/identity_cutover.py`
 - `src/gobby/utils/durable_file.py`
 - `src/gobby/runner_init/helpers.py::*` — scope-reason: boot keeps only non-epoch identity work — fresh-identity registration and tombstone re-key
-- `src/gobby/cli/hub_maintenance.py`
+- `src/gobby/cli/hub_maintenance.py::*` — scope-reason: identity-cutover orchestration spans the maintenance command module
 - `src/gobby/utils/machine_id.py::*` — scope-reason: generator becomes uuid4-only; file read/write moves to durable_file
 - `src/gobby/storage/machines.py::*` — scope-reason: boot-time canonical registration + upsert throttle + UUID validation
 - `src/gobby/storage/bin_update_state.py::*` — scope-reason: re-key to (machine_id, tool_name) with machines FK
@@ -1725,7 +1693,6 @@ Targets:
 - `src/gobby/cli/installers/droid.py::*` — scope-reason: legacy unwrap/cleanup helpers removed
 - `src/gobby/cli/installers/qwen.py::*` — scope-reason: legacy hook types removed
 - `src/gobby/cli/installers/hook_commands.py::*` — scope-reason: legacy hook-script detection removed
-- `src/gobby/cli/_install_legacy.py::*` — scope-reason: whole file deleted
 - `src/gobby/cli/install.py::*` — scope-reason: legacy shim call sites removed
 - `src/gobby/cli/pack.py::*` — scope-reason: legacy hub-postgres.db skip removed
 
@@ -1815,7 +1782,6 @@ live grok pane capture; regenerate
 `kind: deliverable`
 
 Targets:
-- `survey.json::*` — scope-reason: scratch file deleted
 - `.gitattributes`
 - `scripts/setup-firewall.sh`
 - `scripts/migrate_index_to_plans_table.py`
@@ -1843,28 +1809,13 @@ Targets:
 - `docs/evidence/wiki-parity-2026-06/wp3-qa-ghook-ask-daemon.txt`
 - `docs/evidence/wiki-parity-2026-06/wp3-qa-ghook-ask-direct.txt`
 - `docs/evidence/wiki-parity-2026-06/wp3-qa-ghook-read.txt`
-- `docs/evidence/wiki-parity-2026-06/wp3-compile-explainer-v2.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-compile-source.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-deposit-ingest.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-deposit-search.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-health.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-ghook-search.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q2-rrf-ask-daemon.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q2-rrf-search.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q3-uuid5-ask-daemon.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q3-uuid5-search.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q4-falkor-ask-daemon.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-qa-q4-falkor-search.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-search-hybrid.json::*` — scope-reason: raw evidence dump deleted
-- `docs/evidence/wiki-parity-2026-06/wp3-search-sources.json::*` — scope-reason: raw evidence dump deleted
 - `docs/architecture/architecture.md`
 - `docs/architecture/coding-standards.md`
 - `docs/architecture/development-guide.md`
 - `docs/architecture/index.md`
 - `docs/architecture/technology-stack.md`
 
-Delete scratch: `survey.json`, empty `.gitattributes`, diverged
+Delete scratch survey output, empty `.gitattributes`, diverged
 `scripts/setup-firewall.sh` fork, completed
 `scripts/migrate_index_to_plans_table.py`. Doc fixes (every file named —
 Codex round 7 replaced the former globs): `web-ui.md` dead
@@ -1913,7 +1864,7 @@ Targets:
 - `src/gobby/servers/pending_interactions.py::*` — scope-reason: abandoned waiter rows gain a terminal path
 - `src/gobby/storage/session_lifecycle.py::*` — scope-reason: revival-horizon contract + variables sweep
 - `src/gobby/storage/sessions/_field_update.py::_FieldUpdateMixin.revive_expired_terminal_session`
-- `src/gobby/runner_maintenance/storage_hygiene.py`
+- `src/gobby/runner_maintenance/storage_hygiene.py::*` — scope-reason: retention and terminal-row cleanup span the storage-hygiene module
 - `src/gobby/mcp_proxy/metrics_store.py::*` — scope-reason: cleanup atomicity + reset scoping
 - `src/gobby/mcp_proxy/metrics_events.py::*` — scope-reason: block-only statistics contract
 
@@ -2542,7 +2493,7 @@ Targets:
 - `src/gobby/storage/hub/postgres.py::*` — scope-reason: apply_migrations becomes the gdaemon shell-out with DSN pinning
 - `src/gobby/storage/hub/runtime.py::*` — scope-reason: all runtime entry points inherit the shell-out
 - `src/gobby/storage/migrations.py::*` — scope-reason: whole file deleted
-- `src/gobby/cli/schema.py`
+- `src/gobby/cli/schema.py::*` — scope-reason: Python schema command retirement spans the command module
 - `src/gobby/cli/install_setup.py::*` — scope-reason: gdaemon provisioning moves before DB init; failures become fatal
 - `src/gobby/utils/native_bin.py::*` — scope-reason: gdaemon joins the managed-binary resolution and floor set
 - `src/gobby/storage/postgres_baseline_schema.sql::*` — scope-reason: whole file deleted
@@ -2648,7 +2599,7 @@ client-DSN seam; remote-API backend replaces it later.
 Targets:
 - `crates/gcore/src/schema/sweep.rs`
 - `crates/gdaemon/src/main.rs`
-- `src/gobby/runner_maintenance/storage_hygiene.py`
+- `src/gobby/runner_maintenance/storage_hygiene.py::*` — scope-reason: Python runtime-DDL sweep removal spans the storage-hygiene module
 - `src/gobby/memory/dream/storage_schema.py::*` — scope-reason: whole file deleted
 - `src/gobby/memory/dream/storage.py::*` — scope-reason: ensure_dream_schema call sites removed
 - `src/gobby/memory/dream/service.py::*` — scope-reason: memoized ensure calls removed
