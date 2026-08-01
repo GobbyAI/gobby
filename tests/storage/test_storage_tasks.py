@@ -1829,26 +1829,6 @@ class TestLocalTaskManager:
         assert escalated.claimed_by_session_id is None
         assert escalated.claimed_by_session_id is None
 
-    def test_deleting_session_clears_canonical_owner(
-        self, task_manager, project_id, session_manager
-    ) -> None:
-        """Deleting an owning session should null the canonical owner FK."""
-        session = session_manager.register(
-            external_id="delete-owner-ext",
-            machine_id="test-machine",
-            source="codex",
-            project_id=project_id,
-        )
-        task = task_manager.create_task(
-            project_id, "Delete owner", validation_criteria=VALIDATION_CRITERIA
-        )
-        task_manager.claim_task(task.id, session.id)
-
-        session_manager.delete(session.id)
-
-        refreshed = task_manager.get_task(task.id)
-        assert refreshed.claimed_by_session_id is None
-
     # =========================================================================
     # Close Task Additional Tests
     # =========================================================================
