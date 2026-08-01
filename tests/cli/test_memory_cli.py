@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner, Result
 
+from gobby import paths
 from gobby.cli import cli
 from gobby.cli.memory.main import memory as memory_cli
 from gobby.sync.memories import MemoryBackupError, MemoryRestoreError
@@ -985,10 +986,11 @@ class TestMemoryRestoreCommand:
         mock_backup_manager_cls.return_value = mock_backup_manager
 
         with runner.isolated_filesystem():
-            restore_path = Path(".gobby/memories.jsonl")
-            restore_path.parent.mkdir()
+            restore_path = paths.get_gobby_home() / "backups" / "memories.jsonl"
+            restore_path.parent.mkdir(parents=True, exist_ok=True)
             restore_path.write_text("{}", encoding="utf-8")
-            expected_path = restore_path.resolve()
+            # The default path is used as-is; only an explicit --input is resolved.
+            expected_path = restore_path
             result = runner.invoke(cli, ["memory", "restore"])
 
         assert result.exit_code == 0
