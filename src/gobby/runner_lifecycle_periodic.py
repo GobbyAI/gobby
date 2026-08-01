@@ -58,7 +58,7 @@ def _default_loops() -> dict[str, Any]:
         purge_deleted_skills_loop,
         recall_drift_monitor_loop,
         span_cleanup_loop,
-        sweep_test_schemas_on_startup,
+        sweep_test_schemas_loop,
         tmux_window_name_repair_loop,
         unmodeled_observation_cleanup_loop,
     )
@@ -73,7 +73,7 @@ def _default_loops() -> dict[str, Any]:
         "workflow_audit_cleanup_loop": workflow_audit_cleanup_loop,
         "metrics_archive_loop": metrics_archive_loop,
         "span_cleanup_loop": span_cleanup_loop,
-        "sweep_test_schemas_on_startup": sweep_test_schemas_on_startup,
+        "sweep_test_schemas_loop": sweep_test_schemas_loop,
         "unmodeled_observation_cleanup_loop": unmodeled_observation_cleanup_loop,
         "memory_reconcile_loop": memory_reconcile_loop,
         "cleanup_zombie_messages_loop": cleanup_zombie_messages_loop,
@@ -200,8 +200,9 @@ def start_periodic_tasks(
         name="metrics-cleanup",
     )
     runner._test_schema_sweep_task = asyncio.create_task(
-        loops["sweep_test_schemas_on_startup"](
+        loops["sweep_test_schemas_loop"](
             getattr(runner.config, "database_url", None),
+            lambda: runner._shutdown_requested,
         ),
         name="test-schema-sweep",
     )

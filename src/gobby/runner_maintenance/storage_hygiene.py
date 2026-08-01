@@ -23,6 +23,7 @@ _SKILL_CLEANUP_BATCH_LIMIT = 500
 _APPROVAL_EXPIRY_BATCH_LIMIT = 100
 _TEST_SCHEMA_PREFIX = "gobby_test_"
 _TEST_SCHEMA_RETENTION_HOURS = 24
+_TEST_SCHEMA_SWEEP_INTERVAL_SECONDS = 60 * 60
 
 
 def _test_schema_created_epoch(schema_name: str) -> int | None:
@@ -106,17 +107,29 @@ def sweep_orphaned_test_schemas(
     return dropped
 
 
-async def sweep_test_schemas_on_startup(database_url: str | None) -> None:
-    """Run the leased test-schema sweep once without blocking daemon startup I/O."""
+async def sweep_test_schemas_loop(
+    database_url: str | None,
+    is_shutdown_requested: Callable[[], bool],
+    *,
+    interval_seconds: int = _TEST_SCHEMA_SWEEP_INTERVAL_SECONDS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Sweep abandoned test schemas at startup and periodically thereafter."""
     if not database_url:
         return
-    try:
-        dropped = await asyncio.to_thread(sweep_orphaned_test_schemas, database_url)
-    except Exception:
-        logger.exception("Failed to sweep orphaned Postgres test schemas at startup")
-        return
-    if dropped:
-        logger.info("Swept %s orphaned Postgres test schema(s) at startup", dropped)
+    while not is_shutdown_requested():
+        try:
+            dropped = await asyncio.to_thread(sweep_orphaned_test_schemas, database_url)
+            if dropped:
+                logger.info("Swept %s orphaned Postgres test schema(s)", dropped)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Failed to sweep orphaned Postgres test schemas")
+        try:
+            await sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
 
 
 async def purge_deleted_skills_loop(
