@@ -14,7 +14,6 @@ Active memory-lifecycle rules:
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
 - require-memory-recall-before-tool: block on before_tool
 - require-memory-recall-before-turn-end: block on turn_end
-- require-memory-review-before-status: block on before_tool (close_task, submit_for_review, approve_review, reject_review)
 - clear-memory-review-on-create: set_variable on before_tool
 
 """
@@ -47,7 +46,6 @@ MEMORY_RULES = {
     "guard-plan-memory-writes",
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
-    "require-memory-review-before-status",
     "clear-memory-review-on-create",
 }
 
@@ -376,47 +374,6 @@ class TestMemoryCaptureNudge:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "prompt" in body.when
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# require-memory-review-before-status
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestRequireMemoryReviewBeforeStatus:
-    """Gate task status transitions until agent reviews memories."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("require-memory-review-before-status")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        assert body.effects[0].type == "block"
-        assert body.effects[0].reason is not None
-        assert "create_memory" in body.effects[0].reason
-
-    def test_blocks_all_status_transitions(self, db, manager) -> None:
-        """Should block close_task and all review lifecycle transitions."""
-        _sync_bundled(db)
-        row = manager.get_by_name("require-memory-review-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        mcp_tools = body.effects[0].mcp_tools
-        assert "gobby-tasks:close_task" in mcp_tools
-        assert "gobby-tasks-ops:submit_for_review" in mcp_tools
-        assert "gobby-tasks-ops:approve_review" in mcp_tools
-        assert "gobby-tasks-ops:reject_review" in mcp_tools
-
-    def test_has_when_condition(self, db, manager) -> None:
-        """Only block when memory_review_completed is not set."""
-        _sync_bundled(db)
-        row = manager.get_by_name("require-memory-review-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "memory_review_completed" in body.when
-        assert "target_task_has_edits" in body.when
-        assert "preview" not in body.when
-        assert "session_edited_files" not in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

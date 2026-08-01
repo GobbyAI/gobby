@@ -4,7 +4,7 @@ Validates that:
 - no-destructive-shell.yaml rules block dangerous commands for spawned agents
 - no-destructive-shell-interactive.yaml rules block with escape hatch for interactive sessions
 - no-remote-exec blocks curl|sh universally
-- no-destructive-git-interactive mirrors no-destructive-git for interactive
+- no-git-stash-interactive mirrors no-git-stash for interactive
 - no-force-push-interactive mirrors no-force-push for interactive
 """
 
@@ -76,7 +76,7 @@ INTERACTIVE_SHELL_RULES = {f"{name}-interactive" for name in AUTONOMOUS_SHELL_RU
 ALL_NEW_RULES = (
     AUTONOMOUS_SHELL_RULES
     | INTERACTIVE_SHELL_RULES
-    | {"no-remote-exec", "no-destructive-git-interactive", "no-force-push-interactive"}
+    | {"no-remote-exec", "no-git-stash-interactive", "no-force-push-interactive"}
 )
 
 
@@ -102,7 +102,7 @@ class TestDestructiveShellSync:
         _sync_bundled(db)
         interactive_rules = INTERACTIVE_SHELL_RULES | {
             "no-remote-exec",
-            "no-destructive-git-interactive",
+            "no-git-stash-interactive",
             "no-force-push-interactive",
         }
         for name in interactive_rules:
@@ -355,29 +355,20 @@ class TestNoRemoteExec:
         assert "default" in row.tags
 
 
-# --- Pattern matching tests: no-destructive-git-interactive ---
+# --- Pattern matching tests: no-git-stash-interactive ---
 
 
-class TestNoDestructiveGitInteractive:
-    """Test interactive git blocks mirror autonomous patterns."""
+class TestNoGitStashInteractive:
+    """Test the interactive git-stash block mirrors its autonomous counterpart."""
 
     @pytest.fixture(autouse=True)
     def _load_rule(self, db, manager):
         _sync_bundled(db)
-        self.body = _get_rule(manager, "no-destructive-git-interactive")
         self.stash_body = _get_rule(manager, "no-git-stash-interactive")
 
     @pytest.mark.parametrize(
         "command",
         [
-            "git reset --hard",
-            "git reset --hard HEAD~1",
-            "git clean -fd",
-            "git clean -fdx",
-            "git checkout .",
-            "git checkout -- .",
-            "git restore .",
-            "git branch -D feature",
             "git stash",
             "git stash push",
             "git stash save before-rebase",
@@ -393,14 +384,10 @@ class TestNoDestructiveGitInteractive:
             "git --work-tree=/repo stash clear",
             "git -c core.pager=cat stash drop",
             "git --no-pager -C /repo stash pop",
-            "git -C /repo reset --hard",
-            "git --work-tree /repo clean -fd",
-            "git -c user.name=x checkout .",
-            "git -C /repo branch -D feature",
         ],
     )
-    def test_blocks_destructive_git(self, command) -> None:
-        assert _any_rule_matches([self.body, self.stash_body], command)
+    def test_blocks_stash_mutations(self, command) -> None:
+        assert _any_rule_matches([self.stash_body], command)
 
     @pytest.mark.parametrize(
         "command",
@@ -421,16 +408,10 @@ class TestNoDestructiveGitInteractive:
         ],
     )
     def test_allows_safe_git(self, command) -> None:
-        assert not _any_rule_matches([self.body, self.stash_body], command)
+        assert not _any_rule_matches([self.stash_body], command)
 
     def test_when_condition_excludes_spawned_agents(self) -> None:
-        assert self.body.when == "not variables.get('is_spawned_agent')"
-
-    def test_reason_has_escape_hatch(self) -> None:
-        assert self.body.effects
-        reason = self.body.effects[0].reason
-        assert reason is not None
-        assert "Ask the user for permission to disable this rule" in reason
+        assert self.stash_body.when == "not variables.get('is_spawned_agent')"
 
     @pytest.mark.parametrize(
         "rule_name",
@@ -451,13 +432,9 @@ class TestNoDestructiveGitInteractive:
         assert "permission to disable" not in reason
 
     def test_same_pattern_as_autonomous(self, db, manager) -> None:
-        autonomous = _get_rule(manager, "no-destructive-git")
         autonomous_stash = _get_rule(manager, "no-git-stash")
-        assert self.body.effects
         assert self.stash_body.effects
-        assert autonomous.effects
         assert autonomous_stash.effects
-        assert self.body.effects[0].command_pattern == autonomous.effects[0].command_pattern
         assert (
             self.stash_body.effects[0].command_pattern
             == autonomous_stash.effects[0].command_pattern

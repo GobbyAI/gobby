@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.phase5_contract_helpers import LEGACY_REVIEW_TOOLS, source_text, source_texts
+from tests.phase5_contract_helpers import LEGACY_REVIEW_TOOLS, source_texts
 
 pytestmark = pytest.mark.unit
 
@@ -162,12 +162,16 @@ def test_no_rule_invokes_stage_states_manager_directly() -> None:
     assert forbidden.search(source) is None
 
 
-def test_bundled_rules_use_task_state_helper_name() -> None:
-    source = source_text(
-        "src/gobby/install/shared/workflows/rules/plan-mode/block-writes-outside-plan-artifact.yaml"
-    )
+def test_bundled_rules_do_not_use_the_removed_task_status_helper() -> None:
+    """No bundled rule may reference the removed ``task_status_in`` helper.
 
-    assert "task_state_in" in source
+    This guarded a single rule until #19408 retired
+    ``block-writes-outside-plan-artifact``, the only bundled user of the
+    replacement ``task_state_in``. The negative half still has teeth, so it now
+    sweeps every bundled rule rather than naming a file that no longer exists.
+    """
+    source = source_texts(("src/gobby/install/shared/workflows/rules",))
+
     assert "task_status_in" not in source
 
 

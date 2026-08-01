@@ -65,7 +65,6 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 
 
 PLAN_MODE_RULES = {
-    "block-writes-outside-plan-artifact",
     "handle-plan-mode-entry",
     "handle-plan-mode-exit",
     "reset-plan-consider-on-resolved-mode-exit",
