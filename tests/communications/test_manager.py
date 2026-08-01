@@ -2383,3 +2383,100 @@ async def test_group_allowlist_rejection_happens_before_identity_or_persistence(
     assert handled == [message]
     resolve_identity.assert_not_called()
     store.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_telegram_reply_targets_originating_session_with_shared_chat() -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={"allow_from": ["1111111"]},
+    )
+    store = make_store([channel])
+    created_at = datetime(2024, 1, 1, tzinfo=UTC)
+    outbound_by_platform_id = {
+        "1001": CommsMessage(
+            id="outbound-a",
+            channel_id=channel.id,
+            direction="outbound",
+            content="Session A",
+            platform_message_id="1001",
+            session_id="session-a",
+            metadata_json={"platform_destination": "2222222"},
+            created_at=created_at,
+        ),
+        "1002": CommsMessage(
+            id="outbound-b",
+            channel_id=channel.id,
+            direction="outbound",
+            content="Session B",
+            platform_message_id="1002",
+            session_id="session-b",
+            metadata_json={"platform_destination": "2222222"},
+            created_at=created_at,
+        ),
+    }
+
+    def get_message_by_platform_id(
+        channel_name: str,
+        platform_message_id: str,
+        *,
+        platform_destination: str | None = None,
+    ) -> CommsMessage | None:
+        if channel_name != channel.name or platform_destination != "2222222":
+            return None
+        return outbound_by_platform_id.get(platform_message_id)
+
+    store.get_message_by_platform_id.side_effect = get_message_by_platform_id
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    identity = CommsIdentity(
+        id="identity-1",
+        channel_id=channel.id,
+        external_user_id="1111111",
+        session_id="session-b",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    manager._identity_manager = MagicMock()
+    manager._identity_manager.resolve_inbound_identity.return_value = IdentityResolution(
+        identity=identity,
+        session_id="session-b",
+    )
+    manager.event_callback = AsyncMock()
+    mock_adapter = make_adapter(channel_type="telegram")
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    inbound = TelegramAdapter().parse_webhook(
+        {
+            "update_id": 10001,
+            "message": {
+                "message_id": 1003,
+                "from": {"id": 1111111, "is_bot": False, "username": "testuser"},
+                "chat": {"id": 2222222, "type": "private"},
+                "date": 1441645532,
+                "text": "Reply for session A",
+                "reply_to_message": {"message_id": 1001},
+            },
+        },
+        {},
+    )
+    stored = await manager.handle_inbound_messages(channel.name, inbound)
+
+    assert len(stored) == 1
+    assert stored[0].content == "Reply for session A"
+    assert stored[0].metadata_json["reply_to_message_id"] == "1001"
+    assert stored[0].identity_id == identity.id
+    assert stored[0].session_id == "session-a"
+    store.get_message_by_platform_id.assert_any_call(
+        channel.name,
+        "1001",
+        platform_destination="2222222",
+    )
+    manager.event_callback.assert_awaited_once_with(
+        "comms.message_received",
+        message=stored[0],
+    )

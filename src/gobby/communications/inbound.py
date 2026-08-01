@@ -152,6 +152,24 @@ class InboundCommunications:
                     ):
                         message.session_id = callback_session_id
 
+                reply_id = message.metadata_json.get("reply_to_message_id")
+                chat_id = message.metadata_json.get("chat_id")
+                if (
+                    channel.channel_type == "telegram"
+                    and isinstance(reply_id, str)
+                    and reply_id
+                    and isinstance(chat_id, str)
+                    and chat_id
+                ):
+                    source = await asyncio.to_thread(
+                        manager._store.get_message_by_platform_id,
+                        channel_name,
+                        reply_id,
+                        platform_destination=chat_id,
+                    )
+                    if source is not None and source.direction == "outbound" and source.session_id:
+                        message.session_id = source.session_id
+
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(
                         channel.id, message.session_id, message.platform_thread_id
