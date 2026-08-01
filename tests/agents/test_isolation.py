@@ -236,6 +236,27 @@ class TestEnsureIsolationCodeIndex:
         for path, contents in preserved_files.items():
             assert path.read_text() == contents
 
+    def test_reap_survives_unwritable_sibling_home(self, tmp_path: Path) -> None:
+        runtime_root = tmp_path / "gcode-runtime"
+        locked_home = runtime_root / "locked"
+        reapable_home = runtime_root / "reapable"
+        for runtime_home in (locked_home, reapable_home):
+            runtime_home.mkdir(parents=True)
+        (locked_home / "local_cli_token").touch()
+        reapable_token = reapable_home / "local_cli_token"
+        reapable_token.touch()
+        locked_home.chmod(0o500)
+
+        try:
+            # A home owned by another session must never abort this session's
+            # preflight; the reap is best effort and keeps going.
+            _reap_stale_gcode_runtime_tokens(runtime_root)
+        finally:
+            locked_home.chmod(0o700)
+
+        assert (locked_home / "local_cli_token").exists()
+        assert not reapable_token.exists()
+
     @pytest.mark.asyncio
     async def test_api_token_reaches_probe_subprocess_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

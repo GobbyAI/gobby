@@ -341,7 +341,6 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home.parent)
     runtime_home.mkdir(parents=True, exist_ok=True)
     _chmod_private(runtime_home)
-    _reap_stale_gcode_runtime_tokens(runtime_home.parent)
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
         {
@@ -351,6 +350,9 @@ def _prepare_gcode_runtime(
         },
     )
     _link_runtime_assets(source_home, runtime_home)
+    # Runs last so it is the final word on #19289: no writer above it can leave
+    # a credential behind. Sweeping the whole root also reaps pre-#19289 residue.
+    _reap_stale_gcode_runtime_tokens(runtime_home.parent)
 
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,10 +380,23 @@ def _runtime_home_for_workspace(workspace: Path, runtime_root: Path) -> Path:
 
 
 def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
-    for runtime_home in runtime_root.iterdir():
+    """Drop `local_cli_token` from every runtime home under `runtime_root`.
+
+    Best effort: this sweeps homes owned by other sessions, so an unreadable or
+    concurrently torn-down home must never abort the caller's preflight.
+    """
+    try:
+        runtime_homes = list(runtime_root.iterdir())
+    except OSError:
+        logger.debug("Failed to list gcode runtime root %s", runtime_root, exc_info=True)
+        return
+    for runtime_home in runtime_homes:
         if runtime_home.is_symlink() or not runtime_home.is_dir():
             continue
-        (runtime_home / "local_cli_token").unlink(missing_ok=True)
+        try:
+            (runtime_home / "local_cli_token").unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Failed to reap gcode runtime token in %s", runtime_home, exc_info=True)
 
 
 def _gcode_wrapper_script(runtime_home: Path, gcode_bin: Path) -> str:
