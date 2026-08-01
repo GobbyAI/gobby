@@ -347,10 +347,31 @@ def _install_fake_connect(
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect)
 
 
+def _leaked_executor_threads(before: set[threading.Thread]) -> list[str]:
+    """Names of event-loop executor threads that appeared and are still alive.
+
+    ``run_bounded_db`` reaches threads only through the running loop's default
+    executor, so those are the only ones it can leak. Comparing every ident in
+    the process instead makes the assertion depend on subsystems the test does
+    not own: psycopg pool workers, the rule-engine executor and terminal
+    delivery start and stop on their own schedule, and CPython hands a dead
+    thread's ident straight to the next thread. In a full serial run that
+    surfaced as one unrelated ident on each side of the comparison (#19470).
+
+    Only additions are checked. A foreign thread exiting mid-test says nothing
+    about whether this operation leaked.
+    """
+    return sorted(
+        thread.name
+        for thread in set(threading.enumerate()) - before
+        if thread.name.startswith("asyncio_")
+    )
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 async def test_blocked_connect_terminates_within_deadline() -> None:
-    threads_before = {thread.ident for thread in threading.enumerate()}
+    threads_before = set(threading.enumerate())
     accepted = asyncio.Event()
     release_server = asyncio.Event()
 
@@ -390,7 +411,7 @@ async def test_blocked_connect_terminates_within_deadline() -> None:
         server.close()
         await server.wait_closed()
 
-    assert {thread.ident for thread in threading.enumerate()} == threads_before
+    assert not _leaked_executor_threads(threads_before)
 
 
 @pytest.mark.unit
@@ -466,7 +487,7 @@ async def test_proxy_blocked_cancellation_terminates_within_deadline(
     postgres_database_url: str,
     async_ops_schema: str,
 ) -> None:
-    threads_before = {thread.ident for thread in threading.enumerate()}
+    threads_before = set(threading.enumerate())
     conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     async with _PostgresProxy(conninfo, block_cancel=True) as proxy:
 
@@ -484,7 +505,7 @@ async def test_proxy_blocked_cancellation_terminates_within_deadline(
         )
         assert proxy.cancel_seen.is_set()
 
-    assert {thread.ident for thread in threading.enumerate()} == threads_before
+    assert not _leaked_executor_threads(threads_before)
 
 
 @pytest.mark.unit
@@ -494,7 +515,7 @@ async def test_repeated_timeouts_leave_stable_tasks_threads_and_fds(
 ) -> None:
     current = asyncio.current_task()
     tasks_before = {task for task in asyncio.all_tasks() if task is not current}
-    threads_before = {thread.ident for thread in threading.enumerate()}
+    threads_before = set(threading.enumerate())
     fds_before = psutil.Process().num_fds()
 
     for _ in range(4):
@@ -514,8 +535,50 @@ async def test_repeated_timeouts_leave_stable_tasks_threads_and_fds(
 
     await _wait_for_event_loop_callback()
     assert {task for task in asyncio.all_tasks() if task is not current} == tasks_before
-    assert {thread.ident for thread in threading.enumerate()} == threads_before
+    assert not _leaked_executor_threads(threads_before)
     assert psutil.Process().num_fds() == fds_before
+
+
+@pytest.mark.unit
+async def test_thread_leak_check_ignores_foreign_churn_and_catches_real_leaks() -> None:
+    """Foreign executors churning cannot fail the check; a real leak still does."""
+    threads_before = set(threading.enumerate())
+
+    exited = threading.Thread(target=lambda: None, name="pool-99-worker-0")
+    exited.start()
+    exited.join()
+
+    running = threading.Event()
+    release = threading.Event()
+
+    def hold_foreign() -> None:
+        running.set()
+        release.wait(timeout=5.0)
+
+    foreign = threading.Thread(target=hold_foreign, name="rule-engine_0")
+    foreign.start()
+    running.wait(timeout=5.0)
+    try:
+        assert not _leaked_executor_threads(threads_before)
+    finally:
+        release.set()
+        foreign.join()
+
+    leak_running = threading.Event()
+    leak_release = threading.Event()
+
+    def hold_leaked() -> None:
+        leak_running.set()
+        leak_release.wait(timeout=5.0)
+
+    leaked = threading.Thread(target=hold_leaked, name="asyncio_99")
+    leaked.start()
+    leak_running.wait(timeout=5.0)
+    try:
+        assert _leaked_executor_threads(threads_before) == ["asyncio_99"]
+    finally:
+        leak_release.set()
+        leaked.join()
 
 
 @pytest.mark.unit
