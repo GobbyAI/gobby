@@ -264,17 +264,14 @@ def check_manifest_gate(
     limit = timedelta(hours=max_age_hours)
     if age > limit:
         reasons.append(
-            f"manifest exceeds max age: created {manifest.created_at}, "
-            f"age {age} > {max_age_hours}h"
+            f"manifest exceeds max age: created {manifest.created_at}, age {age} > {max_age_hours}h"
         )
 
     unverified = sorted(
         key for key, store in manifest.stores.items() if not store.restore_verified.verified
     )
     if unverified:
-        reasons.append(
-            "restore_verified not earned for stores: " + ", ".join(unverified)
-        )
+        reasons.append("restore_verified not earned for stores: " + ", ".join(unverified))
 
     if manifest.source_identity != current_identity:
         reasons.append(

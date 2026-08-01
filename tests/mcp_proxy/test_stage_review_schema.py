@@ -7,9 +7,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.plans.review_findings import FINDING_SEVERITIES
 
-TASKLESS_AGENT_PATH = Path(
-    "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
-)
+TASKLESS_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml")
 STAGED_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
 
 
@@ -48,9 +46,8 @@ def test_finding_schema_parity_with_adversary_contracts() -> None:
         }
     )
 
-    contracts = (
-        TASKLESS_AGENT_PATH.read_text(encoding="utf-8")
-        + STAGED_AGENT_PATH.read_text(encoding="utf-8")
+    contracts = TASKLESS_AGENT_PATH.read_text(encoding="utf-8") + STAGED_AGENT_PATH.read_text(
+        encoding="utf-8"
     )
     assert "severity: <blocking | nit>" in contracts
     assert "fix: <concrete plan change>" in contracts

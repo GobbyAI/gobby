@@ -15,7 +15,7 @@ def test_raise_plan_validation_failed_emits_warnings_before_click_exception(
         raise_plan_validation_failed(
             {
                 "errors": ["missing acceptance item"],
-        "warnings": ["semantic validation warning"],
+                "warnings": ["semantic validation warning"],
             }
         )
 

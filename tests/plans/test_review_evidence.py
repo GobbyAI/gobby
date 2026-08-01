@@ -557,7 +557,7 @@ def test_manifest_compare_and_apply(
             approval,
             plan_path=plan_path,
             run_id=run.id,
-    )
+        )
     pending = service.get_evidence(prepared.evidence_id)
     assert pending.manifest_state is None
     assert pending.round_result is None
@@ -647,7 +647,7 @@ def test_manifest_compare_and_apply(
             landed_approval,
             plan_path=landed_path,
             run_id=landed_run.id,
-    )
+        )
     landed_bytes = landed_path.read_bytes()
     assert landed_bytes != original_bytes
     assert service.get_evidence(landed_prepared.evidence_id).manifest_state is None

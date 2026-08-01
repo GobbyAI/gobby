@@ -518,9 +518,7 @@ def test_create_event_subscription_uses_responder_session_project(
         )
 
     assert result == {"success": True, "subscription": contract}
-    mock_manager.get_session_project_id.assert_called_once_with(
-        "telegram-responder-session"
-    )
+    mock_manager.get_session_project_id.assert_called_once_with("telegram-responder-session")
     mock_manager.create_event_subscription.assert_called_once_with(
         name="Agent pauses",
         channel="telegram",

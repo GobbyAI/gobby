@@ -47,9 +47,7 @@ def _unverified() -> VerificationState:
 def _store(*, restore_verified: bool = True) -> StoreRecord:
     return StoreRecord(
         archive_verified=_verified("sha256"),
-        restore_verified=(
-            _verified("scratch-restore") if restore_verified else _unverified()
-        ),
+        restore_verified=(_verified("scratch-restore") if restore_verified else _unverified()),
         details={},
     )
 
