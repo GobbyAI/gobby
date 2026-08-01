@@ -235,7 +235,7 @@ def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
 def _is_plan_markdown(path: Path) -> bool:
     if path.name == "README.md" or path.name.startswith("."):
         return False
-    if not path.stem.startswith("task-"):
+    if not path.stem.startswith("task-") and _manifest_root_ref(path.stem) is None:
         return False
     text = path.read_text(encoding="utf-8")
     if _is_orphan_manifest_plan(path, text):
@@ -276,8 +276,37 @@ def _root_ref(path: Path) -> str:
     if stem.startswith("task-"):
         token = stem.split("-", 2)[1]
         if token.isdecimal():
-            return token
+            return _canonical_ref(token)
+    manifest_ref = _manifest_root_ref(stem)
+    if manifest_ref is not None:
+        return manifest_ref
     raise AssertionError(f"cannot infer root task ref from {path}")
+
+
+def _manifest_root_ref(plan_id: str) -> str | None:
+    """Resolve a slug-named plan's root task ref from its coverage manifest.
+
+    Implementation plans are no longer required to be named `task-<N>-<slug>`
+    (`gcore-schema-authority` is the first slug-named one). Such a plan is
+    anchored by the `<root_task_ref>` directory holding its coverage manifest.
+    Slug-named plans with no manifest stay out of discovery: they are strategy
+    plans with nothing to orphan.
+    """
+    if not COVERAGE_DIR.exists():
+        return None
+    matches = sorted(COVERAGE_DIR.glob(f"{PROJECT_ID}/*/{plan_id}.coverage.yaml"))
+    if len(matches) != 1:
+        return None
+    return _canonical_ref(matches[0].parent.name)
+
+
+def _canonical_ref(ref: str) -> str:
+    """Match `gobby.storage.plans._normalize_ref`: decimal refs are stored `#N`.
+
+    Manifest headers and the `plans` registry both carry the `#N` form, while
+    `coverage_manifest_path` sanitizes the `#` away for the directory name.
+    """
+    return f"#{ref}" if ref.isdecimal() else ref
 
 
 def _parser_kind(plan_kind: str) -> PlanKind:

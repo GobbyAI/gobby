@@ -1509,12 +1509,13 @@ class TestMarkTaskNeedsReview:
             },
         )
         assert "error" not in result
+        # a2b779f60 (#19368) dropped repair_submission with the rest of the
+        # repair-proof gating; no production caller passes it any more.
         mock_task_manager.submit_for_review.assert_called_once_with(
             task.id,
             "planning",
             review_notes="Please check the output",
             by_session_id=ANY,
-            repair_submission=None,
         )
 
     @pytest.mark.asyncio
