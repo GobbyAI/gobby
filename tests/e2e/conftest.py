@@ -447,7 +447,7 @@ def e2e_project_dir() -> Generator[Path]:
     errors at teardown even though the assertions already passed.
     """
     with tempfile.TemporaryDirectory(prefix="gobby_e2e_", ignore_cleanup_errors=True) as tmpdir:
-        project_dir = Path(tmpdir)
+        project_dir = Path(tmpdir).resolve()
         gobby_dir = project_dir / ".gobby"
         gobby_dir.mkdir(parents=True, exist_ok=True)
 
