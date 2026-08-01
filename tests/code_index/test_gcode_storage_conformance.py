@@ -114,6 +114,10 @@ def test_real_gcode_writer_matches_python_model_contract(
     env["GCODE_DATABASE_URL"] = scoped_database_url
     env["GOBBY_POSTGRES_DSN"] = scoped_database_url
     env.setdefault("GCODE_BROKER_TIMEOUT_MS", "1")
+    # This isolated home has no daemon credential by design. Without pinning
+    # standalone mode, gcode sees the developer machine's registered daemon
+    # service, queries its effective config unauthenticated, and dies on 401.
+    env["GOBBY_RUNTIME_MODE"] = "standalone"
 
     _run_gcode(gcode_bin, root, env, "init", "--quiet")
     project_id = _project_id(root)
