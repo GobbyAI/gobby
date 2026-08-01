@@ -21,7 +21,7 @@ from gobby.cli.hub_maintenance import CampaignExecutor, register_campaign_execut
 from gobby.config.app import load_config
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.paths import get_gobby_home
-from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.hub.runtime import apply_destructive_batch
 from gobby.storage.maintenance_epoch import (
     DestructiveBatch,
     MaintenanceEpoch,
@@ -174,11 +174,7 @@ def _apply_verified_batch(
         now=datetime.now(UTC),
         max_age_hours=max_age_hours,
     )
-    database = PostgresHubDatabase(bound_url, pool_config=pool_config)
-    try:
-        database.apply_destructive_migrations(context)
-    finally:
-        database.close()
+    apply_destructive_batch(bound_url, pool_config, context)
 
 
 def _newest_manifest_path(backup_root: Path) -> Path:
