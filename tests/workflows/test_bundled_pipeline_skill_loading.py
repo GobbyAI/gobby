@@ -1,10 +1,12 @@
-"""Regression tests for bundled pipeline skill-loading boundaries."""
+"""Regression tests for bundled pipeline authoring boundaries."""
 
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from gobby.workflows.definitions import PipelineDefinition
 
 pytestmark = pytest.mark.unit
 
@@ -38,3 +40,14 @@ def test_bundled_pipelines_do_not_load_skills() -> None:
                 and node.get("tool") == "get_skill"
                 and node.get("inject_result") is True
             ), path
+
+
+def test_task_steps_leave_session_context_to_proxy_wrapper() -> None:
+    for path in PIPELINES_DIR.glob("*.yaml"):
+        with path.open() as f:
+            pipeline = PipelineDefinition.model_validate(yaml.safe_load(f))
+
+        for step in pipeline.steps:
+            if step.mcp is None or step.mcp.server != "gobby-tasks":
+                continue
+            assert "session_id" not in (step.mcp.arguments or {}), path

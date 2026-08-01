@@ -131,7 +131,7 @@ async def test_plan_memory_write_blocks_once_then_allows_retry(
 
     assert first.decision == "block"
     assert first.reason is not None
-    assert "Plan drafts, enhancement suggestions, and review findings" in first.reason
+    assert "Use the plan artifact or evidence for plan drafts" in first.reason
     assert variables["plan_memory_write_nudge_fired"] is True
     assert second.decision == "allow"
 

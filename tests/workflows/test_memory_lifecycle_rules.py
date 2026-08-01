@@ -445,10 +445,10 @@ class TestGuardPlanMemoryWrites:
         ]
         assert effect.acknowledge_variable == "plan_memory_write_nudge_fired"
         assert effect.reason == (
-            "Plan drafts, enhancement suggestions, and review findings belong in the "
-            "plan artifact or evidence. Memory is reserved for explicit durable user "
-            "preferences and finalized decisions. Retry only when the write satisfies "
-            "that boundary."
+            "Use the plan artifact or evidence for plan drafts, enhancement "
+            "suggestions, and review findings. Memory is reserved for explicit "
+            "durable user preferences and finalized decisions. Retry only when the "
+            "write satisfies that boundary."
         )
 
     def test_condition_covers_planning_contexts_and_recall_precedence(

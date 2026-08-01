@@ -71,8 +71,10 @@ async def test_finalize_audits_every_block_gate(temp_db: HubDatabase) -> None:
         BlockGate(rule_name="rule-two", reason="second reason", condition="vars.second"),
     ]
 
+    # The audit offload lives in `block_audit.log_enforcement_block`; the
+    # evaluation module delegates to it and no longer touches `asyncio` itself.
     with patch(
-        "gobby.workflows.engine.evaluation.asyncio.to_thread",
+        "gobby.workflows.block_audit.asyncio.to_thread",
         wraps=asyncio.to_thread,
     ) as to_thread:
         result = await engine._finalize_block_response(

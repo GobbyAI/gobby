@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
-_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
+_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "Continue ", "If ")
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {

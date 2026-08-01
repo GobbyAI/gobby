@@ -554,6 +554,9 @@ def test_open_tool_error_upsert_deduplicates_and_resolves_exact_target(db: Any) 
 
     records = mgr.get_variables(S1)["open_tool_errors"]
     assert len(records) == 2
+    # `error_id` is a content-derived retrieval handle (#19338). Assert its shape
+    # here and leave the digest contract to tests/hooks/test_tool_error_tracker.py.
+    assert records[0].pop("error_id").startswith("error-")
     assert records[0] == {
         "tool": "gobby-tasks/close_task",
         "target_key": "args:aaaaaaaa",

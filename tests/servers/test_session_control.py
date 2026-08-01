@@ -1320,6 +1320,9 @@ class TestContinueInChatTerminalKill:
         source_session.last_prompt_cache_creation_tokens = 2301
         source_session.last_completion_output_tokens = 456
         source_session.session_type = "terminal"
+        # Proxy attach requires real tmux liveness, so a bare MagicMock attribute
+        # reports False. Model the live pane the way sibling attach tests do.
+        source_session.terminal_context = {"tmux_pane": "%5"}
         source_session.workflow_name = "release-checks"
         source_session.agent_run_id = "run-auto-1"
 
