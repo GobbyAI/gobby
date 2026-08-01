@@ -7,6 +7,7 @@ import subprocess
 import sys
 import weakref
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -119,12 +120,23 @@ def test_failed_close_remains_registered_and_can_retry(monkeypatch: pytest.Monke
 @pytest.mark.integration
 def test_tasks_list_cli_exit_prints_no_finalization_noise(
     postgres_database_url: str,
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
     tmp_path: Path,
 ) -> None:
-    """A normal task CLI invocation closes its pool before Python finalization."""
+    """A normal task CLI invocation closes its pool before Python finalization.
+
+    The DSN handed to the subprocess is pinned to this worker's
+    ``gobby_test_*`` schema so the CLI never reaches the live hub. The seed
+    fixture already migrated that schema to head, so the CLI's own
+    ``apply_migrations()`` finds nothing pending; an unscoped DSN would instead
+    land on an already-baselined database and be refused by the destructive
+    migration gate.
+    """
     config_path = tmp_path / "bootstrap.yaml"
+    scoped_url = f"{postgres_database_url}?options=-csearch_path%3D{postgres_schema}"
     config_path.write_text(
-        f'hub_backend: postgres\ndatabase_url: "{postgres_database_url}"\n',
+        f'hub_backend: postgres\ndatabase_url: "{scoped_url}"\n',
         encoding="utf-8",
     )
     config_path.chmod(0o600)

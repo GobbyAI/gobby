@@ -16,6 +16,7 @@ from gobby.config.logging import (
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
     MCP_LOG_FILENAME,
+    RULE_ALLOW_AUDIT_LOG_FILENAME,
     RUNTIME_LOG_FILENAME,
     LoggingSettings,
     resolved_log_path,
@@ -124,6 +125,7 @@ def test_json_otel_formatter_serializes_non_json_extra_values():
     [
         ("gobby", "daemon"),
         ("gobby.runner", "daemon"),
+        ("gobby.rule_allow_audit", "allow_audit"),
         ("gobby.hooks", "hooks"),
         ("gobby.hooks.events", "hooks"),
         ("gobby.hooks_extra", "daemon"),
@@ -153,6 +155,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
 
     messages = {
         "gobby.runner": "daemon-record",
+        "gobby.rule_allow_audit": '{"result":"allow"}',
         "gobby.hooks.events": "hook-record",
         "gobby.mcp_proxy.manager": "mcp-proxy-record",
         "gobby.servers.routes.mcp.tools": "mcp-route-record",
@@ -176,6 +179,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "errors": resolved_log_path(logging_config, ERRORS_LOG_FILENAME),
         "hooks": resolved_log_path(logging_config, HOOKS_LOG_FILENAME),
         "mcp": resolved_log_path(logging_config, MCP_LOG_FILENAME),
+        "allow_audit": resolved_log_path(logging_config, RULE_ALLOW_AUDIT_LOG_FILENAME),
     }
     contents = {surface: path.read_text() for surface, path in paths.items()}
 
@@ -195,9 +199,12 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         assert message in contents["automation"]
     for message in messages.values():
         primary_writes = sum(
-            message in contents[surface] for surface in ("automation", "daemon", "hooks", "mcp")
+            message in contents[surface]
+            for surface in ("allow_audit", "automation", "daemon", "hooks", "mcp")
         )
         assert primary_writes == 1
+
+    assert contents["allow_audit"].strip() == '{"result":"allow"}'
 
     assert "hook-warning" in contents["hooks"]
     assert "hook-warning" in contents["errors"]
@@ -226,8 +233,17 @@ def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
         for handler in root_logger.handlers
         if isinstance(handler, logging.handlers.RotatingFileHandler)
     ]
-    assert len(file_handlers) == 5
-    assert {type(handler.formatter) for handler in file_handlers} == {OTelTraceFormatter}
+    assert len(file_handlers) == 6
+    audit_handlers = [
+        handler
+        for handler in file_handlers
+        if Path(handler.baseFilename).name == RULE_ALLOW_AUDIT_LOG_FILENAME
+    ]
+    assert len(audit_handlers) == 1
+    assert type(audit_handlers[0].formatter) is logging.Formatter
+    assert {
+        type(handler.formatter) for handler in file_handlers if handler not in audit_handlers
+    } == {OTelTraceFormatter}
     for name in ("gobby.hooks", "gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp"):
         child = logging.getLogger(name)
         assert child.propagate
@@ -281,7 +297,10 @@ def test_setup_file_logging_json_format(logging_config: LoggingSettings) -> None
 
     root_logger = logging.getLogger("gobby")
     handler = [
-        h for h in root_logger.handlers if isinstance(h, logging.handlers.RotatingFileHandler)
+        h
+        for h in root_logger.handlers
+        if isinstance(h, logging.handlers.RotatingFileHandler)
+        and Path(h.baseFilename).name != RULE_ALLOW_AUDIT_LOG_FILENAME
     ][0]
     assert isinstance(handler.formatter, JsonOTelFormatter)
 
@@ -320,7 +339,7 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
     from gobby.telemetry.instrumentors import _instrumented
 
     telemetry_config.llm_tracing.enabled = True
-    telemetry_config.llm_tracing.providers = ["anthropic"]
+    telemetry_config.llm_tracing.providers = ["openai"]
 
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -328,16 +347,26 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
             message="'asyncio.iscoroutinefunction' is deprecated.*",
             category=DeprecationWarning,
         )
-        from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
+        warnings.filterwarnings(
+            "ignore",
+            message="'return' in a 'finally' block",
+            category=SyntaxWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="Support for class-based `config` is deprecated.*",
+            category=DeprecationWarning,
+        )
+        from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 
-        instrumentor = AnthropicInstrumentor()
+        instrumentor = OpenAIInstrumentor()
         try:
             daemon_init_telemetry(telemetry_config, logging_config)
 
             assert instrumentor.is_instrumented_by_opentelemetry
         finally:
             instrumentor.uninstrument()
-            _instrumented.discard("anthropic")
+            _instrumented.discard("openai")
 
 
 def test_shutdown_telemetry_has_no_logging_bridge_and_shuts_down_providers() -> None:

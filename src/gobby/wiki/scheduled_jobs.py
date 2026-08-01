@@ -140,7 +140,6 @@ class LibrarianTaskManagerProtocol(Protocol):
 
 
 GatewayFactory = Callable[[ResolvedWikiScope], WikiGatewayProtocol]
-WIKI_CRON_COMMANDS = ("refresh", "health", "audit")
 WIKI_JOB_NAME_PREFIX = "gobby:wiki-"
 WIKI_HANDLER_NAME_PREFIX = "wiki:"
 
@@ -374,16 +373,9 @@ async def register_wiki_cron_jobs_for_projects(
     for project_id, scopes in project_scopes:
         if not fallback_project_id:
             fallback_project_id = project_id
-        await _run_sync(
-            run_sync,
-            reconcile_stale_wiki_cron_scopes,
-            cron_storage=cron_storage,
-            project_id=project_id,
-        )
         for scope in _configured_scopes(scopes, project_id):
             scope_projects.setdefault(scope, project_id)
 
-    await _run_sync(run_sync, purge_legacy_wiki_research_jobs, cron_storage)
     if task_manager is None and db is not None:
         from gobby.storage.tasks import LocalTaskManager
 
@@ -805,12 +797,6 @@ def _ensure_wiki_cron_job(
         cron_storage.wake_system_job(existing.id)
 
 
-def purge_legacy_wiki_research_jobs(cron_storage: CronJobStorage) -> int:
-    """Hard-delete every legacy wiki research cron row; `gwiki research` no
-    longer exists, so system and operator rows alike are unrunnable."""
-    return cron_storage.delete_retired_jobs_by_name_prefix(wiki_job_name("research", ""))
-
-
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:
     default_scope = project_scope(project_id) if project_id else None
     # None means "use the project default"; an explicit empty iterable means no scopes.
@@ -821,40 +807,6 @@ def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[st
     if scopes is not None:
         return []
     return [default_scope] if default_scope else []
-
-
-def reconcile_stale_wiki_cron_scopes(
-    *,
-    cron_storage: CronJobStorage,
-    project_id: str,
-) -> int:
-    """Replace/disable legacy bare-project wiki cron rows with project:<id> rows."""
-    legacy_scope = project_id.strip()
-    if not legacy_scope or legacy_scope.startswith(("project:", "topic:")):
-        return 0
-
-    repaired = 0
-    canonical_scope = project_scope(legacy_scope)
-    for command in WIKI_CRON_COMMANDS:
-        legacy = cron_storage.get_job_by_name(wiki_job_name(command, legacy_scope))
-        if legacy is None or not legacy.is_system:
-            # Non-system bare-scope rows are operator-owned; the system-only
-            # identity reconcile would raise SystemRowProtected and abort
-            # registration for every scope.
-            continue
-
-        canonical_name = wiki_job_name(command, canonical_scope)
-        canonical = cron_storage.get_job_by_name(canonical_name)
-        if canonical is None:
-            cron_storage.reconcile_system_job_identity(legacy.id, name=canonical_name)
-        else:
-            cron_storage.reconcile_system_job_identity(
-                legacy.id,
-                enabled=False,
-                next_run_at=None,
-            )
-        repaired += 1
-    return repaired
 
 
 def _refresh_changed_paths(result: dict[str, Any]) -> list[str]:

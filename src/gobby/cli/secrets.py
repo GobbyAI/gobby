@@ -10,8 +10,6 @@ from gobby.storage.secrets import (
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
     VALID_CATEGORIES,
-    SecretMigrationError,
-    SecretMigrationReport,
     SecretStore,
 )
 
@@ -47,18 +45,6 @@ def _prompt_kek_passphrase() -> str:
             confirmation_prompt=True,
         )
     )
-
-
-def _echo_migration_report(report: SecretMigrationReport) -> None:
-    mode = "dry run" if report.dry_run else "migration"
-    click.echo(
-        f"Secret {mode}: total={report.total}, migrated={report.migrated}, "
-        f"skipped={report.skipped}, failed={report.failed}"
-    )
-    for entry in report.entries:
-        reason = f" ({entry.reason})" if entry.reason else ""
-        required = " required" if entry.required else ""
-        click.echo(f"  {entry.name}: {entry.status}{required}{reason}")
 
 
 @click.group()
@@ -161,19 +147,6 @@ def get_secret(name: str) -> None:
     else:
         click.echo(f"Secret '{name}' not found.", err=True)
         raise SystemExit(1)
-
-
-@secrets.command("migrate")
-@click.option("--dry-run", is_flag=True, help="Report legacy migration without writing changes.")
-def migrate_secrets(dry_run: bool) -> None:
-    """Migrate legacy machine-bound secrets to envelope encryption."""
-    with _SecretStoreContext() as store:
-        try:
-            report = store.migrate_legacy_machine_id_secrets(dry_run=dry_run)
-        except SecretMigrationError as exc:
-            _echo_migration_report(exc.report)
-            raise click.ClickException(str(exc)) from exc
-    _echo_migration_report(report)
 
 
 @secrets.command("rekey")

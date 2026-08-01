@@ -18,7 +18,7 @@ def test_telemetry_settings_defaults() -> None:
     assert settings.metrics_enabled is True
     assert settings.exporter.prometheus_enabled is True
     assert settings.exporter.otlp_endpoint is None
-    assert settings.llm_tracing.providers == ["anthropic", "openai"]
+    assert settings.llm_tracing.providers == ["openai"]
 
 
 def test_telemetry_settings_trace_sample_rate_validation() -> None:

@@ -50,20 +50,27 @@ class CliRuntime:
     @property
     def config(self) -> DaemonConfig:
         """Load DB-backed configuration only when a command needs it."""
-        if self._config is None:
-            self._config = self.config_loader(self.config_file, self.require_database())
-        return self._config
+        return self.require_config()
 
     @config.setter
     def config(self, value: DaemonConfig) -> None:
         self._config = value
 
-    def require_database(self) -> HubDatabase:
+    def require_config(self, *, apply_migrations: bool = True) -> DaemonConfig:
+        """Return configuration, controlling migrations on its first database open."""
+        if self._config is None:
+            database = self.require_database(apply_migrations=apply_migrations)
+            self._config = self.config_loader(self.config_file, database)
+        return self._config
+
+    def require_database(self, *, apply_migrations: bool = True) -> HubDatabase:
         """Return the invocation's database, opening it on first use."""
         if self._closed:
             raise RuntimeError("CLI runtime is already closed")
         if self._database is None:
-            self._database = self.exit_stack.enter_context(runtime_hub_database(self.config_file))
+            self._database = self.exit_stack.enter_context(
+                runtime_hub_database(self.config_file, apply_migrations=apply_migrations)
+            )
         return self._database
 
     def close(self) -> None:

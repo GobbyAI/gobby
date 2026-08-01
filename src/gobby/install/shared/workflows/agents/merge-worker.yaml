@@ -134,9 +134,6 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-    exclude:
-      - "tag:sync"
-
 steps:
   - name: merge
     description: "Execute merge with AI-powered conflict resolution"

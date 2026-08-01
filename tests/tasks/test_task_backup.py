@@ -1632,10 +1632,10 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_updates_existing_legacy_url_id(
+    async def test_import_issues_ignores_existing_legacy_url_id(
         self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
     ) -> None:
-        """Test import updates rows that used the legacy repo URL UUID seed."""
+        """Test import ignores rows that used the retired repo URL UUID seed."""
         repo_url = "https://github.com/owner/repo"
         legacy_task_id = _legacy_github_issue_task_id(repo_url, 8)
         existing = github_importer.task_manager.create_task(
@@ -1672,19 +1672,22 @@ class TestImportFromGitHubIssues:
             )
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["imported"] == [legacy_task_id]
-        updated = github_importer.task_manager.get_task(legacy_task_id)
-        assert updated.title == "Legacy Updated"
-        assert updated.github_repo == "owner/repo"
-        assert updated.github_issue_number == 8
+        expected_task_id = _github_issue_task_id(sample_project["id"], 8)
+        assert result["count"] == 1
+        assert result["imported"] == [expected_task_id]
+        imported = github_importer.task_manager.get_task(expected_task_id)
+        assert imported.title == "Legacy Updated"
+        legacy = github_importer.task_manager.get_task(legacy_task_id)
+        assert legacy.title == "Legacy task"
+        assert legacy.github_repo is None
+        assert legacy.github_issue_number is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_updates_current_project_legacy_normalized_id(
+    async def test_import_issues_ignores_current_project_legacy_normalized_id(
         self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
     ) -> None:
-        """Test import updates old normalized-ID rows only in the requested project."""
+        """Test import ignores rows that used the retired normalized UUID seed."""
         repo_url = "https://github.com/owner/repo"
         legacy_task_id = _legacy_normalized_github_issue_task_id(9)
         existing = github_importer.task_manager.create_task(
@@ -1721,12 +1724,15 @@ class TestImportFromGitHubIssues:
             )
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["imported"] == [legacy_task_id]
-        updated = github_importer.task_manager.get_task(legacy_task_id)
-        assert updated.title == "Legacy Normalized Updated"
-        assert updated.github_repo == "owner/repo"
-        assert updated.github_issue_number == 9
+        expected_task_id = _github_issue_task_id(sample_project["id"], 9)
+        assert result["count"] == 1
+        assert result["imported"] == [expected_task_id]
+        imported = github_importer.task_manager.get_task(expected_task_id)
+        assert imported.title == "Legacy Normalized Updated"
+        legacy = github_importer.task_manager.get_task(legacy_task_id)
+        assert legacy.title == "Legacy normalized task"
+        assert legacy.github_repo is None
+        assert legacy.github_issue_number is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

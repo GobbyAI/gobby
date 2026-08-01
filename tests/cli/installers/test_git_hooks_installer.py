@@ -1010,16 +1010,26 @@ class TestHookTemplates:
         assert "gobby hooks run pre-merge 2>/dev/null" not in content
 
     def test_prepush_template_contains_gobby_backups(self) -> None:
-        """Test that pre-push backs up both JSONL artifacts."""
+        """Pre-push backs up both artifacts without mutating Git history."""
         content = HOOK_TEMPLATES["pre-push"]
         assert "GOBBY_JSONL_EXPORT_CONTEXT" not in content
         assert "gobby tasks backup --quiet" in content
         assert "gobby memory backup" in content
-        assert '--no-verify --only -- "$@"' in content
-        assert "run git push again to publish it" in content
+        assert "commit_jsonl_files" not in content
+        assert "git add" not in content
+        assert "git commit" not in content
+        assert "run git push again to publish it" not in content
 
-    def test_prepush_backup_commit_preserves_unrelated_staged_files(self, tmp_path: Path) -> None:
-        """The generated backup commit contains only JSONL changes and reports a second push."""
+        bundled_hook = (
+            Path(__file__).resolve().parents[3] / "src" / "gobby" / "hooks" / "git" / "pre-push"
+        ).read_text(encoding="utf-8")
+        assert "gobby tasks backup --quiet" in bundled_hook
+        assert "gobby memory backup" in bundled_hook
+        assert "git add" not in bundled_hook
+        assert "git commit" not in bundled_hook
+
+    def test_prepush_backup_does_not_commit_or_touch_staging(self, tmp_path: Path) -> None:
+        """Local backup refresh leaves HEAD and the caller's staging area unchanged."""
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
@@ -1069,13 +1079,13 @@ class TestHookTemplates:
             env=env,
         )
 
-        committed_files = subprocess.run(
-            ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
+        updated_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
             cwd=repo,
             check=True,
             capture_output=True,
             text=True,
-        ).stdout.splitlines()
+        ).stdout.strip()
         staged_files = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             cwd=repo,
@@ -1084,9 +1094,11 @@ class TestHookTemplates:
             text=True,
         ).stdout.splitlines()
 
-        assert committed_files == [".gobby/memories.jsonl", ".gobby/tasks.jsonl"]
+        assert updated_head == head
         assert staged_files == ["unrelated.txt"]
-        assert "run git push again to publish it" in result.stderr
+        assert (gobby_dir / "tasks.jsonl").read_text() == "new task\n"
+        assert (gobby_dir / "memories.jsonl").read_text() == "new memory\n"
+        assert "run git push again to publish it" not in result.stderr
 
     def test_post_commit_template_escapes_nul_delimiter(self, tmp_path: Path) -> None:
         """Generated post-commit hooks must not embed a literal NUL byte."""

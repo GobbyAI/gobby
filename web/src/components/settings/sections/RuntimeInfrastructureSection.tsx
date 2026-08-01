@@ -17,8 +17,8 @@ import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
  * `auth.session_secret` are intentionally absent — they are dropped from the
  * overlay. Rows the legacy form rendered as a free-text fallback get real
  * editors here: `cors_origins`, the sandbox path lists, `digest.candidates`,
- * and the `code_index.*` arrays become string lists, while `search.mode` and
- * `ui.mode` become bounded selects.
+ * and code-index summary candidates become string lists, while `search.mode`
+ * and `ui.mode` become bounded selects.
  */
 const OWNED_PATHS: readonly string[] = [
   // Daemon core
@@ -47,7 +47,6 @@ const OWNED_PATHS: readonly string[] = [
   'search.notify_on_fallback',
   // Code index
   'code_index.enabled',
-  'code_index.auto_index_on_commit',
   'code_index.maintenance_interval_seconds',
   'code_index.maintenance_index_timeout_seconds',
   'code_index.nightly_full_reindex_enabled',
@@ -57,21 +56,16 @@ const OWNED_PATHS: readonly string[] = [
   'code_index.nightly_full_reindex_concurrency',
   'code_index.maintenance_log_file',
   'code_index.missing_root_purge_observations',
-  'code_index.max_file_size_bytes',
-  'code_index.exclude_patterns',
   'code_index.embedding_enabled',
   'code_index.graph_enabled',
-  'code_index.qdrant_collection_prefix',
-  'code_index.languages',
-'code_index.symbol_summary.enabled',
-'code_index.symbol_summary.batch_size',
-'code_index.symbol_summary.profile',
-'code_index.symbol_summary.candidates',
-'code_index.symbol_summary.max_concurrency',
-'code_index.symbol_summary.max_tokens',
+  'code_index.symbol_summary.enabled',
+  'code_index.symbol_summary.batch_size',
+  'code_index.symbol_summary.profile',
+  'code_index.symbol_summary.candidates',
+  'code_index.symbol_summary.max_concurrency',
+  'code_index.symbol_summary.max_tokens',
   'code_index.sync_worker_interval_seconds',
   'code_index.sync_worker_batch_size',
-  'code_index.content_extensions',
   'indexing.respect_gitignore',
   // Binary freshness
   'bin_freshness.enabled',
@@ -293,12 +287,6 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Enable code index"
         ariaLabel="Enable code index"
       />
-      <SwitchConfigField
-        fields={fields}
-        path="code_index.auto_index_on_commit"
-        label="Re-index on commit"
-        ariaLabel="Re-index on commit"
-      />
       <NumberConfigField
         fields={fields}
         path="code_index.maintenance_interval_seconds"
@@ -357,20 +345,6 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Missing-root purge threshold (observations)"
         ariaLabel="Missing-root purge threshold (observations)"
       />
-      <NumberConfigField
-        fields={fields}
-        path="code_index.max_file_size_bytes"
-        label="Maximum indexed file size (bytes)"
-        ariaLabel="Maximum indexed file size (bytes)"
-      />
-      <StringListConfigField
-        fields={fields}
-        path="code_index.exclude_patterns"
-        label="Exclude patterns"
-        ariaLabel="Exclude pattern"
-        addLabel="Add exclude pattern"
-        placeholder="node_modules"
-      />
       <SwitchConfigField
         fields={fields}
         path="code_index.embedding_enabled"
@@ -382,21 +356,6 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         path="code_index.graph_enabled"
         label="Enable code graph"
         ariaLabel="Enable code graph"
-      />
-      <TextConfigField
-        fields={fields}
-        path="code_index.qdrant_collection_prefix"
-        label="Qdrant collection prefix"
-        ariaLabel="Qdrant collection prefix"
-        placeholder="gobby_code"
-      />
-      <StringListConfigField
-        fields={fields}
-        path="code_index.languages"
-        label="Indexed languages"
-        ariaLabel="Indexed language"
-        addLabel="Add language"
-        placeholder="python"
       />
       <SwitchConfigField
         fields={fields}
@@ -447,14 +406,6 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         path="code_index.sync_worker_batch_size"
         label="Sync worker batch size"
         ariaLabel="Sync worker batch size"
-      />
-      <StringListConfigField
-        fields={fields}
-        path="code_index.content_extensions"
-        label="Content extensions"
-        ariaLabel="Content extension"
-        addLabel="Add content extension"
-        placeholder=".md"
       />
       <SwitchConfigField
         fields={fields}

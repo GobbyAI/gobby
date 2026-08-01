@@ -34,6 +34,12 @@ uv run gobby install
 uv run gobby start --verbose
 ```
 
+On a fresh clone, `gobby init` reads the committed project UUID, registers the
+local `projects` row, refreshes portable project settings, and runs the initial
+code index. It leaves the checkout clean. Task and memory JSONL backups live in
+`~/.gobby/backups/<project-uuid>/`; they are local recovery artifacts and must
+not be committed.
+
 ## Development Workflow
 
 ### Running the Daemon

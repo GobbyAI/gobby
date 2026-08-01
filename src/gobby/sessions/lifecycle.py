@@ -19,6 +19,7 @@ from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.token_events import TokenEventStore
 
 logger = logging.getLogger(__name__)
@@ -298,10 +299,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         # kept for revival; reclaim it only after the revival horizon.
         orphaned = self.session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30)
         pruned_workflows = self.session_manager.prune_stale_compact_workflow_instances(
-            retention_hours=24
+            retention_hours=SESSION_REVIVAL_HORIZON_HOURS
         )
         if pruned_workflows:
             logger.info("Pruned %s stale compact workflow instances", pruned_workflows)
+        self.session_manager.cleanup_expired_session_state()
 
         # Then expire sessions that have been paused/active for too long
         expired = self.session_manager.expire_stale_sessions(

@@ -16,6 +16,12 @@ POSTGRES_BASELINE_SCHEMA = SRC_ROOT / "storage" / "postgres_baseline_schema.sql"
 RECONCILE_DRIFT_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "306_reconcile_live_hub_schema_drift.sql"
 )
+RECONCILE_DRIFT_V2_MIGRATION = (
+    SRC_ROOT / "storage" / "migrations" / "356_reconcile_live_hub_schema_drift_v2.sql"
+)
+DROP_DEAD_TABLES_MIGRATION = SRC_ROOT / "storage" / "migrations" / "357_drop_dead_tables.sql"
+DROP_DEAD_COLUMNS_MIGRATION = SRC_ROOT / "storage" / "migrations" / "358_drop_dead_columns.sql"
+DROP_PGAUDIT_PROBE_MIGRATION = SRC_ROOT / "storage" / "migrations" / "359_drop_pgaudit_probe.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -53,6 +59,17 @@ MEMORY_DREAM_RUNTIME_NORMALIZERS = (
     "UPDATE memory_dream_snapshots\n               SET action = CASE",
     "UPDATE memory_dream_runs\n               SET status = 'failed'",
     "ADD CONSTRAINT memory_dream_runs_status_check",
+)
+DESTRUCTIVE_MIGRATION_VERSION = 355
+DESTRUCTIVE_DIRECTIVE = "-- gobby:destructive"
+DESTRUCTIVE_SQL_PATTERNS = (
+    re.compile(r"\bDROP\s+(?:TABLE|INDEX|SCHEMA|TYPE)\b", re.IGNORECASE),
+    re.compile(
+        r"\bALTER\s+TABLE\b[\s\S]*?\bDROP\s+(?:COLUMN|CONSTRAINT)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bTRUNCATE\b", re.IGNORECASE),
+    re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE),
 )
 
 
@@ -124,6 +141,49 @@ def _tracked_migration_names(migrations_dir: Path) -> list[str]:
             if line.endswith(".sql") and (REPO_ROOT / line).exists()
         )
     return sorted(path.name for path in migrations_dir.glob("*.sql"))
+
+
+def _contains_destructive_sql(sql: str) -> bool:
+    return any(pattern.search(sql) is not None for pattern in DESTRUCTIVE_SQL_PATTERNS)
+
+
+def _has_destructive_directive(sql: str) -> bool:
+    return DESTRUCTIVE_DIRECTIVE in {
+        line.strip() for line in sql.splitlines() if line.lstrip().startswith("--")
+    }
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE retired;",
+        "ALTER TABLE active DROP COLUMN retired;",
+        "DROP INDEX retired;",
+        "DROP SCHEMA retired;",
+        "DROP TYPE retired;",
+        "ALTER TABLE active DROP CONSTRAINT old_check;",
+        "TRUNCATE active;",
+        "DELETE FROM active;",
+        "DO $migration$ BEGIN DROP TABLE retired; END; $migration$;",
+    ],
+)
+def test_destructive_sql_marker_audit_recognizes_required_statements(sql: str) -> None:
+    assert _contains_destructive_sql(sql)
+
+
+def test_post_bookkeeping_destructive_migrations_carry_marker() -> None:
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+    unmarked: list[str] = []
+
+    for path in migrations_dir.glob("*.sql"):
+        version = int(path.name.split("_", 1)[0])
+        if version < DESTRUCTIVE_MIGRATION_VERSION:
+            continue
+        sql = path.read_text(encoding="utf-8")
+        if _contains_destructive_sql(sql) and not _has_destructive_directive(sql):
+            unmarked.append(path.name)
+
+    assert unmarked == []
 
 
 def _storage_module_name(path: Path) -> str:
@@ -503,6 +563,104 @@ def test_external_issue_outbound_cursor_matches_baseline() -> None:
     assert expected in migration
 
 
+def test_reconcile_cron_display_name_migration_is_dual_shape_safe() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "355_reconcile_346_cron_display_name.sql"
+    ).read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    _assert_contains_all(
+        "cron display name reconciliation migration",
+        normalized,
+        (
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS display_name TEXT;",
+            "DROP TABLE IF EXISTS tmux_input_requests, tmux_input_pane_states;",
+        ),
+    )
+
+
+def test_drop_dead_tables_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_DEAD_TABLES_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+    table_names = (
+        "savings_ledger",
+        "session_memories",
+        "rule_overrides",
+        "workflow_states",
+        "tool_embeddings",
+    )
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    for table_name in table_names:
+        assert f"Evidence block: {table_name}" in migration
+    _assert_contains_all(
+        "dead-table removal migration",
+        normalized,
+        tuple(f"DROP TABLE IF EXISTS {table_name};" for table_name in table_names),
+    )
+
+
+def test_drop_dead_columns_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_DEAD_COLUMNS_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+    columns = (
+        ("tasks", "assignee"),
+        ("task_artifacts", "last_reviewed_plan_hash"),
+        ("task_artifacts", "plan_review_attempts"),
+        ("task_artifacts", "qa_attempts"),
+        ("task_artifacts", "epic_qa_attempts"),
+        ("task_artifacts", "merge_attempts"),
+        ("inter_session_messages", "read_at"),
+    )
+    indexes = (
+        "idx_token_events_event_at",
+        "idx_token_events_model_family",
+        "idx_token_events_project_event",
+    )
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    for table_name, column_name in columns:
+        assert f"Evidence block: {table_name}.{column_name}" in migration
+        assert f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS {column_name};" in normalized
+    for index_name in indexes:
+        assert f"Evidence block: {index_name}" in migration
+        assert f"DROP INDEX IF EXISTS {index_name};" in normalized
+
+
+def test_drop_pgaudit_probe_migration_is_destructive_and_dual_shape_safe() -> None:
+    migration = DROP_PGAUDIT_PROBE_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    assert "Evidence block: _pgaudit_probe" in migration
+    assert "DROP TABLE IF EXISTS _pgaudit_probe;" in normalized
+
+
+def test_reconcile_live_hub_schema_drift_v2_matches_canonical_schema() -> None:
+    migration = RECONCILE_DRIFT_V2_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert normalized.startswith(f"{DESTRUCTIVE_DIRECTIVE} ")
+    _assert_contains_all(
+        "live hub schema drift v2 reconciliation",
+        normalized,
+        (
+            "CREATE TABLE IF NOT EXISTS memory_dream_truth_state",
+            "ALTER COLUMN memory_type SET DEFAULT 'fact'",
+            "ALTER COLUMN dream_due_version TYPE BIGINT",
+            "ALTER COLUMN total_chars TYPE BIGINT",
+            "ADD CONSTRAINT cron_jobs_name_key UNIQUE (name)",
+            "ADD CONSTRAINT projects_linear_sync_enabled_check",
+            "ADD CONSTRAINT project_github_triage_configs_sync_enabled_check",
+            "ADD CONSTRAINT project_github_triage_configs_triage_enabled_check",
+            "DROP INDEX IF EXISTS idx_inter_session_messages_unread",
+            "DROP COLUMN IF EXISTS read_at",
+            "DROP COLUMN IF EXISTS assignee",
+        ),
+    )
+
+
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     migration = (
@@ -587,7 +745,6 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
         "comms_routing_rules": ("id", "channel_id", "project_id", "session_id"),
         "comms_attachments": ("id", "message_id"),
         "session_variables": ("session_id",),
-        "rule_overrides": ("session_id",),
         "unmodeled_observation_events": ("id", "session_id"),
         "unmodeled_observations": ("example_session_id",),
     }.items():
@@ -630,7 +787,6 @@ def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
         "comms_messages": ("platform_message_id", "platform_thread_id"),
         "comms_identities": ("external_user_id",),
         "sessions": ("external_id", "spawned_by_agent_id"),
-        "rule_overrides": ("id",),
         "secret_key_material": ("id",),
         "spans": ("trace_id", "span_id", "parent_span_id"),
     }.items():

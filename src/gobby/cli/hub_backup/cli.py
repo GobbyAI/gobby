@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from gobby.cli.daemon import _services_start, _services_stop
+from gobby.cli.daemon import ServiceStartResult, _services_start, _services_stop
 from gobby.cli.hub_backup._manifest import (
     MANIFEST_NAME,
     ArtifactRecord,
@@ -35,6 +35,7 @@ from gobby.cli.hub_backup._stores import (
     HUB_VOLUMES,
     POSTGRES_DUMP_RELPATH,
     VOLUME_ARCHIVE_DIR,
+    archive_rule_allow_audit_logs,
     collect_postgres_identity,
     collect_row_count_probes,
     collect_source_roles,
@@ -50,6 +51,12 @@ from gobby.cli.hub_backup._verify import (
     verify_qdrant_restore,
     verify_volume_archives,
 )
+from gobby.cli.installers.compose_env import (
+    MANAGED_SERVICE_PROFILES,
+    ComposeEnvironmentError,
+    ComposeRuntime,
+    resolve_compose_runtime,
+)
 from gobby.cli.installers.container_restart import (
     FALKORDB_CONTAINER,
     POSTGRES_CONTAINER,
@@ -62,7 +69,12 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
+from gobby.config.logging import resolved_logs_dir
 from gobby.paths import get_gobby_home
+from gobby.storage.maintenance_epoch import (
+    MAINTENANCE_EPOCH_ENV,
+    require_orchestrator_epoch,
+)
 from gobby.utils.version import get_version
 
 # `gobby-postgres-test-1` is deliberately absent: the test cluster is scratch
@@ -77,6 +89,14 @@ MIN_FREE_BYTES = 5 * 1024**3
 OUTPUT_DIR_MODE = 0o700
 DOCKER_INSPECT_TIMEOUT_SECONDS = 30
 TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+COMPOSE_START_TIMEOUT_SECONDS = 120
+
+_EPOCH_COMPOSE_OVERRIDE = """\
+services:
+  postgres:
+    environment:
+      PGOPTIONS: "${PGOPTIONS:?PGOPTIONS must carry the maintenance epoch}"
+"""
 
 POSTGRES_ARCHIVE_METHOD = "pg-restore-list+sha256"
 QDRANT_ARCHIVE_METHOD = "snapshot-download+sha256"
@@ -113,23 +133,34 @@ def hub_backup(
     json_output: bool,
 ) -> None:
     """Back up every hub datastore and prove each artifact restores."""
+    if epoch is not None:
+        child_epoch = os.environ.get(MAINTENANCE_EPOCH_ENV)
+        if child_epoch != epoch:
+            raise click.ClickException(
+                "`hub-backup --epoch` may only run as a child of "
+                "`gobby hub-maintenance` for the same epoch"
+            )
+
     gobby_home = get_gobby_home()
     backup_root = _resolve_output_dir(output)
     _preflight(backup_root)
     _create_output_dir(backup_root)
 
     database_url = _resolve_database_url(gobby_home)
+    if epoch is not None:
+        require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
-    qdrant_url, qdrant_api_key = _qdrant_settings(ctx)
+    qdrant_url, qdrant_api_key = _qdrant_settings(ctx, apply_migrations=epoch is None)
 
     # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
     restart_daemon = _daemon_is_running() and epoch is None
     manifest_path = backup_root / MANIFEST_NAME
     try:
-        stop_daemon(shutdown_source="cli_hub_backup")
+        stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
         manifest = _run_backup(
             backup_root=backup_root,
             gobby_home=gobby_home,
+            logs_dir=resolved_logs_dir(ctx.obj.config.logging),
             database_url=database_url,
             qdrant_url=qdrant_url,
             qdrant_api_key=qdrant_api_key,
@@ -220,6 +251,7 @@ def _run_backup(
     *,
     backup_root: Path,
     gobby_home: Path,
+    logs_dir: Path,
     database_url: str,
     qdrant_url: str | None,
     qdrant_api_key: str | None,
@@ -239,6 +271,7 @@ def _run_backup(
     artifacts.extend(falkordb_artifacts)
     volume_artifacts, volume_details = _archive_volumes(gobby_home, backup_root)
     artifacts.extend(volume_artifacts)
+    artifacts.extend(archive_rule_allow_audit_logs(logs_dir, backup_root))
 
     stores = _verify_stores(
         backup_root=backup_root,
@@ -275,12 +308,81 @@ def _archive_volumes(
     try:
         artifacts, details = tar_volumes(backup_root)
     finally:
-        restart = _services_start(gobby_home)
+        restart = (
+            _start_epoch_services(gobby_home)
+            if os.environ.get(MAINTENANCE_EPOCH_ENV)
+            else _services_start(gobby_home)
+        )
     if restart.outcome != "success":
         raise click.ClickException(
             f"Docker services did not restart after archiving volumes: {restart.detail}"
         )
     return artifacts, details
+
+
+def _start_epoch_services(gobby_home: Path) -> ServiceStartResult:
+    """Start managed services with the epoch token available to Postgres healthchecks."""
+    services_dir = gobby_home / "services"
+    compose_file = services_dir / "docker-compose.yml"
+    if not compose_file.exists():
+        return ServiceStartResult("failed", f"Compose file is missing: {compose_file}")
+
+    try:
+        postgres_runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
+    except ComposeEnvironmentError as exc:
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
+    postgres_result = _run_epoch_compose_up(compose_file, services_dir, postgres_runtime)
+    if postgres_result.outcome != "success":
+        return postgres_result
+
+    try:
+        runtime = resolve_compose_runtime(gobby_home)
+    except ComposeEnvironmentError as exc:
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
+    if runtime.profiles != MANAGED_SERVICE_PROFILES:
+        return ServiceStartResult(
+            "failed",
+            "Docker service config must enable postgres, qdrant, and falkordb profiles",
+        )
+    return _run_epoch_compose_up(compose_file, services_dir, runtime)
+
+
+def _run_epoch_compose_up(
+    compose_file: Path,
+    services_dir: Path,
+    runtime: ComposeRuntime,
+) -> ServiceStartResult:
+    epoch = os.environ.get(MAINTENANCE_EPOCH_ENV, "")
+    if epoch not in runtime.environment.get("PGOPTIONS", ""):
+        return ServiceStartResult("failed", "PGOPTIONS does not carry the maintenance epoch")
+
+    command = ["docker", "compose", "-f", str(compose_file), "-f", "-"]
+    for profile in runtime.profiles:
+        command.extend(["--profile", profile])
+    command.extend(["up", "-d", "--remove-orphans", "--wait"])
+    try:
+        result = subprocess.run(  # nosec B603 - fixed Docker Compose arguments
+            command,
+            input=_EPOCH_COMPOSE_OVERRIDE,
+            capture_output=True,
+            text=True,
+            timeout=COMPOSE_START_TIMEOUT_SECONDS,
+            env=runtime.environment,
+            cwd=str(services_dir),
+        )
+    except subprocess.TimeoutExpired:
+        return ServiceStartResult(
+            "failed",
+            f"Docker compose up timed out after {COMPOSE_START_TIMEOUT_SECONDS}s",
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ServiceStartResult("failed", f"Docker compose execution failed: {exc}")
+    if result.returncode != 0:
+        return ServiceStartResult(
+            "failed",
+            f"Docker compose up failed: {result.stderr or result.stdout}",
+        )
+    return ServiceStartResult("success", "Docker services started")
 
 
 # ---------------------------------------------------------------------------
@@ -436,8 +538,12 @@ def _start_daemon() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _qdrant_settings(ctx: click.Context) -> tuple[str | None, str | None]:
-    qdrant = get_cli_runtime(ctx).config.databases.qdrant
+def _qdrant_settings(
+    ctx: click.Context,
+    *,
+    apply_migrations: bool = True,
+) -> tuple[str | None, str | None]:
+    qdrant = get_cli_runtime(ctx).require_config(apply_migrations=apply_migrations).databases.qdrant
     return qdrant.url, qdrant.api_key
 
 

@@ -11,18 +11,13 @@ import hashlib
 import logging
 import os
 import re
-import threading
 import uuid
-from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.paths import get_gobby_home
@@ -33,16 +28,14 @@ from gobby.storage.secret_names import (
     normalize_secret_name,
 )
 from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
-from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
-_SALT_FILENAME = ".secret_salt"
 _KEK_FILENAME = ".secret_kek"
 # Every file holding secret key material under ~/.gobby. Anything that
 # provisions an alternate GOBBY_HOME or snapshots ~/.gobby must carry all of
 # these, or envelope decryption breaks (Rust gcore reads GOBBY_HOME/.secret_kek).
-SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (_SALT_FILENAME, _KEK_FILENAME)
+SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (_KEK_FILENAME,)
 
 # These B105 suppressions are scoped to metadata literals, never secret values.
 # Stable key identifier, not a credential.
@@ -59,17 +52,9 @@ SCRYPT_P = 1
 
 VALID_CATEGORIES = {"general", "llm", "mcp_server", "memory", "integration"}
 
-_LEGACY_FERNET_KEY_CACHE_MAX_SIZE = 8
-_legacy_fernet_key_cache: OrderedDict[bytes, bytes] = OrderedDict()
-_legacy_fernet_key_cache_lock = threading.Lock()
-
 
 class SecretKeyUnavailable(RuntimeError):
     """Raised when the configured KEK cannot be loaded or cannot unwrap the DEK."""
-
-
-class InvalidSecretSaltError(RuntimeError):
-    """Raised when the legacy secret salt does not have the required length."""
 
 
 class SecretDecryptionError(RuntimeError):
@@ -78,69 +63,6 @@ class SecretDecryptionError(RuntimeError):
     def __init__(self, secret_identifier: str) -> None:
         self.secret_identifier = secret_identifier
         super().__init__(f"Failed to decrypt configured secret {secret_identifier}")
-
-
-class SecretMigrationError(RuntimeError):
-    """Raised when required legacy secrets cannot be migrated."""
-
-    def __init__(self, report: "SecretMigrationReport") -> None:
-        self.report = report
-        failed = ", ".join(entry.name for entry in report.entries if entry.status == "failed")
-        super().__init__(f"Required secret migration failed: {failed or 'unknown secret'}")
-
-
-@dataclass(frozen=True, slots=True)
-class SecretMigrationEntry:
-    """One row in a legacy secret migration report."""
-
-    name: str
-    status: str
-    required: bool
-    reason: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "status": self.status,
-            "required": self.required,
-            "reason": self.reason,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SecretMigrationReport:
-    """Summary of a legacy secret migration or dry run."""
-
-    dry_run: bool
-    key_material_created: bool
-    entries: list[SecretMigrationEntry]
-
-    @property
-    def total(self) -> int:
-        return len(self.entries)
-
-    @property
-    def migrated(self) -> int:
-        return sum(1 for entry in self.entries if entry.status in {"migrated", "would_migrate"})
-
-    @property
-    def skipped(self) -> int:
-        return sum(1 for entry in self.entries if entry.status in {"skipped", "would_skip"})
-
-    @property
-    def failed(self) -> int:
-        return sum(1 for entry in self.entries if entry.status == "failed")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "dry_run": self.dry_run,
-            "key_material_created": self.key_material_created,
-            "total": self.total,
-            "migrated": self.migrated,
-            "skipped": self.skipped,
-            "failed": self.failed,
-            "entries": [entry.to_dict() for entry in self.entries],
-        }
 
 
 def _safe_secret_identifier(normalized_name: str) -> str:
@@ -179,15 +101,6 @@ class SecretInfo:
             "created_at": datetime_to_required_iso(self.created_at),
             "updated_at": datetime_to_required_iso(self.updated_at),
         }
-
-
-def _read_secret_salt(salt_file: Path) -> bytes:
-    salt = salt_file.read_bytes()
-    if len(salt) != 16:
-        raise InvalidSecretSaltError(
-            f"Invalid secret salt file {salt_file}: expected 16 bytes, found {len(salt)}"
-        )
-    return salt
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -236,78 +149,8 @@ def _publish_private_file(path: Path, data: bytes) -> bool:
                 _fsync_directory(path.parent)
 
 
-def _publish_secret_salt(salt_file: Path, salt: bytes) -> bool:
-    """Publish a complete salt without replacing a racing process's winner."""
-    return _publish_private_file(salt_file, salt)
-
-
 def _secret_material_home(gobby_home: Path | None = None) -> Path:
     return get_gobby_home() if gobby_home is None else gobby_home.expanduser()
-
-
-def _get_or_create_salt(gobby_home: Path | None = None) -> bytes:
-    """Get or atomically create the legacy machine_id encryption salt."""
-    salt_file = _secret_material_home(gobby_home) / _SALT_FILENAME
-    salt_file.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        return _read_secret_salt(salt_file)
-    except FileNotFoundError:
-        pass
-
-    salt = os.urandom(16)
-    if _publish_secret_salt(salt_file, salt):
-        logger.info("Generated new legacy secret encryption salt")
-        return salt
-
-    return _read_secret_salt(salt_file)
-
-
-def _derive_fernet_key_uncached(machine_id: str, salt: bytes) -> bytes:
-    """Derive the legacy Fernet key from machine ID using PBKDF2."""
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=600_000,
-    )
-    key_bytes = kdf.derive(machine_id.encode("utf-8"))
-    return base64.urlsafe_b64encode(key_bytes)
-
-
-def _legacy_fernet_key_cache_key(machine_id: str, salt: bytes) -> bytes:
-    """Return a fixed-size cache key without retaining raw derivation inputs."""
-    machine_id_bytes = machine_id.encode("utf-8")
-    digest = hashlib.sha256()
-    digest.update(len(machine_id_bytes).to_bytes(8, "big"))
-    digest.update(machine_id_bytes)
-    digest.update(len(salt).to_bytes(8, "big"))
-    digest.update(salt)
-    return digest.digest()
-
-
-def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
-    """Return a process-cached legacy Fernet key for stable derivation inputs."""
-    cache_key = _legacy_fernet_key_cache_key(machine_id, salt)
-    with _legacy_fernet_key_cache_lock:
-        cached = _legacy_fernet_key_cache.get(cache_key)
-        if cached is not None:
-            _legacy_fernet_key_cache.move_to_end(cache_key)
-            return cached
-
-        # Keep derivation inside the lock: concurrent first users must not each
-        # pay the 600k-iteration PBKDF2 cost for the same process-stable inputs.
-        key = _derive_fernet_key_uncached(machine_id, salt)
-        _legacy_fernet_key_cache[cache_key] = key
-        if len(_legacy_fernet_key_cache) > _LEGACY_FERNET_KEY_CACHE_MAX_SIZE:
-            _legacy_fernet_key_cache.popitem(last=False)
-        return key
-
-
-def _clear_legacy_fernet_key_cache() -> None:
-    """Clear the bounded process cache (primarily for isolated tests)."""
-    with _legacy_fernet_key_cache_lock:
-        _legacy_fernet_key_cache.clear()
 
 
 def _derive_scrypt_fernet_key(
@@ -387,9 +230,6 @@ class SecretStore:
     Secret values are encrypted by a random DEK. The DEK is wrapped by a KEK
     and stored in ``secret_key_material``. Only daemon-internal code can call
     ``get()``/``resolve()``; HTTP APIs expose write-only secret management.
-
-    Legacy migration's 600k-iteration PBKDF2 key uses a synchronized, bounded
-    process cache, so repeated store instances reuse the process-stable result.
 
     All secret names are normalized to lowercase for case-insensitive matching.
     """
@@ -572,77 +412,13 @@ class SecretStore:
         )
         return cursor.fetchone() is not None
 
-    def _legacy_fernet(self) -> Fernet:
-        machine_id = get_machine_id()
-        if not machine_id:
-            raise RuntimeError("Cannot migrate legacy secrets: machine ID unavailable")
-        return Fernet(_derive_fernet_key(machine_id, _get_or_create_salt(self.gobby_home)))
-
     def _initialize_envelope(
         self,
         *,
-        required_secret_names: set[str],
-        dry_run: bool,
         posture: str,
         passphrase: str | None = None,
-    ) -> tuple[bytes | None, SecretMigrationReport]:
-        rows = self.db.fetchall("SELECT name, encrypted_value FROM secrets ORDER BY name")
+    ) -> bytes:
         dek = Fernet.generate_key()
-        dek_fernet = Fernet(dek)
-        entries: list[SecretMigrationEntry] = []
-        migrated_values: list[tuple[str, str]] = []
-
-        legacy_fernet: Fernet | None = None
-        legacy_error: str | None = None
-        if rows:
-            try:
-                legacy_fernet = self._legacy_fernet()
-            except RuntimeError as exc:
-                legacy_error = str(exc)
-
-        for row in rows:
-            name = self._normalize_name(str(row["name"]))
-            required = name in required_secret_names
-            if legacy_fernet is None:
-                status = "failed" if required else ("would_skip" if dry_run else "skipped")
-                entries.append(
-                    SecretMigrationEntry(
-                        name=name,
-                        status=status,
-                        required=required,
-                        reason=legacy_error or "legacy key unavailable",
-                    )
-                )
-                continue
-
-            try:
-                plaintext = legacy_fernet.decrypt(str(row["encrypted_value"]).encode("utf-8"))
-            except InvalidToken:
-                status = "failed" if required else ("would_skip" if dry_run else "skipped")
-                entries.append(
-                    SecretMigrationEntry(
-                        name=name,
-                        status=status,
-                        required=required,
-                        reason="legacy token could not be decrypted",
-                    )
-                )
-                continue
-
-            status = "would_migrate" if dry_run else "migrated"
-            entries.append(SecretMigrationEntry(name=name, status=status, required=required))
-            migrated_values.append((name, dek_fernet.encrypt(plaintext).decode("utf-8")))
-
-        report = SecretMigrationReport(
-            dry_run=dry_run,
-            key_material_created=not dry_run,
-            entries=entries,
-        )
-        if report.failed:
-            raise SecretMigrationError(report)
-        if dry_run:
-            return None, report
-
         with self.db.transaction() as txn:
             key_material_created = self._insert_key_material_if_absent(
                 dek,
@@ -650,12 +426,6 @@ class SecretStore:
                 passphrase=passphrase,
                 executor=txn,
             )
-            if key_material_created:
-                for name, encrypted_value in migrated_values:
-                    txn.execute(
-                        "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
-                        (encrypted_value, utc_now(), name),
-                    )
 
         if not key_material_created:
             winner = self._load_key_material()
@@ -664,45 +434,23 @@ class SecretStore:
                     "Concurrent secret envelope initialization did not publish a key"
                 )
             winner_dek = self._unwrap_dek(winner, passphrase=passphrase)
-            concurrent_report = SecretMigrationReport(
-                dry_run=False,
-                key_material_created=False,
-                entries=entries,
-            )
             self._fernet = Fernet(winner_dek)
-            return winner_dek, concurrent_report
-
-        for entry in entries:
-            if entry.status == "skipped":
-                logger.warning(
-                    "Skipping legacy secret during envelope migration",
-                    extra={
-                        "secret": _safe_secret_identifier(entry.name),
-                        "reason": entry.reason,
-                    },
-                )
+            return winner_dek
 
         self._fernet = Fernet(dek)
-        return dek, report
+        return dek
 
     def _get_dek(self) -> bytes:
         row = self._load_key_material()
         if row is not None:
             return self._unwrap_dek(row)
-        legacy_row = self.db.fetchone("SELECT 1 FROM secrets LIMIT 1")
-        if legacy_row:
+        if self.db.fetchone("SELECT 1 FROM secrets LIMIT 1"):
             raise RuntimeError(
-                "Secret envelope key material is missing while legacy secrets exist; "
-                "run ensure_ready() before accessing secrets."
+                "Secret envelope key material is missing while encrypted secrets exist."
             )
-        dek, _report = self._initialize_envelope(
-            required_secret_names=set(),
-            dry_run=False,
+        return self._initialize_envelope(
             posture=POSTURE_KEY_FILE,
         )
-        if dek is None:
-            raise RuntimeError("Secret envelope was not initialized")
-        return dek
 
     def _get_fernet(self) -> Fernet:
         """Lazy-initialize the DEK Fernet cipher."""
@@ -710,40 +458,9 @@ class SecretStore:
             self._fernet = Fernet(self._get_dek())
         return self._fernet
 
-    def ensure_ready(self, *, required_secret_names: Iterable[str] = ()) -> SecretMigrationReport:
-        """Initialize envelope metadata and migrate legacy rows if needed."""
-        required = {self._normalize_name(name) for name in required_secret_names}
-        if self._load_key_material() is not None:
-            self._get_fernet()
-            return SecretMigrationReport(dry_run=False, key_material_created=False, entries=[])
-        _dek, report = self._initialize_envelope(
-            required_secret_names=required,
-            dry_run=False,
-            posture=POSTURE_KEY_FILE,
-        )
-        return report
-
-    def migrate_legacy_machine_id_secrets(
-        self,
-        *,
-        dry_run: bool = False,
-        required_secret_names: Iterable[str] = (),
-        posture: str = POSTURE_KEY_FILE,
-        passphrase: str | None = None,
-    ) -> SecretMigrationReport:
-        """Migrate legacy machine_id-derived rows into the envelope scheme."""
-        required = {self._normalize_name(name) for name in required_secret_names}
-        if self._load_key_material() is not None:
-            if not dry_run:
-                self._get_fernet()
-            return SecretMigrationReport(dry_run=dry_run, key_material_created=False, entries=[])
-        _dek, report = self._initialize_envelope(
-            required_secret_names=required,
-            dry_run=dry_run,
-            posture=posture,
-            passphrase=passphrase,
-        )
-        return report
+    def ensure_ready(self) -> None:
+        """Initialize envelope key material."""
+        self._get_fernet()
 
     def current_kek_posture(self) -> str | None:
         """Return the active KEK posture, or None before first initialization."""
@@ -757,15 +474,11 @@ class SecretStore:
         posture = _normalize_posture(posture)
         row = self._load_key_material()
         if row is None:
-            dek, report = self._initialize_envelope(
-                required_secret_names=set(),
-                dry_run=False,
+            dek = self._initialize_envelope(
                 posture=posture,
                 passphrase=passphrase,
             )
-            if dek is None:
-                raise RuntimeError("Secret envelope was not initialized")
-            if not report.key_material_created:
+            if self.current_kek_posture() != posture:
                 self._upsert_key_material(dek, posture=posture, passphrase=passphrase)
         else:
             dek = self._unwrap_dek(row)

@@ -28,9 +28,7 @@ refresh within about five seconds. The old token stops authorizing HTTP and
 direct WebSocket connections; browser sessions remain independent and the
 browser WebSocket proxy reads the refreshed daemon token.
 
-Web UI passwords are stored as salted scrypt hashes in `auth.password_hash`.
-Daemon startup migrates a decryptable legacy `auth.password` secret to this
-hash and removes the legacy value.
+Web UI passwords are stored as salted Argon2id hashes in `auth.password_hash`.
 
 ## Envelope Model
 
@@ -52,18 +50,11 @@ hash and removes the legacy value.
 `scrypt_passphrase` is opt-in via `gobby install --secret-kek-posture passphrase`
 or `gobby secrets rekey --posture passphrase`.
 
-## Legacy Migration
+## Canonical State
 
-Before envelope encryption, secret values were encrypted with a Fernet key
-derived from local `machine_id` and `~/.gobby/.secret_salt`.
-
-Migration rules:
-
-- If `secret_key_material` is missing, the daemon attempts a one-time migration.
-- Migratable legacy rows are decrypted with the current box's legacy key and
-  re-encrypted with the new DEK.
-- `gobby secrets migrate --dry-run` reports what would migrate without writing.
-- Explicit `$secret:NAME` config-store references are startup-required. If one
-  cannot be migrated, daemon startup fails.
-- Legacy rows that are not required and cannot be migrated are logged with a
-  non-reversible identifier and left for re-entry.
+- A hub containing secret rows must contain the `default`
+  `secret_key_material` row that wraps their DEK.
+- Communications webhook secrets are stored in `SecretStore`; channel rows
+  carry `$secret:NAME` references.
+- Web UI credentials use `auth.password_hash`; `auth.password` is not a
+  supported storage key.

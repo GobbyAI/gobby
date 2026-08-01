@@ -95,7 +95,6 @@ def register_handoff_tools(
         content: str | None = None,
         to_session: str | None = None,
         notes: str | None = None,
-        full: bool = False,
         write_file: bool = False,
         output_path: str = ".gobby/session_summaries/",
         set_handoff_ready: bool = True,
@@ -108,7 +107,6 @@ def register_handoff_tools(
             content: Agent-authored handoff content (fast path, skips transcript analysis)
             to_session: Target session to send handoff context to via P2P message
             notes: Additional notes to include in handoff
-            full: Generate full LLM summary only (default when content omitted)
             write_file: Also write to file (default: False). DB is always written.
             output_path: Directory for file output (default: .gobby/session_summaries/)
             set_handoff_ready: Set session status to handoff_ready (default: True)
@@ -169,7 +167,6 @@ def register_handoff_tools(
             write_file=write_file,
             output_path=output_path,
             set_handoff_ready=set_handoff_ready,
-            full_only=full,
         )
 
         if not summary_result.get("success"):

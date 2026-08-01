@@ -118,7 +118,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
         Args:
             event: The hook event to evaluate.
-            session_id: Current session ID (for overrides).
+            session_id: Current session ID.
             variables: Session variables dict (mutated in-place by set_variable).
             eval_context: Additional eval context (LazyBool thunks, etc).
 
@@ -288,18 +288,14 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 # 1. Load enabled rules for this event, sorted by priority
                 rules = await offload(self._load_rules, resolved_rule_events)
 
-                # 2. Apply session overrides
-                overrides = await offload(self._load_session_overrides, session_id)
-                rules = await offload(self._apply_overrides, rules, overrides)
-
-                # 3. Filter by agent_scope
+                # 2. Filter by agent_scope
                 agent_type = variables.get("_agent_type")
                 rules = await offload(self._filter_by_agent_scope, rules, agent_type)
 
-                # 4. Filter by audience
+                # 3. Filter by audience
                 rules = await offload(self._filter_by_audience, rules, variables)
 
-                # 5. Filter by active rules (selector-based)
+                # 4. Filter by active rules (selector-based)
                 rules = await offload(
                     self._filter_by_active_rules,
                     rules,
@@ -498,31 +494,6 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
         ordered.sort(key=lambda item: (item[1].priority, item[0], item[1].name))
         return [(row, body) for _, row, body in ordered]
-
-    def _load_session_overrides(self, session_id: str) -> dict[str, bool]:
-        """Load session-scoped rule overrides."""
-        if not session_id:
-            # rule_overrides.session_id is a native uuid column; binding "" raises.
-            return {}
-        rows = self.db.fetchall(
-            "SELECT rule_name, enabled FROM rule_overrides WHERE session_id = %s",
-            (session_id,),
-        )
-        return {row["rule_name"]: bool(row["enabled"]) for row in rows}
-
-    def _apply_overrides(
-        self,
-        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
-        overrides: dict[str, bool],
-    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
-        """Filter rules based on session overrides."""
-        if not overrides:
-            return rules
-        return [
-            (row, body)
-            for row, body in rules
-            if overrides.get(row.name, True)  # Default to enabled if no override
-        ]
 
     def _filter_by_agent_scope(
         self,

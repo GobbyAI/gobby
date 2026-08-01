@@ -31,6 +31,7 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.storage.migrations import (
     BASELINE_VERSION,
+    DestructiveMigrationContext,
     MigrationRunner,
     MigrationUnsupportedError,
     _split_statements_respecting_dollar_quotes,
@@ -63,7 +64,6 @@ atexit.register(_close_open_databases_at_exit)
 _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
     {
         "gobby_install_ownership",
-        "_pgaudit_probe",
     }
 )
 _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
@@ -419,9 +419,15 @@ class PostgresHubDatabase:
 
     def apply_migrations(self) -> None:
         runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
-        if not self._postgres_baseline_already_applied():
+        baseline_already_applied = self._postgres_baseline_already_applied()
+        if not baseline_already_applied:
             self._apply_postgres_baseline()
-        runner.apply_pending()
+        runner.apply_pending(fresh_schema=not baseline_already_applied)
+
+    def apply_destructive_migrations(self, context: DestructiveMigrationContext) -> None:
+        """Apply or resume one verified destructive migration batch."""
+        runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
+        runner.apply_destructive(context)
 
     def _postgres_baseline_already_applied(self) -> bool:
         self.open()

@@ -195,7 +195,10 @@ def test_discovery_agents_include_task_skill_gates(slug: str) -> None:
     selectors = _raw_agent(slug)["workflows"]["rule_selectors"]
 
     assert "tag:task-skill-gates" in selectors["include"]
-    assert "tag:task-skill-gates" not in selectors["exclude"]
+    # `exclude` is optional (AgentSelector declares it so, and most bundled
+    # agents omit it). An absent key excludes nothing, which is what this
+    # asserts.
+    assert "tag:task-skill-gates" not in selectors.get("exclude", [])
 
 
 def test_plan_adversary_documents_task_skill_gate_exclusion() -> None:

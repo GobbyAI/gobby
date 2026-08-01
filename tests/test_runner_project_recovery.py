@@ -156,13 +156,13 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
     assert "Wiki cron handlers" in tracker.steps_completed
     assert tracker.errors == []
     offloaded_operations = {call.args[0].__name__ for call in db_run.await_args_list}
-    assert {
+    assert offloaded_operations == {
         "_discover_wiki_cron_project_scopes",
-        "reconcile_stale_wiki_cron_scopes",
-        "purge_legacy_wiki_research_jobs",
         "_ensure_wiki_cron_job",
+        "_reconcile_installed_wiki_recap_timeouts",
         "list_system_jobs_by_name_prefix",
-    } <= offloaded_operations
+        "register_wiki_prune_cron",
+    }
 
 
 @pytest.mark.asyncio

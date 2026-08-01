@@ -20,19 +20,23 @@ from gobby.config.logging import (
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
     MCP_LOG_FILENAME,
+    RULE_ALLOW_AUDIT_LOG_FILENAME,
     LoggingSettings,
+    allow_audit_backup_count,
 )
 
-LogSurface = Literal["daemon", "hooks", "mcp", "automation"]
+LogSurface = Literal["daemon", "hooks", "mcp", "automation", "allow_audit"]
 
 _PARSER_ERROR_NAMESPACE = "gobby.parser_error"
 _PRIMARY_LOG_FILENAMES: dict[LogSurface, str] = {
+    "allow_audit": RULE_ALLOW_AUDIT_LOG_FILENAME,
     "automation": AUTOMATION_LOG_FILENAME,
     "daemon": DAEMON_LOG_FILENAME,
     "hooks": HOOKS_LOG_FILENAME,
     "mcp": MCP_LOG_FILENAME,
 }
 _MANAGED_CHILD_LOGGERS = (
+    "gobby.rule_allow_audit",
     "gobby.hooks",
     "gobby.mcp",
     "gobby.mcp.server",
@@ -57,6 +61,8 @@ class _HandlerConfig:
     logs_dir: Path
     max_bytes: int
     backup_count: int
+    allow_audit_max_bytes: int
+    allow_audit_backup_count: int
 
 
 _default_logging_settings = LoggingSettings()
@@ -64,6 +70,8 @@ _active_handler_config = _HandlerConfig(
     logs_dir=Path(_default_logging_settings.dir),
     max_bytes=_default_logging_settings.max_size_mb * 1024 * 1024,
     backup_count=_default_logging_settings.backup_count,
+    allow_audit_max_bytes=_default_logging_settings.allow_audit_max_size_mb * 1024 * 1024,
+    allow_audit_backup_count=allow_audit_backup_count(_default_logging_settings),
 )
 _registered_parser_loggers: set[str] = set()
 _logging_metric_handler: _LoggingMetricHandler | None = None
@@ -75,6 +83,8 @@ def _in_namespace(logger_name: str, namespace: str) -> bool:
 
 def classify_log_surface(logger_name: str) -> LogSurface:
     """Return the semantic primary surface for a Gobby logger name."""
+    if _in_namespace(logger_name, "gobby.rule_allow_audit"):
+        return "allow_audit"
     if _in_namespace(logger_name, "gobby.hooks"):
         return "hooks"
     if any(_in_namespace(logger_name, namespace) for namespace in _MCP_NAMESPACES):
@@ -285,6 +295,8 @@ def _handler_config(settings: LoggingSettings) -> _HandlerConfig:
         logs_dir=Path(settings.dir).expanduser(),
         max_bytes=settings.max_size_mb * 1024 * 1024,
         backup_count=settings.backup_count,
+        allow_audit_max_bytes=settings.allow_audit_max_size_mb * 1024 * 1024,
+        allow_audit_backup_count=allow_audit_backup_count(settings),
     )
 
 
@@ -337,6 +349,8 @@ def _effective_handler_config() -> _HandlerConfig:
         logs_dir=logs_dir.expanduser(),
         max_bytes=_active_handler_config.max_bytes,
         backup_count=_active_handler_config.backup_count,
+        allow_audit_max_bytes=_active_handler_config.allow_audit_max_bytes,
+        allow_audit_backup_count=_active_handler_config.allow_audit_backup_count,
     )
 
 
@@ -399,11 +413,22 @@ def _create_formatted_handlers(
     handlers: list[logging.Handler] = []
     try:
         for surface, filename in _PRIMARY_LOG_FILENAMES.items():
+            surface_config = config
+            surface_formatter = formatter
+            if surface == "allow_audit":
+                surface_config = _HandlerConfig(
+                    logs_dir=config.logs_dir,
+                    max_bytes=config.allow_audit_max_bytes,
+                    backup_count=config.allow_audit_backup_count,
+                    allow_audit_max_bytes=config.allow_audit_max_bytes,
+                    allow_audit_backup_count=config.allow_audit_backup_count,
+                )
+                surface_formatter = logging.Formatter("%(message)s")
             handler = _create_rotating_handler(
                 config.logs_dir / filename,
-                config,
+                surface_config,
                 level=level,
-                formatter=formatter,
+                formatter=surface_formatter,
             )
             handler.addFilter(_PrimarySurfaceFilter(surface))
             handlers.append(handler)
@@ -453,3 +478,7 @@ def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
 
     for logger_name in ("websockets", "websockets.server"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    from gobby.telemetry.rule_allow_audit import configure_rule_allow_audit
+
+    configure_rule_allow_audit(config)

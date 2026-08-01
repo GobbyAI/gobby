@@ -44,7 +44,6 @@ encoding_rs = "0.8"
 dirs = "6"
 flate2 = "1"
 fs4 = "1.1"
-linked-hash-map = "0.5"
 uuid = { version = "1", features = ["v4", "v5"] }
 regex = "1"
 scraper = "0.27"
@@ -72,5 +71,4 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
-gobby-core = { path = "../gcore", version = "0.8.1", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 serial_test = "3"

@@ -2,6 +2,8 @@
 
 import json
 import os
+import stat
+import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from gobby.utils.project_init import (
     _write_project_json,
     detect_verification_commands,
     initialize_project,
+    update_project_json_fields,
 )
 
 pytestmark = pytest.mark.unit
@@ -645,23 +648,27 @@ class TestWriteProjectJson:
         assert content["name"] == "my-project"
         assert content["created_at"] == "2024-06-15T12:00:00Z"
 
-    def test_writes_linear_project_binding(self, tmp_path: Path) -> None:
-        """Project JSON preserves Linear team and project IDs."""
+    def test_update_omits_nonportable_project_fields(self, tmp_path: Path) -> None:
+        """Committed project metadata excludes machine-local bindings."""
         cwd = tmp_path / "project"
         cwd.mkdir()
 
-        _write_project_json(
+        _write_project_json(cwd, "proj-123", "my-project", "2024-06-15T12:00:00Z")
+        update_project_json_fields(
             cwd,
-            "proj-123",
-            "my-project",
-            "2024-06-15T12:00:00Z",
             linear_team_id="team-1",
             linear_project_id="lin-proj",
+            parent_project_id="parent-id",
+            parent_project_path="/machine/local/path",
+            hooks={"mode": "default"},
         )
 
         content = json.loads((cwd / ".gobby" / "project.json").read_text())
-        assert content["linear_team_id"] == "team-1"
-        assert content["linear_project_id"] == "lin-proj"
+        assert content["hooks"] == {"mode": "default"}
+        assert "linear_team_id" not in content
+        assert "linear_project_id" not in content
+        assert "parent_project_id" not in content
+        assert "parent_project_path" not in content
 
     def test_overwrites_existing_project_json(self, tmp_path: Path) -> None:
         """Test that existing project.json is overwritten."""
@@ -705,6 +712,17 @@ class TestWriteProjectJson:
         _write_project_json(cwd, "new-id", "new-name", "2024-01-01")
 
         assert json.loads(project_file.read_text(encoding="utf-8"))["id"] == "new-id"
+
+    def test_atomic_write_preserves_project_file_mode(self, tmp_path: Path) -> None:
+        cwd = tmp_path / "project"
+        cwd.mkdir()
+        _write_project_json(cwd, "proj-123", "my-project", "2024-01-01")
+        project_file = cwd / ".gobby" / "project.json"
+        project_file.chmod(0o640)
+
+        update_project_json_fields(cwd, hooks={"mode": "default"})
+
+        assert stat.S_IMODE(project_file.stat().st_mode) == 0o640
 
     def test_handles_existing_gobby_dir(self, tmp_path: Path) -> None:
         """Test that existing .gobby directory is handled correctly."""
@@ -792,7 +810,10 @@ class TestInitializeProject:
     def test_already_initialized_returns_existing(self, tmp_path: Path) -> None:
         """Test that already initialized project returns existing info."""
         # Patch at the source modules where they are imported from
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch("gobby.storage.projects.LocalProjectManager") as manager_cls,
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 "name": "existing-name",
@@ -805,10 +826,52 @@ class TestInitializeProject:
             assert result.project_id == "existing-id"
             assert result.project_name == "existing-name"
             assert result.already_existed is True
+            manager_cls.return_value.ensure_exists.assert_called_once_with(
+                "existing-id", "existing-name", str(tmp_path.resolve())
+            )
 
-    def test_reinit_from_subdirectory_refreshes_project_root(self, tmp_path: Path) -> None:
+    def test_existing_project_file_registers_and_sanitizes_clone(
+        self, tmp_path: Path, hub_db: HubDatabase
+    ) -> None:
+        project_id = str(uuid.uuid4())
+        project_file = tmp_path / ".gobby" / "project.json"
+        project_file.parent.mkdir()
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": project_id,
+                    "name": "fresh-clone",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "linear_team_id": "team-1",
+                    "linear_project_id": "linear-project-1",
+                    "parent_project_id": "parent-id",
+                    "parent_project_path": "/original/machine/path",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = initialize_project(tmp_path, db=hub_db)
+
+        project = LocalProjectManager(hub_db).get(project_id)
+        assert result.already_existed is True
+        assert project is not None
+        assert project.repo_path == str(tmp_path.resolve())
+        content = json.loads(project_file.read_text(encoding="utf-8"))
+        assert set(content).isdisjoint(
+            {
+                "linear_team_id",
+                "linear_project_id",
+                "parent_project_id",
+                "parent_project_path",
+            }
+        )
+
+    def test_reinit_from_subdirectory_refreshes_project_root(
+        self, tmp_path: Path, hub_db: HubDatabase
+    ) -> None:
         """Re-init refreshes the discovered project root instead of the requested cwd."""
-        project_id = "existing-id"
+        project_id = str(uuid.uuid4())
         project_file = tmp_path / ".gobby" / "project.json"
         project_file.parent.mkdir()
         project_file.write_text(
@@ -830,7 +893,7 @@ class TestInitializeProject:
         (subdir / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
         (subdir / "tests").mkdir()
 
-        result = initialize_project(subdir, db=MagicMock())
+        result = initialize_project(subdir, db=hub_db)
 
         root_data = json.loads(project_file.read_text(encoding="utf-8"))
         assert result.project_id == project_id
@@ -1064,25 +1127,27 @@ class TestInitializeProject:
                         assert result.already_existed is True
                         assert manager.get_by_name.call_count == 2
 
-    def test_uses_cwd_when_none(self) -> None:
+    def test_uses_cwd_when_none(self, hub_db: HubDatabase) -> None:
         """Test that current working directory is used when cwd is None."""
+        project_id = str(uuid.uuid4())
         mock_project_context = {
-            "id": "id",
+            "id": project_id,
             "name": "name",
             "project_path": "/test",
             "created_at": "2024",
         }
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value=mock_project_context
+            "gobby.utils.project_context.get_project_context",
+            return_value=mock_project_context,
         ):
             with patch("pathlib.Path.cwd") as mock_cwd:
                 mock_cwd.return_value = Path("/some/path")
 
-                result = initialize_project(cwd=None, db=MagicMock())
+                result = initialize_project(cwd=None, db=hub_db)
 
                 # Should use cwd
-                assert result.project_id == "id"
+                assert result.project_id == project_id
 
     def test_project_context_none_id(self, tmp_path: Path) -> None:
         """Test when project context exists but id is None."""
@@ -1206,7 +1271,10 @@ class TestInitializeProject:
         subdir = tmp_path / "subdir" / "project"
         subdir.mkdir(parents=True)
 
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch.object(LocalProjectManager, "ensure_exists"),
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 "name": "existing-name",
@@ -1246,7 +1314,10 @@ class TestInitializeProject:
 
     def test_already_initialized_returns_correct_project_path(self, tmp_path: Path) -> None:
         """Test that project_path from context is used when already initialized."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch.object(LocalProjectManager, "ensure_exists"),
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 "name": "existing-name",
@@ -1261,7 +1332,10 @@ class TestInitializeProject:
 
     def test_already_initialized_with_missing_project_path(self, tmp_path: Path) -> None:
         """Test when project context exists but project_path is missing."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch.object(LocalProjectManager, "ensure_exists"),
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 "name": "existing-name",
@@ -1276,7 +1350,10 @@ class TestInitializeProject:
 
     def test_already_initialized_with_missing_created_at(self, tmp_path: Path) -> None:
         """Test when project context exists but created_at is missing."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch.object(LocalProjectManager, "ensure_exists"),
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 "name": "existing-name",
@@ -1291,7 +1368,10 @@ class TestInitializeProject:
 
     def test_already_initialized_with_missing_name(self, tmp_path: Path) -> None:
         """Test when project context exists but name is missing."""
-        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+        with (
+            patch("gobby.utils.project_context.get_project_context") as mock_ctx,
+            patch.object(LocalProjectManager, "ensure_exists"),
+        ):
             mock_ctx.return_value = {
                 "id": "existing-id",
                 # No name

@@ -11,7 +11,6 @@ by hook events. It supports:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -27,36 +26,13 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.utils.env import expand_env_mapping, expand_env_variables
+from gobby.utils.webhook_transport import WebhookTransport
 
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
 
 logger = logging.getLogger(__name__)
 _MAX_WEBHOOK_RESPONSE_BYTES = 64 * 1024
-
-
-class _WebhookResponseTooLarge(ValueError):
-    """Raised when a webhook response exceeds the configured body ceiling."""
-
-
-async def _read_bounded_response(response: httpx.Response) -> bytes:
-    content_length = response.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared_length = int(content_length)
-        except ValueError:
-            declared_length = None
-        if declared_length is not None and declared_length > _MAX_WEBHOOK_RESPONSE_BYTES:
-            raise _WebhookResponseTooLarge
-
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in response.aiter_bytes():
-        total += len(chunk)
-        if total > _MAX_WEBHOOK_RESPONSE_BYTES:
-            raise _WebhookResponseTooLarge
-        chunks.append(chunk)
-    return b"".join(chunks)
 
 
 @dataclass
@@ -99,6 +75,7 @@ class WebhookDispatcher:
             config: Webhooks configuration containing endpoints and settings.
         """
         self.config = config
+        self._transport = WebhookTransport(allow_private_addresses=True)
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
@@ -107,6 +84,7 @@ class WebhookDispatcher:
         return httpx.AsyncClient(
             timeout=httpx.Timeout(self.config.default_timeout),
             follow_redirects=False,
+            trust_env=False,
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -197,9 +175,6 @@ class WebhookDispatcher:
         if client is None:
             client = await self._get_client()
         start_time = datetime.now()
-        attempts = 0
-        last_error: str | None = None
-        delay = endpoint.retry_delay
 
         # Build headers
         headers = {
@@ -221,134 +196,54 @@ class WebhookDispatcher:
                 decision="block" if endpoint.can_block and endpoint.fail_closed else None,
             )
 
-        while attempts <= endpoint.retry_count:
-            attempts += 1
+        try:
+            result = await self._transport.execute(
+                url=url,
+                method="POST",
+                headers=headers,
+                payload=payload,
+                timeout=endpoint.timeout,
+                max_response_bytes=_MAX_WEBHOOK_RESPONSE_BYTES,
+                max_attempts=endpoint.retry_count + 1,
+                backoff_seconds=endpoint.retry_delay,
+                client=client,
+            )
+        except Exception as exc:
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            logger.exception("Webhook %s unexpected error: %s", endpoint.name, exc)
+            return WebhookResult(
+                endpoint_name=endpoint.name,
+                success=False,
+                error=str(exc),
+                duration_ms=duration_ms,
+                decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+            )
 
-            try:
-                request = client.build_request(
-                    "POST",
-                    url,
-                    json=payload,
-                    headers=headers,
-                    timeout=endpoint.timeout,
-                )
-                response = await client.send(request, stream=True, follow_redirects=False)
-                try:
-                    response_content = await _read_bounded_response(response)
-                except _WebhookResponseTooLarge:
-                    duration_ms = (datetime.now() - start_time).total_seconds() * 1000
-                    logger.warning(
-                        "Webhook %s response exceeded %d bytes",
-                        endpoint.name,
-                        _MAX_WEBHOOK_RESPONSE_BYTES,
-                    )
-                    return WebhookResult(
-                        endpoint_name=endpoint.name,
-                        success=False,
-                        status_code=response.status_code,
-                        error=f"Response body exceeds {_MAX_WEBHOOK_RESPONSE_BYTES} bytes",
-                        attempts=attempts,
-                        duration_ms=duration_ms,
-                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
-                    )
-                finally:
-                    await response.aclose()
-
-                duration_ms = (datetime.now() - start_time).total_seconds() * 1000
-
-                # Parse response body if JSON
-                response_body: dict[str, Any] | None = None
-                try:
-                    parsed_body = json.loads(response_content)
-                    if isinstance(parsed_body, dict):
-                        response_body = parsed_body
-                except (json.JSONDecodeError, ValueError):
-                    pass
-
-                # Check if blocking webhook and extract decision
-                decision: str | None = None
-                if endpoint.can_block and response_body:
-                    decision = response_body.get("decision")
-
-                # Success on 2xx status codes
-                if 200 <= response.status_code < 300:
-                    logger.debug("Webhook %s succeeded: %s", endpoint.name, response.status_code)
-                    return WebhookResult(
-                        endpoint_name=endpoint.name,
-                        success=True,
-                        status_code=response.status_code,
-                        response_body=response_body,
-                        attempts=attempts,
-                        duration_ms=duration_ms,
-                        decision=decision,
-                    )
-
-                # Redirects and client errors are not retryable. Redirect following is disabled,
-                # so returning immediately also prevents repeated requests to the origin.
-                if 300 <= response.status_code < 500:
-                    logger.warning(
-                        "Webhook %s non-success response: %s", endpoint.name, response.status_code
-                    )
-                    return WebhookResult(
-                        endpoint_name=endpoint.name,
-                        success=False,
-                        status_code=response.status_code,
-                        response_body=response_body,
-                        error=f"HTTP {response.status_code}",
-                        attempts=attempts,
-                        duration_ms=duration_ms,
-                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
-                    )
-
-                # 5xx errors are retryable
-                last_error = f"HTTP {response.status_code}"
-                logger.warning(
-                    "Webhook %s server error: %s, attempt %s/%s",
-                    endpoint.name,
-                    response.status_code,
-                    attempts,
-                    endpoint.retry_count + 1,
-                )
-
-            except httpx.TimeoutException:
-                last_error = "Request timeout"
-                logger.warning(
-                    "Webhook %s timeout, attempt %s/%s",
-                    endpoint.name,
-                    attempts,
-                    endpoint.retry_count + 1,
-                )
-
-            except httpx.ConnectError as e:
-                last_error = f"Connection error: {e}"
-                logger.warning(
-                    "Webhook %s connection error: %s, attempt %s/%s",
-                    endpoint.name,
-                    e,
-                    attempts,
-                    endpoint.retry_count + 1,
-                )
-
-            except Exception as e:
-                last_error = str(e)
-                logger.exception("Webhook %s unexpected error: %s", endpoint.name, e)
-
-            # Wait before retry with exponential backoff
-            if attempts <= endpoint.retry_count:
-                await asyncio.sleep(delay)
-                delay *= 2  # Exponential backoff
-
-        # All retries exhausted
         duration_ms = (datetime.now() - start_time).total_seconds() * 1000
-        logger.error("Webhook %s failed after %s attempts: %s", endpoint.name, attempts, last_error)
+        response_body = result.json_body()
+        if result.success:
+            logger.debug("Webhook %s succeeded: %s", endpoint.name, result.status_code)
+            decision = (
+                response_body.get("decision") if endpoint.can_block and response_body else None
+            )
+        else:
+            logger.warning(
+                "Webhook %s failed after %s attempt(s): %s",
+                endpoint.name,
+                result.attempts,
+                result.error,
+            )
+            decision = "block" if endpoint.can_block and endpoint.fail_closed else None
 
         return WebhookResult(
             endpoint_name=endpoint.name,
-            success=False,
-            error=last_error,
-            attempts=attempts,
+            success=result.success,
+            status_code=result.status_code,
+            response_body=response_body,
+            error=result.error,
+            attempts=result.attempts,
             duration_ms=duration_ms,
-            decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+            decision=decision,
         )
 
     async def _dispatch_blocking(

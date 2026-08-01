@@ -117,7 +117,7 @@ def _bootstrap_database_url(gobby_home: Path) -> str:
         config = load_bootstrap(str(bootstrap_path), resolve_database_url=True)
     except BootstrapConfigError as exc:
         raise ComposeEnvironmentError(f"Invalid {bootstrap_path}: {exc}") from exc
-    if config.hub_backend != "postgres" or not config.database_url:
+    if not config.database_url:
         raise ComposeEnvironmentError(
             f"{bootstrap_path} must define a PostgreSQL database_url for managed services"
         )

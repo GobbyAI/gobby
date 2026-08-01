@@ -1,8 +1,7 @@
 """Bootstrap configuration for pre-database settings.
 
-These settings are needed before the PostgreSQL hub is available:
-daemon_port, bind_host, websocket_port, ui_port, hub_backend, database_url, and
-PostgreSQL client pool settings.
+These settings are needed before the PostgreSQL hub is available: daemon_port,
+bind_host, websocket_port, ui_port, database_url, and PostgreSQL client pool settings.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -37,19 +36,15 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 
 AuthMode = Literal["required", "disabled"]
-HubBackend = Literal["postgres"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
-    'hub_backend must be postgres (hub_backend (Literal["postgres"]) only supports '
-    f'"postgres"). Run `gobby postgres install` to write PostgreSQL bootstrap settings; '
-    f"see {HUB_BACKEND_MIGRATION_DOCS}. "
-    "Enforcement: _parse_hub_backend() raises BootstrapConfigError."
+    "Only the PostgreSQL hub backend is supported. "
+    f"Run `gobby postgres install` to write PostgreSQL settings; "
+    f"see {HUB_BACKEND_MIGRATION_DOCS}."
 )
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
-    "hub_backend=postgres requires database_url in bootstrap.yaml. "
-    f"Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}. "
-    'Config type: hub_backend (Literal["postgres"]); enforcement is kept with '
-    "_parse_hub_backend() and BootstrapConfigError."
+    "database_url is required in bootstrap.yaml. "
+    f"Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}."
 )
 
 
@@ -66,7 +61,6 @@ class BootstrapConfig:
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
     auth_mode: AuthMode = "required"
-    hub_backend: HubBackend = "postgres"
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
@@ -82,7 +76,6 @@ class BootstrapConfig:
             "websocket": {"port": self.websocket_port},
             "ui": {"port": self.ui_port},
             "auth_mode": self.auth_mode,
-            "hub_backend": self.hub_backend,
             "database_url": self.database_url,
             "postgres_pool": self.postgres_pool.to_dict(),
         }
@@ -132,7 +125,6 @@ def load_bootstrap(
                 raise BootstrapConfigError("bootstrap.yaml must contain a YAML mapping")
             return _default_bootstrap_config()
 
-        hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
         if "database_url_ref" in data:
             raise BootstrapConfigError(
@@ -159,7 +151,6 @@ def load_bootstrap(
             ),
             ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
             auth_mode=auth_mode,
-            hub_backend=hub_backend,
             database_url=database_url,
             postgres_pool=postgres_pool,
             daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
@@ -179,12 +170,6 @@ def _parse_auth_mode(value: object) -> AuthMode:
     if value in ("required", "disabled"):
         return cast(AuthMode, value)
     raise BootstrapConfigError("auth_mode must be one of: required, disabled")
-
-
-def _parse_hub_backend(value: object) -> HubBackend:
-    if value == "postgres":
-        return cast(HubBackend, value)
-    raise BootstrapConfigError(HUB_BACKEND_POSTGRES_REQUIRED)
 
 
 def _validate_managed_database_url(database_url: str) -> None:

@@ -1,7 +1,7 @@
 """
 LLM SDK auto-instrumentation via OpenLLMetry.
 
-Activates OpenTelemetry instrumentors for Anthropic and OpenAI SDKs.
+Activates OpenTelemetry instrumentation for the OpenAI SDK.
 Each LLM call automatically emits a child span with gen_ai.* semantic convention attributes.
 """
 
@@ -15,10 +15,6 @@ logger = logging.getLogger(__name__)
 
 # Map provider names to their instrumentor module and class
 _INSTRUMENTOR_MAP: dict[str, tuple[str, str]] = {
-    "anthropic": (
-        "opentelemetry.instrumentation.anthropic",
-        "AnthropicInstrumentor",
-    ),
     "openai": (
         "opentelemetry.instrumentation.openai",
         "OpenAIInstrumentor",
@@ -58,8 +54,7 @@ def setup_llm_instrumentors(
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
-            constructor_kwargs = {"enrich_token_usage": True} if provider == "anthropic" else {}
-            instrumentor_cls(**constructor_kwargs).instrument()
+            instrumentor_cls().instrument()
             _instrumented.add(provider)
             logger.info("Activated LLM instrumentor for %s", provider)
         except ImportError:

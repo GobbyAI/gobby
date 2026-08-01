@@ -9,7 +9,7 @@ Provides a unified search layer with multiple backends:
 Basic usage (keyword):
     from gobby.search import SearchConfig, UnifiedSearcher
 
-    searcher = UnifiedSearcher(SearchConfig(mode="keyword"), db=db, fts_table="tasks_fts")
+    searcher = UnifiedSearcher(SearchConfig(mode="keyword"), db=db, fts_table="tasks")
     results = await searcher.search_async("query text", top_k=10)
 
 Unified search (async with fallback):

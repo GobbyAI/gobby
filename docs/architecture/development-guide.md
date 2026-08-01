@@ -1,6 +1,6 @@
 # Gobby Development Guide
 
-> Updated: 2026-06-11
+> Updated: 2026-07-31
 
 ## Prerequisites
 
@@ -258,4 +258,4 @@ uv run mypy src/ --show-error-codes
 uv run mypy src/module.py
 ```
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-31_

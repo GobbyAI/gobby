@@ -3,17 +3,9 @@
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig
-
-_LEGACY_SUMMARY_KEYS = {
-    "summary_enabled": "enabled",
-    "summary_batch_size": "batch_size",
-    "summary_profile": "profile",
-    "summary_candidates": "candidates",
-    "summary_max_concurrency": "max_concurrency",
-}
 
 
 class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
@@ -48,10 +40,6 @@ class CodeIndexConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="Enable code indexing via tree-sitter AST parsing",
-    )
-    auto_index_on_commit: bool = Field(
-        default=True,
-        description="Auto-reindex changed files on git commit",
     )
     maintenance_interval_seconds: int = Field(
         default=3600,
@@ -97,29 +85,6 @@ class CodeIndexConfig(BaseModel):
             "before purging its index"
         ),
     )
-    max_file_size_bytes: int = Field(
-        default=1_000_000,
-        ge=1,
-        description="Skip files larger than this",
-    )
-    exclude_patterns: list[str] = Field(
-        default=[
-            "node_modules",
-            ".vite",
-            ".git",
-            "__pycache__",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytest_cache",
-            ".tox",
-            ".eggs",
-            "vendor",
-            "build",
-            "dist",
-            ".venv",
-        ],
-        description="Glob patterns to exclude from indexing",
-    )
     embedding_enabled: bool = Field(
         default=True,
         description="Enable Qdrant vector embeddings for semantic search",
@@ -127,31 +92,6 @@ class CodeIndexConfig(BaseModel):
     graph_enabled: bool = Field(
         default=True,
         description="Enable FalkorDB call/import graph",
-    )
-    qdrant_collection_prefix: str = Field(
-        default="code_symbols_",
-        description="Qdrant collection name prefix",
-    )
-    languages: list[str] = Field(
-        default=[
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "rust",
-            "java",
-            "php",
-            "dart",
-            "csharp",
-            "c",
-            "cpp",
-            "elixir",
-            "ruby",
-            "markdown",
-            "yaml",
-            "json",
-        ],
-        description="Languages to index",
     )
     symbol_summary: CodeIndexSymbolSummaryConfig = Field(
         default_factory=CodeIndexSymbolSummaryConfig,
@@ -187,52 +127,6 @@ class CodeIndexConfig(BaseModel):
         gt=0,
         description="Maximum vector-sync breaker backoff",
     )
-    content_extensions: list[str] = Field(
-        default=[
-            ".html",
-            ".css",
-            ".scss",
-            ".less",
-            ".toml",
-            ".cfg",
-            ".ini",
-            ".sh",
-            ".bash",
-            ".zsh",
-            ".fish",
-            ".sql",
-            ".graphql",
-            ".proto",
-            ".txt",
-            ".rst",
-            ".csv",
-            ".gitignore",
-            ".editorconfig",
-        ],
-        description="Additional file extensions to index for content search only (no AST parsing)",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def drop_removed_keys(cls, data: object) -> object:
-        """Drop removed keys and migrate legacy flat symbol-summary keys."""
-        if isinstance(data, dict):
-            updated = dict(data)
-            updated.pop("sync_worker_vector_batch_size", None)
-            if any(key in updated for key in _LEGACY_SUMMARY_KEYS):
-                existing_summary = updated.get("symbol_summary")
-                symbol_summary = (
-                    dict(existing_summary) if isinstance(existing_summary, dict) else {}
-                )
-                for old_key, new_key in _LEGACY_SUMMARY_KEYS.items():
-                    if old_key in updated and new_key not in symbol_summary:
-                        symbol_summary[new_key] = updated.pop(old_key)
-                    else:
-                        # Drop the legacy flat key once an explicit nested value wins.
-                        updated.pop(old_key, None)
-                updated["symbol_summary"] = symbol_summary
-            return updated
-        return data
 
     @field_validator("nightly_full_reindex_cron")
     @classmethod

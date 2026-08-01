@@ -34,6 +34,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "session_id: 'str', machine_id: 'str | None' = None, "
     "project_id: 'str | None' = None) -> 'None'",
     "clear_had_edits": "(self, session_id: 'str') -> 'None'",
+    "cleanup_expired_session_state": "(self) -> 'SessionStateCleanupResult'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
@@ -127,6 +128,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "workflow_name: 'str | None' = None, agent_depth: 'int' = 0, "
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None) -> 'str'",
     "register_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
+    "register_status_transition_listener": "(self, listener: "
+    "'SessionStatusTransitionCallback') -> 'None'",
     "register_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "renumber_project_sessions": "(self, project_id: 'str', *, dry_run: 'bool' = True) -> "
     "'list[SessionRenumberMapping]'",
@@ -138,6 +141,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",
     "unregister_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
+    "unregister_status_transition_listener": "(self, listener: "
+    "'SessionStatusTransitionCallback') -> 'None'",
     "unregister_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "update": "(self, session_id: 'str', *, external_id: 'str | None' = None, "
     "source: 'str | None' = None, model: 'str | None' = None, "

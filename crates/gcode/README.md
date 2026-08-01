@@ -99,7 +99,7 @@ Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
 asks the local daemon broker for the hub DSN first. If the daemon is
 unavailable, resolution checks `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
 `~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap
-`database_url`. Bootstrap config requires `hub_backend: postgres`.
+`database_url`.
 
 Standalone setup is tested against PostgreSQL 18 with `pg_search` BM25 indexes.
 The schema preflight reads PostgreSQL catalogs such as `pg_class` and

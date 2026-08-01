@@ -99,7 +99,7 @@ async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> 
         return []
 
     with patch(
-        "gobby.runner_maintenance._JITTER_RANDOM",
+        "gobby.runner_maintenance.binaries._JITTER_RANDOM",
         SimpleNamespace(uniform=lambda _lower, _upper: 2),
     ):
         await bin_freshness_loop(

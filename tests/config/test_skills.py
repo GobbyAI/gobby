@@ -182,12 +182,3 @@ class TestDaemonConfigSkillsField:
         assert config.skills.inject_core_skills is False
         assert config.skills.core_skills_path == "/custom/path"
         assert config.skills.injection_format == "full"
-
-    def test_get_skills_config_method(self) -> None:
-        """Test DaemonConfig.get_skills_config() method."""
-        from gobby.config.app import DaemonConfig
-
-        config = DaemonConfig()
-        skills_config = config.get_skills_config()
-        assert skills_config is not None
-        assert skills_config.inject_core_skills is True

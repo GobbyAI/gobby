@@ -59,7 +59,7 @@ class SkillManager:
 
     def __init__(
         self,
-        db: HubDatabase | HubDatabase,
+        db: HubDatabase,
         project_id: str | None = None,
         search_config: SearchConfig | None = None,
         embedding_model: str = "nomic-embed-text",

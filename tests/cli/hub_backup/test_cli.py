@@ -13,8 +13,11 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple
+from unittest.mock import MagicMock
 
 import click
 import pytest
@@ -40,8 +43,11 @@ from gobby.cli.hub_backup._stores import (
     VOLUME_ARCHIVE_DIR,
 )
 from gobby.cli.hub_backup._verify import RoleExpectation
+from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
 
@@ -140,6 +146,7 @@ class _Harness:
         self.qdrant_snapshot_settings: tuple[str | None, str | None] | None = None
         self.qdrant_verify_settings: tuple[str | None, str | None] | None = None
         self.shutdown_source_seen: str | None = None
+        self.stop_quiet_seen: bool | None = None
         self.postgres_paths_seen: tuple[Path, Path] | None = None
         self.probes_seen: dict[str, int] | None = None
         self.roles_seen: list[RoleExpectation] | None = None
@@ -205,6 +212,7 @@ class _Harness:
     ) -> bool:
         self._step("stop_daemon")
         self.shutdown_source_seen = shutdown_source
+        self.stop_quiet_seen = quiet
         return True
 
     def start_daemon(self) -> None:
@@ -341,6 +349,7 @@ class _Harness:
         monkeypatch.setattr(hub_cli, "get_gobby_home", lambda: self.gobby_home)
         replacements: dict[str, object] = {
             "_resolve_database_url": self.resolve_database_url,
+            "require_orchestrator_epoch": lambda _database_url, _epoch: None,
             "_require_managed_docker_postgres": self.require_managed_docker_postgres,
             "_daemon_is_running": self.daemon_is_running,
             "stop_daemon": self.stop_daemon,
@@ -353,6 +362,7 @@ class _Harness:
             "dump_falkordb": self.dump_falkordb,
             "_services_stop": self.services_stop,
             "_services_start": self.services_start,
+            "_start_epoch_services": self.services_start,
             "tar_volumes": self.tar_volumes,
             "verify_postgres_restore": self.verify_postgres_restore,
             "verify_qdrant_restore": self.verify_qdrant_restore,
@@ -465,6 +475,34 @@ class TestManifest:
         assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes"}
         assert len(manifest.artifacts) == 4 + len(HUB_VOLUMES)
 
+    def test_manifest_includes_allow_audit_logs_with_checksums(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        logs_dir = harness.gobby_home / "logs"
+        logs_dir.mkdir(parents=True)
+        runtime.config.logging.dir = str(logs_dir)
+        source_lines = {
+            RULE_ALLOW_AUDIT_LOG_FILENAME: b'{"result":"allow"}\n',
+            f"{RULE_ALLOW_AUDIT_LOG_FILENAME}.1": b'{"result":"allow","rotated":true}\n',
+        }
+        for filename, content in source_lines.items():
+            (logs_dir / filename).write_bytes(content)
+
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+        records = {
+            artifact.path: artifact
+            for artifact in manifest.artifacts
+            if artifact.path.startswith("logs/")
+        }
+        assert set(records) == {f"logs/{filename}" for filename in source_lines}
+        for filename, content in source_lines.items():
+            record = records[f"logs/{filename}"]
+            assert record.sha256 == hashlib.sha256(content).hexdigest()
+            assert (backup_root / record.path).read_bytes() == content
+
     def test_every_store_records_archive_and_restore_verification(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
     ) -> None:
@@ -536,8 +574,13 @@ class TestOutputDirectory:
 
 class TestEpoch:
     def test_epoch_is_recorded_and_suppresses_the_daemon_restart(
-        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setenv("GOBBY_MAINTENANCE_EPOCH", "e1")
         backup_root = tmp_path / "backup"
         _run_ok(runtime, backup_root, "--epoch", "e1")
 
@@ -545,6 +588,42 @@ class TestEpoch:
         assert manifest.epoch_id == "e1"
         assert "stop_daemon" in harness.calls
         assert "start_daemon" not in harness.calls
+
+    def test_epoch_config_loading_skips_pending_destructive_migrations(
+        self,
+        harness: _Harness,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        database = MagicMock()
+        apply_migrations_values: list[bool] = []
+        config = DaemonConfig()
+        config.databases.qdrant.url = QDRANT_URL
+        config.databases.qdrant.api_key = QDRANT_API_KEY
+
+        @contextmanager
+        def open_database(
+            _config_file: str | None = None,
+            *,
+            apply_migrations: bool = True,
+        ) -> Iterator[MagicMock]:
+            apply_migrations_values.append(apply_migrations)
+            if apply_migrations:
+                raise RuntimeError("pending destructive migration rejected")
+            yield database
+
+        def load_runtime_config(_config_file: str | None, _database: object) -> DaemonConfig:
+            return config
+
+        monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+        monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, "e1")
+        runtime = CliRuntime(config_file=None, config_loader=load_runtime_config)
+
+        result = _invoke(runtime, "--output", str(tmp_path / "backup"), "--epoch", "e1")
+        runtime.close()
+
+        assert result.exit_code == 0, result.output
+        assert apply_migrations_values == [False]
 
 
 class TestCleanup:
@@ -583,6 +662,52 @@ class TestCleanup:
         assert result.exit_code != 0
         assert "verify_postgres_restore" not in harness.calls
         assert harness.calls[-1] == "start_daemon"
+
+    def test_epoch_service_restart_injects_pgoptions_for_postgres_healthcheck(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        services_dir = tmp_path / "services"
+        services_dir.mkdir()
+        (services_dir / "docker-compose.yml").write_text("services: {}\n")
+        epoch = "3e553f12-2d7c-4e3f-a8c6-637e2a928942"
+        pgoptions = f"-c gobby.maintenance_epoch={epoch}"
+        monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, epoch)
+        monkeypatch.setenv("PGOPTIONS", pgoptions)
+
+        def resolve_runtime(
+            _gobby_home: Path,
+            *,
+            profiles: tuple[str, ...] = ("postgres", "qdrant", "falkordb"),
+        ) -> ComposeRuntime:
+            return ComposeRuntime(
+                environment={"PGOPTIONS": pgoptions},
+                profiles=profiles,
+            )
+
+        calls: list[tuple[list[str], dict[str, object]]] = []
+
+        def run_compose(
+            args: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(hub_cli, "resolve_compose_runtime", resolve_runtime, raising=False)
+        monkeypatch.setattr(subprocess, "run", run_compose)
+
+        result = hub_cli._start_epoch_services(tmp_path)
+
+        assert result == ServiceStartResult("success", "Docker services started")
+        assert len(calls) == 2
+        for command, kwargs in calls:
+            assert command.count("-f") == 2
+            assert command[command.index("-f", 3) + 1] == "-"
+            assert kwargs["input"] == hub_cli._EPOCH_COMPOSE_OVERRIDE
+            assert kwargs["env"] == {"PGOPTIONS": pgoptions}
+            assert "--wait" in command
 
     def test_refuses_to_archive_volumes_while_services_are_still_up(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
@@ -646,6 +771,13 @@ class TestPreflight:
 
 
 class TestJsonOutput:
+    def test_json_output_stops_daemon_quietly(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        _run_ok(runtime, tmp_path / "backup", "--json")
+
+        assert harness.stop_quiet_seen is True
+
     def test_json_output_reports_the_manifest_path_and_summary(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
     ) -> None:

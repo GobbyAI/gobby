@@ -299,12 +299,7 @@ def test_resync_after_plan_enhancement_field_does_not_drift(
     assert default.state == "bundled"
 
 
-def test_sync_refreshes_legacy_hashed_bundled_row(
-    temp_db: Any, sample_project: dict[str, Any]
-) -> None:
-    # A bundled row whose stored hash predates the plan_enhancement_rounds
-    # column (the legacy payload shape) must refresh on the next sync rather
-    # than be misread as a user edit and skipped.
+def test_sync_skips_row_with_previous_shape_hash(temp_db: Any) -> None:
     BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
     row = temp_db.fetchone(
@@ -312,24 +307,26 @@ def test_sync_refreshes_legacy_hashed_bundled_row(
         ("default",),
     )
     assert row is not None
-    new_hash = row["bundled_hash"]
-    legacy_hash = manager.legacy_row_hash(row)
-    assert legacy_hash != new_hash
+    previous_payload = manager._row_payload(row)
+    previous_payload.pop("plan_enhancement_rounds")
+    previous_hash = manager._hash_payload(previous_payload)
+    assert previous_hash != row["bundled_hash"]
 
     temp_db.execute(
         "UPDATE build_profiles SET bundled_hash = %s WHERE id = %s",
-        (legacy_hash, row["id"]),
+        (previous_hash, row["id"]),
     )
 
     result = BuildProfileLoader().sync(temp_db)
-    assert result.upserted >= 1
+    assert result.upserted == 0
+    assert result.skipped == 5
 
-    refreshed = temp_db.fetchone(
+    unchanged = temp_db.fetchone(
         "SELECT bundled_hash FROM build_profiles WHERE id = %s",
         (row["id"],),
     )
-    assert refreshed is not None
-    assert refreshed["bundled_hash"] == new_hash
+    assert unchanged is not None
+    assert unchanged["bundled_hash"] == previous_hash
 
 
 def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: Any) -> None:
@@ -341,14 +338,12 @@ def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: Any) -> No
     )
     assert row is not None
     bundled_hash = row["bundled_hash"]
-    legacy_hash = manager.legacy_row_hash(row)
 
     manager.set_enabled("default", source="installed", project_id=None, enabled=False)
 
     toggled = temp_db.fetchone("SELECT * FROM build_profiles WHERE id = %s", (row["id"],))
     assert toggled is not None
     assert manager.row_hash(toggled) == bundled_hash
-    assert manager.legacy_row_hash(toggled) == legacy_hash
 
 
 def test_sync_refresh_preserves_installed_enabled_toggle(temp_db: Any, tmp_path: Path) -> None:

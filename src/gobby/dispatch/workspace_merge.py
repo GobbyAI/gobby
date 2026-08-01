@@ -26,11 +26,11 @@ from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.project_init import WORKTREE_LOCAL_PROJECT_KEYS
 
 WorkspaceBackend = Literal["worktree", "clone"]
 MERGE_HOLDER = "dispatcher-merge"
 MERGE_TTL_SECONDS = 600
-WORKTREE_LOCAL_PROJECT_KEYS = frozenset({"parent_project_id", "parent_project_path"})
 WORKTREE_LOCAL_METADATA_CONFLICTS = frozenset({".gobby/project.json"})
 DOCS_GUIDES_README = "docs/guides/README.md"
 GUIDE_ROW_RE = re.compile(

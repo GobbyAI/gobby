@@ -1,6 +1,7 @@
 """Dedicated logging settings and path resolution."""
 
 from collections.abc import Mapping
+from math import ceil
 from pathlib import Path
 from typing import Literal
 
@@ -12,7 +13,11 @@ ERRORS_LOG_FILENAME = "errors.log"
 RUNTIME_LOG_FILENAME = "runtime.log"
 HOOKS_LOG_FILENAME = "hooks.log"
 MCP_LOG_FILENAME = "mcp.log"
+RULE_ALLOW_AUDIT_LOG_FILENAME = "rule-allow-audit.jsonl"
 UI_LOG_FILENAME = "ui.log"
+
+ALLOW_AUDIT_EVENTS_PER_DAY = 368_000
+ALLOW_AUDIT_SIZING_BYTES_PER_LINE = 512
 
 
 class LoggingSettings(BaseModel):
@@ -46,12 +51,31 @@ class LoggingSettings(BaseModel):
         default=100,
         description="Logs directory growth threshold per resource-monitor interval",
     )
+    allow_audit_retention_days: int = Field(
+        default=14,
+        ge=14,
+        description="Target retention in days for durable rule allow audit lines",
+    )
+    allow_audit_max_size_mb: int = Field(
+        default=256,
+        description="Maximum size of each rule allow audit rotation",
+    )
+    allow_audit_queue_capacity: int = Field(
+        default=8192,
+        description="Maximum queued rule allow audit lines; overflow drops newest",
+    )
+    allow_audit_shutdown_timeout_seconds: float = Field(
+        default=2.0,
+        description="Hard deadline for draining queued rule allow audit lines",
+    )
 
     @field_validator(
         "max_size_mb",
         "backup_count",
         "runtime_max_size_mb",
         "growth_warn_mb_per_interval",
+        "allow_audit_max_size_mb",
+        "allow_audit_queue_capacity",
     )
     @classmethod
     def validate_positive(cls, value: int) -> int:
@@ -59,6 +83,29 @@ class LoggingSettings(BaseModel):
         if value <= 0:
             raise ValueError("Value must be positive")
         return value
+
+    @field_validator("allow_audit_shutdown_timeout_seconds")
+    @classmethod
+    def validate_positive_float(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("Value must be positive")
+        return value
+
+
+def allow_audit_backup_count(config: LoggingSettings) -> int:
+    """Size rotations for the configured day target.
+
+    The planning sample measured 368,000 allow lines/day. At a conservative
+    512 bytes/line, 14 days need 2,637,824,000 bytes. Ten 256 MiB files cover
+    2,684,354,560 bytes, so the default keeps nine backups plus the active file.
+    """
+    required_bytes = (
+        config.allow_audit_retention_days
+        * ALLOW_AUDIT_EVENTS_PER_DAY
+        * ALLOW_AUDIT_SIZING_BYTES_PER_LINE
+    )
+    max_bytes = config.allow_audit_max_size_mb * 1024 * 1024
+    return max(1, ceil(required_bytes / max_bytes) - 1)
 
 
 def resolved_logs_dir(config: LoggingSettings) -> Path:

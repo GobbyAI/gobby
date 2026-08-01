@@ -27,13 +27,17 @@ import pytest
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from gobby.runner_maintenance.storage_hygiene import (
+    _TEST_SCHEMA_PREFIX,
+    _test_schema_created_epoch,
+    sweep_orphaned_test_schemas,
+)
 from gobby.storage.hub.postgres import (
     _BASELINE_BOOKKEEPING_TABLES,
     PostgresHubDatabase,
 )
 
-_TEST_SCHEMA_PREFIX = "gobby_test_"
-_TEST_SCHEMA_DROP_LOCK = "gobby_test_schema_drop"
+_POSTGRES_IDENTIFIER_MAX_BYTES = 63
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -84,43 +88,8 @@ def postgres_database_url() -> str:
 
 
 def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
-    """Drop only aged `gobby_test_*` schemas from abandoned test runs."""
-    cutoff_epoch = int(time.time()) - age_hours * 3600
-    with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute(
-            "SELECT pg_advisory_lock(hashtext(%s))",
-            (_TEST_SCHEMA_DROP_LOCK,),
-        )
-        try:
-            rows = conn.execute(
-                """
-                SELECT schema_name
-                FROM information_schema.schemata
-                WHERE schema_name LIKE 'gobby_test_%%'
-                """
-            ).fetchall()
-            for (schema_name,) in rows:
-                parts = schema_name.split("_", 5)
-                if len(parts) != 6:
-                    continue
-                try:
-                    created_epoch = int(parts[2])
-                except ValueError:
-                    continue
-                if created_epoch > cutoff_epoch:
-                    continue
-                logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
-                try:
-                    conn.execute(
-                        sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name))
-                    )
-                except psycopg.Error:
-                    logger.exception("Failed to drop orphaned schema %s", schema_name)
-        finally:
-            conn.execute(
-                "SELECT pg_advisory_unlock(hashtext(%s))",
-                (_TEST_SCHEMA_DROP_LOCK,),
-            )
+    """Delegate fixture cleanup to the daemon-owned leased sweeper."""
+    sweep_orphaned_test_schemas(url, age_hours)
 
 
 def _capture_canonical_seed(
@@ -214,30 +183,31 @@ def isolated_test_schema(url: str, worker_label: str) -> Iterator[str]:
     created_epoch = int(time.time())
     nonce = uuid.uuid4().hex[:6]
     schema = f"{_TEST_SCHEMA_PREFIX}{created_epoch}_{os.getpid()}_{worker_label}_{nonce}"
+    if (
+        _test_schema_created_epoch(schema) is None
+        or len(schema.encode()) > _POSTGRES_IDENTIFIER_MAX_BYTES
+    ):
+        raise ValueError(
+            "PostgreSQL test worker label must be non-empty, contain no underscores, "
+            "and fit the six-part schema name contract"
+        )
     _enforce_safe_test_schema(schema)
     _cleanup_orphaned_schemas(url)
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    try:
-        yield schema
-    finally:
-        with psycopg.connect(url, autocommit=True) as conn:
-            conn.execute(
-                "SELECT pg_advisory_lock(hashtext(%s))",
-                (_TEST_SCHEMA_DROP_LOCK,),
-            )
+        conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
+        try:
+            conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
             try:
+                yield schema
+            finally:
                 exists = conn.execute(
                     "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
                     (schema,),
                 ).fetchone()
                 if exists:
                     conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
-            finally:
-                conn.execute(
-                    "SELECT pg_advisory_unlock(hashtext(%s))",
-                    (_TEST_SCHEMA_DROP_LOCK,),
-                )
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
 
 
 @pytest.fixture(scope="session")

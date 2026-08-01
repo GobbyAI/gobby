@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.pipelines import PipelineConfig
+from gobby.utils.webhook_transport import WebhookTransport
 from gobby.workflows.definitions import WebhookConfig, WebhookEndpoint
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.pipeline_webhooks import WebhookNotifier
-from gobby.workflows.webhook_executor import WebhookExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -251,7 +251,7 @@ class TestPipelineExecutorExecute:
         simple_pipeline.webhooks = WebhookConfig(
             on_complete=WebhookEndpoint(url="https://example.com/complete")
         )
-        transport = MagicMock(spec=WebhookExecutor)
+        transport = MagicMock(spec=WebhookTransport)
         transport.execute = AsyncMock(side_effect=ValueError("unsafe webhook target"))
         executor = PipelineExecutor(
             db=mock_db,
@@ -259,7 +259,7 @@ class TestPipelineExecutorExecute:
             llm_service=mock_llm_service,
             webhook_notifier=WebhookNotifier(
                 base_url="https://gobby.local",
-                executor=transport,
+                transport=transport,
             ),
         )
 

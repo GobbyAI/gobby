@@ -2636,7 +2636,7 @@ class TestSignalHandlerBehavior:
 
         with (
             patch("asyncio.get_running_loop", return_value=mock_loop),
-            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+            patch("gobby.runner_maintenance.lifecycle.get_gobby_home", return_value=tmp_path),
         ):
             setup_signal_handlers(
                 shutdown_callback,
@@ -2710,7 +2710,7 @@ class TestSignalHandlerBehavior:
 
         with (
             patch("asyncio.get_running_loop", return_value=mock_loop),
-            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+            patch("gobby.runner_maintenance.lifecycle.get_gobby_home", return_value=tmp_path),
             patch("gobby.shutdown_intent.time.time", return_value=marker_written_at + 30.0),
         ):
             setup_signal_handlers(
@@ -2746,7 +2746,7 @@ class TestSignalHandlerBehavior:
 
         with (
             patch("asyncio.get_running_loop", return_value=mock_loop),
-            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+            patch("gobby.runner_maintenance.lifecycle.get_gobby_home", return_value=tmp_path),
         ):
             setup_signal_handlers(
                 shutdown_callback,

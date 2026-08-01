@@ -135,6 +135,76 @@ class TestSessionManagerPruning:
         assert len(workflow_manager.get_active_instances(unmarked.id)) == 1
         assert len(workflow_manager.get_active_instances(fresh.id)) == 1
 
+    def test_cleanup_expired_session_state_uses_revival_horizon_and_terminalizes_pending(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        variable_manager = SessionVariableManager(session_manager.db)
+        old_expired = session_manager.register(
+            external_id="old-expired-state",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        old_deleted = session_manager.register(
+            external_id="old-deleted-state",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        recent_expired = session_manager.register(
+            external_id="recent-expired-state",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for session in (old_expired, old_deleted, recent_expired):
+            variable_manager.merge_variables(session.id, {"payload": session.external_id})
+
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'expired', "
+            "updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (old_expired.id,),
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'deleted', "
+            "updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (old_deleted.id,),
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'expired', "
+            "updated_at = NOW() - INTERVAL '23 hours' WHERE id = %s",
+            (recent_expired.id,),
+        )
+        interaction_id = str(uuid4())
+        session_manager.db.execute(
+            """
+            INSERT INTO pending_interactions (
+                id, session_id, kind, provider, payload_json, status, timeout_seconds
+            ) VALUES (%s, %s, 'approval', 'codex', '{}', 'pending', 300)
+            """,
+            (interaction_id, old_expired.id),
+        )
+
+        result = session_manager.cleanup_expired_session_state()
+
+        assert result.session_variables == 2
+        assert result.pending_interactions == 1
+        remaining_variables = session_manager.db.fetchall(
+            "SELECT session_id FROM session_variables WHERE session_id IN (%s, %s, %s)",
+            (old_expired.id, old_deleted.id, recent_expired.id),
+        )
+        assert [row["session_id"] for row in remaining_variables] == [recent_expired.id]
+        pending = session_manager.db.fetchone(
+            "SELECT status, decision, resolved_at FROM pending_interactions WHERE id = %s",
+            (interaction_id,),
+        )
+        assert pending is not None
+        assert pending["status"] == "expired"
+        assert pending["decision"] == "timeout"
+        assert pending["resolved_at"] is not None
+
     def test_expire_stale_sessions(
         self,
         session_manager: SessionManager,

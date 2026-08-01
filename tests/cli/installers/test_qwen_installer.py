@@ -65,17 +65,6 @@ class TestInstallQwen:
             ]
             for hook_type, user_command in user_hooks.items()
         }
-        existing_hooks["BeforeTool"] = [
-            {
-                "hooks": [
-                    {"type": "command", "command": "user-legacy-before-tool"},
-                    {
-                        "type": "command",
-                        "command": "ghook --gobby-owned --cli=qwen --type=BeforeTool",
-                    },
-                ]
-            }
-        ]
         settings_file.write_text(
             json.dumps(
                 {
@@ -131,12 +120,6 @@ class TestInstallQwen:
             assert user_command in commands
             assert not any("--type=stale" in command for command in commands)
             assert sum("--gobby-owned" in command for command in commands) == 1
-        legacy_commands = [
-            handler["command"]
-            for group in settings["hooks"]["BeforeTool"]
-            for handler in group["hooks"]
-        ]
-        assert legacy_commands == ["user-legacy-before-tool"]
         assert (temp_dir / ".qwen" / "projects.json").exists()
         assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
 
@@ -195,14 +178,6 @@ class TestInstallQwen:
                                 ]
                             }
                         ],
-                        "BeforeTool": [
-                            {
-                                "hooks": [
-                                    {"command": "user-before-tool"},
-                                    {"command": "ghook --gobby-owned --cli=qwen --type=BeforeTool"},
-                                ]
-                            }
-                        ],
                     },
                     "general": {"enableHooks": True},
                 }
@@ -221,7 +196,7 @@ class TestInstallQwen:
             result = uninstall_qwen(project_path)
 
         assert result["success"] is True
-        assert result["hooks_removed"] == ["SessionStart", "BeforeTool"]
+        assert result["hooks_removed"] == ["SessionStart"]
         assert result["mcp_removed"] is True
         assert result["files_removed"] == []
 
@@ -234,7 +209,6 @@ class TestInstallQwen:
         with open(settings_file) as f:
             settings = json.load(f)
         assert settings["hooks"]["SessionStart"][0]["hooks"] == [{"command": "user-session-start"}]
-        assert settings["hooks"]["BeforeTool"][0]["hooks"] == [{"command": "user-before-tool"}]
 
     def test_uninstall_qwen_global_mode_uses_home_directory(
         self, project_path: Path, temp_dir: Path

@@ -483,24 +483,17 @@ class TestSyncBundledPipelines:
 
         rows = manager.list_all(workflow_type="pipeline")
         names = [row.name for row in rows]
-        assert "expand-task" in names
-        assert "nightly-fixes" in names
-        assert "spawn-developer" in names
-        assert "spawn-qa" in names
-        assert "wiki-research" in names
-        assert "dev" in names
-        assert "qa" in names
-        assert "review" in names
-        assert "orchestrator" not in names
-        assert "front-half-orchestrator" not in names
-        assert "delivery-orchestrator" not in names
+        assert set(names) == {"expand-task", "gobby-merge", "review"}
 
         expand_task = manager.get_by_name("expand-task")
-        nightly_fixes = manager.get_by_name("nightly-fixes")
+        gobby_merge = manager.get_by_name("gobby-merge")
+        review = manager.get_by_name("review")
         assert expand_task is not None
         assert expand_task.enabled is True
-        assert nightly_fixes is not None
-        assert nightly_fixes.enabled is True
+        assert gobby_merge is not None
+        assert gobby_merge.enabled is True
+        assert review is not None
+        assert review.enabled is True
 
     def test_ignores_deprecated_pipeline_directory(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

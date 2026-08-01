@@ -166,7 +166,6 @@ class GitHubIssueImporter:
         from gobby.sync.tasks import (
             _ensure_task_sequence_metadata,
             _github_issue_uuid_seed,
-            _legacy_github_issue_uuid_seed,
         )
 
         imported: list[str] = []
@@ -189,15 +188,6 @@ class GitHubIssueImporter:
                         uuid.NAMESPACE_URL,
                         _github_issue_uuid_seed(project_id, owner, repo, issue_num),
                     )
-                )
-                legacy_normalized_task_id = str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        _legacy_github_issue_uuid_seed(owner, repo, issue_num),
-                    )
-                )
-                legacy_task_id = str(
-                    uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_url}/issues/{issue_num}")
                 )
                 title = issue.get("title", "Untitled Issue")
                 body = issue.get("body") or ""
@@ -227,17 +217,10 @@ class GitHubIssueImporter:
                     (project_id, github_repo, issue_num),
                 ).fetchone()
                 if existing is None:
-                    for candidate_task_id in (
-                        task_id,
-                        legacy_normalized_task_id,
-                        legacy_task_id,
-                    ):
-                        existing = conn.execute(
-                            "SELECT id FROM tasks WHERE project_id = %s AND id = %s",
-                            (project_id, candidate_task_id),
-                        ).fetchone()
-                        if existing is not None:
-                            break
+                    existing = conn.execute(
+                        "SELECT id FROM tasks WHERE project_id = %s AND id = %s",
+                        (project_id, task_id),
+                    ).fetchone()
                 if existing:
                     task_id = str(existing["id"])
                     conn.execute(

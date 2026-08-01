@@ -419,22 +419,6 @@ def _coordinator_session_ref(
     )
 
 
-@click.command("stop")
-@click.argument("input_ref", required=False, metavar="[REF]")
-@click.option("--project", "project_ref", help="Project name or UUID to stop.")
-def build_stop_command(input_ref: str | None, project_ref: str | None) -> None:
-    """Stop future dispatcher build ticks."""
-    _run_build_stop(input_ref, project_ref=project_ref)
-
-
-@click.command("resume")
-@click.argument("input_ref", required=False, metavar="[REF]")
-@click.option("--project", "project_ref", help="Project name or UUID to resume.")
-def build_resume_command(input_ref: str | None, project_ref: str | None) -> None:
-    """Resume dispatcher build ticks."""
-    _run_build_resume(input_ref, project_ref=project_ref)
-
-
 def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = None) -> None:
     project_context = _resolve_build_project_context(project_ref, Path.cwd())
     project_id = project_context.project_id

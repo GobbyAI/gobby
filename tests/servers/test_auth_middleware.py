@@ -17,7 +17,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import gobby.storage.secrets as secrets_module
 from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
@@ -144,7 +143,7 @@ def test_all_routes_pass_when_auth_disabled(
 
 
 @pytest.mark.asyncio
-async def test_repeated_requests_reuse_cached_credentials_without_secret_kdf(
+async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
     hub_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -163,9 +162,7 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_kdf(
 
     monkeypatch.setattr(ConfigStore, "get", tracked_get)
     secret_store_init = MagicMock(side_effect=AssertionError("SecretStore constructed"))
-    derive_key = MagicMock(side_effect=AssertionError("legacy secret KDF invoked"))
     monkeypatch.setattr(SecretStore, "__init__", secret_store_init)
-    monkeypatch.setattr(secrets_module, "_derive_fernet_key", derive_key)
 
     auth_service = AuthService(
         lambda: hub_db,
@@ -206,7 +203,6 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_kdf(
     assert len(credential_lookup_threads) == 6
     assert all(thread_id != event_loop_thread for thread_id in credential_lookup_threads)
     secret_store_init.assert_not_called()
-    derive_key.assert_not_called()
 
 
 @pytest.mark.asyncio

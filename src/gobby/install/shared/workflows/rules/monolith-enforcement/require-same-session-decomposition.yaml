@@ -4,7 +4,7 @@ rules:
   require-decompose-monolith-before-threshold-write:
     description: "Require decomposition guidance before touching a threshold-crossing source file"
     event: before_tool
-    enabled: false
+    enabled: true
     priority: 27
     when: >
       event.data.get('canonical_tool_kind') == 'write' and
@@ -21,7 +21,7 @@ rules:
   require-monolith-resolution-before-commit:
     description: "Block commits while a session-owned production source file is over budget"
     event: before_tool
-    enabled: false
+    enabled: true
     priority: 25
     when: "bool(outstanding_monolith_paths())"
     effects:
@@ -36,7 +36,7 @@ rules:
   require-monolith-resolution-before-task-transition:
     description: "Block task completion and review transitions while owned source is over budget"
     event: before_tool
-    enabled: false
+    enabled: true
     priority: 25
     when: "bool(outstanding_monolith_paths())"
     effects:
@@ -55,7 +55,7 @@ rules:
   require-monolith-resolution-before-turn-end:
     description: "Block turn end while a session-owned production source file is over budget"
     event: turn_end
-    enabled: false
+    enabled: true
     priority: 20
     when: "bool(outstanding_monolith_paths())"
     effects:

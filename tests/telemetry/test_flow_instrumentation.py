@@ -195,8 +195,7 @@ async def test_rule_engine_instrumentation(tracer_provider):
 
         # Mock internal methods
         with patch.object(engine, "_load_rules", return_value=[]):
-            with patch.object(engine, "_load_session_overrides", return_value={}):
-                await engine.evaluate(event, "sess-123", {})
+            await engine.evaluate(event, "sess-123", {})
 
     spans = exporter.get_finished_spans()
     rule_span = next(s for s in spans if s.name == "rules.evaluate")

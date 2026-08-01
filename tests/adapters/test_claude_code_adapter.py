@@ -98,6 +98,11 @@ class TestClaudeCodeAdapterInit:
         adapter = ClaudeCodeAdapter(hook_manager=mock_hm)
         assert adapter._hook_manager is mock_hm
 
+    def test_class_docstring_describes_current_handler_only(self) -> None:
+        assert ClaudeCodeAdapter.__doc__ is not None
+        assert "HookManager.handle" in ClaudeCodeAdapter.__doc__
+        assert "set_legacy_mode" not in ClaudeCodeAdapter.__doc__
+
 
 class TestEventMap:
     """Verify all Claude Code hook types are correctly mapped."""

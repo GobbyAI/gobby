@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import stat
-from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,7 +27,6 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
-    runtime_embedding_key,
 )
 from gobby.config.extensions import (
     HookExtensionsConfig,
@@ -53,7 +51,6 @@ from gobby.config.features import (
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
-    ContextInjectionConfig,
     DigestConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
@@ -492,8 +489,8 @@ class TestDaemonConfig:
     def test_sub_config_access(self) -> None:
         """Test accessing sub-configurations."""
         config = DaemonConfig()
-        assert config.get_recommend_tools_config() == config.recommend_tools
-        assert config.get_mcp_client_proxy_config() == config.mcp_client_proxy
+        assert config.get_import_mcp_server_config() is config.import_mcp_server
+        assert config.get_gobby_tasks_config() is config.gobby_tasks
 
     def test_get_verification_defaults(self) -> None:
         """Test get_verification_defaults returns verification_defaults config."""
@@ -502,13 +499,6 @@ class TestDaemonConfig:
         assert verification_config is config.verification_defaults
 
         assert isinstance(verification_config, ProjectVerificationConfig)
-
-    def test_get_project_verification_synthesis_config(self) -> None:
-        """Test get_project_verification_synthesis_config returns synthesis config."""
-        config = DaemonConfig()
-        synthesis_config = config.get_project_verification_synthesis_config()
-        assert synthesis_config is config.project_verification_synthesis
-        assert isinstance(synthesis_config, ProjectVerificationSynthesisConfig)
 
     def test_rejects_removed_conductor_section(self) -> None:
         """Stale top-level conductor config should fail loudly."""
@@ -996,147 +986,6 @@ class TestLoadConfig:
             "claude/haiku",
         )
 
-    def test_load_config_deletes_seeded_stale_feature_candidates(self, temp_dir: Path) -> None:
-        """Old seeded Claude-only and Spark rows fall through to profiles."""
-
-        values = {
-            "ai.generation.profile_defaults.feature_low": ["claude/haiku"],
-            "ai.generation.profile_defaults.feature_mid": ["claude/sonnet"],
-            "ai.generation.profile_defaults.feature_high": ["claude/opus"],
-            "digest.candidates": ["claude/claude-haiku-4-5"],
-            "memory.kg.candidates": ["claude/haiku"],
-            "tool_summarizer.candidates": ["claude/haiku"],
-            "import_mcp_server.candidates": ["claude/haiku"],
-            "skill_description.candidates": ["claude/haiku"],
-            "code_index.symbol_summary.candidates": ["claude/haiku"],
-            "memory.dream.candidates": ["codex/gpt-5.3-codex-spark", "claude/sonnet"],
-            "recommend_tools.candidates": ["codex/gpt-5.3-codex-spark", "claude/sonnet"],
-            "merge_resolution.candidates": ["claude/claude-sonnet-4-5"],
-            "gobby-tasks.validation.candidates": [
-                "codex/gpt-5.3-codex-spark",
-                "claude/sonnet",
-            ],
-            "chat.candidates": ["claude/opus"],
-            "gobby_tasks.expansion.candidates": ["claude/claude-opus-4-5"],
-        }
-        one_off_keys = {
-            "digest.candidates",
-            "merge_resolution.candidates",
-            "gobby_tasks.expansion.candidates",
-        }
-        expected_deleted = sorted(values)
-        deleted: list[str] = []
-        rows: list[dict[str, object]] = [
-            {
-                "key": key,
-                "value": value if key == "gobby_tasks.expansion.candidates" else json.dumps(value),
-                "source": "one-off-0.5.0-migration" if key in one_off_keys else "defaults",
-            }
-            for key, value in values.items()
-        ]
-
-        class DummyDB:
-            def __init__(self) -> None:
-                self.params: tuple[object, ...] | None = None
-
-            def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
-                self.params = _params
-                sources = set(_params)
-                return [row for row in rows if row["source"] in sources]
-
-            def transaction(self) -> AbstractContextManager[None]:
-                return nullcontext()
-
-        class DummyConfigStore:
-            def __init__(self) -> None:
-                self.db = DummyDB()
-
-            def get_all(self) -> dict[str, object]:
-                return dict(values)
-
-            def delete(self, key: str) -> bool:
-                deleted.append(key)
-                return values.pop(key, None) is not None
-
-        store = DummyConfigStore()
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-        low_candidates = default_candidates_for_profile(FeatureProfile.LOW)
-        mid_candidates = default_candidates_for_profile(FeatureProfile.MID)
-        high_candidates = default_candidates_for_profile(FeatureProfile.HIGH)
-
-        assert store.db.params == ("defaults", "one-off-0.5.0-migration")
-        assert deleted == expected_deleted
-        assert candidate_labels(config.digest.candidates) == low_candidates
-        assert candidate_labels(config.memory.kg.candidates) == low_candidates
-        assert candidate_labels(config.tool_summarizer.candidates) == low_candidates
-        assert candidate_labels(config.import_mcp_server.candidates) == low_candidates
-        assert candidate_labels(config.skill_description.candidates) == low_candidates
-        assert candidate_labels(config.code_index.symbol_summary.candidates) == low_candidates
-        assert candidate_labels(config.memory.dream.candidates) == mid_candidates
-        assert candidate_labels(config.recommend_tools.candidates) == mid_candidates
-        assert candidate_labels(config.merge_resolution.candidates) == mid_candidates
-        assert candidate_labels(config.gobby_tasks.validation.candidates) == mid_candidates
-        assert candidate_labels(config.chat.candidates) == high_candidates
-        assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
-        assert candidate_labels(config.gobby_tasks.expansion.candidates) == high_candidates
-
-    def test_load_config_migrates_code_index_symbol_summary_rows(self, temp_dir: Path) -> None:
-        """Old persisted code-index summary rows are copied to symbol_summary and deleted."""
-
-        values: dict[str, object] = {
-            "code_index.summary_enabled": False,
-            "code_index.summary_batch_size": 7,
-            "code_index.summary_profile": "feature_mid",
-            "code_index.summary_candidates": ["claude/sonnet"],
-            "code_index.summary_max_concurrency": 3,
-        }
-        writes: dict[str, object] = {}
-        deleted: list[str] = []
-
-        class DummyConfigStore:
-            db = None
-
-            def get_all(self) -> dict[str, object]:
-                return dict(values)
-
-            def set(self, key: str, value: object, source: str = "user") -> None:
-                writes[key] = value
-                values[key] = value
-
-            def delete(self, key: str) -> bool:
-                deleted.append(key)
-                return values.pop(key, None) is not None
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=DummyConfigStore(),
-        )
-
-        assert config.code_index.symbol_summary.enabled is False
-        assert config.code_index.symbol_summary.batch_size == 7
-        assert config.code_index.symbol_summary.profile == FeatureProfile.MID
-        assert candidate_labels(config.code_index.symbol_summary.candidates) == ("claude/sonnet",)
-        assert config.code_index.symbol_summary.max_concurrency == 3
-        assert writes == {
-            "code_index.symbol_summary.enabled": False,
-            "code_index.symbol_summary.batch_size": 7,
-            "code_index.symbol_summary.profile": "feature_mid",
-            "code_index.symbol_summary.candidates": ["claude/sonnet"],
-            "code_index.symbol_summary.max_concurrency": 3,
-        }
-        assert deleted == [
-            "code_index.summary_batch_size",
-            "code_index.summary_candidates",
-            "code_index.summary_enabled",
-            "code_index.summary_max_concurrency",
-            "code_index.summary_profile",
-        ]
-
     def test_load_config_preserves_user_and_non_legacy_feature_candidates(
         self, temp_dir: Path
     ) -> None:
@@ -1247,43 +1096,6 @@ class TestLoadConfig:
         assert config.embeddings.api_base == "http://localhost:9999/v1"
         assert config.embeddings.dim == 1024
 
-    def test_legacy_embedding_db_keys_are_ignored(self, temp_dir: Path) -> None:
-        """Old DB embedding keys are no longer honored after the hard cut."""
-
-        class DummyConfigStore:
-            def __init__(self) -> None:
-                self.deleted: list[str] = []
-
-            def get_all(self) -> dict[str, object]:
-                return {
-                    runtime_embedding_key("model"): "legacy-model",
-                    runtime_embedding_key("api_base"): "http://legacy/v1",
-                    runtime_embedding_key("provider"): "ollama",
-                    AI_EMBEDDING_MODEL_KEY: "canonical-model",
-                    AI_EMBEDDING_DIM_KEY: 768,
-                    "ai.embeddings.provider": "lmstudio",
-                }
-
-            def delete(self, key: str) -> bool:
-                self.deleted.append(key)
-                return True
-
-        store = DummyConfigStore()
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-        assert config.embeddings.model == "canonical-model"
-        assert config.embeddings.api_base is None
-        assert sorted(store.deleted) == [
-            "ai.embeddings.provider",
-            runtime_embedding_key("api_base"),
-            runtime_embedding_key("model"),
-            runtime_embedding_key("provider"),
-        ]
-
     def test_legacy_local_generation_db_keys_are_rejected(self, temp_dir: Path) -> None:
         """Old generation endpoint rows fail startup with the replacement path."""
 
@@ -1308,45 +1120,13 @@ class TestLoadConfig:
 
         store = DummyConfigStore()
 
-        with pytest.raises(ValueError, match=r"ai\.generation\.endpoints"):
+        with pytest.raises(ValueError, match="Conflicting scalar and nested config keys"):
             load_config(
                 config_file=str(temp_dir / "bootstrap.yaml"),
                 config_store=store,
             )
 
-        assert sorted(store.deleted) == ["local", "local.model", "local.url"]
-
-    def test_load_config_migrates_defaults_seeded_ui_mode_to_auto(self, temp_dir: Path) -> None:
-        """Only defaults-sourced legacy ui.mode=production rows migrate to auto."""
-
-        class DummyCursor:
-            rowcount = 1
-
-        class DummyDB:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, tuple[object, ...]]] = []
-
-            def execute(self, query: str, params: tuple[object, ...]) -> DummyCursor:
-                self.calls.append((query, params))
-                return DummyCursor()
-
-        class DummyConfigStore:
-            def __init__(self) -> None:
-                self.db = DummyDB()
-
-            def get_all(self) -> dict[str, object]:
-                return {"ui.mode": "production"}
-
-        store = DummyConfigStore()
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-        assert config.ui.mode == "auto"
-        assert store.db.calls
-        assert store.db.calls[0][1][2:] == ("ui.mode", "defaults", '"production"')
+        assert store.deleted == []
 
     def test_load_config_leaves_explicit_ui_mode_production_untouched(self, temp_dir: Path) -> None:
         """Non-defaults ui.mode=production rows remain explicit production."""
@@ -1391,64 +1171,6 @@ class TestLoadConfig:
         assert not hasattr(config, "task_description")
         assert not hasattr(config.gobby_tasks, "enrichment")
 
-    def test_load_config_deletes_removed_validation_rows(self, temp_dir: Path) -> None:
-        """Removed validation settings cannot prevent the daemon from starting."""
-        removed_keys = {
-            "gobby_tasks.validation.build_command",
-            "gobby_tasks.validation.issue_similarity_threshold",
-            "gobby_tasks.validation.max_consecutive_errors",
-            "gobby_tasks.validation.max_retries",
-            "gobby_tasks.validation.recurring_issue_threshold",
-            "gobby_tasks.validation.run_build_first",
-        }
-
-        class DummyConfigStore:
-            def __init__(self) -> None:
-                self.deleted: list[str] = []
-
-            def get_all(self) -> dict[str, object]:
-                return dict.fromkeys(removed_keys, 1)
-
-            def delete(self, key: str) -> bool:
-                self.deleted.append(key)
-                return True
-
-        store = DummyConfigStore()
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-        assert set(store.deleted) == removed_keys
-        assert config.gobby_tasks.validation.enabled is True
-
-    def test_load_config_migrates_legacy_project_wiki_root(self, temp_dir: Path) -> None:
-        """Legacy gobby-wiki project roots load from the sibling wiki vault."""
-        legacy_root = temp_dir / "repo" / "gobby-wiki"
-        dot_gobby_root = temp_dir / "other" / ".gobby" / "wiki"
-        topic_root = temp_dir / "topics" / "research"
-
-        class DummyConfigStore:
-            def get_all(self) -> dict[str, object]:
-                return {
-                    "wiki.roots": [
-                        {"scope": "project", "path": str(legacy_root)},
-                        {"scope": "project", "path": str(dot_gobby_root)},
-                        {"scope": "topic:research", "path": str(topic_root)},
-                    ]
-                }
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=DummyConfigStore(),
-        )
-
-        assert [(root.scope, root.path) for root in config.wiki.roots] == [
-            ("project", temp_dir / "repo" / "wiki"),
-            ("project", dot_gobby_root),
-            ("topic:research", topic_root),
-        ]
-
     def test_load_config_clamps_legacy_cron_interval_from_db(self, temp_dir: Path) -> None:
         """Legacy cron intervals below the scheduler floor do not block startup."""
 
@@ -1480,15 +1202,14 @@ class TestLoadConfig:
                 config_store=DummyConfigStore(),
             )
 
-    def test_load_config_preserves_bootstrap_backend_selection_over_db(
+    def test_load_config_preserves_bootstrap_database_settings_over_db(
         self, temp_dir: Path
     ) -> None:
-        """DB config cannot override bootstrap-level hub backend selection."""
+        """DB config cannot override bootstrap-level database settings."""
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
-            "hub_backend: postgres\n"
             "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
             "postgres_pool:\n"
             "  min_size: 4\n"
@@ -1500,7 +1221,6 @@ class TestLoadConfig:
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
                 return {
-                    "hub_backend": "local",
                     "database_url": None,
                     "postgres_pool.min_size": 99,
                     "postgres_pool.max_size": 100,
@@ -1512,7 +1232,6 @@ class TestLoadConfig:
             resolve_database_url=True,
         )
 
-        assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert not hasattr(config, "postgres_install_mode")
         assert config.postgres_pool.min_size == 4
@@ -1585,7 +1304,7 @@ class TestBootstrapConfig:
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
-        assert d["hub_backend"] == "postgres"
+        assert "hub_backend" not in d
         assert d["database_url"] is None
         assert "postgres_install_mode" not in d
 
@@ -2031,28 +1750,6 @@ class TestCompactHandoffConfig:
         assert config.refresh_timeout_seconds == 45.0
 
 
-class TestContextInjectionConfig:
-    """Tests for ContextInjectionConfig."""
-
-    def test_default_values(self) -> None:
-        """Test default context injection config."""
-        config = ContextInjectionConfig()
-        assert config.enabled is True
-        assert config.default_source == "summary_markdown"
-        assert config.max_file_size == 51200
-        assert config.max_content_size == 51200
-        assert config.max_transcript_messages == 100
-
-    def test_positive_validation(self) -> None:
-        """Test positive value validation."""
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_file_size=0)
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_content_size=-1)
-        with pytest.raises(ValidationError):
-            ContextInjectionConfig(max_transcript_messages=0)
-
-
 class TestToolSummarizerConfig:
     """Tests for ToolSummarizerConfig."""
 
@@ -2234,7 +1931,6 @@ class TestDaemonConfigComposition:
 
         # Session
         assert isinstance(config.compact_handoff, CompactHandoffConfig)
-        assert isinstance(config.context_injection, ContextInjectionConfig)
         assert isinstance(config.session_summary, SessionSummaryConfig)
         assert isinstance(config.session_lifecycle, SessionLifecycleConfig)
         assert isinstance(config.message_tracking, MessageTrackingConfig)
@@ -2275,18 +1971,10 @@ class TestDaemonConfigComposition:
         """Test all getter methods return correct configs."""
         config = DaemonConfig()
 
-        assert config.get_recommend_tools_config() is config.recommend_tools
-        assert config.get_tool_summarizer_config() is config.tool_summarizer
+        assert config.get_tool_result_offload_config() is config.tool_result_offload
         assert config.get_import_mcp_server_config() is config.import_mcp_server
-        assert config.get_mcp_client_proxy_config() is config.mcp_client_proxy
-        assert config.get_memory_config() is config.memory
-        assert config.get_memory_backup_config() is config.memory_backup
         assert config.get_gobby_tasks_config() is config.gobby_tasks
-        assert config.get_metrics_config() is config.metrics
-        assert (
-            config.get_project_verification_synthesis_config()
-            is config.project_verification_synthesis
-        )
+        assert config.get_search_config() is config.search
 
     def test_yaml_round_trip(self, temp_dir: Path) -> None:
         """Test config survives YAML export and reimport."""
@@ -2342,7 +2030,6 @@ class TestAllConfigClassesInstantiate:
             WebSocketSettings(),
             TelemetrySettings(),
             CompactHandoffConfig(),
-            ContextInjectionConfig(),
             SessionSummaryConfig(),
             ToolSummarizerConfig(),
             RecommendToolsConfig(),
@@ -2368,6 +2055,6 @@ class TestAllConfigClassesInstantiate:
             DaemonConfig(),
         ]
 
-        assert len(configs) == 27
+        assert len(configs) == 26
         for config in configs:
             assert config is not None

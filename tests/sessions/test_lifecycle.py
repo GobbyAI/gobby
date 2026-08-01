@@ -140,6 +140,7 @@ class TestSessionLifecycleManager:
         manager.session_manager.expire_empty_sessions.return_value = 4
         manager.session_manager.prune_empty_sessions.return_value = 5
         manager.session_manager.prune_stale_compact_workflow_instances.return_value = 7
+        manager.session_manager.cleanup_expired_session_state.return_value = None
 
         count = await manager._expire_stale_sessions()
 
@@ -153,6 +154,7 @@ class TestSessionLifecycleManager:
         manager.session_manager.prune_stale_compact_workflow_instances.assert_called_once_with(
             retention_hours=24
         )
+        manager.session_manager.cleanup_expired_session_state.assert_called_once_with()
         manager.session_manager.expire_stale_sessions.assert_called_once_with(
             timeout_hours=manager.config.stale_session_timeout_hours
         )

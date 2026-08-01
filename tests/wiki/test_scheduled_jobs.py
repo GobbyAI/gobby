@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -1131,7 +1132,7 @@ def test_upkeep_deadline_hierarchy_has_distinct_grace_windows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_system_research_jobs_are_hard_deleted(
+async def test_system_research_jobs_are_left_untouched(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -1157,17 +1158,13 @@ async def test_system_research_jobs_are_hard_deleted(
             gateway_factory=lambda _scope: RecordingGateway(),
         )
 
-    assert cron_storage.get_job(existing.id) is None
-    remaining = [
-        job
-        for job in cron_storage.list_jobs(project_id=project_id)
-        if job.name.startswith("gobby:wiki-research:")
-    ]
-    assert remaining == []
+    remaining = cron_storage.get_job(existing.id)
+    assert remaining is not None
+    assert remaining.enabled is True
 
 
 @pytest.mark.asyncio
-async def test_query_backed_research_jobs_are_hard_deleted(
+async def test_query_backed_research_jobs_are_left_untouched(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -1196,7 +1193,7 @@ async def test_query_backed_research_jobs_are_hard_deleted(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert cron_storage.get_job(query_job.id) is None
+    assert cron_storage.get_job(query_job.id) is not None
     assert "wiki:research:project:alpha" not in executor.handlers
 
 
@@ -1230,7 +1227,7 @@ async def test_default_wiki_cron_scope_resolves_project_root(
 
 
 @pytest.mark.asyncio
-async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
+async def test_wiki_cron_registration_leaves_bare_uuid_rows_untouched(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -1256,7 +1253,7 @@ async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
         enabled=True,
         is_system=True,
     )
-    cron_storage.create_job(
+    legacy_research = cron_storage.create_job(
         project_id=project_id,
         name=f"gobby:wiki-research:{project_id}",
         description="legacy research",
@@ -1276,13 +1273,12 @@ async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    disabled_refresh = cron_storage.get_job(legacy_refresh.id)
-    assert disabled_refresh is not None
-    assert disabled_refresh.name == f"gobby:wiki-refresh:{project_id}"
-    assert disabled_refresh.enabled is False
-    assert disabled_refresh.next_run_at is None
+    untouched_refresh = cron_storage.get_job(legacy_refresh.id)
+    assert untouched_refresh is not None
+    assert untouched_refresh.name == f"gobby:wiki-refresh:{project_id}"
+    assert untouched_refresh.enabled is True
     assert cron_storage.get_job(canonical_refresh.id) is not None
-    assert cron_storage.get_job_by_name(f"gobby:wiki-research:{project_id}") is None
+    assert cron_storage.get_job(legacy_research.id) is not None
     assert cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}") is None
 
 
@@ -1365,7 +1361,7 @@ async def test_enabled_non_system_row_takeover_recomputes_next_run(
     assert taken_over.schedule_type == "cron"
     assert taken_over.cron_expr == WIKI_RECAP_SCHEDULE_CRON
     assert taken_over.next_run_at is not None
-    recomputed = taken_over.next_run_at.astimezone(UTC)
+    recomputed = taken_over.next_run_at.astimezone(ZoneInfo(taken_over.timezone))
     assert (recomputed.hour, recomputed.minute) == (0, 10)
 
 

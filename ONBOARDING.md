@@ -68,14 +68,21 @@ Top MCP Servers:
    - At least one supported coding CLI, such as Claude Code, Codex, Droid,
      Gemini, or QwenCode
 
-2. Install Gobby from the repo:
+2. Clone, initialize, install, and start Gobby:
 
    ```bash
+   git clone https://github.com/GobbyAI/gobby.git
+   cd gobby
+   uv sync
+   uv run gobby init
    uv run gobby install
+   uv run gobby start --verbose
    ```
 
-   If you are in a git repo that is not yet a Gobby project, the installer can
-   initialize `.gobby/project.json` for you.
+   On a fresh clone, `gobby init` registers the committed project UUID in the
+   local database and builds the initial code index without changing tracked
+   files. Pre-push task and memory snapshots are written under
+   `~/.gobby/backups/<project-uuid>/` and stay outside Git.
 
 3. Verify the daemon:
 

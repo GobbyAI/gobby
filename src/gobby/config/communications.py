@@ -21,8 +21,6 @@ class CommunicationsConfig(BaseModel):
     enabled: bool = False
     webhook_base_url: str = ""
     channel_defaults: ChannelDefaults = Field(default_factory=ChannelDefaults)
-    inbound_enabled: bool = True
-    outbound_enabled: bool = True
     auto_create_sessions: bool = True
 
     @field_validator("webhook_base_url")

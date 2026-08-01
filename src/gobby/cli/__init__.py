@@ -14,10 +14,10 @@ from .communications import comms
 from .cron import cron
 from .daemon import health, restart, start, status, stop
 from .embeddings import embeddings
-from .export_import import export_cmd, import_cmd
 from .extensions import hooks, webhooks
 from .github import github
 from .hub_backup.cli import hub_backup
+from .hub_maintenance import hub_maintenance
 from .init import init
 from .install import install, uninstall
 from .linear import linear
@@ -36,6 +36,7 @@ from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
 from .runtime import CliRuntime
+from .schema import schema
 from .secrets import secrets
 from .service import service
 from .sessions import sessions
@@ -127,15 +128,14 @@ cli.add_command(sync)
 cli.add_command(auth)
 cli.add_command(secrets)
 cli.add_command(service)
-cli.add_command(export_cmd)
-cli.add_command(import_cmd)
-
 cli.add_command(qdrant)
 cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(hub_backup)
+cli.add_command(hub_maintenance)
 cli.add_command(comms)
 cli.add_command(build_command)
 cli.add_command(plan)
 cli.add_command(plans)
+cli.add_command(schema)

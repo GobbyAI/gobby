@@ -544,4 +544,4 @@ class TestApplyPersonaImpl:
         call_args = mock_merge.call_args
         merged_changes = call_args[0][1]
         assert merged_changes["assigned_task_id"] == "#42"
-        assert merged_changes["session_task"] == "#42"
+        assert "session_task" not in merged_changes

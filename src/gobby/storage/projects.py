@@ -302,7 +302,10 @@ class LocalProjectManager:
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                repo_path = EXCLUDED.repo_path,
+                updated_at = EXCLUDED.updated_at
             """,
             (project_id, name, repo_path, now, now),
         )
@@ -311,14 +314,7 @@ class LocalProjectManager:
         if project:
             return project
 
-        project = self.get_by_name(name)
-        if project:
-            return project
-
-        raise RuntimeError(
-            f"Project '{name}' ({project_id}) not found after conflict-safe insert — "
-            "possible database inconsistency"
-        )
+        raise RuntimeError(f"Project '{name}' ({project_id}) not found after ID-targeted upsert")
 
     def list(self, include_deleted: bool = False) -> list[Project]:
         """List all projects. Excludes soft-deleted projects by default."""

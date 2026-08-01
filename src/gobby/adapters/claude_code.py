@@ -68,7 +68,6 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     Phase 2C Migration Complete:
     - Now using HookManager.handle(HookEvent) for all hooks
-    - Legacy execute() path available via set_legacy_mode(True) for rollback
     """
 
     @property

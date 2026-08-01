@@ -25,23 +25,40 @@ DOLLAR_PLACEHOLDER_RE = re.compile(r"\$[1-9][0-9]*\b")
 # legitimate SQL, not a qmark placeholder: a qmark placeholder is never
 # directly followed by a bound %s parameter or a quoted literal.
 JSONB_KEY_EXISTS_RE = re.compile(r"\?(?=\s*(?:%s|'))")
+# ``execute`` is not a database-only method name: WebhookTransport, the Linear
+# GraphQL client, and the AI tool runtime all expose one, so this audit also
+# collects their literal first arguments. A URL's query separator and its
+# percent-encoded octets are not psycopg placeholders, and no real SQL
+# statement binds a parameter inside a ``scheme://host`` run, so scrubbing URLs
+# removes those false positives without narrowing SQL coverage. The run stops
+# at either quote character so a URL inside a quoted SQL literal cannot consume
+# its closing quote.
+_URL_PATTERN = r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"]*"
+_COMMENT_PATTERN = (
+    r"--[^\n]*(?:\n|$)"
+    r"|/\*.*?\*/"
+    r"|\$[A-Za-z_][A-Za-z0-9_]*\$.*?\$[A-Za-z_][A-Za-z0-9_]*\$"
+    r"|\$\$.*?\$\$"
+)
+NON_PLACEHOLDER_RE = re.compile(f"{_COMMENT_PATTERN}|{_URL_PATTERN}", re.DOTALL)
 
 
 def test_db_call_sql_literals_use_psycopg_placeholders() -> None:
-    violations: list[str] = []
-    for path, lineno, sql in _db_call_sql_literals():
-        scrubbed = _scrub_sql(sql)
-        if "?" in scrubbed or DOLLAR_PLACEHOLDER_RE.search(scrubbed):
-            violations.append(f"{path.relative_to(PROJECT_ROOT)}:{lineno}")
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT)}:{lineno}"
+        for path, lineno, sql in _db_call_sql_literals()
+        if _has_foreign_placeholder(sql)
+    ]
 
     assert violations == []
 
 
 def test_db_call_sql_literals_escape_raw_percent_signs() -> None:
-    violations: list[str] = []
-    for path, lineno, sql in _db_call_sql_literals():
-        if RAW_PERCENT_RE.search(_scrub_comments_and_dollar_quotes(sql)):
-            violations.append(f"{path.relative_to(PROJECT_ROOT)}:{lineno}")
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT)}:{lineno}"
+        for path, lineno, sql in _db_call_sql_literals()
+        if _has_unescaped_percent(sql)
+    ]
 
     assert violations == []
 
@@ -60,6 +77,37 @@ def test_dynamic_placeholder_helpers_emit_psycopg_placeholders() -> None:
     assert newer_than_now_expr(object(), "created_at", "%s", "minute") == (
         "created_at >= NOW() - (%s::double precision * INTERVAL '1 minute')"
     )
+
+
+def test_url_scrub_hides_only_urls_and_not_real_placeholder_bugs() -> None:
+    """The URL scrub must clear webhook literals without masking real SQL bugs.
+
+    Both assertions run the same `_has_foreign_placeholder` /
+    `_has_unescaped_percent` predicates the two repo-wide audits use, so a
+    scrub that swallowed genuine violations would fail here first.
+    """
+    webhook_url = "https://user:pass@hooks.example/hook?token=secret&pct=%20#frag"
+
+    assert _has_foreign_placeholder(webhook_url) is False
+    assert _has_unescaped_percent(webhook_url) is False
+
+    embedded = (
+        "UPDATE webhooks SET target = 'https://hooks.example/hook?token=a&pct=%20' "
+        "WHERE id = ? AND ratio > 50%"
+    )
+
+    assert _has_foreign_placeholder(embedded) is True
+    assert _has_unescaped_percent(embedded) is True
+    assert _has_foreign_placeholder("SELECT * FROM tasks WHERE id = $1") is True
+
+
+def _has_foreign_placeholder(sql: str) -> bool:
+    scrubbed = _scrub_sql(sql)
+    return "?" in scrubbed or DOLLAR_PLACEHOLDER_RE.search(scrubbed) is not None
+
+
+def _has_unescaped_percent(sql: str) -> bool:
+    return RAW_PERCENT_RE.search(_scrub_comments_and_dollar_quotes(sql)) is not None
 
 
 def _db_call_sql_literals() -> list[tuple[Path, int, str]]:
@@ -113,12 +161,7 @@ def _scrub_sql(sql: str) -> str:
 
 
 def _scrub_comments_and_dollar_quotes(sql: str) -> str:
-    return re.sub(
-        r"--[^\n]*(?:\n|$)|/\*.*?\*/|\$[A-Za-z_][A-Za-z0-9_]*\$.*?\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$.*?\$\$",
-        " ",
-        sql,
-        flags=re.DOTALL,
-    )
+    return NON_PLACEHOLDER_RE.sub(" ", sql)
 
 
 def _scrub_quoted_strings(sql: str) -> str:

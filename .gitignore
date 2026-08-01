@@ -230,8 +230,6 @@ __marimo__/
 .scripts/
 .gobby/**
 !.gobby/
-!.gobby/tasks.jsonl
-!.gobby/memories.jsonl
 !.gobby/project.json
 !.gobby/project.jsonl
 !.gobby/plans/

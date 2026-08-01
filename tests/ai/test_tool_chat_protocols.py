@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
-from aiohttp import ClientSession
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.client_rpc import handle_incoming_request
@@ -614,8 +614,8 @@ class FakeDroidClient:
         assert isinstance(headers, list)
         authorization = headers[0]
         assert isinstance(authorization, dict)
-        async with ClientSession() as session:
-            response = await session.post(
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
                 self.mcp["url"],
                 headers={authorization["name"]: authorization["value"]},
                 json={
@@ -628,7 +628,7 @@ class FakeDroidClient:
                     },
                 },
             )
-            payload = await response.json()
+            payload = response.json()
         assert isinstance(payload, dict)
         result = payload["result"]
         assert isinstance(result, dict)
@@ -873,18 +873,18 @@ async def test_droid_mcp_server_rejects_missing_bearer_token(tmp_path: Path) -> 
     await server.start()
     try:
         assert server.url is not None
-        async with ClientSession() as session:
-            response = await session.post(
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
                 server.url,
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
             )
-            assert response.status == 401
+            assert response.status_code == 401
     finally:
         await server.stop()
 
 
 @pytest.mark.asyncio
-async def test_droid_mcp_server_closes_socket_when_runner_cleanup_raises(
+async def test_droid_mcp_server_closes_socket_when_server_shutdown_raises(
     tmp_path: Path,
 ) -> None:
     runtime = ToolRuntime(
@@ -902,11 +902,11 @@ async def test_droid_mcp_server_closes_socket_when_runner_cleanup_raises(
     with (
         patch.object(
             type(runner),
-            "cleanup",
+            "shutdown",
             new_callable=AsyncMock,
-            side_effect=RuntimeError("cleanup failed"),
+            side_effect=RuntimeError("shutdown failed"),
         ),
-        pytest.raises(RuntimeError, match="cleanup failed"),
+        pytest.raises(RuntimeError, match="shutdown failed"),
     ):
         await server.stop()
 

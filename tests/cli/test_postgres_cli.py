@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -21,7 +18,8 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
-    assert {"install", "backup", "restore", "status", "activate"} <= set(postgres_group.commands)
+    assert {"install", "backup", "restore", "status"} <= set(postgres_group.commands)
+    assert "activate" not in postgres_group.commands
     assert "uninstall" not in postgres_group.commands
     assert "migrate-from-postgres" not in postgres_group.commands
     assert "deactivate" not in postgres_group.commands
@@ -34,7 +32,6 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
         (["postgres", "status", "--help"], ["--json"]),
         (["postgres", "backup", "--help"], ["--output"]),
         (["postgres", "restore", "--help"], ["--clean", "--yes", "--allow-unverified"]),
-        (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
     ],
 )
 def test_postgres_cli_help_exposes_phase1_options(args: list[str], expected: list[str]) -> None:
@@ -266,7 +263,7 @@ def test_postgres_uninstall_command_is_not_registered(
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
+    _write_postgres_bootstrap(tmp_path)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
@@ -274,208 +271,16 @@ def test_postgres_uninstall_command_is_not_registered(
     assert result.exit_code == 2
     assert "No such command 'uninstall'" in result.output
     bootstrap = _read_bootstrap(tmp_path)
-    assert bootstrap["hub_backend"] == "postgres"
+    assert "hub_backend" not in bootstrap
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert "postgres_install_mode" not in bootstrap
 
 
-def test_postgres_activate_refuses_when_daemon_is_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: True)
-
-    result = CliRunner().invoke(postgres_cli, ["activate"])
-
-    assert result.exit_code != 0
-    assert "Stop the daemon first: gobby stop" in result.output
-
-
-def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
-
-    probe_calls: list[str] = []
-
-    def _probe_pgaudit() -> dict[str, str]:
-        probe_calls.append("probe")
-        return {
-            "audit_file": "/var/log/pgaudit/pgaudit.log",
-            "audit_readback": "LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE",
-            "write_probe": "ok",
-        }
-
-    monkeypatch.setattr(
-        postgres_cli_module,
-        "_probe_pgaudit_or_fail",
-        _probe_pgaudit,
-    )
-
-    result = CliRunner().invoke(postgres_cli, ["activate"])
-
-    assert result.exit_code == 0
-    assert probe_calls == ["probe"]
-    assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
-    assert list(tmp_path.glob("bootstrap.yaml.*.bak"))
-    tickets = list((tmp_path / "migrations").glob("cutover-*.json"))
-    assert len(tickets) == 1
-    payload = json.loads(tickets[0].read_text(encoding="utf-8"))
-    assert payload["mode"] == "docker"
-    assert payload["capture_kind"] == "pgaudit-managed"
-    assert payload["capture_value"] is None
-    assert payload["verification"]["state"] == "ok"
-    assert payload["verification"]["probe_detail"]["audit_file"] == "/var/log/pgaudit/pgaudit.log"
-    assert "AUDIT: SESSION" in payload["verification"]["probe_detail"]["audit_readback"]
-    assert "_path" not in payload
-    assert "PostgreSQL is now the required hub runtime." in result.output
-    assert "docs/runbooks/postgres-rollback.md" in result.output
-    assert "gobby postgres deactivate" not in result.output
-    assert "Validation-window deadline:" in result.output
-
-
-def test_postgres_activate_rejects_deprecated_capture_flags(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
-
-    result = CliRunner().invoke(
-        postgres_cli,
-        ["activate", "--capture-sink", f"pgaudit-file:{tmp_path / 'pgaudit.log'}"],
-    )
-
-    assert result.exit_code != 0
-    assert "Capture flags are not applicable in Docker mode" in result.output
-    assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
-
-
-def test_probe_pgaudit_or_fail_reads_back_docker_audit_log(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-
-    class _FakeConnection:
-        def __init__(self) -> None:
-            self.queries: list[str] = []
-            self.committed = False
-
-        def __enter__(self) -> _FakeConnection:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def execute(self, query: object) -> SimpleNamespace:
-            query_text = str(query)
-            self.queries.append(query_text)
-            if "pg_settings" in query_text:
-                return SimpleNamespace(fetchone=lambda: ("write",))
-            if "UPDATE _pgaudit_probe" in query_text:
-                return SimpleNamespace(fetchone=lambda: ("2026-05-21T00:00:00Z",))
-            raise AssertionError(f"unexpected query: {query}")
-
-        def commit(self) -> None:
-            self.committed = True
-
-    fake_conn = _FakeConnection()
-    commands: list[list[str]] = []
-
-    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        commands.append(cmd)
-        assert cmd[:4] == ["docker", "exec", "gobby-postgres", "sh"]
-        assert "gobby-pgaudit-probe-fixed" in cmd[-1]
-        return subprocess.CompletedProcess(
-            cmd,
-            0,
-            stdout=(
-                "/var/log/pgaudit/pgaudit.log\n"
-                "LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE,TABLE,public._pgaudit_probe,"
-                "/* gobby-pgaudit-probe-fixed */ UPDATE\n"
-            ),
-            stderr="",
-        )
-
-    monkeypatch.setattr(postgres_cli_module, "_postgres_connection", lambda: fake_conn)
-    monkeypatch.setattr(postgres_cli_module, "_extension_present", lambda _conn, _ext: True)
-    monkeypatch.setattr(postgres_cli_module, "_preload_libraries", lambda _conn: ["pgaudit"])
-    monkeypatch.setattr(postgres_cli_module.uuid, "uuid4", lambda: SimpleNamespace(hex="fixed"))
-    monkeypatch.setattr(postgres_cli_module.subprocess, "run", _run)
-
-    result = postgres_cli_module._probe_pgaudit_or_fail()
-
-    assert fake_conn.committed is True
-    assert any(
-        "gobby-pgaudit-probe-fixed" in query and "UPDATE _pgaudit_probe" in query
-        for query in fake_conn.queries
-    )
-    assert commands
-    assert result["audit_file"] == "/var/log/pgaudit/pgaudit.log"
-    assert "gobby-pgaudit-probe-fixed" in result["audit_readback"]
-
-
-def test_docker_pgaudit_log_probe_fails_when_audit_line_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-
-    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no audit line")
-
-    monkeypatch.setattr(postgres_cli_module.subprocess, "run", _run)
-
-    with pytest.raises(click.ClickException, match="pgAudit log readback probe failed"):
-        postgres_cli_module._probe_docker_pgaudit_log_or_fail("missing-token")
-
-
-def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres as postgres_cli_module
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
-    monkeypatch.setattr(
-        postgres_cli_module,
-        "_probe_pgaudit_or_fail",
-        lambda: {"write_probe": "ok"},
-    )
-
-    def _fail_write(_ticket: dict[str, Any]) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(postgres_cli_module, "_write_cutover_ticket", _fail_write)
-
-    result = CliRunner().invoke(postgres_cli, ["activate"])
-
-    assert result.exit_code != 0
-    assert isinstance(result.exception, OSError)
-    assert _read_bootstrap(tmp_path)["hub_backend"] == "postgres"
-
-
-def _write_postgres_bootstrap(
-    home: Path,
-    *,
-    hub_backend: str,
-) -> None:
+def _write_postgres_bootstrap(home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     (home / "bootstrap.yaml").write_text(
         yaml.safe_dump(
             {
-                "hub_backend": hub_backend,
                 "database_url": "postgresql://gobby:secret@example.com/gobby",
             }
         ),
@@ -487,13 +292,3 @@ def _read_bootstrap(home: Path) -> dict[str, Any]:
     data = yaml.safe_load((home / "bootstrap.yaml").read_text(encoding="utf-8"))
     assert isinstance(data, dict)
     return data
-
-
-def _allow_activation(
-    monkeypatch: pytest.MonkeyPatch,
-    postgres_cli_module: Any,
-    *,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)

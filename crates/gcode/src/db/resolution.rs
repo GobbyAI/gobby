@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use gobby_core::ai::effective_config::EffectiveConfigError;
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
@@ -173,22 +173,10 @@ fn resolve_database_url_from_env(
 }
 
 fn resolve_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) -> anyhow::Result<String> {
-    let hub_backend = bootstrap
-        .hub_backend
-        .as_deref()
-        .context("bootstrap.yaml must include `hub_backend: postgres`")?;
-    if hub_backend != "postgres" {
-        bail!(
-            "gcode requires `hub_backend: postgres` in bootstrap.yaml. Current hub_backend is `{}`. Configure the Gobby PostgreSQL hub before running gcode.",
-            hub_backend
-        );
-    }
-
-    if let Some(database_url) = bootstrap.database_url.as_deref() {
-        return Ok(database_url.to_string());
-    }
-
-    bail!("hub_backend=postgres requires `database_url` in bootstrap.yaml")
+    bootstrap
+        .database_url
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("bootstrap.yaml must include `database_url`"))
 }
 
 fn non_empty_trimmed(value: Option<String>) -> Option<String> {
@@ -204,9 +192,8 @@ fn non_empty_trimmed(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn bootstrap(hub_backend: &str, database_url: Option<&str>) -> HubDatabaseBootstrap {
+    fn bootstrap(database_url: Option<&str>) -> HubDatabaseBootstrap {
         HubDatabaseBootstrap {
-            hub_backend: Some(hub_backend.to_string()),
             database_url: database_url.map(str::to_string),
             daemon_url: None,
         }
@@ -268,7 +255,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+            "database_url: postgresql://bootstrap/db\n",
         )
         .expect("write bootstrap");
         std::fs::write(
@@ -294,7 +281,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+            "database_url: postgresql://bootstrap/db\n",
         )
         .expect("write bootstrap");
 
@@ -315,7 +302,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+            "database_url: postgresql://bootstrap/db\n",
         )
         .expect("write bootstrap");
         std::fs::write(
@@ -348,7 +335,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(
             home.path().join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://inline/db\n",
+            "database_url: postgresql://inline/db\n",
         )
         .expect("write bootstrap");
 
@@ -441,56 +428,57 @@ mod tests {
 
     #[test]
     fn postgres_bootstrap_accepts_inline_url() {
-        let resolved = resolve_database_url_from_bootstrap(&bootstrap(
-            "postgres",
-            Some("postgresql://inline/db"),
-        ))
-        .expect("resolve inline url");
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap(Some("postgresql://inline/db")))
+                .expect("resolve inline url");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }
 
     #[test]
-    fn non_postgres_bootstrap_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(&bootstrap("local-file", None))
-            .expect_err("non-postgres backend must fail");
+    fn legacy_hub_backend_is_ignored() {
+        let bootstrap = gobby_core::bootstrap::parse_hub_database_bootstrap(
+            "hub_backend: local-file\ndatabase_url: postgresql://inline/db\n",
+        )
+        .expect("parse bootstrap")
+        .expect("bootstrap data");
 
-        let message = err.to_string();
-        assert!(message.contains("hub_backend: postgres"));
-        assert!(message.contains("local-file"));
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap).expect("resolve legacy bootstrap");
+
+        assert_eq!(resolved, "postgresql://inline/db");
     }
 
     #[test]
-    fn missing_hub_backend_fails_clearly() {
+    fn bootstrap_without_hub_backend_resolves() {
         let bootstrap = gobby_core::bootstrap::parse_hub_database_bootstrap(
             "database_url: postgresql://inline/db\n",
         )
         .expect("parse bootstrap")
         .expect("bootstrap data");
-        let err = resolve_database_url_from_bootstrap(&bootstrap)
-            .expect_err("missing hub_backend must fail");
 
-        assert!(err.to_string().contains("hub_backend: postgres"));
+        let resolved =
+            resolve_database_url_from_bootstrap(&bootstrap).expect("resolve trimmed bootstrap");
+
+        assert_eq!(resolved, "postgresql://inline/db");
     }
 
     #[test]
     fn missing_postgres_dsn_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(&bootstrap("postgres", None))
+        let err = resolve_database_url_from_bootstrap(&bootstrap(None))
             .expect_err("missing dsn must fail");
 
         assert!(err.to_string().contains("database_url"));
     }
 
     #[test]
-    fn parse_bootstrap_database_reads_postgres_fields() {
+    fn parse_bootstrap_database_reads_database_url() {
         let parsed = gobby_core::bootstrap::parse_hub_database_bootstrap(
-            "hub_backend: postgres\n\
-             database_url: postgresql://inline/db\n",
+            "database_url: postgresql://inline/db\n",
         )
         .expect("parse bootstrap")
         .expect("bootstrap data");
 
-        assert_eq!(parsed.hub_backend.as_deref(), Some("postgres"));
         assert_eq!(
             parsed.database_url.as_deref(),
             Some("postgresql://inline/db")

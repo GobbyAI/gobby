@@ -19,8 +19,8 @@ import {
 
 /**
  * Projects & Sessions settings (audit IA section 4). Owns the active-project
- * client preference plus the session-lifecycle, summary, handoff, context,
- * history, tracking, verification-default, and validation-detection config
+ * client preference plus the session-lifecycle, summary, handoff, history,
+ * tracking, verification-default, and validation-detection config
  * groups. Built on the #17108 foundation: the active project is a live
  * client preference threaded through `projectSelection` (App owns and persists
  * it to `ui_settings.selectedProjectId`); everything else flows through the
@@ -47,16 +47,6 @@ const SESSION_LIFECYCLE_PATHS = [
 const COMPACT_HANDOFF_PATHS = [
   'compact_handoff.enabled',
   'compact_handoff.refresh_timeout_seconds',
-]
-
-const CONTEXT_INJECTION_PATHS = [
-  'context_injection.enabled',
-  'context_injection.default_source',
-  'context_injection.max_file_size',
-  'context_injection.max_content_size',
-  'context_injection.max_transcript_messages',
-  'context_injection.truncation_suffix',
-  'context_injection.context_template',
 ]
 
 const CHAT_HISTORY_PATHS = [
@@ -95,7 +85,6 @@ const OWNED_PATHS: readonly string[] = [
   ...SESSION_LIFECYCLE_PATHS,
   ...SESSION_SUMMARY_PATHS,
   ...COMPACT_HANDOFF_PATHS,
-  ...CONTEXT_INJECTION_PATHS,
   ...CHAT_HISTORY_PATHS,
   ...MESSAGE_TRACKING_PATHS,
   ...VERIFICATION_DEFAULTS_PATHS,
@@ -263,62 +252,6 @@ function CompactHandoffGroup({ fields }: { fields: SettingsSectionFields }) {
   )
 }
 
-function ContextInjectionGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Context injection"
-      hint="Context fed to subagents spawned from a session."
-    >
-      <SwitchConfigField
-        fields={fields}
-        path="context_injection.enabled"
-        label="Enable context injection"
-        ariaLabel="Enable context injection"
-      />
-      <TextConfigField
-        fields={fields}
-        path="context_injection.default_source"
-        label="Default context source"
-        ariaLabel="Default context source"
-        placeholder="summary_markdown"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="context_injection.max_file_size"
-        label="Max file size (bytes)"
-        ariaLabel="Max file size (bytes)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="context_injection.max_content_size"
-        label="Max content size (bytes)"
-        ariaLabel="Max content size (bytes)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="context_injection.max_transcript_messages"
-        label="Max transcript messages"
-        ariaLabel="Max transcript messages"
-      />
-      <TextConfigField
-        fields={fields}
-        path="context_injection.truncation_suffix"
-        label="Truncation suffix"
-        ariaLabel="Truncation suffix"
-      />
-      <TextAreaConfigField
-        fields={fields}
-        path="context_injection.context_template"
-        label="Context template"
-        ariaLabel="Context template"
-        placeholder="Leave blank for the default template"
-        nullable
-        rows={4}
-      />
-    </Subsection>
-  )
-}
-
 function ChatHistoryGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
@@ -448,7 +381,6 @@ export function ProjectsSessionsSection() {
           <SessionLifecycleGroup fields={fields} />
           <SessionSummaryGroup fields={fields} />
           <CompactHandoffGroup fields={fields} />
-          <ContextInjectionGroup fields={fields} />
           <ChatHistoryGroup fields={fields} />
           <MessageTrackingGroup fields={fields} />
           <VerificationDefaultsGroup fields={fields} />

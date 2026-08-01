@@ -21,8 +21,9 @@ import pytest
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, DEFAULT_EXTERNAL_MCP_SERVERS
 from gobby.mcp_proxy.client_manager import connections
 from gobby.mcp_proxy.client_manager.secrets import resolve_secrets_in_config
+from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
-from gobby.mcp_proxy.manager import MCPClientManager, truncate_tool_brief
+from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import (
     ConnectionState,
     HealthState,

@@ -173,6 +173,22 @@ class TelemetryMetrics:
             "automation_events_total",
             "Automation state transitions by bounded component and outcome",
         )
+        self._register_counter(
+            "rule_evaluations_total",
+            "Rule evaluations by rule and result",
+        )
+        self._register_histogram(
+            "rule_evaluation_duration_seconds",
+            "Rule evaluation duration in seconds by rule and result",
+        )
+        self._register_counter(
+            "rule_allow_audit_dropped_lines_total",
+            "Rule allow audit lines dropped by bounded reason",
+        )
+        self._register_counter(
+            "rule_allow_audit_write_errors_total",
+            "Rule allow audit line write failures",
+        )
 
         # Daemon health metrics (using ObservableGauges)
         self._meter.create_observable_gauge(

@@ -194,12 +194,13 @@ class TestRuleStats:
         )
 
         stats = event_store.get_rule_stats()
-        assert len(stats) == 2
-
-        rule_a = next(s for s in stats if s["rule_name"] == "rule-a")
-        assert rule_a["eval_count"] == 2
-        assert rule_a["block_count"] == 1
-        assert rule_a["allow_count"] == 1
+        assert stats == [
+            {
+                "rule_name": "rule-a",
+                "block_count": 1,
+                "avg_latency_ms": 2.0,
+            }
+        ]
 
     def test_filter_by_session(self, event_store: MetricsEventStore) -> None:
         event_store.record_event(
@@ -215,9 +216,25 @@ class TestRuleStats:
             result="block",
         )
 
-        stats = event_store.get_rule_stats(session_id=SESSION_ID_3)
-        assert len(stats) == 1
-        assert stats[0]["allow_count"] == 1
+        assert event_store.get_rule_stats(session_id=SESSION_ID_3) == []
+        assert event_store.get_rule_stats(session_id=SESSION_ID_2) == [
+            {
+                "rule_name": "rule-a",
+                "block_count": 1,
+                "avg_latency_ms": None,
+            }
+        ]
+
+    def test_rule_timeseries_excludes_historical_allows(
+        self, event_store: MetricsEventStore
+    ) -> None:
+        event_store.record_event(event_type="rule_eval", name="rule-a", result="allow")
+        event_store.record_event(event_type="rule_eval", name="rule-a", result="block")
+
+        result = event_store.get_timeseries("rule_eval", range_key="24h")
+
+        assert sum(bucket["call_count"] for bucket in result["buckets"]) == 1
+        assert all("allow_count" not in bucket for bucket in result["buckets"])
 
 
 class TestSkillStats:
@@ -658,8 +675,9 @@ class TestMCPTools:
 
         result = await registry.call("get_rule_metrics", {"hours": 1})
         assert result["success"] is True
-        assert result["summary"]["total_evals"] == 2
         assert result["summary"]["total_blocks"] == 1
+        assert "total_evals" not in result["summary"]
+        assert "total_allows" not in result["summary"]
 
     @pytest.mark.asyncio
     async def test_get_skill_metrics(

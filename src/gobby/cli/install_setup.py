@@ -310,7 +310,6 @@ def ensure_daemon_config() -> dict[str, Any]:
     import yaml
 
     defaults = {
-        "hub_backend": "postgres",
         "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
         "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
         "daemon_port": 60887,

@@ -27,7 +27,6 @@ const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HubDatabaseBootstrap {
-    pub hub_backend: Option<String>,
     pub database_url: Option<String>,
     pub daemon_url: Option<String>,
 }
@@ -142,7 +141,6 @@ pub fn parse_hub_database_bootstrap(
     };
 
     Ok(Some(HubDatabaseBootstrap {
-        hub_backend: optional_string_field(map, "hub_backend")?,
         database_url: optional_string_field(map, "database_url")?,
         daemon_url: optional_string_field(map, "daemon_url")?,
     }))
@@ -156,11 +154,7 @@ pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<
 }
 
 pub fn postgres_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) -> Option<String> {
-    if matches!(bootstrap.hub_backend.as_deref(), Some("postgres")) {
-        bootstrap.database_url.clone()
-    } else {
-        None
-    }
+    bootstrap.database_url.clone()
 }
 
 fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Result<Option<String>> {
@@ -340,11 +334,7 @@ mod tests {
     fn postgres_database_url_reads_postgres_url() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
-        fs::write(
-            &path,
-            "hub_backend: postgres\ndatabase_url: postgresql://localhost/gobby\n",
-        )
-        .unwrap();
+        fs::write(&path, "database_url: postgresql://localhost/gobby\n").unwrap();
 
         assert_eq!(
             postgres_database_url_from_bootstrap_file(&path)
@@ -358,11 +348,7 @@ mod tests {
     fn postgres_database_url_trims_url() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
-        fs::write(
-            &path,
-            "hub_backend: postgres\ndatabase_url: '  postgresql://localhost/gobby  '\n",
-        )
-        .unwrap();
+        fs::write(&path, "database_url: '  postgresql://localhost/gobby  '\n").unwrap();
 
         assert_eq!(
             postgres_database_url_from_bootstrap_file(&path)
@@ -378,8 +364,7 @@ mod tests {
         let path = dir.path().join("bootstrap.yaml");
         fs::write(
             &path,
-            "hub_backend: postgres\n\
-             database_url: postgresql://localhost/gobby\n\
+            "database_url: postgresql://localhost/gobby\n\
              daemon_url: '  http://gobby.example.test:62000/  '\n",
         )
         .unwrap();
@@ -393,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn postgres_database_url_ignores_non_postgres_backend() {
+    fn postgres_database_url_ignores_legacy_backend_key() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(
@@ -403,8 +388,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            postgres_database_url_from_bootstrap_file(&path).unwrap(),
-            None
+            postgres_database_url_from_bootstrap_file(&path)
+                .unwrap()
+                .as_deref(),
+            Some("postgresql://localhost/gobby")
         );
     }
 
@@ -412,7 +399,7 @@ mod tests {
     fn postgres_database_url_malformed_yaml_errors() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
-        fs::write(&path, "hub_backend: [").unwrap();
+        fs::write(&path, "database_url: [").unwrap();
 
         assert!(postgres_database_url_from_bootstrap_file(&path).is_err());
     }

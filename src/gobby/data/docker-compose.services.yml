@@ -104,11 +104,6 @@ services:
           audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
           test -n "$$audit_file";
           test "$$(stat -c '%U %a' "$$audit_file")" = "postgres 640";
-          if [ "$$expected_audit_log" = "write" ]; then
-            psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -c 'UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at;';
-            audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
-            tail -n 20 "$$audit_file" | grep -E 'LOG:  AUDIT: SESSION,.*UPDATE';
-          fi
       interval: 5s
       timeout: 3s
       retries: 10

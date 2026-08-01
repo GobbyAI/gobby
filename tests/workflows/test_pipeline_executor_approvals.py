@@ -359,7 +359,7 @@ class TestApprovalGateHandling:
         )
         notifier = WebhookNotifier(base_url="http://127.0.0.1:7778")
         send_webhook = AsyncMock(return_value=MagicMock(success=True))
-        notifier.executor.execute = send_webhook
+        notifier.transport.execute = send_webhook
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,

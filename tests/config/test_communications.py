@@ -43,14 +43,10 @@ def test_communications_config_pydantic():
     config = CommunicationsConfig(
         enabled=True,
         webhook_base_url="https://api.gobby.ai/webhooks",
-        inbound_enabled=False,
-        outbound_enabled=True,
         auto_create_sessions=False,
     )
     assert config.enabled is True
     assert config.webhook_base_url == "https://api.gobby.ai/webhooks"
-    assert config.inbound_enabled is False
-    assert config.outbound_enabled is True
     assert config.auto_create_sessions is False
     assert config.channel_defaults.rate_limit_per_minute == 30  # Default
 
@@ -60,8 +56,6 @@ def test_communications_config_default():
     config = CommunicationsConfig()
     assert config.enabled is False
     assert config.webhook_base_url == ""
-    assert config.inbound_enabled is True
-    assert config.outbound_enabled is True
     assert config.auto_create_sessions is True
     assert isinstance(config.channel_defaults, ChannelDefaults)
     assert config.channel_defaults.rate_limit_per_minute == 30

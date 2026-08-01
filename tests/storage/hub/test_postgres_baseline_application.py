@@ -53,7 +53,6 @@ class _ClassifyConnection:
     [
         (set(), set(), "fresh"),
         ({"gobby_install_ownership"}, set(), "fresh_with_install_infra"),
-        ({"_pgaudit_probe"}, set(), "fresh_with_install_infra"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION}, "already_baselined"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION + 1}, "already_baselined"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION - 1}, "corrupt_partial"),
@@ -62,7 +61,6 @@ class _ClassifyConnection:
         ({"gobby_install_ownership", "tasks"}, set(), "corrupt_partial"),
         (
             {
-                "_pgaudit_probe",
                 "code_indexed_projects",
                 "code_indexed_files",
                 "code_symbols",
@@ -913,8 +911,8 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
             self.autocommit_connection = autocommit_connection
             created_runners.append(self)
 
-        def apply_pending(self) -> None:
-            calls.append("file_migrations")
+        def apply_pending(self, *, fresh_schema: bool = False) -> None:
+            calls.append(f"file_migrations:{fresh_schema}")
 
     created_runners: list[FakeRunner] = []
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
@@ -924,7 +922,7 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
 
     db.apply_migrations()
 
-    assert calls == ["file_migrations"]
+    assert calls == ["file_migrations:True"]
     assert len(created_runners) == 1
     assert created_runners[0].autocommit_connection == db._open_advisory_lock_connection
     assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
@@ -960,8 +958,8 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypa
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 
-        def apply_pending(self) -> None:
-            calls.append("file_migrations")
+        def apply_pending(self, *, fresh_schema: bool = False) -> None:
+            calls.append(f"file_migrations:{fresh_schema}")
 
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
     monkeypatch.setattr(
@@ -978,7 +976,7 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypa
     db = object.__new__(module.PostgresHubDatabase)
     db.apply_migrations()
 
-    assert calls == ["postgres_baseline", "file_migrations"]
+    assert calls == ["postgres_baseline", "file_migrations:True"]
 
 
 def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypatch) -> None:
@@ -990,8 +988,8 @@ def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypat
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 
-        def apply_pending(self) -> None:
-            calls.append("file_migrations")
+        def apply_pending(self, *, fresh_schema: bool = False) -> None:
+            calls.append(f"file_migrations:{fresh_schema}")
 
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
     monkeypatch.setattr(
@@ -1008,4 +1006,4 @@ def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypat
     db = object.__new__(module.PostgresHubDatabase)
     db.apply_migrations()
 
-    assert calls == ["file_migrations"]
+    assert calls == ["file_migrations:False"]

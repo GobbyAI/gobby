@@ -10,6 +10,7 @@ links to the guide that owns that topic.
 | [system-requirements.md](system-requirements.md) | Supported operating systems, runtime prerequisites, and backing services |
 | [configuration.md](configuration.md) | Daemon, project, and environment configuration reference |
 | [ai-configuration.md](ai-configuration.md) | AI capability routing, mixed backends, `--no-ai`, and local model budget |
+| [llm-features.md](llm-features.md) | Provider and model candidate routing for text-generation features |
 | [shared-stack.md](shared-stack.md) | Tailscale shared daemon/PostgreSQL setup, trust boundary, and current remote limitations |
 
 ## Core Workflows
@@ -51,6 +52,7 @@ links to the guide that owns that topic.
 | [codewiki.md](codewiki.md) | Generated codebase docs, degraded graph output, and `gwiki` ingest |
 | [gwiki-user-guide.md](gwiki-user-guide.md) | `gwiki` vault setup, multimodal ingest, hybrid search, research, and maintenance |
 | [ghook-user-guide.md](ghook-user-guide.md) | `ghook` hook dispatch, inbox replay, diagnostics, and troubleshooting |
+| [wiki-research.md](wiki-research.md) | Ad-hoc and scheduled wiki research pipeline operation |
 
 ## Interfaces & Reference
 
@@ -92,6 +94,7 @@ links to the guide that owns that topic.
 | [web-ui.md](web-ui.md) | Web app shell, chat, dashboard, projects, settings, and route/API flow |
 | [providers-and-models.md](providers-and-models.md) | Provider availability, model catalogs, web-chat backends, and local model warmup |
 | [frontend-style-guide.md](frontend-style-guide.md) | Design tokens, component patterns, and web UI styling rules |
+| [one-surface-tab-recipe.md](one-surface-tab-recipe.md) | Activity-panel tab implementation and migration recipe |
 | [voice.md](voice.md) | Local speech-to-text and text-to-speech for web chat voice conversations |
 
 ## Maintainer Guides

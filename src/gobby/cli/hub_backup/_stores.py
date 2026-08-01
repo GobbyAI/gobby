@@ -7,6 +7,8 @@ here proves a backup is restorable, it only makes one.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess  # nosec B404 # fixed docker/pg_dump/redis-cli argv, never shell=True
 import time
 from collections.abc import Sequence
@@ -28,12 +30,15 @@ from gobby.cli.postgres_backup import (
     _raise_for_subprocess_error,
     _sha256_file,
 )
+from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 POSTGRES_DUMP_RELPATH = "postgres/gobby.dump"
 GLOBALS_DUMP_RELPATH = "postgres/globals.sql"
 QDRANT_SNAPSHOT_DIR = "qdrant"
 FALKORDB_DUMP_RELPATH = "falkordb/dump.rdb"
 VOLUME_ARCHIVE_DIR = "volumes"
+ALLOW_AUDIT_ARCHIVE_DIR = "logs"
 
 HUB_VOLUMES: tuple[str, ...] = (
     "gobby_postgres_data",
@@ -152,7 +157,7 @@ def dump_postgres(
 
     dump_path = _prepare_artifact_path(backup_root, POSTGRES_DUMP_RELPATH)
     _capture_stdout(
-        ["docker", "exec", POSTGRES_CONTAINER, "pg_dump", "-U", user, "-d", database, "-Fc"],
+        _postgres_client_command("pg_dump", "-U", user, "-d", database, "-Fc"),
         dump_path,
         action="Docker pg_dump",
         timeout=dump_timeout,
@@ -160,7 +165,7 @@ def dump_postgres(
 
     globals_path = _prepare_artifact_path(backup_root, GLOBALS_DUMP_RELPATH)
     _capture_stdout(
-        ["docker", "exec", POSTGRES_CONTAINER, "pg_dumpall", "-U", user, "--globals-only"],
+        _postgres_client_command("pg_dumpall", "-U", user, "--globals-only"),
         globals_path,
         action="Docker pg_dumpall --globals-only",
         timeout=dump_timeout,
@@ -177,6 +182,13 @@ def dump_postgres(
         "archive_list_checked": True,
     }
     return artifacts, details
+
+
+def _postgres_client_command(client: str, *args: str) -> list[str]:
+    command = ["docker", "exec"]
+    if os.environ.get(MAINTENANCE_EPOCH_ENV):
+        command.extend(["-e", "PGOPTIONS"])
+    return [*command, POSTGRES_CONTAINER, client, *args]
 
 
 def _server_version(database_url: str) -> str:
@@ -424,6 +436,30 @@ def tar_volumes(
         artifacts.append(_artifact_record(f"volume-{volume}", backup_root, relpath))
         archived.append(volume)
     return artifacts, {"volumes": archived}
+
+
+def archive_rule_allow_audit_logs(
+    logs_dir: Path,
+    backup_root: Path,
+) -> list[ArtifactRecord]:
+    """Copy the active allow audit log and numeric rotations into the backup."""
+    if not logs_dir.is_dir():
+        return []
+
+    artifacts: list[ArtifactRecord] = []
+    prefix = f"{RULE_ALLOW_AUDIT_LOG_FILENAME}."
+    for source in sorted(logs_dir.iterdir(), key=lambda path: path.name):
+        is_rotation = source.name.startswith(prefix) and source.name.removeprefix(prefix).isdigit()
+        if source.name != RULE_ALLOW_AUDIT_LOG_FILENAME and not is_rotation:
+            continue
+        if source.is_symlink() or not source.is_file():
+            continue
+        relpath = f"{ALLOW_AUDIT_ARCHIVE_DIR}/{source.name}"
+        destination = _prepare_artifact_path(backup_root, relpath)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o600)
+        artifacts.append(_artifact_record(f"rule_allow_audit:{source.name}", backup_root, relpath))
+    return artifacts
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ decomposition.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from gobby.sessions.status_events import (
     SessionStatusTransition,
@@ -15,11 +16,18 @@ from gobby.sessions.status_events import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS, SYSTEM_SESSION_ID
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionStateCleanupResult:
+    session_variables: int
+    pending_interactions: int
+
 
 _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("sessions", ("parent_session_id",)),
@@ -197,7 +205,10 @@ def expire_orphaned_handoff_sessions(
     return count
 
 
-def prune_stale_compact_workflow_instances(db: HubDatabase, retention_hours: int = 24) -> int:
+def prune_stale_compact_workflow_instances(
+    db: HubDatabase,
+    retention_hours: int = SESSION_REVIVAL_HORIZON_HOURS,
+) -> int:
     """
     Delete workflow instances for compact handoffs that never resumed.
 
@@ -235,6 +246,55 @@ def prune_stale_compact_workflow_instances(db: HubDatabase, retention_hours: int
             retention_hours,
         )
     return count
+
+
+def cleanup_expired_session_state(
+    db: HubDatabase,
+    horizon_hours: int = SESSION_REVIVAL_HORIZON_HOURS,
+) -> SessionStateCleanupResult:
+    """Atomically clear payloads and terminalize interactions past revival."""
+    stale_sql = older_than_now_expr(db, "s.updated_at", "%s", "hour")
+    with db.transaction() as conn:
+        pending_cursor = conn.execute(
+            f"""
+            UPDATE pending_interactions pi
+            SET status = 'expired',
+                decision = 'timeout',
+                resolved_at = CURRENT_TIMESTAMP
+            FROM sessions s
+            WHERE pi.session_id = s.id
+              AND pi.status = 'pending'
+              AND s.status IN ('expired', 'deleted')
+              AND s.id != %s
+              AND {stale_sql}
+            """,  # nosec B608 # cutoff expression is selected by storage dialect.
+            (SYSTEM_SESSION_ID, horizon_hours),
+        )
+        variables_cursor = conn.execute(
+            f"""
+            DELETE FROM session_variables sv
+            USING sessions s
+            WHERE sv.session_id = s.id
+              AND s.status IN ('expired', 'deleted')
+              AND s.id != %s
+              AND {stale_sql}
+            """,  # nosec B608 # cutoff expression is selected by storage dialect.
+            (SYSTEM_SESSION_ID, horizon_hours),
+        )
+
+    result = SessionStateCleanupResult(
+        session_variables=variables_cursor.rowcount or 0,
+        pending_interactions=pending_cursor.rowcount or 0,
+    )
+    if result.session_variables or result.pending_interactions:
+        logger.info(
+            "Cleaned expired session state past %sh revival horizon: "
+            "%s variable rows, %s pending interactions",
+            horizon_hours,
+            result.session_variables,
+            result.pending_interactions,
+        )
+    return result
 
 
 def pause_inactive_active_sessions(

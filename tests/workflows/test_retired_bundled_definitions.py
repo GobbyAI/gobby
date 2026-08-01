@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.hub.protocol import HubDatabase
@@ -16,16 +17,40 @@ from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PIPELINES_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/pipelines"
-AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
+WORKFLOWS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows"
+PIPELINES_DIR = WORKFLOWS_DIR / "pipelines"
+AGENTS_DIR = WORKFLOWS_DIR / "agents"
+RULES_DIR = WORKFLOWS_DIR / "rules"
+PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
 
 RETIRED_PIPELINES = (
     "orchestrator",
     "front-half-orchestrator",
     "dev-orchestrator",
     "delivery-orchestrator",
+    "dev",
+    "merge-clone",
+    "merge-worktree",
+    "nightly-fixes",
+    "qa",
+    "spawn-developer",
+    "spawn-qa",
+    "wiki-research",
 )
-RETIRED_AGENTS = ("developer", "pipeline-worker")
+RETIRED_AGENTS = ("developer", "pipeline-worker", "nightly-linter", "nightly-test-fixer")
+RETIRED_RULES = {
+    "block-and-teach-context7",
+    "block-writes-outside-plan-artifact",
+    "no-destructive-git-interactive",
+    "no-npx",
+    "require-memory-review-before-status",
+}
+MONOLITH_RULES = {
+    "require-decompose-monolith-before-threshold-write",
+    "require-monolith-resolution-before-commit",
+    "require-monolith-resolution-before-task-transition",
+    "require-monolith-resolution-before-turn-end",
+}
 
 
 def test_no_external_conductor_imports_remain() -> None:
@@ -45,11 +70,15 @@ def test_no_external_conductor_imports_remain() -> None:
 def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
     name: str,
 ) -> None:
-    active_path = PIPELINES_DIR / f"{name}.yaml"
-    deprecated_path = PIPELINES_DIR / "deprecated" / f"{name}.yaml"
+    candidates = (
+        WORKFLOWS_DIR / f"{name}.yaml",
+        PIPELINES_DIR / f"{name}.yaml",
+        PIPELINES_DIR / "deprecated" / f"{name}.yaml",
+    )
 
-    assert not active_path.exists(), f"retired pipeline remains active: {active_path}"
-    assert not deprecated_path.exists(), f"retired pipeline tombstone remains: {deprecated_path}"
+    assert not any(path.exists() for path in candidates), (
+        f"retired pipeline remains bundled: {[path for path in candidates if path.exists()]}"
+    )
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
@@ -59,6 +88,39 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
 
     assert not active_path.exists(), f"retired agent remains active: {active_path}"
     assert not deprecated_path.exists(), f"retired agent tombstone remains: {deprecated_path}"
+
+
+def test_retired_rules_are_absent_from_bundled_templates() -> None:
+    bundled_rule_names: set[str] = set()
+    for path in RULES_DIR.rglob("*.yaml"):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("rules"), dict):
+            bundled_rule_names.update(data["rules"])
+
+    assert RETIRED_RULES.isdisjoint(bundled_rule_names)
+
+
+def test_monolith_rule_templates_match_enabled_db_authority() -> None:
+    path = RULES_DIR / "monolith-enforcement/require-same-session-decomposition.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    assert set(data["rules"]) == MONOLITH_RULES
+    assert all(rule["enabled"] is True for rule in data["rules"].values())
+
+
+def test_bundled_agents_have_no_dead_sync_selector() -> None:
+    offenders: list[str] = []
+    for path in AGENTS_DIR.glob("*.yaml"):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        excludes = data.get("workflows", {}).get("rule_selectors", {}).get("exclude", [])
+        if "tag:sync" in excludes:
+            offenders.append(path.name)
+
+    assert offenders == []
+
+
+def test_retired_digest_prompt_is_absent() -> None:
+    assert not (PROMPTS_DIR / "memory/digest_update.md").exists()
 
 
 def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(

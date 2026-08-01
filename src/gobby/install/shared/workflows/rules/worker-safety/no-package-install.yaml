@@ -13,18 +13,6 @@ rules:
         command_pattern: "\\bnpm\\s+(install|i|add)\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
-  no-npx:
-    description: "Block npx for spawned agents."
-    event: before_tool
-    enabled: false
-    priority: 50
-    when: "variables.get('is_spawned_agent')"
-    effects:
-      - type: block
-        tools: [Bash]
-        command_pattern: "\\bnpx\\b"
-        reason: "Running npx is not allowed for agents. Dependencies should be managed by the user."
-
   no-yarn-add:
     description: "Block yarn add for spawned agents."
     event: before_tool

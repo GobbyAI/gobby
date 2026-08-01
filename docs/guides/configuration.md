@@ -583,6 +583,30 @@ toolchain. For Python projects in this repo, use `uv run` commands. Gobby hooks
 read this file through the project context utilities; task expansion also uses
 the verification section when generating validation criteria.
 
+The committed schema contains only repository-portable fields:
+
+| Field | Purpose |
+| --- | --- |
+| `id` | Stable project UUID shared by every clone |
+| `name` | Project display name |
+| `created_at` | Project creation timestamp |
+| `verification` | Named repository verification commands |
+| `validation_detection` | Optional custom validation-command matchers |
+| `hooks` | Repository hook policy |
+
+Commit `.gobby/project.json`. Gobby strips `linear_team_id`,
+`linear_project_id`, `parent_project_id`, and `parent_project_path` whenever it
+updates the file. Linear bindings live in the local `projects` database row.
+Real worktree and clone isolation creates parent markers in those isolated
+checkouts; merge handling removes them from shared project metadata.
+
+Task and memory state are database-owned and must stay untracked.
+`gobby tasks backup` and `gobby memory backup` write machine-local snapshots to
+`~/.gobby/backups/<project-uuid>/tasks.jsonl` and
+`~/.gobby/backups/<project-uuid>/memories.jsonl`. The pre-push hook refreshes
+these snapshots without staging or committing them. Explicit task restore and
+memory restore commands remain available for disaster recovery and migration.
+
 ## Build Defaults
 
 Build defaults are loaded from `~/.gobby/build.yaml`, then

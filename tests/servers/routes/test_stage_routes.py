@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.servers.routes import stages
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -52,6 +53,10 @@ def test_routes_registered(stage_client: TestClient) -> None:
     assert ("/api/tasks/{task_id}/stages", "GET") in routes
     assert ("/api/tasks/{task_id}/stages/{stage_name}", "PATCH") in routes
     assert ("/api/tasks", "GET") in routes
+
+
+def test_stages_module_has_no_zero_route_router_global() -> None:
+    assert not hasattr(stages, "router")
 
 
 def test_patch_start_stage(

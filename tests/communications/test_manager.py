@@ -150,9 +150,8 @@ async def test_start_loads_channels():
 
     assert "test-channel" in manager._adapters
     mock_adapter.initialize.assert_called_once()
-    # start() lists all channels for secret migration and gobby_chat creation,
-    # then loads enabled channels for activation.
-    assert store.list_channels.call_count == 3
+    # start() lists channels for gobby_chat creation, then enabled channels for activation.
+    assert store.list_channels.call_count == 2
     store.list_channels.assert_any_call(enabled_only=False)
     store.list_channels.assert_any_call(enabled_only=True)
 
@@ -1416,45 +1415,10 @@ async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machi
     )
 
 
-async def test_start_migrates_plaintext_webhook_secret_before_verification(
-    temp_db, mock_machine_id: str
-):
-    """Legacy plaintext rows are migrated and resolved for webhook verification."""
-    assert mock_machine_id
-    store = LocalCommunicationsStore(temp_db)
-    legacy = make_channel(
-        name="legacy-slack",
-        channel_type="slack",
-        channel_id="11111111-1111-4111-8111-111111111111",
-        webhook_secret="legacy-plaintext-secret",
-    )
-    store.create_channel(legacy)
-    secret_store = SecretStore(temp_db)
-    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
-    mock_adapter = make_adapter(channel_type="slack")
-    mock_adapter.verify_webhook.side_effect = (
-        lambda _payload, _headers, secret: secret == "legacy-plaintext-secret"
-    )
+def test_plaintext_webhook_secret_migrator_is_removed() -> None:
+    from gobby.communications.lifecycle import AdapterLifecycleOperations
 
-    def adapter_class(channel_type: str):
-        if channel_type == "slack":
-            return MagicMock(return_value=mock_adapter)
-        return None
-
-    with patch("gobby.communications.manager.get_adapter_class", side_effect=adapter_class):
-        await manager.start()
-
-    stored = store.get_channel(legacy.id)
-    assert stored is not None
-    assert stored.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_LEGACY_SLACK"
-    assert secret_store.get("COMMS_SLACK_WEBHOOK_SECRET_LEGACY_SLACK") == "legacy-plaintext-secret"
-
-    messages = await manager.handle_inbound("legacy-slack", b"payload", {"X-Signature": "ok"})
-
-    assert messages == []
-    mock_adapter.verify_webhook.assert_called_once_with(
-        b"payload", {"X-Signature": "ok"}, "legacy-plaintext-secret"
-    )
+    assert not hasattr(AdapterLifecycleOperations, "_migrate_plaintext_webhook_secrets")
 
 
 @pytest.mark.asyncio

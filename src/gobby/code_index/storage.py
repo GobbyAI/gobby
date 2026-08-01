@@ -29,8 +29,8 @@ class CodeIndexStorage(
 ):
     """Storage for code symbols, indexed files, and projects in the runtime hub."""
 
-    def __init__(self, db: HubDatabase | HubDatabase) -> None:
-        """Initialize storage against a legacy DB or HubDatabase seam."""
+    def __init__(self, db: HubDatabase) -> None:
+        """Initialize storage against the runtime hub seam."""
         self.db: HubDatabase = db
 
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine._offload import offload
@@ -406,16 +407,23 @@ class EvaluationMixin:
                         if _is_write_like_event_data(evaluation.event.data):
                             _clear_edit_write_state(evaluation.variables)
 
-            # Record rule evaluation metric
-            if self._event_store:
-                rule_latency = (time.perf_counter() - rule_start) * 1000
+            rule_latency = (time.perf_counter() - rule_start) * 1000
+            rule_result: RuleResult = "block" if rule_blocked else "allow"
+            record_rule_evaluation(
+                rule_name=row.name,
+                result=rule_result,
+                event=evaluation.event.event_type.value,
+                session_id=evaluation.session_id,
+                latency_ms=rule_latency,
+            )
+            if self._event_store and rule_blocked:
                 metric_records.append(
                     MetricsEventRecord(
                         event_type="rule_eval",
                         name=row.name,
                         session_id=evaluation.session_id,
-                        success=not rule_blocked,
-                        result="block" if rule_blocked else "allow",
+                        success=False,
+                        result="block",
                         latency_ms=rule_latency,
                     )
                 )

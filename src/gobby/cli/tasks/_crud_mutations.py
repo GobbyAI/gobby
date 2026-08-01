@@ -144,11 +144,8 @@ def close_task_impl(
     services: CrudServices,
     task_ids: tuple[str, ...],
     reason: str,
-    skip_validation: bool,
-    force: bool,
 ) -> None:
     manager = services.get_task_manager()
-    _ = (skip_validation, force)
 
     expanded_ids = services.parse_task_refs(task_ids)
 

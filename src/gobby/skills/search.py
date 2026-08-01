@@ -106,7 +106,7 @@ class SkillSearch:
     def __init__(
         self,
         *,
-        db: HubDatabase | HubDatabase,
+        db: HubDatabase,
         config: SearchConfig | None = None,
         refit_threshold: int = 10,
         embedding_model: str = "nomic-embed-text",

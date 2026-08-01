@@ -11,7 +11,6 @@ import pytest
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.cli.installers.droid import (
     _MIN_GHOOK_VERSION_FOR_DROID,
-    _cleanup_legacy_droid_hooks_file,
     install_droid,
     uninstall_droid,
 )
@@ -148,7 +147,7 @@ def test_install_droid_creates_backup_when_rewriting_existing_hooks(
 ) -> None:
     hooks_file = droid_env / ".factory" / "hooks.json"
     hooks_file.parent.mkdir(parents=True)
-    hooks_file.write_text(json.dumps({"hooks": {"Other": [{"command": "custom"}]}}))
+    hooks_file.write_text(json.dumps({"Other": [{"command": "custom"}]}))
 
     with patch("gobby.cli.installers.droid.time.time", return_value=1234567890):
         result = install_droid(project_path, mode="global")
@@ -157,43 +156,7 @@ def test_install_droid_creates_backup_when_rewriting_existing_hooks(
     assert (hooks_file.parent / "hooks.json.1234567890.backup").exists()
     flat = _load_json(hooks_file)
     assert "Other" in flat  # preserved non-Gobby entry
-    assert "hooks" not in flat  # unwrapped to flat format
     assert "PreToolUse" in flat  # Gobby hooks added at top level
-
-
-def test_cleanup_legacy_droid_hooks_file_removes_nested_file(
-    temp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
-    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: temp_dir)
-    legacy = temp_dir / ".factory" / "hooks" / "hooks.json"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text("{}", encoding="utf-8")
-
-    _cleanup_legacy_droid_hooks_file()
-
-    assert not legacy.exists()
-
-
-@pytest.mark.parametrize("env_name", ["GOBBY_DROID_HOOKS_FILE", "GOBBY_HOOKS_DIR"])
-def test_cleanup_legacy_droid_hooks_file_honors_overrides(
-    env_name: str,
-    temp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
-    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
-    monkeypatch.setenv(env_name, str(temp_dir / "custom"))
-    monkeypatch.setattr(Path, "home", lambda: temp_dir)
-    legacy = temp_dir / ".factory" / "hooks" / "hooks.json"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text("{}", encoding="utf-8")
-
-    _cleanup_legacy_droid_hooks_file()
-
-    assert legacy.exists()
 
 
 def test_uninstall_droid_removes_only_gobby_entries(
@@ -205,20 +168,18 @@ def test_uninstall_droid_removes_only_gobby_entries(
     hooks_file.write_text(
         json.dumps(
             {
-                "hooks": {
-                    "PreToolUse": [
-                        {"hooks": [{"type": "command", "command": "custom"}]},
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": "ghook --gobby-owned --cli=droid --type=PreToolUse",
-                                }
-                            ]
-                        },
-                    ],
-                    "Custom": [{"hooks": [{"type": "command", "command": "custom"}]}],
-                }
+                "PreToolUse": [
+                    {"hooks": [{"type": "command", "command": "custom"}]},
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=droid --type=PreToolUse",
+                            }
+                        ]
+                    },
+                ],
+                "Custom": [{"hooks": [{"type": "command", "command": "custom"}]}],
             }
         )
     )
@@ -232,7 +193,6 @@ def test_uninstall_droid_removes_only_gobby_entries(
     assert result["success"] is True
     assert result["hooks_removed"] == ["PreToolUse"]
     flat = _load_json(hooks_file)
-    assert "hooks" not in flat  # unwrapped to flat format
     assert flat["PreToolUse"] == [{"hooks": [{"type": "command", "command": "custom"}]}]
     assert "Custom" in flat
     assert set(_load_json(mcp_file)["mcpServers"]) == {"other"}

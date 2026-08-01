@@ -267,30 +267,26 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "top_5": [{"name": r["name"], "calls": r["cnt"]} for r in tool_rows],
             }
 
-            # Rule eval stats
+            # Durable rule history contains blocks only. Allow outcomes are
+            # exposed separately through process telemetry and the audit log.
             rule_rows = await server.run_db(
                 db.fetchall,
-                "SELECT name, COUNT(*) as cnt, "
-                "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
-                "FROM metrics_events WHERE event_type = 'rule_eval'"
+                "SELECT name, COUNT(*) as blocks "
+                "FROM metrics_events WHERE event_type = 'rule_eval' AND result = 'block'"
                 + (" AND created_at >= %s" if since else "")
-                + " GROUP BY name ORDER BY cnt DESC LIMIT 5",
+                + " GROUP BY name ORDER BY blocks DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
             rule_total_row = await server.run_db(
                 db.fetchone,
-                "SELECT COUNT(*) as cnt, "
-                "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
-                "FROM metrics_events WHERE event_type = 'rule_eval'"
+                "SELECT COUNT(*) as blocks "
+                "FROM metrics_events WHERE event_type = 'rule_eval' AND result = 'block'"
                 + (" AND created_at >= %s" if since else ""),
                 (since.isoformat(),) if since else (),
             )
             metrics_stats["rules"] = {
-                "total_evals": (rule_total_row["cnt"] or 0) if rule_total_row else 0,
                 "block_count": (rule_total_row["blocks"] or 0) if rule_total_row else 0,
-                "top_5": [
-                    {"name": r["name"], "evals": r["cnt"], "blocks": r["blocks"]} for r in rule_rows
-                ],
+                "top_5": [{"name": r["name"], "blocks": r["blocks"]} for r in rule_rows],
             }
 
             # Skill stats

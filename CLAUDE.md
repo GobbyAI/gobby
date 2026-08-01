@@ -193,9 +193,6 @@ with self.db.transaction() as conn:
     conn.execute("INSERT INTO tasks (id, title) VALUES (%s, %s)", (task_id, title))
 ```
 
-Legacy SQLite access is limited to one-shot import tooling such as
-`gobby postgres migrate-from-sqlite`.
-
 ## See Also
 
 - `GUIDING_PRINCIPLES.md` - Development philosophy (the 8 principles)

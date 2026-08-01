@@ -1323,30 +1323,16 @@ class TestCloseTaskCommand:
         assert "Cannot close" in result.output
         assert "child tasks still open" in result.output
 
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_close_task_with_force(
+    @pytest.mark.parametrize("removed_option", ["--force", "--skip-validation"])
+    def test_close_task_rejects_removed_options(
         self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
         runner: CliRunner,
-        mock_task: MagicMock,
+        removed_option: str,
     ) -> None:
-        """Test closing a task with --force bypasses child check."""
-        child_task = MagicMock()
-        child_task.id = "gt-child1"
-        _set_task_state(child_task, "ready")
+        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", removed_option])
 
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.close_task.return_value = mock_task
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--force"])
-
-        assert result.exit_code == 0
-        assert "Closed task" in result.output
-        mock_manager.close_task.assert_called_once()
+        assert result.exit_code == 2
+        assert f"No such option '{removed_option}'" in result.output
 
 
 class TestReopenTaskCommand:

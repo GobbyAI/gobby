@@ -1,6 +1,6 @@
 # Gobby Architecture Documentation
 
-> Updated: 2026-06-11 | Version: 0.5.0
+> Updated: 2026-07-31 | Version: 0.5.0
 
 ## Overview
 
@@ -200,4 +200,4 @@ Hook event fired (e.g., before_tool)
 7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-31_

@@ -226,32 +226,11 @@ if [ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != "wiki" ] && [ -n "$PUSH_RE
     done <<< "$PUSH_REFS"
 fi
 
-# Gobby backup — snapshot tasks and memories before push
+# Gobby backup — snapshot tasks and memories outside the repository before push
 # Skip for spawned agents to avoid JSONL contamination in worktrees
 if [ -z "$GOBBY_AGENT_RUN_ID" ] && command -v gobby >/dev/null 2>&1; then
     gobby tasks backup --quiet 2>/dev/null || true
     gobby memory backup --quiet 2>/dev/null || true
-
-    commit_jsonl_files() {
-        set --
-        for f in .gobby/tasks.jsonl .gobby/memories.jsonl; do
-            if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
-                if git add "$f" 2>/dev/null; then
-                    set -- "$@" "$f"
-                fi
-            fi
-        done
-
-        [ "$#" -gt 0 ] || return 1
-        git commit -m "gobby: backup tasks/memories" --no-verify --only -- "$@" \
-            >/dev/null 2>&1
-    }
-
-    if commit_jsonl_files; then
-        BACKUP_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || true)
-        echo "gobby: backup commit $BACKUP_COMMIT was created after push refs were resolved." >&2
-        echo "gobby: run git push again to publish it." >&2
-    fi
 fi
 
 if command -v gobby >/dev/null 2>&1; then

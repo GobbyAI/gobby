@@ -1091,3 +1091,10 @@ def test_build_restart_empty_stage_caps_do_not_count_as_supplied() -> None:
     opts = BuildOptions(isolation_explicit=False, stage_caps=[])
 
     assert _restart_options_were_supplied(opts) is False
+
+
+def test_unregistered_build_command_objects_are_removed() -> None:
+    import gobby.cli.build as build_cli
+
+    assert not hasattr(build_cli, "build_stop_command")
+    assert not hasattr(build_cli, "build_resume_command")

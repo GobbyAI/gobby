@@ -265,6 +265,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
 
     periodic_task_attrs = (
         "_metrics_cleanup_task",
+        "_test_schema_sweep_task",
         "_tool_results_cleanup_task",
         "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
@@ -704,7 +705,10 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
+    from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
+
     await _settle_terminal_delivery_barrier()
+    await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(

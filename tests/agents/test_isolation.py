@@ -173,7 +173,6 @@ class TestEnsureIsolationCodeIndex:
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
         source_home.mkdir()
         (source_home / "machine_id").write_text("machine-id\n")
-        (source_home / ".secret_salt").write_bytes(b"salt")
         kek = source_home / ".secret_kek"
         kek.write_text("kek-key\n")
         kek.chmod(0o600)
@@ -197,7 +196,7 @@ class TestEnsureIsolationCodeIndex:
 
         assert result.runtime_home is not None
         runtime_home = Path(result.runtime_home)
-        for name in ("machine_id", ".secret_salt", ".secret_kek", "models", "services"):
+        for name in ("machine_id", ".secret_kek", "models", "services"):
             linked = runtime_home / name
             assert linked.is_symlink(), f"{name} not linked into runtime home"
             assert linked.resolve() == (source_home / name).resolve()

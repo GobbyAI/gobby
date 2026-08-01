@@ -176,9 +176,9 @@ async def test_kick_fires_when_dispatcher_enabled() -> None:
 
 
 def test_no_task_flag_exposed() -> None:
-    from gobby.cli.build import build_stop_command
+    from gobby.cli.build import build_command
 
-    param_names = {param.name for param in build_stop_command.params}
+    param_names = {param.name for param in build_command.params}
     assert "task" not in param_names
 
 

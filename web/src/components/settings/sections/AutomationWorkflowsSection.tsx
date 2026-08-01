@@ -40,14 +40,8 @@ const EXPANSION_PATHS = [
   'gobby-tasks.expansion.enabled',
   'gobby-tasks.expansion.prompt_path',
   'gobby-tasks.expansion.system_prompt_path',
-  'gobby-tasks.expansion.codebase_research_enabled',
-  'gobby-tasks.expansion.research_model',
-  'gobby-tasks.expansion.research_max_steps',
-  'gobby-tasks.expansion.research_system_prompt',
-  'gobby-tasks.expansion.web_research_enabled',
   'gobby-tasks.expansion.default_strategy',
   'gobby-tasks.expansion.timeout',
-  'gobby-tasks.expansion.research_timeout',
   'gobby-tasks.expansion.pattern_criteria.patterns',
   'gobby-tasks.expansion.pattern_criteria.detection_keywords',
 ]
@@ -227,45 +221,6 @@ function ExpansionGroup({ fields }: { fields: SettingsSectionFields }) {
         path="gobby-tasks.expansion.timeout"
         label="Expansion timeout (seconds)"
         ariaLabel="Expansion timeout (seconds)"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.codebase_research_enabled"
-        label="Codebase research"
-        ariaLabel="Codebase research"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.web_research_enabled"
-        label="Web research"
-        ariaLabel="Web research"
-      />
-      <TextConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.research_model"
-        label="Research model"
-        ariaLabel="Research model"
-        placeholder="claude/haiku"
-        nullable
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.research_max_steps"
-        label="Research max steps"
-        ariaLabel="Research max steps"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.research_timeout"
-        label="Research timeout (seconds)"
-        ariaLabel="Research timeout (seconds)"
-      />
-      <TextAreaConfigField
-        fields={fields}
-        path="gobby-tasks.expansion.research_system_prompt"
-        label="Research system prompt"
-        ariaLabel="Research system prompt"
-        rows={3}
       />
       <ListMapConfigField
         fields={fields}

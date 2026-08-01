@@ -75,7 +75,8 @@ def test_bootstrap_preserves_valid_explicit_scalar_values(tmp_path: Path) -> Non
                 "bind_host": "127.0.0.1",
                 "websocket_port": 61235,
                 "ui_port": 61236,
-                "hub_backend": "postgres",
+                "hub_backend": "legacy-value",
+                "database_path": "/legacy/gobby.db",
                 "database_url": "postgresql://gobby:secret@localhost/gobby",
             }
         ),
@@ -88,3 +89,5 @@ def test_bootstrap_preserves_valid_explicit_scalar_values(tmp_path: Path) -> Non
     assert bootstrap.websocket_port == 61235
     assert bootstrap.ui_port == 61236
     assert bootstrap.database_url == "postgresql://gobby:secret@localhost/gobby"
+    assert "hub_backend" not in bootstrap.to_config_dict()
+    assert "database_path" not in bootstrap.to_config_dict()

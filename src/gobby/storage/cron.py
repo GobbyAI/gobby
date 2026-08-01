@@ -730,33 +730,6 @@ class CronJobStorage(CronRunStorageMixin):
             )
         return cursor.rowcount
 
-    def delete_retired_jobs_by_name_prefix(self, prefix: str) -> int:
-        """Hard-delete cron rows for a retired automation, bypassing system-row
-        protection.
-
-        Reserved for removed-automation cleanup where the executing command no
-        longer exists; callers must only pass prefixes that scope retired job
-        names (e.g. ``gobby:wiki-research:``).
-        """
-        if not prefix:
-            raise ValueError("prefix must not be empty")
-        pattern = _escape_like_prefix(prefix)
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                DELETE FROM cron_runs
-                 WHERE cron_job_id IN (
-                    SELECT id FROM cron_jobs WHERE name LIKE %s ESCAPE '\\'
-                 )
-                """,
-                (pattern,),
-            )
-            cursor = conn.execute(
-                "DELETE FROM cron_jobs WHERE name LIKE %s ESCAPE '\\'",
-                (pattern,),
-            )
-        return cursor.rowcount
-
     def delete_system_jobs_by_project_and_name_prefix(
         self,
         project_id: str,

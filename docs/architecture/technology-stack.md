@@ -1,6 +1,6 @@
 # Gobby Technology Stack
 
-> Updated: 2026-06-11
+> Updated: 2026-07-31
 
 ## Core Technologies
 
@@ -166,4 +166,4 @@ Tailwind, tested with Vitest); see `web/package.json`.
 | **Release** | PyPI trusted publishing |
 | **Code Review** | CodeRabbit AI |
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-31_

@@ -119,34 +119,6 @@ def test_rewrite_fills_droid_placeholder_from_key() -> None:
     )
 
 
-def test_rewrite_replaces_quoted_legacy_hook_script_path() -> None:
-    config = {
-        "hooks": {
-            "SessionStart": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": 'python "C:\\Users\\me\\.gobby\\hooks\\hook.py"',
-                        }
-                    ]
-                },
-            ]
-        }
-    }
-
-    rewrite_hook_template_commands(
-        config,
-        cli_name="claude",
-        hooks_dir=Path("/tmp/hooks"),
-        ghook_bin="/Users/test/.gobby/bin/ghook",
-    )
-
-    assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == (
-        "/Users/test/.gobby/bin/ghook --gobby-owned --cli=claude --type=SessionStart"
-    )
-
-
 def test_rewrite_swaps_ghook_prefix_but_keeps_flags() -> None:
     """Only the executable prefix is rewritten; ``--cli``/``--type`` are preserved."""
     config = {
@@ -195,34 +167,6 @@ def test_rewrite_leaves_foreign_commands_untouched() -> None:
     )
 
     assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "some-user-script --foo"
-
-
-def test_rewrite_ignores_legacy_script_name_substrings() -> None:
-    config = {
-        "hooks": {
-            "SessionStart": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "python /tmp/my_hook.py.bak --flag",
-                        }
-                    ]
-                },
-            ]
-        }
-    }
-
-    rewrite_hook_template_commands(
-        config,
-        cli_name="claude",
-        hooks_dir=Path("/tmp/hooks"),
-        ghook_bin="/Users/test/.gobby/bin/ghook",
-    )
-
-    assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == (
-        "python /tmp/my_hook.py.bak --flag"
-    )
 
 
 def test_gobby_hook_detection_accepts_ghook_marker() -> None:

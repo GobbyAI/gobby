@@ -6,15 +6,19 @@ from types import ModuleType
 
 import click
 
+from gobby import paths
+from gobby.sync.jsonl_io import project_backup_path
+
 
 def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
 
 
 def _default_backup_path(project_ctx: dict[str, object] | None) -> Path:
-    project_path = project_ctx.get("project_path") if project_ctx else None
-    root = Path(str(project_path)).expanduser().resolve() if project_path else Path.cwd().resolve()
-    return root / ".gobby" / "memories.jsonl"
+    project_id = project_ctx.get("id") if project_ctx else None
+    if project_id:
+        return project_backup_path(str(project_id), "memories.jsonl")
+    return paths.get_gobby_home() / "backups" / "memories.jsonl"
 
 
 @click.command("export")
@@ -74,7 +78,7 @@ def export_memories(
     "-o",
     "output_path",
     type=click.Path(),
-    help="Output file path (default: .gobby/memories.jsonl)",
+    help="Output file path (default: ~/.gobby/backups/<project-uuid>/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 @click.pass_context
@@ -86,7 +90,7 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
 
     Examples:
 
-        gobby memory backup                           # Export to .gobby/memories.jsonl
+        gobby memory backup                           # Export to ~/.gobby/backups/<id>/
 
         gobby memory backup -o ~/backups/mem.jsonl   # Export to custom path
     """

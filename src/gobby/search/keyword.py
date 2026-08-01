@@ -75,7 +75,6 @@ class _TableConfig:
 _TABLE_CONFIGS: dict[str, _TableConfig] = {
     "tasks": _TableConfig(
         table="tasks",
-        aliases=("tasks_fts",),
         postgres_columns=("title", "description"),
         filters={
             "project_id": "project_id",
