@@ -7,12 +7,21 @@ pub const AUTHORIZATION_HEADER: &str = "Authorization";
 pub const AGENT_API_TOKEN_ENV: &str = "GOBBY_AGENT_API_TOKEN";
 
 pub fn read_local_cli_token() -> anyhow::Result<String> {
-    // Sandboxed agent runs deny the operator token file; the run-scoped
-    // capability in the environment is their only daemon credential.
+    read_local_cli_token_for(&crate::gobby_home()?)
+}
+
+/// Resolve the daemon credential for an explicit Gobby home.
+///
+/// Sandboxed agent runs deny the operator token file; the run-scoped
+/// capability in the environment is their only daemon credential. Callers that
+/// already know the home must go through here rather than
+/// [`read_local_cli_token_at`], or an agent whose home legitimately carries no
+/// token file sends an unauthenticated request and the daemon answers 401.
+pub fn read_local_cli_token_for(gobby_home: &Path) -> anyhow::Result<String> {
     if let Some(token) = agent_api_token_from_env() {
         return Ok(token);
     }
-    read_local_cli_token_at(&crate::gobby_home()?)
+    read_local_cli_token_at(gobby_home)
 }
 
 fn agent_api_token_from_env() -> Option<String> {
@@ -97,6 +106,29 @@ mod tests {
 
         set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
         set_env("GOBBY_HOME", saved_home.as_deref());
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_capability_preferred_for_an_explicit_home() -> anyhow::Result<()> {
+        // A sandboxed agent's home legitimately carries no token file. Callers
+        // that pass the home explicitly must still honor the run-scoped
+        // capability, or the daemon answers 401 (#19458).
+        let home = tempfile::tempdir()?;
+        let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
+
+        set_env(AGENT_API_TOKEN_ENV, Some(" env-token "));
+        assert_eq!(read_local_cli_token_for(home.path())?, "env-token");
+
+        set_env(AGENT_API_TOKEN_ENV, None);
+        let err = read_local_cli_token_for(home.path()).expect_err("no credential available");
+        assert!(err.to_string().contains("missing local CLI token"));
+
+        std::fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), "file-token\n")?;
+        assert_eq!(read_local_cli_token_for(home.path())?, "file-token");
+
+        set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
         Ok(())
     }
 }

@@ -78,7 +78,7 @@ pub fn daemon_mode_layers_at(
     base_url: &str,
     gobby_home: &Path,
 ) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
-    let token = crate::local_token::read_local_cli_token_at(gobby_home).ok();
+    let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
     let daemon = fetch_daemon_served_config_at(base_url, token.as_deref())?;
     let path = gcore_config_path(gobby_home);
     let routing = match StandaloneConfig::read_raw_at(&path) {
