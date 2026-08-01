@@ -98,12 +98,13 @@ def daemon_tools(mock_mcp_manager, mock_llm_service):
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False
 
-    # Mock config to return mcp_proxy config
+    # Mock config to return mcp_proxy config. aa5d43697 (#19400) dropped the
+    # get_mcp_client_proxy_config passthrough; callers read the field directly.
     mock_config = MagicMock(spec=DaemonConfig)
     mock_proxy_config = MagicMock()
     mock_proxy_config.enabled = True
     mock_proxy_config.tool_timeout = 60.0
-    mock_config.get_mcp_client_proxy_config.return_value = mock_proxy_config
+    mock_config.mcp_client_proxy = mock_proxy_config
 
     # Mock recommend tools config
     mock_rec_tools = MagicMock()
@@ -111,7 +112,6 @@ def daemon_tools(mock_mcp_manager, mock_llm_service):
     mock_rec_tools.provider = "claude"
     mock_rec_tools.prompt = "rec prompt"
     mock_rec_tools.llm_prompt_path = None  # Use default prompt path
-    mock_config.get_recommend_tools_config.return_value = mock_rec_tools
     mock_config.recommend_tools = mock_rec_tools  # Direct property access
 
     tools = GobbyDaemonTools(

@@ -137,8 +137,12 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
     assert stored is not None
     assert stored.linear_team_id == "team-1"
     assert stored.linear_project_id == "proj-1"
+    # 04db7fdb8 (#19412) made project.json portable: Linear ids are
+    # workspace-specific, so NONPORTABLE_PROJECT_KEYS strips them on every write
+    # and the hub row is their only home.
     persisted = json.loads((project_root / ".gobby" / "project.json").read_text())
-    assert persisted["linear_project_id"] == "proj-1"
+    assert "linear_project_id" not in persisted
+    assert "linear_team_id" not in persisted
 
     assert any(tool == "list_teams" for tool, _args in linear.calls)
     assert any(tool == "create_project" for tool, _args in linear.calls)
