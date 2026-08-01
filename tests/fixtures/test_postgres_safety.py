@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 from tests.fixtures.postgres import (
     _adapt_seed_rows,
@@ -21,6 +23,24 @@ from tests.fixtures.postgres import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def isolated_postgres_database_url(postgres_database_url: str) -> Iterator[str]:
+    """Create a throwaway database so schema sweeps cannot reach the live hub."""
+    database_name = f"gobby_sweep_test_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    maintenance_url = make_conninfo(postgres_database_url, dbname="postgres")
+    isolated_url = make_conninfo(postgres_database_url, dbname=database_name)
+
+    with psycopg.connect(maintenance_url, autocommit=True) as connection:
+        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    try:
+        yield isolated_url
+    finally:
+        with psycopg.connect(maintenance_url, autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
+            )
 
 
 def test_schema_looks_test_only_accepts_test_schema_name() -> None:
@@ -85,28 +105,31 @@ def test_orphan_cleanup_delegates_to_leased_sweeper(
 ) -> None:
     import tests.fixtures.postgres as postgres_fixture
 
-    sweep = MagicMock(return_value=0)
+    calls: list[tuple[str, int]] = []
+
+    def sweep(url: str, age_hours: int) -> int:
+        calls.append((url, age_hours))
+        return 0
+
     monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
 
     _cleanup_orphaned_schemas("postgresql://test", age_hours=12)
 
-    sweep.assert_called_once_with("postgresql://test", 12)
+    assert calls == [("postgresql://test", 12)]
 
 
 def test_isolated_test_schema_rejects_label_that_breaks_name_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tests.fixtures.postgres as postgres_fixture
+    def unexpected_call(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("invalid worker label reached PostgreSQL setup")
 
-    connect = MagicMock()
-    monkeypatch.setattr(postgres_fixture, "_cleanup_orphaned_schemas", MagicMock())
-    monkeypatch.setattr(postgres_fixture.psycopg, "connect", connect)
+    monkeypatch.setattr("tests.fixtures.postgres._cleanup_orphaned_schemas", unexpected_call)
+    monkeypatch.setattr("tests.fixtures.postgres.psycopg.connect", unexpected_call)
 
     with pytest.raises(ValueError, match="worker label"):
         with isolated_test_schema("postgresql://test", "gw_0"):
             pass
-
-    connect.assert_not_called()
 
 
 def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
@@ -138,7 +161,7 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
     connection.execute.side_effect = execute
     connect = MagicMock(return_value=connection)
     monkeypatch.setattr(postgres_fixture, "_cleanup_orphaned_schemas", MagicMock())
-    monkeypatch.setattr(postgres_fixture.psycopg, "connect", connect)
+    monkeypatch.setattr("tests.fixtures.postgres.psycopg.connect", connect)
 
     with isolated_test_schema("postgresql://test", "master") as schema:
         assert events == ["lease", "create"]
@@ -151,23 +174,37 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
 
 
 @pytest.mark.integration
-def test_held_schema_lease_blocks_orphan_sweep(postgres_database_url: str) -> None:
+def test_orphan_sweep_drops_stale_schema_and_preserves_live_schema(
+    isolated_postgres_database_url: str,
+) -> None:
     from gobby.runner_maintenance import storage_hygiene
 
-    schema = f"gobby_test_0_{os.getpid()}_lease_{uuid.uuid4().hex[:6]}"
-    with psycopg.connect(postgres_database_url, autocommit=True) as live_connection:
-        live_connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
-        live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    stale_schema = f"gobby_test_0_{os.getpid()}_stale_{uuid.uuid4().hex[:6]}"
+    live_schema = f"gobby_test_0_{os.getpid()}_live_{uuid.uuid4().hex[:6]}"
+    with psycopg.connect(isolated_postgres_database_url, autocommit=True) as live_connection:
+        live_connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (live_schema,))
+        live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(stale_schema)))
+        live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(live_schema)))
         try:
-            dropped = storage_hygiene.sweep_orphaned_test_schemas(postgres_database_url)
+            dropped = storage_hygiene.sweep_orphaned_test_schemas(isolated_postgres_database_url)
 
-            assert dropped == 0
+            assert dropped == 1
+            assert (
+                live_connection.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (stale_schema,),
+                ).fetchone()
+                is None
+            )
             assert live_connection.execute(
                 "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-                (schema,),
+                (live_schema,),
             ).fetchone() == (1,)
         finally:
             live_connection.execute(
-                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(stale_schema))
             )
-            live_connection.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
+            live_connection.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(live_schema))
+            )
+            live_connection.execute("SELECT pg_advisory_unlock(hashtext(%s))", (live_schema,))

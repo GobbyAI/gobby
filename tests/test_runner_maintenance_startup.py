@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -18,6 +18,9 @@ from gobby.runner_maintenance_recurring import (
     metrics_archive_loop,
     metrics_cleanup_loop,
 )
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 _DAY_SECONDS = 24 * 60 * 60
 _TEST_STARTUP_DELAY_SECONDS = 10.0
@@ -118,8 +121,11 @@ def test_schema_sweep_rechecks_eligibility_under_acquired_lease(
     schema_name: str,
 ) -> None:
     connection, events = _schema_sweep_connection(schema_name, lease_acquired=True)
-    monkeypatch.setattr(storage_hygiene.psycopg, "connect", lambda *_args, **_kwargs: connection)
-    monkeypatch.setattr(storage_hygiene.time, "time", lambda: 100)
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+    monkeypatch.setattr("gobby.runner_maintenance.storage_hygiene.time.time", lambda: 100)
 
     dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
 
@@ -134,7 +140,10 @@ def test_schema_sweep_skips_schema_with_held_lease(
         "gobby_test_0_1_master_abc123",
         lease_acquired=False,
     )
-    monkeypatch.setattr(storage_hygiene.psycopg, "connect", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
+        lambda *_args, **_kwargs: connection,
+    )
 
     dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
 
@@ -147,7 +156,10 @@ def test_schema_sweep_drops_eligible_schema_only_after_recheck(
 ) -> None:
     schema_name = "gobby_test_0_1_master_abc123"
     connection, events = _schema_sweep_connection(schema_name, lease_acquired=True)
-    monkeypatch.setattr(storage_hygiene.psycopg, "connect", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
+        lambda *_args, **_kwargs: connection,
+    )
 
     dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
 
@@ -156,29 +168,51 @@ def test_schema_sweep_drops_eligible_schema_only_after_recheck(
 
 
 @pytest.mark.asyncio
-async def test_periodic_start_schedules_test_schema_startup_sweep() -> None:
+async def test_schema_sweep_loop_rechecks_after_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep = CancelAtInterval()
+    sweep = MagicMock(return_value=0)
+    monkeypatch.setattr(storage_hygiene, "sweep_orphaned_test_schemas", sweep)
+
+    await storage_hygiene.sweep_test_schemas_loop(
+        "postgresql://test",
+        lambda: False,
+        interval_seconds=60,
+        sleep=sleep,
+    )
+
+    assert sweep.call_args_list == [call("postgresql://test"), call("postgresql://test")]
+    assert sleep.requests == [60, 60]
+
+
+@pytest.mark.asyncio
+async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
     database_url = "postgresql://gobby:test@localhost:5432/gobby"
-    calls: list[str | None] = []
+    calls: list[tuple[str | None, Callable[[], bool]]] = []
 
     async def complete_loop(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    async def capture_sweep(url: str | None) -> None:
-        calls.append(url)
+    async def capture_sweep(url: str | None, is_shutdown: Callable[[], bool]) -> None:
+        calls.append((url, is_shutdown))
 
     loops = dict.fromkeys(_default_loops(), complete_loop)
-    loops["sweep_test_schemas_on_startup"] = capture_sweep
-    runner = SimpleNamespace(
-        config=DaemonConfig(database_url=database_url),
-        metrics_manager=object(),
-        metrics_event_store=object(),
-        database=object(),
-        db_executor=None,
-        memory_manager=None,
-        http_server=SimpleNamespace(app=object()),
-        pipeline_execution_manager=None,
-        session_manager=None,
-        _shutdown_requested=False,
+    loops["sweep_test_schemas_loop"] = capture_sweep
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(
+            config=DaemonConfig(database_url=database_url),
+            metrics_manager=object(),
+            metrics_event_store=object(),
+            database=object(),
+            db_executor=None,
+            memory_manager=None,
+            http_server=SimpleNamespace(app=object()),
+            pipeline_execution_manager=None,
+            session_manager=None,
+            _shutdown_requested=False,
+        ),
     )
 
     start_periodic_tasks(runner, tracker=None, **loops)
@@ -186,7 +220,9 @@ async def test_periodic_start_schedules_test_schema_startup_sweep() -> None:
         *(task for task in vars(runner).values() if isinstance(task, asyncio.Task))
     )
 
-    assert calls == [database_url]
+    assert len(calls) == 1
+    assert calls[0][0] == database_url
+    assert calls[0][1]() is False
 
 
 @pytest.mark.asyncio
