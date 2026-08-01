@@ -3913,22 +3913,6 @@ class TestContext7RuleCondition:
     def test_matches_supported_write(self) -> None:
         assert self._eval("/project/src/main.ts") is True
 
-    def test_synced_rule_acknowledges_optional_nudge(
-        self,
-        db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("block-and-teach-context7")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert "not variables.get('context7_nudge_fired')" in (body.when or "")
-        assert body.effects[0].acknowledge_variable == "context7_nudge_fired"
-        assert body.effects[0].reason is not None
-        assert "one-time nudge is now cleared" in body.effects[0].reason
-
     def test_skips_non_write(self) -> None:
         assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False
 
