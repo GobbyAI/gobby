@@ -150,11 +150,15 @@ def test_directive_forms_survive_collapse() -> None:
     inventory = _enabled_actionable_reasons()
     assert inventory
 
+    # A corpus survey: it can only require forms that some enabled bundled rule
+    # actually uses. "set_variable" was dropped when 66dbca284 (#19408) retired
+    # require-memory-review-before-status, the only rule whose block reason
+    # carried a set_variable(...) directive. The collapse logic for it is still
+    # exercised below whenever a reason reintroduces the form.
     forms = {
         "single_line_call_tool": False,
         "multiline_call_tool": False,
         "direct_mcp_tool": False,
-        "set_variable": False,
         "backticked_command": False,
         "alternative_commands": False,
     }

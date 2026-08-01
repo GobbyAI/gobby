@@ -60,6 +60,9 @@ DATABASE_OID = 16401
 STARTING_HEAD = 187
 
 ROW_PROBES = {"tasks": 1204, "sessions": 88}
+# postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, and the
+# rule_allow_audit log archive_rule_allow_audit_logs adds (d41adc20c, #19418).
+NON_VOLUME_ARTIFACTS = 5
 QDRANT_COLLECTION = "gobby_memories"
 QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
 QDRANT_POINTS = 4211
@@ -473,7 +476,7 @@ class TestManifest:
         assert manifest.row_count_probes == ROW_PROBES
         assert manifest.source_identity.pg_system_identifier == SYSTEM_IDENTIFIER
         assert set(manifest.stores) == {"postgres", "qdrant", "falkordb", "volumes"}
-        assert len(manifest.artifacts) == 4 + len(HUB_VOLUMES)
+        assert len(manifest.artifacts) == NON_VOLUME_ARTIFACTS + len(HUB_VOLUMES)
 
     def test_manifest_includes_allow_audit_logs_with_checksums(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
@@ -788,7 +791,7 @@ class TestJsonOutput:
         assert payload["manifest"] == str(backup_root / MANIFEST_NAME)
         assert payload["backup_root"] == str(backup_root)
         assert payload["epoch_id"] is None
-        assert payload["artifacts"] == 4 + len(HUB_VOLUMES)
+        assert payload["artifacts"] == NON_VOLUME_ARTIFACTS + len(HUB_VOLUMES)
         assert sorted(payload["stores"]) == ["falkordb", "postgres", "qdrant", "volumes"]
 
     def test_json_output_never_leaks_the_dsn(
