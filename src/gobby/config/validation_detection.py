@@ -32,7 +32,27 @@ _NON_EXECUTING_VALIDATION_ARGS = [
 ]
 _SELECTOR_VALIDATION_ARGS = ["-k", "-m", "--run", "-run", "--filter"]
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
-_UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "--color", "-p", "-C"]
+# Every entry consumes the token after it, so an option missing here is read as
+# the command and the run goes uncredited. List both forms of a spelling pair;
+# `-C` is uv's `--config-setting`, and `--directory` has no short form.
+_UV_RUN_OPTIONS_WITH_VALUES = [
+    "--cache-dir",
+    "--color",
+    "--config-setting",
+    "--directory",
+    "--env-file",
+    "--extra",
+    "--group",
+    "--package",
+    "--project",
+    "--python",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+    "-C",
+    "-p",
+    "-w",
+]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
 
 

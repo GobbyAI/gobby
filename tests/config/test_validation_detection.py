@@ -131,6 +131,41 @@ def test_builtin_validation_detection_rejects_non_validation_commands(command: s
     assert is_validation_command(command) is False
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        "--directory /tmp/worktree",
+        "--project /tmp/worktree",
+        "--with pytest-cov",
+        "-w pytest-cov",
+        "--with-requirements dev.txt",
+        "--with-editable .",
+        "--extra dev",
+        "--group test",
+        "--package gobby",
+        "--env-file .env",
+        "--python 3.13",
+        "-p 3.13",
+        "--cache-dir /tmp/cache",
+        "--color never",
+        "--config-setting editable_mode=compat",
+        "-C editable_mode=compat",
+        "--directory /tmp/worktree --with pytest-cov",
+    ],
+)
+def test_uv_run_options_with_values_are_stripped_before_the_runner(options: str) -> None:
+    # Each of these consumes its value; an unlisted one is read as the command
+    # and a real test run is silently never credited.
+    match = classify_validation_command(
+        f"GOBBY_TEST_PROTECT=1 uv run {options} pytest tests/x.py -q"
+    )
+
+    assert match is not None
+    assert match.matcher_id == "python-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("pytest", "tests/x.py", "-q")
+
+
 def test_default_wrapper_rules_apply_to_explicit_config() -> None:
     match = classify_validation_command(
         "rust-token-killer -- 'cargo check'", ValidationDetectionConfig()
