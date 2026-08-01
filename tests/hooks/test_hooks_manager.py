@@ -1863,7 +1863,14 @@ class TestHookManagerWebhookDispatch:
                 return httpx.Response(200, json={"decision": decision}, request=request)
 
         created_clients: list[LoopBoundClient] = []
-        with patch("gobby.hooks.webhooks.httpx.AsyncClient", LoopBoundClient):
+        with (
+            patch.object(
+                manager._webhook_dispatcher._transport,
+                "_lookup_addresses",
+                new=AsyncMock(return_value=("93.184.216.34",)),
+            ),
+            patch("gobby.hooks.webhooks.httpx.AsyncClient", LoopBoundClient),
+        ):
             first = manager._dispatch_webhooks_sync(event, blocking_only=True)
             second = manager._dispatch_webhooks_sync(event, blocking_only=True)
 

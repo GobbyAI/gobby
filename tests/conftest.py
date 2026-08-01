@@ -79,6 +79,56 @@ def make_task_validator() -> Callable[..., "TaskValidator"]:
 _GOBBY_LOGGER_NAMES = ("gobby", "gobby.hooks", "gobby.mcp.server", "gobby.mcp.client")
 
 
+def _reset_process_global_state() -> None:
+    """Reset process-owned registries that must not cross test boundaries."""
+    import opentelemetry.metrics._internal as metrics_internal
+    from opentelemetry import trace
+    from opentelemetry.util._once import Once
+
+    from gobby.agents import terminal_delivery
+    from gobby.telemetry import providers as telemetry_providers
+
+    api_tracer_provider = trace._TRACER_PROVIDER
+    api_meter_provider = metrics_internal._METER_PROVIDER
+    owned_tracer_provider = telemetry_providers._OWNED_TRACER_PROVIDER
+    owned_meter_provider = telemetry_providers._OWNED_METER_PROVIDER
+
+    telemetry_providers.shutdown_providers()
+    for api_provider, owned_provider in (
+        (api_tracer_provider, owned_tracer_provider),
+        (api_meter_provider, owned_meter_provider),
+    ):
+        if api_provider is not None and api_provider is not owned_provider:
+            shutdown = getattr(api_provider, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+
+    trace._TRACER_PROVIDER = None
+    trace._TRACER_PROVIDER_SET_ONCE = Once()
+    metrics_internal._METER_PROVIDER = None
+    metrics_internal._METER_PROVIDER_SET_ONCE = Once()
+
+    terminal_delivery.detach_shielded_terminal_deliveries()
+    terminal_delivery.reset_terminal_delivery_offload()
+    terminal_delivery.reopen_terminal_delivery_admission()
+
+
+@pytest.fixture(autouse=True)
+def _restore_process_global_state() -> Generator[None]:
+    """Isolate OpenTelemetry and terminal-delivery state around every test.
+
+    OpenTelemetry provider registration uses process-global one-shot guards.
+    Terminal delivery also owns process-global admission and in-flight task
+    state. Tests that initialize telemetry or patch ``asyncio.create_task`` can
+    otherwise poison every later runner lifecycle in the serial suite.
+    """
+    _reset_process_global_state()
+    try:
+        yield
+    finally:
+        _reset_process_global_state()
+
+
 @pytest.fixture(autouse=True)
 def _restore_gobby_logger_state() -> Generator[None]:
     """Snapshot and restore the gobby logger tree around every test.
