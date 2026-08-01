@@ -1,12 +1,27 @@
-"""Small builders for valid plan-review coverage payloads in focused tests."""
+"""Small builders and doubles for plan-review coverage tests."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from gobby.plans.review_coverage import REVIEW_LANES
+
+
+class StubReviewLearningService:
+    """Record `record()` calls, optionally failing, for review-lesson tests."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[dict[str, Any]] = []
+
+    async def record(self, **kwargs: Any) -> dict[str, object]:
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("recorder unavailable")
+        return {"lesson_id": "lesson-1"}
 
 
 def manifest_digest(entries: Sequence[Mapping[str, object]]) -> str:

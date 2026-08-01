@@ -27,9 +27,8 @@ from tests.storage.tasks._stage_test_helpers import set_stage_state
 async def test_backfill_wire_contract(
     temp_db: HubDatabase,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    durable_lineage_fixture = _create_durable_lineage(temp_db, tmp_path, monkeypatch)
+    durable_lineage_fixture = _create_durable_lineage(temp_db, tmp_path)
     recorder = StubReviewLearningService(fail=True)
     ctx = RegistryContext(
         task_manager=durable_lineage_fixture.manager,

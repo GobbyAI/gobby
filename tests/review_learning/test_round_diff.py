@@ -20,7 +20,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from tests.review_coverage_helpers import coverage_attestation
+from tests.review_coverage_helpers import StubReviewLearningService, coverage_attestation
 
 pytest_plugins = ("tests.storage.test_stage_review_findings",)
 
@@ -310,18 +310,6 @@ class DurableLineage:
     session_id: str
     plan_path: Path
     approval_evidence_id: str
-
-
-class StubReviewLearningService:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.calls: list[dict[str, Any]] = []
-
-    async def record(self, **kwargs: Any) -> dict[str, object]:
-        self.calls.append(kwargs)
-        if self.fail:
-            raise RuntimeError("recorder unavailable")
-        return {"lesson_id": "lesson-1"}
 
 
 def _plan_text(body: str = "Stable requirement.") -> str:
