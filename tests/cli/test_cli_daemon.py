@@ -59,7 +59,7 @@ def _mock_daemon_command_runtime(
 
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.require_database",
-        lambda _runtime: MagicMock(),
+        lambda _runtime, **_kwargs: MagicMock(),
     )
     monkeypatch.setattr(
         "gobby.cli.load_full_config_from_db",
