@@ -41,6 +41,7 @@ def _mock_components(database: object, session_manager: object) -> SimpleNamespa
         webhook_dispatcher=MagicMock(),
         session_manager=session_manager,
         session_coordinator=MagicMock(),
+        session_end_auto_link_worker=MagicMock(),
         health_monitor=MagicMock(),
         event_handlers=MagicMock(),
     )
