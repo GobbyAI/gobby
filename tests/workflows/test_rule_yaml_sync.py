@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.mcp_proxy.tools.workflows._rules import update_rule
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -315,6 +316,88 @@ rules:
         result2 = sync_bundled_rules(db, rules_dir)
         assert result2["synced"] == 0
         assert result2["skipped"] == 1
+
+    def test_enabled_default_flip_updates_unmodified_rule(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+    ) -> None:
+        rule_file = rules_dir / "changing.yaml"
+        rule_file.write_text(
+            """
+rules:
+  mutable-rule:
+    event: before_tool
+    enabled: false
+    effect:
+      type: block
+      reason: "Still disabled by default."
+"""
+        )
+        sync_bundled_rules(db, rules_dir)
+
+        seeded = manager.get_by_name("mutable-rule")
+        assert seeded is not None
+        assert seeded.enabled is False
+        assert seeded.enabled_user_modified is False
+
+        rule_file.write_text(
+            """
+rules:
+  mutable-rule:
+    event: before_tool
+    enabled: true
+    effect:
+      type: block
+      reason: "Now enabled by default."
+"""
+        )
+        result = sync_bundled_rules(db, rules_dir)
+
+        updated = manager.get_by_name("mutable-rule")
+        assert updated is not None
+        assert result["updated"] == 1
+        assert updated.enabled is True
+        assert updated.enabled_user_modified is False
+
+    def test_enabled_default_flip_preserves_explicit_user_disable(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
+    ) -> None:
+        rule_file = rules_dir / "changing.yaml"
+        rule_file.write_text(
+            """
+rules:
+  mutable-rule:
+    event: before_tool
+    enabled: false
+    effect:
+      type: block
+      reason: "Still disabled by default."
+"""
+        )
+        sync_bundled_rules(db, rules_dir)
+
+        response = update_rule(manager, "mutable-rule", enabled=False)
+        assert response["success"] is True
+        explicitly_disabled = manager.get_by_name("mutable-rule")
+        assert explicitly_disabled is not None
+        assert explicitly_disabled.enabled_user_modified is True
+
+        rule_file.write_text(
+            """
+rules:
+  mutable-rule:
+    event: before_tool
+    enabled: true
+    effect:
+      type: block
+      reason: "Now enabled by default."
+"""
+        )
+        sync_bundled_rules(db, rules_dir)
+
+        preserved = manager.get_by_name("mutable-rule")
+        assert preserved is not None
+        assert preserved.enabled is False
+        assert preserved.enabled_user_modified is True
 
     def test_message_only_change_updates_reason_and_preserves_enabled_toggle(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path

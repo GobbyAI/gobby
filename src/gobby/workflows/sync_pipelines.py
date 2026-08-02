@@ -222,7 +222,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                         )
                         if update_fields.pop("source", None) is not None:
                             manager.move_to_global(existing.id)
-                        manager.update(existing.id, **update_fields)
+                        manager.update_from_sync(existing.id, **update_fields)
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -242,7 +242,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                     if update_fields:
                         if update_fields.pop("source", None) is not None:
                             manager.move_to_global(existing.id)
-                        manager.update(existing.id, **update_fields)
+                        manager.update_from_sync(existing.id, **update_fields)
                         result["updated"] += 1
                         continue
 

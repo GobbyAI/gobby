@@ -1433,6 +1433,7 @@ CREATE TABLE workflow_definitions (
     workflow_type TEXT NOT NULL DEFAULT 'workflow',
     version TEXT DEFAULT '1.0',
     enabled BOOLEAN DEFAULT TRUE,
+    enabled_user_modified BOOLEAN NOT NULL DEFAULT FALSE,
     priority INTEGER DEFAULT 100,
     sources JSONB,
     definition_json JSONB NOT NULL,
