@@ -793,7 +793,7 @@ fn remaining_loop_budget_precedes_longer_tool_timeout() {
 fn tool_loop_contract_defaults_and_complete_overrides_resolve() {
     let defaults = ToolLoopLimits::resolve(&mut config_source(&[])).expect("defaults resolve");
     assert_eq!(defaults.max_turns, None);
-    assert_eq!(defaults.max_tool_calls, 24);
+    assert_eq!(defaults.max_tool_calls, 30);
     assert_eq!(defaults.max_bytes_per_tool_result, 16_384);
     assert_eq!(defaults.tool_timeout_seconds, 300);
     assert_eq!(defaults.loop_timeout_seconds, 1_200);

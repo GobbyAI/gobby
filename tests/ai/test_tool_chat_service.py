@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -46,11 +47,12 @@ class _RecordingAdapter:
         self.label = label
         self.bindings: list[CapabilityBinding] = []
         self.requests: list[ToolChatRequest] = []
+        self.result = ToolChatResult(text=f"narrative::{self.label}", tool_use_count=2, turns=1)
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
         self.requests.append(request)
         self.bindings.append(binding)
-        return ToolChatResult(text=f"narrative::{self.label}", tool_use_count=2, turns=1)
+        return self.result
 
 
 def _registry() -> AICapabilityRegistry:
@@ -91,6 +93,8 @@ def _request(**overrides: Any) -> ToolChatRequest:
             prompt="Document the auth module.",
             tool_policy=_POLICY,
             project_path="/repo",
+            caller="gwiki.ask.deep",
+            request_id="019fc08a-1d63-4b23-bbc8-659d56bc4168",
         ),
         **overrides,
     )
@@ -115,6 +119,60 @@ async def test_llm_provider_candidate_dispatches_to_llm_provider_adapter() -> No
     assert result.text == "narrative::llm_provider"
     assert [b.provider for b in llm.bindings] == ["claude"]
     assert openai.bindings == []
+
+
+@pytest.mark.asyncio
+async def test_limit_logs_include_safe_correlation_routing_limits_and_counts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, llm, _openai = _service()
+    llm.result = ToolChatResult(
+        text="bounded narrative",
+        tool_use_count=30,
+        turns=7,
+        tools={"gcode_search": 22, "gcode_outline": 8},
+        stop_reason="max_tool_calls",
+    )
+    caplog.set_level(logging.DEBUG, logger="gobby.ai._tool_chat_service")
+
+    result = await service.chat_result(
+        _request(
+            prompt="SENSITIVE PROMPT",
+            project_path="/private/full/project/path",
+            candidates=("claude/haiku",),
+        )
+    )
+
+    assert result.tool_use_count == 30
+    assert result.turns == 7
+    assert [record.getMessage() for record in caplog.records] == [
+        "tool_chat request started",
+        "tool_chat request completed",
+        "tool_chat terminated by limit",
+    ]
+    record = caplog.records[-1]
+    fields = record.__dict__
+    assert record.levelno == logging.INFO
+    assert fields["caller"] == "gwiki.ask.deep"
+    assert fields["request_id"] == "019fc08a-1d63-4b23-bbc8-659d56bc4168"
+    assert fields["profile"] is None
+    assert fields["requested_provider"] == "claude"
+    assert fields["requested_model"] == "haiku"
+    assert fields["provider"] == "claude"
+    assert fields["model"] == "haiku"
+    assert fields["adapter_style"] == "llm_provider"
+    assert fields["stop_reason"] == "max_tool_calls"
+    assert fields["max_turns"] is None
+    assert fields["max_tool_calls"] == 30
+    assert fields["max_bytes_per_tool_result"] == 16_384
+    assert fields["tool_timeout_seconds"] == 300
+    assert fields["loop_timeout_seconds"] == 1_200
+    assert fields["turns"] == 7
+    assert fields["tool_use_count"] == 30
+    assert fields["tools"] == {"gcode_search": 22, "gcode_outline": 8}
+    logged = repr([record.__dict__ for record in caplog.records])
+    assert "SENSITIVE PROMPT" not in logged
+    assert "/private/full/project/path" not in logged
 
 
 @pytest.mark.asyncio
@@ -207,13 +265,38 @@ async def test_same_path_skips_unavailable_candidate_then_dispatches_by_style() 
 
 
 @pytest.mark.asyncio
-async def test_no_available_candidate_raises_without_fallback() -> None:
+async def test_no_available_candidate_raises_without_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     service, llm, openai = _service()
+    caplog.set_level(logging.INFO, logger="gobby.ai._tool_chat_service")
     with pytest.raises(CapabilityUnavailableError):
-        await service.chat_result(_request(candidates=("codex/gpt-5.6-terra",)))
+        await service.chat_result(
+            _request(
+                prompt="SENSITIVE FAILURE PROMPT",
+                project_path="/private/failure/path",
+                candidates=("codex/gpt-5.6-terra",),
+            )
+        )
     # No adapter was invoked — no silent fallback to another provider/feature.
     assert llm.bindings == []
     assert openai.bindings == []
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "tool_chat capability unavailable"
+    )
+    fields = record.__dict__
+    assert record.levelno == logging.INFO
+    assert fields["caller"] == "gwiki.ask.deep"
+    assert fields["request_id"] == "019fc08a-1d63-4b23-bbc8-659d56bc4168"
+    assert fields["provider"] == "codex"
+    assert fields["model"] == "gpt-5.6-terra"
+    assert fields["stop_reason"] == "capability_unavailable"
+    assert fields["max_tool_calls"] == 30
+    logged = repr(record.__dict__)
+    assert "SENSITIVE FAILURE PROMPT" not in logged
+    assert "/private/failure/path" not in logged
 
 
 class _SlowAdapter:

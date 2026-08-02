@@ -128,6 +128,7 @@ class ToolChatRequest:
     builtins: tuple[BuiltinToolSpec, ...] = ()
     allowed_adapter_styles: tuple[AIAdapterStyle, ...] | None = None
     caller: str | None = None
+    request_id: str | None = None
 
     @property
     def effective_limits(self) -> ToolLoopLimits:

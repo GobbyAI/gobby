@@ -19,6 +19,25 @@ fn daemon_agentic_context(project_id: Option<&str>) -> AiContext {
     }
 }
 
+fn spawn_agentic_response(response: impl Into<String>) -> std::io::Result<(String, RequestHandle)> {
+    let response = response.into();
+    let mut response: Value = serde_json::from_str(&response).expect("valid response fixture");
+    spawn_json_response_from_request(move |raw| {
+        let request = request_body_json(raw);
+        let investigation = response
+            .as_object_mut()
+            .expect("response fixture is an object")
+            .entry("investigation")
+            .or_insert_with(|| json!({}));
+        let investigation = investigation
+            .as_object_mut()
+            .expect("investigation fixture is an object");
+        investigation.insert("caller".to_string(), request["caller"].clone());
+        investigation.insert("request_id".to_string(), request["request_id"].clone());
+        response.to_string()
+    })
+}
+
 /// Points the daemon dial URL at a stub server and stages a local CLI token
 /// under a temp `GOBBY_HOME`, restoring all four env vars on drop. Mirrors the
 /// daemon test harness so `daemon_agentic_chat` is exercised end to end over the
@@ -81,7 +100,7 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     // investigation provenance: a single POST under the local CLI token, no
     // tools/tool_choice/model passthrough, and no per-turn tool-call response.
     let response = r##"{"model":"claude-opus","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"# Architecture\n\nGrounded narrative citing crates/foo/src/lib.rs:12."}}],"investigation":{"tool_use_count":7,"turns":4,"stop_reason":"max_turns","tools":{"Read":5,"Grep":2}},"usage":{"input_tokens":1200,"output_tokens":800,"total_tokens":2000}}"##;
-    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let (api_base, handle) = spawn_agentic_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
     let mut context = daemon_agentic_context(Some("project-7"));
@@ -98,6 +117,7 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     };
     let result = daemon_agentic_chat(
         &context,
+        "test.agentic",
         "feature_high",
         None,
         "/abs/repo",
@@ -115,11 +135,15 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
             && line.contains("Bearer agentic-token")
     }));
     let body = request_body_json(&raw);
+    assert_eq!(body["caller"], "test.agentic");
+    let request_id = body["request_id"].as_str().expect("request UUID string");
+    let request_uuid = uuid::Uuid::parse_str(request_id).expect("request UUID parses");
+    assert_eq!(request_uuid.get_version_num(), 4);
     assert_eq!(body["profile"], "feature_high");
     assert_eq!(body["project_id"], "project-7");
     assert_eq!(body["project_path"], "/abs/repo");
     assert_eq!(body["limits"]["max_turns"], 60);
-    assert_eq!(body["limits"]["max_tool_calls"], 24);
+    assert_eq!(body["limits"]["max_tool_calls"], 30);
     assert_eq!(body["limits"]["max_bytes_per_tool_result"], 16_384);
     assert_eq!(body["limits"]["tool_timeout_seconds"], 300);
     assert_eq!(body["limits"]["loop_timeout_seconds"], 1_200);
@@ -147,6 +171,8 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
         Some("# Architecture\n\nGrounded narrative citing crates/foo/src/lib.rs:12.")
     );
     assert_eq!(result.model.as_deref(), Some("claude-opus"));
+    assert_eq!(result.caller, "test.agentic");
+    assert_eq!(result.request_id, request_id);
     assert_eq!(result.tool_use_count, 7);
     assert_eq!(result.turns, Some(4));
     assert_eq!(result.stop_reason.as_deref(), Some("max_turns"));
@@ -157,9 +183,9 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
 }
 
 #[test]
-fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
+fn daemon_agentic_chat_defaults_missing_optional_investigation_and_omits_unset_fields() {
     let response = r#"{"model":"claude-opus","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"body"}}]}"#;
-    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let (api_base, handle) = spawn_agentic_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
     let context = daemon_agentic_context(None);
@@ -172,6 +198,7 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
     };
     let result = daemon_agentic_chat(
         &context,
+        "test.agentic",
         "feature_high",
         None,
         "/abs/repo",
@@ -205,11 +232,14 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
 fn parse_daemon_agentic_preserves_null_investigation_provenance() {
     let result = parse_daemon_agentic(&json!({
         "investigation": {
+            "caller": "test.agentic",
+            "request_id": "019fc08a-1d63-4b23-bbc8-659d56bc4168",
             "turns": null,
             "stop_reason": null,
             "tool_use_count": null
         }
-    }));
+    }))
+    .expect("correlated investigation parses");
 
     assert_eq!(result.turns, None);
     assert_eq!(result.stop_reason, None);
@@ -228,6 +258,7 @@ fn daemon_agentic_chat_rejects_blank_profile_before_daemon_setup() {
 
     let error = daemon_agentic_chat(
         &context,
+        "test.agentic",
         " \t ",
         None,
         "/repo",
@@ -243,12 +274,39 @@ fn daemon_agentic_chat_rejects_blank_profile_before_daemon_setup() {
 }
 
 #[test]
+fn daemon_agentic_chat_rejects_blank_caller_before_daemon_setup() {
+    let context = daemon_agentic_context(Some("project-1"));
+    let messages = vec![ChatMessage::user("investigate")];
+    let tool_policy = ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: vec!["search".to_string()],
+        allow_mutation: false,
+    };
+
+    let error = daemon_agentic_chat(
+        &context,
+        " \t ",
+        "feature_high",
+        None,
+        "/repo",
+        &tool_policy,
+        &messages,
+        &context.tool_loop_limits,
+        None,
+    )
+    .expect_err("blank caller rejected");
+
+    assert!(matches!(error, AiError::NotConfigured { .. }), "{error}");
+    assert!(error.to_string().contains("caller is required"), "{error}");
+}
+
+#[test]
 fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
     // An explicit candidate chain (--ai-aggregate-candidate) pins the exact
     // provider/model sequence: the body carries `candidates` and omits
     // `profile`, mirroring the one-shot /api/llm/generate precedence.
     let response = r#"{"model":"claude-sonnet","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"pinned narrative"}}]}"#;
-    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let (api_base, handle) = spawn_agentic_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
     let context = daemon_agentic_context(Some("project-7"));
@@ -271,6 +329,7 @@ fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
 
     let result = daemon_agentic_chat(
         &context,
+        "test.agentic",
         "feature_high",
         Some(&candidates),
         "/abs/repo",
@@ -298,7 +357,7 @@ fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
 fn daemon_agentic_chat_empty_candidates_fall_back_to_profile() {
     // An empty chain is "not pinned": the profile is required and forwarded.
     let response = r#"{"model":"m","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"body"}}]}"#;
-    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let (api_base, handle) = spawn_agentic_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
     let context = daemon_agentic_context(None);
@@ -311,6 +370,7 @@ fn daemon_agentic_chat_empty_candidates_fall_back_to_profile() {
 
     daemon_agentic_chat(
         &context,
+        "test.agentic",
         "feature_high",
         Some(&[]),
         "/abs/repo",

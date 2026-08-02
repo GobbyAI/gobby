@@ -13,7 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import UUID4, AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from gobby.ai import (
     AICapability,
@@ -146,12 +146,22 @@ class ChatCompletionsPayload(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     project_path: str = Field(min_length=1)
     tool_policy: ToolPolicyPayload
+    caller: str
+    request_id: UUID4
     profile: str | None = None
     provider: str | None = None
     model: str | None = None
     candidates: tuple[FeatureCandidateInput, ...] = ()
     limits: ToolLoopLimitsPayload | None = None
     reasoning_effort: str | None = None
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        caller = value.strip()
+        if not caller:
+            raise ValueError("caller must not be blank")
+        return caller
 
     @property
     def effective_profile(self) -> str | None:
@@ -298,7 +308,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                         else None
                     ),
                     reasoning_effort=payload.reasoning_effort,
-                    caller="llm-chat-completions-route",
+                    caller=payload.caller,
+                    request_id=str(payload.request_id),
                 )
             )
             response: dict[str, Any] = {
@@ -310,6 +321,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 ],
                 "model": result.model,
                 "investigation": {
+                    "caller": payload.caller,
+                    "request_id": str(payload.request_id),
                     "tool_use_count": result.tool_use_count,
                     "turns": result.turns,
                     "tools": result.tools,

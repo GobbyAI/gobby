@@ -130,6 +130,10 @@ impl ChatTransport for DirectChatTransport<'_> {
 /// so a single-turn passthrough transport would re-prompt forever.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DaemonAgenticResult {
+    /// Stable caller label echoed by the daemon.
+    pub caller: String,
+    /// UUID v4 generated for this request and echoed by the daemon.
+    pub request_id: String,
     /// Final assistant narrative, if the daemon produced any.
     pub content: Option<String>,
     /// Model the daemon selected for its agent.
@@ -174,6 +178,7 @@ pub struct ToolPolicy {
 #[allow(clippy::too_many_arguments)]
 pub fn daemon_agentic_chat(
     context: &AiContext,
+    caller: &str,
     profile: &str,
     candidates: Option<&[FeatureCandidate]>,
     project_path: &str,
@@ -182,6 +187,13 @@ pub fn daemon_agentic_chat(
     limits: &ToolLoopLimits,
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
+    let caller = caller.trim();
+    if caller.is_empty() {
+        return Err(AiError::not_configured(
+            Some(AiCapability::ToolChat.as_str().to_string()),
+            "daemon agentic chat caller is required",
+        ));
+    }
     let profile = profile.trim();
     let candidates = candidates.filter(|candidates| !candidates.is_empty());
     if profile.is_empty() && candidates.is_none() {
@@ -193,7 +205,10 @@ pub fn daemon_agentic_chat(
     let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
+    let request_id = uuid::Uuid::new_v4().to_string();
     let body = build_daemon_agentic_body(
+        caller,
+        &request_id,
         profile,
         candidates,
         context.project_id.as_deref(),
@@ -202,6 +217,10 @@ pub fn daemon_agentic_chat(
         messages,
         limits,
         reasoning_effort,
+    );
+    log::debug!(
+        "daemon agentic request started caller={caller} request_id={request_id} profile={profile} candidates={}",
+        candidates.map_or(0, |items| items.len())
     );
 
     let _permit = context.limiter.acquire();
@@ -215,7 +234,24 @@ pub fn daemon_agentic_chat(
         std::thread::sleep,
     )?;
 
-    Ok(parse_daemon_agentic(&value))
+    let result = parse_daemon_agentic(&value)?;
+    if result.caller != caller || result.request_id != request_id {
+        return Err(AiError::parse_failure(
+            "daemon agentic response correlation does not match request",
+        ));
+    }
+    log::debug!(
+        "daemon agentic request completed caller={} request_id={} model={} stop_reason={} turns={} tool_use_count={}",
+        result.caller,
+        result.request_id,
+        result.model.as_deref().unwrap_or("<unknown>"),
+        result.stop_reason.as_deref().unwrap_or("<unknown>"),
+        result
+            .turns
+            .map_or_else(|| "<unknown>".to_string(), |turns| turns.to_string()),
+        result.tool_use_count,
+    );
+    Ok(result)
 }
 
 /// Build the daemon agentic-chat body: the system+user `messages`, the feature
@@ -228,6 +264,8 @@ pub fn daemon_agentic_chat(
 /// and builds the tools from the policy.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_daemon_agentic_body(
+    caller: &str,
+    request_id: &str,
     profile: &str,
     candidates: Option<&[FeatureCandidate]>,
     project_id: Option<&str>,
@@ -238,6 +276,11 @@ pub(crate) fn build_daemon_agentic_body(
     reasoning_effort: Option<&str>,
 ) -> Value {
     let mut body = Map::new();
+    body.insert("caller".to_string(), Value::String(caller.to_string()));
+    body.insert(
+        "request_id".to_string(),
+        Value::String(request_id.to_string()),
+    );
     let messages: Vec<Value> = messages.iter().map(message_to_json).collect();
     body.insert("messages".to_string(), Value::Array(messages));
     match candidates {
@@ -288,7 +331,7 @@ fn tool_policy_to_json(policy: &ToolPolicy) -> Value {
 /// the provenance — `tool_use_count` defaults to 0 when absent, while `turns` and
 /// `stop_reason` stay `None` so absence is never reported as a count or a verdict.
 /// Token usage reuses the shared chat-completion usage parser.
-pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
+pub(crate) fn parse_daemon_agentic(value: &Value) -> Result<DaemonAgenticResult, AiError> {
     let content = value
         .get("choices")
         .and_then(Value::as_array)
@@ -298,24 +341,41 @@ pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
         .and_then(Value::as_str)
         .filter(|content| !content.is_empty())
         .map(str::to_string);
-    let investigation = value.get("investigation");
+    let investigation = value
+        .get("investigation")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AiError::parse_failure("daemon agentic response missing investigation"))?;
+    let required_text = |key: &str| {
+        investigation
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                AiError::parse_failure(format!(
+                    "daemon agentic response missing investigation.{key}"
+                ))
+            })
+    };
     let count = |key: &str| {
         investigation
-            .and_then(|inv| inv.get(key))
+            .get(key)
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
     };
-    DaemonAgenticResult {
+    Ok(DaemonAgenticResult {
+        caller: required_text("caller")?,
+        request_id: required_text("request_id")?,
         content,
         model: chat_completion_model(value),
         tool_use_count: count("tool_use_count").unwrap_or(0),
         turns: count("turns"),
         stop_reason: investigation
-            .and_then(|inv| inv.get("stop_reason"))
+            .get("stop_reason")
             .and_then(Value::as_str)
             .map(str::to_string),
         usage: chat_completion_usage(value),
-    }
+    })
 }
 
 /// Build the direct-route OpenAI-compatible request body for one completion

@@ -12,6 +12,7 @@ use super::generation_routes::{
 };
 
 const COMMAND: &str = "gwiki upkeep";
+const DAEMON_AGENTIC_CALLER: &str = "gwiki.upkeep";
 
 pub(crate) fn execute(
     selection: ScopeSelection,
@@ -83,6 +84,7 @@ pub(crate) fn execute(
         )
     } else if let Some(mut tool_loop) = resolve_tool_loop_generator(
         ai_selection.route,
+        DAEMON_AGENTIC_CALLER,
         &selection,
         vault_root,
         context.scope.project_root().map(|root| root.to_path_buf()),
@@ -157,4 +159,14 @@ pub(crate) fn execute(
         payload,
         text,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DAEMON_AGENTIC_CALLER;
+
+    #[test]
+    fn daemon_agentic_caller_is_stable() {
+        assert_eq!(DAEMON_AGENTIC_CALLER, "gwiki.upkeep");
+    }
 }

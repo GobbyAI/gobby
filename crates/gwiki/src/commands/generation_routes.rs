@@ -141,6 +141,7 @@ pub(crate) fn resolve_ai_selection(
 /// scopes cannot supply).
 pub(crate) fn resolve_tool_loop_generator(
     route: AiRouting,
+    caller: &'static str,
     scope: &ScopeSelection,
     vault_root: PathBuf,
     project_root: Option<PathBuf>,
@@ -186,6 +187,7 @@ pub(crate) fn resolve_tool_loop_generator(
         run_agentic_generation(
             &context,
             route,
+            caller,
             &profile,
             target.as_ref(),
             project_root.as_deref(),
@@ -244,6 +246,7 @@ pub(crate) fn run_direct_agentic_generation(
 fn run_agentic_generation(
     context: &AiContext,
     route: AiRouting,
+    caller: &str,
     profile: &str,
     target: Option<&DirectGenerationTarget>,
     project_root: Option<&Path>,
@@ -262,6 +265,7 @@ fn run_agentic_generation(
                 .ok_or_else(|| "daemon tool loop requires a project scope root".to_string())?;
             let result = daemon_agentic_chat(
                 context,
+                caller,
                 profile,
                 None,
                 &project_root.display().to_string(),

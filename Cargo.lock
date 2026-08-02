@@ -2127,6 +2127,7 @@ dependencies = [
  "thiserror 2.0.18",
  "ureq",
  "urlencoding",
+ "uuid",
  "yaml_serde",
 ]
 

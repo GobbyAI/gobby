@@ -237,6 +237,37 @@ async def test_openai_loop_stops_at_max_tool_calls(
     assert len(result.trace) == 1
 
 
+@pytest.mark.asyncio
+async def test_openai_loop_default_stops_at_thirty_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run_argv(argv: list[str], **kwargs: Any) -> str:
+        return "RESULT"
+
+    monkeypatch.setattr(tools, "run_argv", fake_run_argv)
+    client = _FakeClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    tool_calls=[
+                        _FakeToolCall("c1", "gcode_search", '{"args": ["a"]}'),
+                        _FakeToolCall("c2", "gcode_outline", '{"args": ["b"]}'),
+                    ]
+                )
+            )
+        ],
+        repeat_last=True,
+    )
+    adapter = OpenAICompatibleToolChatAdapter(client_factory=lambda _binding: client)
+
+    result = await adapter.chat(_request(), _binding())
+
+    assert result.stop_reason == "max_tool_calls"
+    assert result.tool_use_count == 30
+    assert result.turns == 16
+    assert len(result.trace) == 30
+
+
 # --- Family B (llm_provider / Claude Agent SDK) ---
 
 

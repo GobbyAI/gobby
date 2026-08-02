@@ -473,6 +473,8 @@ mod tests {
         stop_reason: Option<&str>,
     ) -> DaemonAgenticResult {
         DaemonAgenticResult {
+            caller: "gcode.codewiki".to_string(),
+            request_id: "019fc08a-1d63-4b23-bbc8-659d56bc4168".to_string(),
             content: content.map(str::to_string),
             model: Some("claude-opus".to_string()),
             tool_use_count,

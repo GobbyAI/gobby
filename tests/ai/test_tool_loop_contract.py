@@ -45,7 +45,7 @@ def test_contract_metadata_and_defaults_are_canonical() -> None:
     assert TOOL_LOOP_CONTRACT_VERSION == contract["version"] == 1
     assert TOOL_LOOP_CONFIG_PREFIX == contract["config_prefix"] == "ai.generation.tool_loop"
     assert DEFAULT_MAX_TURNS is contract["fields"]["max_turns"]["default"] is None
-    assert DEFAULT_MAX_TOOL_CALLS == contract["fields"]["max_tool_calls"]["default"] == 24
+    assert DEFAULT_MAX_TOOL_CALLS == contract["fields"]["max_tool_calls"]["default"] == 30
     assert (
         DEFAULT_MAX_BYTES_PER_TOOL_RESULT
         == contract["fields"]["max_bytes_per_tool_result"]["default"]

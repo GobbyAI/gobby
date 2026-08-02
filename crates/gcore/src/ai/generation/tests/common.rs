@@ -29,7 +29,9 @@ pub(super) use crate::ai_types::{AiError, TokenUsage};
 pub(super) use crate::config::{
     AiRouting, AiTuning, CapabilityBinding, ConfigSource, FeatureCandidate, TEST_ENV_LOCK, ai_keys,
 };
-pub(super) use crate::test_http::spawn_json_response;
+pub(super) use crate::test_http::{
+    RequestHandle, spawn_json_response, spawn_json_response_from_request,
+};
 
 pub(super) fn request_body_json(raw: &str) -> Value {
     let body = raw.split("\r\n\r\n").nth(1).expect("request has a body");

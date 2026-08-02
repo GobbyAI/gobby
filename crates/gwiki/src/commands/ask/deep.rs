@@ -22,6 +22,7 @@ use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{ScopeSelection, WikiError};
 
 const DEEP_DAEMON_TOOLS: [&str; 4] = ["search", "read", "backlinks", "sources"];
+const DAEMON_AGENTIC_CALLER: &str = "gwiki.ask.deep";
 
 struct DeepGenerationResult {
     route: &'static str,
@@ -183,6 +184,7 @@ fn run_daemon(
     let messages = deep_messages(daemon_system(), plan);
     match daemon_agentic_chat(
         context,
+        DAEMON_AGENTIC_CALLER,
         profile,
         None,
         &project_root.display().to_string(),
@@ -486,6 +488,11 @@ mod tests {
     use crate::commands::ask::assembly::ask_output_from_retrieval;
     use crate::commands::ask::evidence::plan_evidence;
     use crate::commands::ask::test_support::retrieval_with_hooks_hit;
+
+    #[test]
+    fn daemon_agentic_caller_is_stable() {
+        assert_eq!(DAEMON_AGENTIC_CALLER, "gwiki.ask.deep");
+    }
 
     fn output() -> crate::output::AskOutput {
         let retrieval = retrieval_with_hooks_hit();

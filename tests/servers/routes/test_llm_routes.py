@@ -1364,6 +1364,52 @@ class _FakeToolChatService:
 
 
 _READONLY_TOOL_POLICY = {"cli": "gcode", "tools": ["search", "outline"]}
+_TOOL_CHAT_CALLER = "gwiki.ask.deep"
+_TOOL_CHAT_REQUEST_ID = "019fc08a-1d63-4b23-bbc8-659d56bc4168"
+
+
+def _valid_tool_chat_payload() -> dict[str, object]:
+    return {
+        "caller": _TOOL_CHAT_CALLER,
+        "request_id": _TOOL_CHAT_REQUEST_ID,
+        "messages": [{"role": "user", "content": "Investigate."}],
+        "project_path": "/repo",
+        "tool_policy": _READONLY_TOOL_POLICY,
+    }
+
+
+@pytest.mark.parametrize("missing_field", ["caller", "request_id"])
+def test_chat_completions_requires_correlation_fields(
+    client: TestClient,
+    missing_field: str,
+) -> None:
+    payload = _valid_tool_chat_payload()
+    payload.pop(missing_field)
+
+    response = client.post("/api/llm/chat/completions", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("caller", "   "),
+        ("request_id", "malformed"),
+        ("request_id", "019fc08a-1d63-1b23-bbc8-659d56bc4168"),
+    ],
+)
+def test_chat_completions_rejects_invalid_correlation_fields(
+    client: TestClient,
+    field: str,
+    value: str,
+) -> None:
+    payload = _valid_tool_chat_payload()
+    payload[field] = value
+
+    response = client.post("/api/llm/chat/completions", json=payload)
+
+    assert response.status_code == 422
 
 
 def _chat_result(**overrides: object) -> ToolChatResult:
@@ -1399,6 +1445,8 @@ def test_chat_completions_returns_openai_shape_with_investigation(
                 {"role": "assistant", "content": "Which auth surface?"},
                 {"role": "user", "content": "The login handler."},
             ],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1417,6 +1465,8 @@ def test_chat_completions_returns_openai_shape_with_investigation(
         ],
         "model": "opus",
         "investigation": {
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "tool_use_count": 33,
             "turns": 39,
             "tools": {"gcode_search": 28, "gcode_outline": 5},
@@ -1441,7 +1491,8 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     # The route sends no provider name; the default profile drives selection.
     assert request.profile == "feature_high"
     assert request.provider is None
-    assert request.caller == "llm-chat-completions-route"
+    assert request.caller == _TOOL_CHAT_CALLER
+    assert request.request_id == _TOOL_CHAT_REQUEST_ID
 
 
 def test_chat_completions_requires_a_tool_policy(client: TestClient) -> None:
@@ -1449,6 +1500,8 @@ def test_chat_completions_requires_a_tool_policy(client: TestClient) -> None:
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
         },
     )
@@ -1476,6 +1529,8 @@ def test_chat_completions_accepts_complete_limits_without_clamping(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Investigate."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
             "limits": {
@@ -1493,7 +1548,7 @@ def test_chat_completions_accepts_complete_limits_without_clamping(
     assert "usage" not in body
     assert "applied_reasoning_effort" not in body
     assert body["choices"][0]["finish_reason"] == "length"
-    assert service.requests[0].limits == ToolLoopLimits(max_turns=500)
+    assert service.requests[0].limits == ToolLoopLimits(max_turns=500, max_tool_calls=24)
 
 
 def test_chat_completions_forwards_explicit_routing(
@@ -1507,6 +1562,8 @@ def test_chat_completions_forwards_explicit_routing(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
             "provider": "endpoint:lm-studio",
@@ -1533,6 +1590,8 @@ def test_chat_completions_rejects_messages_without_user_content(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "system", "content": "Only a system prompt."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1556,6 +1615,8 @@ def test_chat_completions_maps_capability_unavailable_to_400(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1576,6 +1637,8 @@ def test_chat_completions_maps_value_error_to_400(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1596,6 +1659,8 @@ def test_chat_completions_maps_unexpected_error_to_500(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1615,6 +1680,8 @@ def test_chat_completions_returns_503_without_config(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },
@@ -1634,6 +1701,8 @@ def test_chat_completions_returns_503_without_service(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
+            "caller": _TOOL_CHAT_CALLER,
+            "request_id": _TOOL_CHAT_REQUEST_ID,
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
         },

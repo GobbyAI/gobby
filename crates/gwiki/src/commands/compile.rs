@@ -18,6 +18,7 @@ use super::generation_routes::{
 };
 
 const COMMAND: &str = "gwiki compile";
+const DAEMON_AGENTIC_CALLER: &str = "gwiki.compile";
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
@@ -72,6 +73,7 @@ pub(crate) fn execute(
     let project_root = resolved_scope.project_root().map(|root| root.to_path_buf());
     if let Some(mut tool_loop) = resolve_tool_loop_generator(
         ai_selection.route,
+        DAEMON_AGENTIC_CALLER,
         &scope,
         vault_root,
         project_root,
@@ -320,6 +322,11 @@ mod tests {
 
     use crate::paths;
     use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceRecord};
+
+    #[test]
+    fn daemon_agentic_caller_is_stable() {
+        assert_eq!(DAEMON_AGENTIC_CALLER, "gwiki.compile");
+    }
 
     fn manifest_source(id: &str, title: &str) -> SourceRecord {
         SourceRecord {

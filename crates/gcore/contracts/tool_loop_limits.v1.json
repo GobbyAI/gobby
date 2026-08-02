@@ -9,7 +9,7 @@
     },
     "max_tool_calls": {
       "type": "positive_integer",
-      "default": 24
+      "default": 30
     },
     "max_bytes_per_tool_result": {
       "type": "positive_integer",

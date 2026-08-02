@@ -34,6 +34,7 @@ const CODEWIKI_READONLY_GCODE_TOOLS: &[&str] = &[
     "path",
     "blast-radius",
 ];
+const DAEMON_AGENTIC_CALLER: &str = "gcode.codewiki";
 
 fn log_tool_loop_error(ctx: &Context, stage: &str, error: &dyn std::fmt::Display) {
     if !ctx.quiet {
@@ -238,6 +239,7 @@ pub(crate) fn resolve_tool_loop_generator(
                 let tool_policy = codewiki_readonly_tool_policy();
                 match daemon_agentic_chat(
                     &ai_context,
+                    DAEMON_AGENTIC_CALLER,
                     &profile,
                     (!aggregate_candidates.is_empty()).then_some(aggregate_candidates.as_slice()),
                     &project_path,
@@ -302,6 +304,11 @@ pub(crate) fn maybe_generate_tool_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daemon_agentic_caller_is_stable() {
+        assert_eq!(DAEMON_AGENTIC_CALLER, "gcode.codewiki");
+    }
 
     #[test]
     fn bound_seed_prompt_passes_small_prompts_through() {

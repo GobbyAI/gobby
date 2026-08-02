@@ -16,6 +16,27 @@ pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String
     spawn_response(200, "OK", "application/json", body.into())
 }
 
+#[cfg(feature = "ai")]
+pub(crate) fn spawn_json_response_from_request(
+    build_body: impl FnOnce(&str) -> String + Send + 'static,
+) -> io::Result<(String, RequestHandle)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let api_base = format!("http://{}", listener.local_addr()?);
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let request = read_http_request(&mut stream)?;
+        let body = build_body(&request);
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )?;
+        Ok(request)
+    });
+    Ok((api_base, handle))
+}
+
 #[cfg(any(feature = "ai", feature = "qdrant"))]
 pub(crate) fn spawn_json_response_with_status(
     status: u16,

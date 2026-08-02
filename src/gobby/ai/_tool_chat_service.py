@@ -89,6 +89,8 @@ class ToolChatService:
         """Run the first available tool_chat candidate; never fall back elsewhere."""
         limits = request.limits or self._default_limits
         request = replace(request, limits=limits)
+        log_fields = _request_log_fields(request, limits)
+        logger.debug("tool_chat request started", extra=log_fields)
         deadline = asyncio.get_running_loop().time() + limits.loop_timeout_seconds
         candidates = self._candidate_requests(request)
         attempted: list[str] = []
@@ -97,6 +99,11 @@ class ToolChatService:
         last_error: Exception | None = None
         for candidate in candidates:
             label = _candidate_label(candidate)
+            candidate_log_fields = {
+                **log_fields,
+                "requested_provider": candidate.provider,
+                "requested_model": candidate.model,
+            }
             attempted.append(label)
             try:
                 binding = self._select_binding(candidate)
@@ -107,23 +114,20 @@ class ToolChatService:
                     binding,
                     deadline=deadline,
                 )
-                if result.stop_reason in LIMIT_STOP_REASONS:
-                    logger.info(
-                        "tool_chat terminated by limit",
-                        extra={
-                            "provider": result.provider or binding.provider,
-                            "model": result.model or candidate.model,
-                            "stop_reason": result.stop_reason,
-                            "turns": result.turns,
-                            "tool_use_count": result.tool_use_count,
-                        },
-                    )
-                return replace(
+                result = replace(
                     result,
                     provider=result.provider or binding.provider,
                     model=(result.model or candidate.model or next(iter(binding.models), None)),
                     adapter_style=binding.adapter_style.value,
                 )
+                result_log_fields = _result_log_fields(candidate_log_fields, result)
+                logger.debug("tool_chat request completed", extra=result_log_fields)
+                if result.stop_reason in LIMIT_STOP_REASONS:
+                    logger.info(
+                        "tool_chat terminated by limit",
+                        extra=result_log_fields,
+                    )
+                return result
             except CapabilityUnavailableError as exc:
                 last_error = exc
                 unavailable_count += 1
@@ -131,10 +135,11 @@ class ToolChatService:
                 logger.info(
                     "tool_chat capability unavailable",
                     extra={
-                        "candidate": label,
-                        "provider": exc.provider,
-                        "model": exc.model,
-                        "reason": exc.reason,
+                        **candidate_log_fields,
+                        "provider": exc.provider or candidate.provider,
+                        "model": exc.model or candidate.model,
+                        "stop_reason": "capability_unavailable",
+                        "failure_type": type(exc).__name__,
                     },
                 )
                 continue
@@ -263,3 +268,45 @@ def _candidate_request(
 
 def _candidate_label(request: ToolChatRequest) -> str:
     return f"{request.provider or '?'}/{request.model or '?'}"
+
+
+def _request_log_fields(
+    request: ToolChatRequest,
+    limits: ToolLoopLimits,
+) -> dict[str, object]:
+    """Return safe structured fields shared by every tool-chat log record."""
+    return {
+        "caller": request.caller,
+        "request_id": request.request_id,
+        "profile": request.profile,
+        "requested_provider": request.provider,
+        "requested_model": request.model,
+        "provider": None,
+        "model": None,
+        "adapter_style": None,
+        "stop_reason": None,
+        "max_turns": limits.max_turns,
+        "max_tool_calls": limits.max_tool_calls,
+        "max_bytes_per_tool_result": limits.max_bytes_per_tool_result,
+        "tool_timeout_seconds": limits.tool_timeout_seconds,
+        "loop_timeout_seconds": limits.loop_timeout_seconds,
+        "turns": None,
+        "tool_use_count": 0,
+        "tools": {},
+    }
+
+
+def _result_log_fields(
+    request_fields: Mapping[str, object],
+    result: ToolChatResult,
+) -> dict[str, object]:
+    return {
+        **request_fields,
+        "provider": result.provider,
+        "model": result.model,
+        "adapter_style": result.adapter_style,
+        "stop_reason": result.stop_reason,
+        "turns": result.turns,
+        "tool_use_count": result.tool_use_count,
+        "tools": dict(result.tools),
+    }
