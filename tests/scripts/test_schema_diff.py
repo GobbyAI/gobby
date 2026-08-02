@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime
 
 import pytest
 
+import scripts.schema_diff as schema_diff
 from scripts.schema_diff import (
     SeedTableSpec,
     compare_live_seed_manifests,
@@ -80,6 +83,80 @@ $$;
     assert normalize_schema_dump(fresh, schema_name="scratch") == normalize_schema_dump(
         live,
         schema_name="public",
+    )
+
+
+def test_normalize_schema_dump_matches_accepted_table_names_exactly() -> None:
+    dump = """
+CREATE TABLE public.tasks (id uuid NOT NULL);
+CREATE TABLE public.task_stage_states (id uuid NOT NULL);
+"""
+
+    normalized = normalize_schema_dump(
+        dump,
+        schema_name="public",
+        accepted_tables=frozenset({"tasks"}),
+    )
+
+    assert "CREATE TABLE __schema__.tasks (" not in normalized
+    assert "CREATE TABLE __schema__.task_stage_states (" in normalized
+
+
+def test_postgres_clients_keep_credentials_out_of_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def capture_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", capture_run)
+    monkeypatch.setattr(schema_diff, "_apply_reconcile_migration", lambda *_: None)
+    database_url = "postgresql://schema_diff_user:super-secret-password@127.0.0.1:5432/gobby_test"
+
+    schema_diff._dump_schema(database_url, "public", pg_dump="pg_dump")
+    schema_diff._project_live_schema(
+        database_url,
+        "CREATE SCHEMA public;",
+        live_schema="public",
+        projection_schema="projected",
+        psql="psql",
+    )
+
+    assert len(calls) == 2
+    for argv, kwargs in calls:
+        rendered_argv = " ".join(argv)
+        assert database_url not in rendered_argv
+        assert "schema_diff_user" not in rendered_argv
+        assert "super-secret-password" not in rendered_argv
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        assert env["PGUSER"] == "schema_diff_user"
+        assert env["PGPASSWORD"] == "super-secret-password"
+
+
+def test_main_reports_postgres_client_timeout_as_clean_nonzero_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def timed_out(argv: list[str], **_: object) -> None:
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=120)
+
+    def run_with_timeout(_: object) -> int:
+        schema_diff._run_postgres_client(["pg_dump"], action="pg_dump schema public")
+        pytest.fail("subprocess timeout was not raised")
+
+    monkeypatch.setattr(subprocess, "run", timed_out)
+    monkeypatch.setattr(schema_diff, "run", run_with_timeout)
+    monkeypatch.setattr(sys, "argv", ["schema_diff.py"])
+
+    assert schema_diff.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "schema_diff: pg_dump schema public timed out after 120 seconds; "
+        "check database connectivity and retry\n"
     )
 
 

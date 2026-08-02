@@ -43,6 +43,7 @@ _IGNORED_STATEMENT_PREFIXES = (
     "CREATE SCHEMA ",
     "COMMENT ON SCHEMA ",
 )
+_POSTGRES_CLIENT_TIMEOUT_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,14 @@ def _normalize_statement(statement: str) -> str:
 
 
 def _mentions_accepted_table(statement: str, accepted_tables: frozenset[str]) -> bool:
-    return any(table in statement for table in accepted_tables)
+    return any(
+        re.search(
+            rf"(?<![{_IDENTIFIER_EDGE}]){re.escape(table)}(?![{_IDENTIFIER_EDGE}])",
+            statement,
+        )
+        is not None
+        for table in accepted_tables
+    )
 
 
 def normalize_schema_dump(
@@ -333,14 +341,12 @@ _BOOKKEEPING_TABLES = frozenset(
     }
 )
 _LIVE_ACCEPTED_TABLES: Mapping[str, str] = {
-    "_pgaudit_probe": "installer-owned pgAudit verification table",
     "gobby_install_ownership": "installer-owned component inventory",
     "gwiki_chunks": "gcore-owned wiki index",
     "gwiki_documents": "gcore-owned wiki index",
     "gwiki_ingestions": "gcore-owned wiki index",
     "gwiki_links": "gcore-owned wiki index",
     "gwiki_sources": "gcore-owned wiki index",
-    "savings_ledger": "gcore-owned token-savings telemetry",
 }
 _RECONCILE_MIGRATION_VERSION = 356
 _RECONCILE_MIGRATION = (
@@ -493,6 +499,7 @@ def _run_postgres_client(
     *,
     action: str,
     stdin: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     try:
         result = subprocess.run(  # nosec B603 - fixed executables and argv, never shell=True
@@ -500,15 +507,32 @@ def _run_postgres_client(
             input=stdin,
             capture_output=True,
             check=False,
+            env=env,
             text=True,
-            timeout=120,
+            timeout=_POSTGRES_CLIENT_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{action} timed out after {_POSTGRES_CLIENT_TIMEOUT_SECONDS} seconds; "
+            "check database connectivity and retry"
+        ) from None
+    except OSError as exc:
         raise RuntimeError(f"{action} failed: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(f"{action} failed: {detail}")
     return result.stdout
+
+
+def _postgres_client_connection(database_url: str) -> tuple[str, dict[str, str]]:
+    parameters = conninfo_to_dict(database_url)
+    env = os.environ.copy()
+    for parameter, variable in (("user", "PGUSER"), ("password", "PGPASSWORD")):
+        credential = parameters.pop(parameter, None)
+        if credential is not None:
+            env[variable] = str(credential)
+    sanitized = {key: str(value) for key, value in parameters.items() if value is not None}
+    return make_conninfo(**sanitized), env
 
 
 def _dump_schema(
@@ -517,6 +541,7 @@ def _dump_schema(
     *,
     pg_dump: str,
 ) -> str:
+    conninfo, env = _postgres_client_connection(database_url)
     return _run_postgres_client(
         [
             pg_dump,
@@ -526,9 +551,10 @@ def _dump_schema(
             "--schema",
             schema_name,
             "--dbname",
-            database_url,
+            conninfo,
         ],
         action=f"pg_dump schema {schema_name}",
+        env=env,
     )
 
 
@@ -559,10 +585,12 @@ def _project_live_schema(
     psql: str,
 ) -> None:
     projected_dump = _replace_schema_token(live_dump, live_schema, projection_schema)
+    conninfo, env = _postgres_client_connection(database_url)
     _run_postgres_client(
-        [psql, "--dbname", database_url, "--set", "ON_ERROR_STOP=1", "--quiet"],
+        [psql, "--dbname", conninfo, "--set", "ON_ERROR_STOP=1", "--quiet"],
         action="restore live schema projection",
         stdin=projected_dump,
+        env=env,
     )
     _apply_reconcile_migration(database_url, projection_schema)
 
@@ -818,7 +846,7 @@ def run(args: argparse.Namespace) -> int:
     if live_head < _RECONCILE_MIGRATION_VERSION:
         print(f"Projected live DDL through migration {_RECONCILE_MIGRATION_VERSION} in scratch")
     for table, reason in _LIVE_ACCEPTED_TABLES.items():
-        if table in live_dump:
+        if _mentions_accepted_table(live_dump, frozenset({table})):
             print(f"Accepted live-only table {table}: {reason}")
     if errors:
         print("Unexplained divergences:", file=sys.stderr)
