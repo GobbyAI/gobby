@@ -70,6 +70,7 @@ DESTRUCTIVE_SQL_PATTERNS = (
     ),
     re.compile(r"\bTRUNCATE\b", re.IGNORECASE),
     re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE),
+    re.compile(r"^\s*UPDATE\s+[A-Za-z_][A-Za-z0-9_]*\b", re.IGNORECASE | re.MULTILINE),
 )
 
 
@@ -164,6 +165,7 @@ def _has_destructive_directive(sql: str) -> bool:
         "ALTER TABLE active DROP CONSTRAINT old_check;",
         "TRUNCATE active;",
         "DELETE FROM active;",
+        "UPDATE active SET retired = TRUE;",
         "DO $migration$ BEGIN DROP TABLE retired; END; $migration$;",
     ],
 )
