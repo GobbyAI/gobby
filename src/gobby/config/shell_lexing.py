@@ -13,8 +13,6 @@ from dataclasses import dataclass
 SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "|&", "&", "\n"}
 _SHELL_PUNCTUATION = ";&|<>\n"
 _SHELL_REDIRECTION_RE = re.compile(r"^(?:[<>]+|[<>]&|&[<>])$")
-# `(?<!<)` keeps the `<<<` herestring, which has no body, out of the match.
-_HEREDOC_RE = re.compile(r"(?<!<)<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
 @dataclass(frozen=True)
@@ -84,13 +82,73 @@ def _strip_heredoc_bodies(command: str) -> str:
         line = lines[index]
         kept.append(line)
         index += 1
-        for dedent, _quote, delimiter in _HEREDOC_RE.findall(line):
+        for dedent, delimiter in _heredoc_openers(line):
             while index < len(lines):
                 terminator = lines[index].rstrip()
                 index += 1
                 if (terminator.lstrip("\t") if dedent else terminator) == delimiter:
                     break
     return "\n".join(kept)
+
+
+def _heredoc_openers(line: str) -> list[tuple[bool, str]]:
+    """Return unquoted here-document operators and their quote-removed words."""
+    openers: list[tuple[bool, str]] = []
+    quote: str | None = None
+    at_word_start = True
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote is not None:
+            if quote == '"' and char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char == "\\":
+            at_word_start = False
+            index += 2
+            continue
+        if char in "'\"":
+            quote = char
+            at_word_start = False
+            index += 1
+            continue
+        if char == "#" and at_word_start:
+            break
+        if line.startswith("<<<", index):
+            index += 3
+            at_word_start = True
+            continue
+        if line.startswith("<<", index):
+            operator_end = index + 2
+            dedent = operator_end < len(line) and line[operator_end] == "-"
+            operand_start = operator_end + int(dedent)
+            delimiter = _parse_heredoc_delimiter(line[operand_start:])
+            if delimiter is not None:
+                openers.append((dedent, delimiter))
+            index = operand_start
+            at_word_start = True
+            continue
+        at_word_start = char in " \t;&|<>()"
+        index += 1
+    return openers
+
+
+def _parse_heredoc_delimiter(value: str) -> str | None:
+    """Parse one shell word and apply the quote removal used for delimiters."""
+    value = value.lstrip(" \t")
+    if not value or value[0] == "#" or value[0] in _SHELL_PUNCTUATION:
+        return None
+    lexer = shlex.shlex(value, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return next(lexer, None)
+    except ValueError:
+        return None
 
 
 def safe_split(value: str) -> list[str]:

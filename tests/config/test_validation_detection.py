@@ -198,6 +198,20 @@ def test_shell_command_segments_handle_glued_operators_and_redirections(
     [
         ("cat > notes.md <<'EOF'\nuv run pytest tests/\nEOF", [["cat"]]),
         ("cat > notes.md <<-EOF\n\tuv run pytest tests/\n\tEOF", [["cat"]]),
+        ("cat <<'EOF-2'\nuv run pytest tests/\nEOF-2\ntrue", [["cat"], ["true"]]),
+        ('cat <<"END.SQL"\nuv run pytest tests/\nEND.SQL\ntrue', [["cat"], ["true"]]),
+        ("cat <<END-MARKER\nuv run pytest tests/\nEND-MARKER\ntrue", [["cat"], ["true"]]),
+        ("cat <<'END MARK;1'\nuv run pytest tests/\nEND MARK;1\ntrue", [["cat"], ["true"]]),
+        ("cat <<E'ND-'2\nuv run pytest tests/\nEND-2\ntrue", [["cat"], ["true"]]),
+        ("cat <<END\\ MARK\nuv run pytest tests/\nEND MARK\ntrue", [["cat"], ["true"]]),
+        (
+            "cat <<-END/MARK+1\n\tuv run pytest tests/\n\tEND/MARK+1\ntrue",
+            [["cat"], ["true"]],
+        ),
+        (
+            "cat <<-'END;MARK'\n\tuv run pytest tests/\n\tEND;MARK\ntrue",
+            [["cat"], ["true"]],
+        ),
         (
             'cat > a <<"ONE" > b <<TWO\npytest a\nONE\npytest b\nTWO\ntrue',
             [["cat"], ["true"]],
@@ -221,6 +235,8 @@ def test_shell_command_segments_drop_heredoc_bodies(
     [
         "cat > notes.md <<'EOF'\nuv run pytest tests/\nEOF",
         "cat > notes.md <<-EOF\n\tGOBBY_TEST_PROTECT=1 uv run pytest tests/\n\tEOF",
+        "cat <<'EOF-2'\nuv run pytest tests/\nEOF-2",
+        "cat <<-END.SQL\n\tGOBBY_TEST_PROTECT=1 uv run pytest tests/\n\tEND.SQL",
     ],
 )
 def test_heredoc_bodies_are_not_validation_commands(command: str) -> None:
