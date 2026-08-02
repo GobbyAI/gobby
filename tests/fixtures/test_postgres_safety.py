@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -167,9 +168,9 @@ def test_orphan_cleanup_delegates_to_leased_sweeper(
 
     monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
 
-    _cleanup_orphaned_schemas("postgresql://test", age_hours=12)
+    _cleanup_orphaned_schemas("postgresql://test")
 
-    assert calls == [("postgresql://test", 12)]
+    assert calls == [("postgresql://test", 0)]
 
 
 def test_isolated_test_schema_rejects_label_that_breaks_name_contract(
@@ -228,19 +229,23 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
 
 
 @pytest.mark.integration
-def test_orphan_sweep_drops_stale_schema_and_preserves_live_schema(
+def test_orphan_sweep_drops_recent_unleased_schema_and_preserves_live_schema(
     isolated_postgres_database_url: str,
 ) -> None:
     from gobby.runner_maintenance import storage_hygiene
 
-    stale_schema = f"gobby_test_0_{os.getpid()}_stale_{uuid.uuid4().hex[:6]}"
-    live_schema = f"gobby_test_0_{os.getpid()}_live_{uuid.uuid4().hex[:6]}"
+    created_epoch = int(time.time())
+    stale_schema = f"gobby_test_{created_epoch}_{os.getpid()}_stale_{uuid.uuid4().hex[:6]}"
+    live_schema = f"gobby_test_{created_epoch}_{os.getpid()}_live_{uuid.uuid4().hex[:6]}"
     with psycopg.connect(isolated_postgres_database_url, autocommit=True) as live_connection:
         live_connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (live_schema,))
         live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(stale_schema)))
         live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(live_schema)))
         try:
-            dropped = storage_hygiene.sweep_orphaned_test_schemas(isolated_postgres_database_url)
+            dropped = storage_hygiene.sweep_orphaned_test_schemas(
+                isolated_postgres_database_url,
+                age_hours=0,
+            )
 
             assert dropped == 1
             assert (
