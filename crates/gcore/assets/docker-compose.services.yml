@@ -91,6 +91,8 @@ services:
     volumes:
       - gobby_postgres_data:/var/lib/postgresql
       - gobby_pgaudit_log:/var/log/pgaudit
+    # Runtime pgAudit health is configuration-only by design; write emission is
+    # proven by .github/scripts/verify-pgaudit-emission.sh in both PostgreSQL CI jobs.
     healthcheck:
       test:
         - CMD-SHELL

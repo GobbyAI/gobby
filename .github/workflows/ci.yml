@@ -325,6 +325,9 @@ jobs:
           docker logs "${GOBBY_POSTGRES_TEST_CONTAINER}"
           exit 1
 
+      - name: Verify pgAudit emits write records
+        run: bash .github/scripts/verify-pgaudit-emission.sh
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -489,6 +492,9 @@ jobs:
 
           docker logs "${GOBBY_POSTGRES_TEST_CONTAINER}"
           exit 1
+
+      - name: Verify pgAudit emits write records
+        run: bash .github/scripts/verify-pgaudit-emission.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
