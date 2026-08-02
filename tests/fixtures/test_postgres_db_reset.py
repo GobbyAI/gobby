@@ -24,6 +24,34 @@ def _require_database_url() -> str:
     return dsn
 
 
+def test_isolated_test_schema_reclaims_each_completed_schema(
+    postgres_database_url: str,
+) -> None:
+    """Repeated schema contexts leave no completed-test schemas behind."""
+    psycopg = pytest.importorskip("psycopg")
+
+    from tests.fixtures.postgres import isolated_test_schema
+
+    created_schemas: list[str] = []
+    with psycopg.connect(postgres_database_url, autocommit=True) as conn:
+        for _ in range(3):
+            with isolated_test_schema(postgres_database_url, "reclaim") as schema:
+                created_schemas.append(schema)
+                present = conn.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (schema,),
+                ).fetchone()
+                assert present == (1,)
+
+            present = conn.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (schema,),
+            ).fetchone()
+            assert present is None
+
+    assert len(set(created_schemas)) == 3
+
+
 def test_seed_rows_survive_reset(
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],

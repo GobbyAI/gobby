@@ -141,7 +141,7 @@ def postgres_database_url() -> str:
     return _require_test_database_url()
 
 
-def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
+def _cleanup_orphaned_schemas(url: str, age_hours: int = 0) -> None:
     """Delegate fixture cleanup to the daemon-owned leased sweeper."""
     sweep_orphaned_test_schemas(url, age_hours)
 
