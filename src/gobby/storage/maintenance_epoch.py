@@ -38,7 +38,6 @@ CAMPAIGNS: tuple[Campaign, ...] = (
 MAINTENANCE_EPOCH_ENV = "GOBBY_MAINTENANCE_EPOCH"
 _QUIESCENCE_DEADLINE_SECONDS = 15.0
 _QUIESCENCE_POLL_SECONDS = 0.25
-_LOGIN_ERROR_PATTERN = re.compile(r"GOBBY_MAINTENANCE_EPOCH (?P<epoch>[0-9a-fA-F-]{36}) is active")
 _PGOPTIONS_EPOCH_PATTERN = re.compile(r"(?:^|\s)-c\s+gobby\.maintenance_epoch=\S+")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -86,7 +85,7 @@ class MaintenanceEpochActiveError(MaintenanceEpochError):
     def __init__(self, epoch_id: uuid.UUID) -> None:
         self.epoch_id = epoch_id
         super().__init__(
-            f"Hub maintenance epoch {epoch_id} is active; "
+            "Hub maintenance is active; "
             "use `gobby hub-maintenance status` or `gobby hub-maintenance resume`."
         )
 
@@ -120,6 +119,16 @@ def bind_maintenance_epoch(database_url: str, epoch_id: uuid.UUID | str) -> str:
     return make_conninfo("", **string_fields)
 
 
+def _bind_login_fence_bypass(database_url: str) -> str:
+    """Return a DSN using PostgreSQL's superuser-only event-trigger bypass."""
+    fields = conninfo_to_dict(database_url)
+    raw_options = fields.get("options")
+    existing_options = str(raw_options) if raw_options is not None else ""
+    fields["options"] = f"{existing_options} -c event_triggers=off".strip()
+    string_fields = {key: str(value) for key, value in fields.items() if value is not None}
+    return make_conninfo("", **string_fields)
+
+
 def maintenance_child_environment(
     epoch_id: uuid.UUID | str,
     *,
@@ -148,10 +157,13 @@ def probe_maintenance_admission(database_url: str) -> str:
         ):
             return database_url
     except psycopg.Error as exc:
-        active_epoch = _epoch_from_login_error(exc)
-        if active_epoch is not None:
-            raise MaintenanceEpochActiveError(active_epoch) from exc
-        raise
+        try:
+            active_epoch = _read_active_epoch(_bind_login_fence_bypass(database_url))
+        except psycopg.Error:
+            raise exc from None
+        if active_epoch is None:
+            raise
+        raise MaintenanceEpochActiveError(active_epoch.id) from exc
 
 
 def admitted_database_url(database_url: str) -> str:
@@ -279,14 +291,14 @@ def _release_fence_after_failed_open(
 
 
 def discover_active_maintenance_epoch(database_url: str) -> MaintenanceEpoch | None:
-    """Discover the open epoch, reconnecting with the token named by the fence."""
+    """Discover the open epoch through PostgreSQL's privileged repair path."""
     try:
         return _read_active_epoch(database_url)
     except psycopg.Error as exc:
-        epoch_id = _epoch_from_login_error(exc)
-        if epoch_id is None:
-            raise
-        return _read_active_epoch(bind_maintenance_epoch(database_url, epoch_id))
+        try:
+            return _read_active_epoch(_bind_login_fence_bypass(database_url))
+        except psycopg.Error:
+            raise exc from None
 
 
 def require_orchestrator_epoch(
@@ -756,11 +768,6 @@ def _new_epoch_id() -> uuid.UUID:
 def _validate_campaign(campaign: str) -> None:
     if campaign not in CAMPAIGNS:
         raise ValueError(f"Unknown maintenance campaign: {campaign}")
-
-
-def _epoch_from_login_error(error: psycopg.Error) -> uuid.UUID | None:
-    match = _LOGIN_ERROR_PATTERN.search(str(error))
-    return uuid.UUID(match.group("epoch")) if match is not None else None
 
 
 def _epoch_from_row(row: Mapping[str, Any]) -> MaintenanceEpoch:
