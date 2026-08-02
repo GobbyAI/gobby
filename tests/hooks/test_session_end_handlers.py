@@ -59,67 +59,62 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
 
     def test_session_end_auto_link_commits(self, mock_dependencies: dict) -> None:
-        """Test auto-linking commits on session end."""
-        from unittest.mock import patch
+        """Session end hands the commit auto-link to the managed worker."""
+        from gobby.hooks.session_end_auto_link import SessionEndAutoLinkJob
 
+        created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mock_session = MagicMock()
+        mock_session.id = "sess-uuid-1"
+        mock_session.created_at = created_at
+        mock_session.agent_run_id = None
+        mock_session.project_id = "d45545c5-ded5-4335-b115-0245752edacf"
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        worker = MagicMock()
+        handlers = EventHandlers(**mock_dependencies, session_end_auto_link_worker=worker)
+        event = make_event(
+            HookEventType.SESSION_END,
+            metadata={"_platform_session_id": "sess-123"},
+            data={"cwd": "/some/dir"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        worker.submit.assert_called_once_with(
+            SessionEndAutoLinkJob(
+                session_id="sess-uuid-1",
+                project_id=mock_session.project_id,
+                created_at=created_at,
+                cwd="/some/dir",
+            )
+        )
+
+    def test_session_end_auto_link_error(self, mock_dependencies: dict) -> None:
+        """A worker that refuses the job must not fail session end."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-uuid-1"
         mock_session.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mock_session.agent_run_id = None
         mock_session.project_id = "d45545c5-ded5-4335-b115-0245752edacf"
         mock_dependencies["session_storage"].get.return_value = mock_session
 
-        mock_project = MagicMock()
-        mock_project.name = "session-project"
-        mock_link_result = MagicMock()
-        mock_link_result.total_linked = 2
-        mock_link_result.linked_tasks = {"task-1": ["abc123"], "task-2": ["def456"]}
-
-        handlers = EventHandlers(**mock_dependencies)
+        # The real failure mode: shutdown closed the worker between the hook
+        # firing and the job being accepted.
+        worker = MagicMock()
+        worker.submit.side_effect = RuntimeError("session-end auto-link worker is closed")
+        handlers = EventHandlers(**mock_dependencies, session_end_auto_link_worker=worker)
         event = make_event(
             HookEventType.SESSION_END,
             metadata={"_platform_session_id": "sess-123"},
             data={"cwd": "/some/dir"},
         )
 
-        with (
-            patch("gobby.storage.projects.LocalProjectManager") as project_manager_cls,
-            patch(
-                "gobby.tasks.commits.auto_link_commits", return_value=mock_link_result
-            ) as mock_auto_link,
-        ):
-            project_manager_cls.return_value.get.return_value = mock_project
-            response = handlers.handle_session_end(event)
+        response = handlers.handle_session_end(event)
 
+        # Should still allow despite the enqueue failure
         assert response.decision == "allow"
-        project_manager_cls.assert_called_once_with(mock_dependencies["session_storage"].db)
-        project_manager_cls.return_value.get.assert_called_once_with(mock_session.project_id)
-        assert mock_auto_link.call_args.kwargs["project_id"] == mock_session.project_id
-        assert mock_auto_link.call_args.kwargs["project_name"] == "session-project"
-
-    def test_session_end_auto_link_error(self, mock_dependencies: dict) -> None:
-        """Test error auto-linking commits is handled gracefully."""
-        from unittest.mock import patch
-
-        mock_session = MagicMock()
-        mock_session.created_at = "2024-01-01T00:00:00Z"
-        mock_session.agent_run_id = None
-        mock_dependencies["session_storage"].get.return_value = mock_session
-
-        handlers = EventHandlers(**mock_dependencies)
-        event = make_event(
-            HookEventType.SESSION_END,
-            metadata={"_platform_session_id": "sess-123"},
-            data={"cwd": "/some/dir"},
-        )
-
-        with patch(
-            "gobby.tasks.commits.auto_link_commits",
-            side_effect=Exception("Link error"),
-        ):
-            response = handlers.handle_session_end(event)
-
-        # Should still allow despite error
-        assert response.decision == "allow"
+        worker.submit.assert_called_once()
 
     def test_session_end_complete_agent_run(self, mock_dependencies: dict) -> None:
         """Test completing agent run on session end."""

@@ -78,6 +78,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._session_manager.db = empty_database_mock()
         self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
+        self._session_end_auto_link_worker = None
         self._message_processor = MagicMock()
         self._task_manager = MagicMock()
         self._workflow_handler = MagicMock()
