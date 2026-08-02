@@ -322,6 +322,9 @@ class _FakeEpochConnection:
         if "pg_terminate_backend" in normalized:
             self.events.append("terminate")
             return _FakeCursor(rows=[])
+        if "pg_stat_clear_snapshot" in normalized:
+            self.events.append("clear-stat-snapshot")
+            return _FakeCursor(row=None)
         if "pg_stat_activity" in normalized:
             self.events.append("verify")
             count = (
@@ -355,7 +358,14 @@ def test_epoch_open_commits_fence_before_terminating_and_verifying_connections(
     )
 
     assert opened.id == epoch_id
-    assert connection.events == ["insert", "commit", "terminate", "verify", "close"]
+    assert connection.events == [
+        "insert",
+        "commit",
+        "terminate",
+        "clear-stat-snapshot",
+        "verify",
+        "close",
+    ]
 
 
 def test_epoch_open_waits_boundedly_for_terminated_backends_to_exit(
@@ -381,8 +391,10 @@ def test_epoch_open_waits_boundedly_for_terminated_backends_to_exit(
         "insert",
         "commit",
         "terminate",
+        "clear-stat-snapshot",
         "verify",
         "terminate",
+        "clear-stat-snapshot",
         "verify",
         "close",
     ]

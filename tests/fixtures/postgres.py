@@ -45,6 +45,7 @@ _TEST_DSN_REQUIRED = (
     "DATABASE_URL must point at an isolated PostgreSQL test database; start one with "
     "`docker compose -f docker-compose.test.yml up -d postgres-test`."
 )
+_ISOLATED_SCHEMA_APPLICATION_PREFIX = "gobby-isolated-schema-"
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -246,21 +247,65 @@ def isolated_test_schema(url: str, worker_label: str) -> Iterator[str]:
         )
     _enforce_safe_test_schema(schema)
     _cleanup_orphaned_schemas(url)
-    with psycopg.connect(url, autocommit=True) as conn:
+    application_name = f"{_ISOLATED_SCHEMA_APPLICATION_PREFIX}{worker_label}-{nonce}"
+    with psycopg.connect(
+        url,
+        autocommit=True,
+        application_name=application_name,
+    ) as conn:
+        backend_pid = conn.info.backend_pid
+        logger.info(
+            "Isolated test schema %s uses PostgreSQL backend pid %s (application_name=%s)",
+            schema,
+            backend_pid,
+            application_name,
+        )
         conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (schema,))
         try:
             conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
             try:
                 yield schema
             finally:
-                exists = conn.execute(
-                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-                    (schema,),
-                ).fetchone()
-                if exists:
-                    conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+                try:
+                    _drop_test_schema(conn, schema)
+                except psycopg.OperationalError as exc:
+                    logger.warning(
+                        "Isolated test schema %s lost PostgreSQL backend pid %s during "
+                        "teardown; reconnecting (application_name=%s): %s",
+                        schema,
+                        backend_pid,
+                        application_name,
+                        exc,
+                    )
+                    with psycopg.connect(
+                        url,
+                        autocommit=True,
+                        application_name=application_name,
+                    ) as cleanup_conn:
+                        logger.info(
+                            "Isolated test schema %s cleanup uses PostgreSQL backend pid %s "
+                            "(application_name=%s)",
+                            schema,
+                            cleanup_conn.info.backend_pid,
+                            application_name,
+                        )
+                        _drop_test_schema(cleanup_conn, schema)
         finally:
-            conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
+            if not conn.closed:
+                try:
+                    conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (schema,))
+                except psycopg.OperationalError:
+                    # PostgreSQL released the session lock when the backend exited.
+                    pass
+
+
+def _drop_test_schema(conn: psycopg.Connection[Any], schema: str) -> None:
+    exists = conn.execute(
+        "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+        (schema,),
+    ).fetchone()
+    if exists:
+        conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @pytest.fixture(scope="session")

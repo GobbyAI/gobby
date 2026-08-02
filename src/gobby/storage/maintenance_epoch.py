@@ -225,6 +225,8 @@ def open_maintenance_epoch(
                   AND activity.backend_type = 'client backend'
                 """
             ).fetchall()
+            # PostgreSQL caches activity statistics until the transaction snapshot is cleared.
+            connection.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
             remaining = connection.execute(
                 """
                 SELECT COUNT(*) AS foreign_connections

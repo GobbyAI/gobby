@@ -14,7 +14,10 @@ from _pytest.outcomes import Failed, Skipped
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
+from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.maintenance_epoch import abort_maintenance_epoch, open_maintenance_epoch
 from tests.fixtures.postgres import (
+    _ISOLATED_SCHEMA_APPLICATION_PREFIX,
     _adapt_seed_rows,
     _cleanup_orphaned_schemas,
     _enforce_safe_test_schema,
@@ -195,6 +198,8 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
     lock_params: list[object] = []
     connection = MagicMock()
     connection.__enter__.return_value = connection
+    connection.info.backend_pid = 12345
+    connection.closed = False
 
     def execute(query: object, params: object | None = None) -> MagicMock:
         rendered = str(query)
@@ -225,6 +230,55 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
     assert events == ["lease", "create", "drop", "unlock"]
     assert connection.__exit__.call_count == 1
     assert connect.call_count == 1
+    assert connect.call_args.kwargs["application_name"].startswith(
+        f"{_ISOLATED_SCHEMA_APPLICATION_PREFIX}master-"
+    )
+
+
+@pytest.mark.integration
+def test_isolated_test_schema_recovers_after_maintenance_epoch_terminates_backend(
+    isolated_postgres_database_url: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with psycopg.connect(isolated_postgres_database_url, autocommit=True) as connection:
+        connection.execute("CREATE EXTENSION pg_search")
+
+    database = PostgresHubDatabase(isolated_postgres_database_url)
+    try:
+        database.apply_migrations()
+    finally:
+        database.close()
+
+    caplog.set_level("INFO", logger="tests.fixtures.postgres")
+    with isolated_test_schema(isolated_postgres_database_url, "epoch") as schema:
+        epoch = open_maintenance_epoch(
+            isolated_postgres_database_url,
+            campaign="schema-apply",
+            opened_by="test-isolated-schema-teardown",
+            scope_note="terminate the fixture backend",
+        )
+        abort_maintenance_epoch(
+            isolated_postgres_database_url,
+            epoch.id,
+            disposition="fixture resilience test completed",
+            confirmed=True,
+        )
+
+    with psycopg.connect(isolated_postgres_database_url, autocommit=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (schema,),
+            ).fetchone()
+            is None
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        _ISOLATED_SCHEMA_APPLICATION_PREFIX in message and "backend pid" in message
+        for message in messages
+    )
+    assert any("lost PostgreSQL backend pid" in message for message in messages)
 
 
 @pytest.mark.integration
