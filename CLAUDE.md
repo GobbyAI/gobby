@@ -47,7 +47,7 @@ Do NOT try to call one step through another (e.g., don't use call_tool to invoke
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 
-The repo has over 15,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+The repo has nearly 30,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
 
 When running pytest as an agent, always prefix pytest commands with `GOBBY_TEST_PROTECT=1`.
 
@@ -113,7 +113,7 @@ uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json 
 uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline .gobby/test-types-baseline.json  # Safely regenerate after debt reduction
 # Repo type gate remains mypy src/; tests are ratcheted, never gated.
 
-# Testing (full suite runs pre-push - only run specific tests)
+# Testing (pre-push runs no pytest - run specific tests yourself)
 uv run pytest tests/test_file.py -v    # Run specific test file
 uv run pytest tests/storage/ -v        # Run specific module
 uv run pytest tests/path/ --cov=gobby --cov-report=term-missing  # Add coverage to any run
@@ -130,7 +130,12 @@ uv run gobby pipelines import <file>   # Import external pipeline file
 uv run gobby build <plan_or_task>      # Opt a plan, epic, or leaf task into state dispatch
 ```
 
-**Coverage threshold**: 80% (enforced in CI and pre-push)
+**Coverage threshold**: 80%, enforced only by CI (`.github/workflows/ci.yml`), which
+runs on pushes to `main`/`0.4.9` and on PRs targeting `main` — feature branches get no
+automated pytest gate. The `pre-push` hook runs `lint`, `format`, `type_check`,
+`ts_check`, and `frontend_tests` from `.gobby/project.json`; it runs no pytest and
+checks no coverage. `pre-push-test.sh` does run the full suite with
+`--cov-fail-under=80`, but it is a standalone script — invoke it explicitly.
 
 **Test markers**: `unit`, `slow`, `integration`, `e2e`
 
@@ -160,11 +165,12 @@ in `src/gobby/install/shared/`.
 | `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN, stored directly in the owner-only (`0600`) bootstrap file (`database_url_ref` is unsupported) |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
-| `.gobby/tasks.jsonl` | Task sync file (git-native) |
+| `.gobby/tasks.jsonl` | Local task backup written by `gobby tasks backup`; not checked in (removed from git in #19412, and `.gitignore` allows only `project.json`, `project.jsonl`, and `plans/` under `.gobby/`) |
 
 ### Templates vs Active Enforcement
 
-Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) are **templates**.
+Files in `src/gobby/install/shared/` are **templates** — `skills/`, `workflows/` (which
+holds `agents/`, `pipelines/`, and the bulk of `rules/`), plus a top-level `rules/build/`.
 They are bundled with the software and synced into DB registry tables on startup. On first
 install, template `enabled` values seed the installed rows. After that, Gobby-owned bundled
 rows are refreshed from templates when definition drift is detected, while preserving the
@@ -195,7 +201,7 @@ with self.db.transaction() as conn:
 
 ## See Also
 
-- `GUIDING_PRINCIPLES.md` - Development philosophy (the 8 principles)
+- `GUIDING_PRINCIPLES.md` - Development philosophy (the 18 principles above)
 - `README.md` - Project overview
 - `CONTRIBUTING.md` - Contribution guidelines
 - Use `list_skills()` for workflow and usage guides
