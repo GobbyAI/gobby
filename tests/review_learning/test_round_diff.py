@@ -21,9 +21,10 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.review_coverage_helpers import StubReviewLearningService, coverage_attestation
-
-pytest_plugins = ("tests.storage.test_stage_review_findings",)
-
+from tests.storage.stage_review_helpers import _prepare_bound
+from tests.storage.stage_review_helpers import (
+    stage_review_setup as _stage_review_setup,  # noqa: F401 - pytest discovers imported fixtures
+)
 
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
@@ -533,7 +534,6 @@ def test_approval_evidence_finalization(
 ) -> None:
     from gobby.plans.review_evidence_models import ReviewEvidenceError
     from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
-    from tests.storage.test_stage_review_findings import _prepare_bound
 
     setup = stage_review_setup
     evidence_id, run_id = _prepare_bound(setup)
