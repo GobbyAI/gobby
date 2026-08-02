@@ -1,10 +1,10 @@
 tags: [worker-safety, enforcement, gobby]
 
 # Closes the exfiltration half of the prompt-injection taint path (gobby-#17671):
-# a spawned agent whose context carries untrusted text (e.g. a wiki-research
-# question) must not be able to upload local data to an attacker host or read
-# local credential stores. Regex command matching is defense-in-depth, not a
-# parser — the companion fix narrows the wiki-researcher's tool grants.
+# a spawned agent whose context carries untrusted task or fetched-source text
+# must not be able to upload local data to an attacker host or read local
+# credential stores. Regex command matching is defense-in-depth, not a parser;
+# agent capability allowlists provide the companion boundary.
 
 rules:
   no-curl-upload:
