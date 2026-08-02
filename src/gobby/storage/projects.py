@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import Any
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.session_context import get_current_session_id
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,10 @@ ORPHANED_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
 GLOBAL_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
 SYSTEM_PROJECT_NAMES = frozenset({"_orphaned", "_migrated", "_personal", "_global", "gobby"})
+
+
+class IsolatedAgentProjectPathError(ValueError):
+    """Raised when an isolated agent session tries to set a canonical repo path."""
 
 
 def personal_project_path(gobby_home: Path | None = None) -> Path:
@@ -199,6 +205,46 @@ class LocalProjectManager:
         """Initialize with database connection."""
         self.db = db
 
+    def _is_isolated_agent_session(self) -> bool:
+        session_id = get_current_session_id() or os.environ.get("GOBBY_SESSION_ID")
+        if not session_id:
+            return False
+        row = self.db.fetchone(
+            """
+            SELECT 1
+            FROM agent_runs
+            WHERE child_session_id = %s
+              AND (worktree_id IS NOT NULL OR clone_id IS NOT NULL)
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        return row is not None
+
+    def _is_registered_isolation_path(self, repo_path: str | None) -> bool:
+        if not repo_path:
+            return False
+        row = self.db.fetchone(
+            """
+            SELECT 1 FROM worktrees WHERE worktree_path = %s
+            UNION ALL
+            SELECT 1 FROM clones WHERE clone_path = %s
+            LIMIT 1
+            """,
+            (repo_path, repo_path),
+        )
+        return row is not None
+
+    def _repo_path_write_is_blocked(self, repo_path: str | None) -> bool:
+        return self._is_isolated_agent_session() or self._is_registered_isolation_path(repo_path)
+
+    def _guard_repo_path_write(self, repo_path: str | None) -> None:
+        if self._repo_path_write_is_blocked(repo_path):
+            raise IsolatedAgentProjectPathError(
+                "project repo_path cannot be changed from an isolated agent session "
+                "or to a registered isolation path"
+            )
+
     def create(
         self,
         name: str,
@@ -216,6 +262,9 @@ class LocalProjectManager:
         Returns:
             Created Project instance
         """
+        if repo_path is not None:
+            self._guard_repo_path_write(repo_path)
+
         project_id = str(uuid.uuid4())
         now = utc_now()
 
@@ -260,6 +309,9 @@ class LocalProjectManager:
         github_url: str | None = None,
     ) -> Project:
         """Get existing project or create new one."""
+        if repo_path is not None:
+            self._guard_repo_path_write(repo_path)
+
         project_id = str(uuid.uuid4())
         now = utc_now()
         row = self.db.fetchone(
@@ -298,6 +350,23 @@ class LocalProjectManager:
             The existing or newly created Project
         """
         now = utc_now()
+        if self._repo_path_write_is_blocked(repo_path):
+            project = self.get(project_id)
+            if project is None:
+                raise IsolatedAgentProjectPathError(
+                    "isolated agent session cannot establish a canonical project repo_path"
+                )
+            self.db.execute(
+                "UPDATE projects SET name = %s, updated_at = %s WHERE id = %s",
+                (name, now, project_id),
+            )
+            updated_project = self.get(project_id)
+            if updated_project:
+                return updated_project
+            raise RuntimeError(
+                f"Project '{name}' ({project_id}) not found after isolated-session update"
+            )
+
         self.db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
@@ -395,6 +464,9 @@ class LocalProjectManager:
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:
             return self.get(project_id)
+
+        if "repo_path" in fields:
+            self._guard_repo_path_write(fields["repo_path"])
 
         fields["updated_at"] = utc_now()
 
