@@ -29,7 +29,7 @@ _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
 _POSTGRES_TEST_USER = "gobby_test"
 _POSTGRES_SKIP_REASONS = [
-    "DATABASE_URL or configured bootstrap database_url is required",
+    "DATABASE_URL must point at an isolated PostgreSQL test database",
     "PostgreSQL DSN required for hub runtime surface tests",
 ]
 
@@ -228,8 +228,6 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
 
     assert "resolve_pytest_database_url()" in script
     assert 'if [ -n "${DATABASE_URL:-}" ]; then' in script
-    assert "read_bootstrap_database_url" in script
-    assert "load_bootstrap(resolve_database_url=True).database_url" in script
     assert "docker_compose -f docker-compose.test.yml up -d postgres-test" in script
     assert "${GOBBY_POSTGRES_TEST_PORT:-60892}" in script
     assert "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)" in script
@@ -240,6 +238,14 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
         "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)",
         'HOME="$PYTEST_ISOLATION_DIR/home"',
     )
+
+
+def test_pre_push_never_resolves_the_live_hub_dsn_for_pytest(repo_root: Path) -> None:
+    """The suite drops schemas, so pre-push must never hand it the daemon's hub."""
+    script = _load_pre_push_script(repo_root)
+
+    assert "read_bootstrap_database_url" not in script
+    assert "load_bootstrap(resolve_database_url=True).database_url" not in script
 
 
 def test_pre_push_records_manifest_and_checks_source_integrity(repo_root: Path) -> None:

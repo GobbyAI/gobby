@@ -41,7 +41,7 @@ PIP_AUDIT_IGNORE_ARGS=(
     --ignore-vuln CVE-2025-3000
 )
 POSTGRES_SKIP_REASONS=(
-    "DATABASE_URL or configured bootstrap database_url is required"
+    "DATABASE_URL must point at an isolated PostgreSQL test database"
     "PostgreSQL DSN required for hub runtime surface tests"
 )
 PYTEST_SELECTION_ARGS=()
@@ -101,20 +101,6 @@ docker_compose() {
     else
         return 127
     fi
-}
-
-read_bootstrap_database_url() {
-    uv_run python - <<'PY'
-from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-
-try:
-    database_url = load_bootstrap(resolve_database_url=True).database_url
-except BootstrapConfigError:
-    database_url = None
-
-if database_url:
-    print(database_url)
-PY
 }
 
 read_managed_falkordb_settings() {
@@ -259,16 +245,12 @@ start_docker_postgres_test_database() {
     return 1
 }
 
+# Never resolve the bootstrap database_url here: that is the hub the running
+# daemon owns, and the suite drops schemas and terminates backends on whatever
+# database it is handed.
 resolve_pytest_database_url() {
     if [ -n "${DATABASE_URL:-}" ]; then
         printf '%s\n' "$DATABASE_URL"
-        return 0
-    fi
-
-    local bootstrap_database_url
-    bootstrap_database_url=$(read_bootstrap_database_url 2>/dev/null || true)
-    if [ -n "$bootstrap_database_url" ]; then
-        printf '%s\n' "$bootstrap_database_url"
         return 0
     fi
 
@@ -432,8 +414,8 @@ PYTEST_EXIT=0
 if ! PYTEST_DATABASE_URL=$(resolve_pytest_database_url); then
     PYTEST_EXIT=1
     echo "✗ Failed to resolve PostgreSQL DATABASE_URL for pytest"
-    echo "  Set DATABASE_URL, configure ~/.gobby/bootstrap.yaml database_url, or enable Docker"
-    echo "  so docker-compose.test.yml can start postgres-test on port 60892."
+    echo "  Set DATABASE_URL to an isolated test database, or enable Docker so"
+    echo "  docker-compose.test.yml can start postgres-test on port 60892."
     FAILED=1
 elif ! mkdir -p \
     "$PYTEST_ISOLATION_DIR/home" \

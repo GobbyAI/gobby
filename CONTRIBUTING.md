@@ -128,8 +128,12 @@ uv run pytest -m integration
 one in this order:
 
 1. `DATABASE_URL`, when already exported.
-2. The configured bootstrap `database_url`.
-3. A Docker fallback from `docker-compose.test.yml`.
+2. A Docker fallback from `docker-compose.test.yml`.
+
+The configured bootstrap `database_url` is never used: it names the hub the running
+daemon owns, and the suite creates, resets, and drops schemas on whatever database
+it is given. Pytest aborts before collection when `DATABASE_URL` resolves to that
+hub, and fails rather than skipping when no DSN is set under `GOBBY_TEST_PROTECT=1`.
 
 The Docker fallback accepts either `docker compose` or `docker-compose`, starts
 the `postgres-test` service, and exports both `DATABASE_URL` and

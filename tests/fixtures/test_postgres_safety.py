@@ -10,16 +10,18 @@ from unittest.mock import MagicMock
 
 import psycopg
 import pytest
+from _pytest.outcomes import Failed, Skipped
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from tests.fixtures.postgres import (
     _adapt_seed_rows,
     _cleanup_orphaned_schemas,
-    _configured_postgres_database_url,
     _enforce_safe_test_schema,
+    _require_test_database_url,
     _schema_looks_test_only,
     isolated_test_schema,
+    pytest_configure,
 )
 
 pytestmark = pytest.mark.unit
@@ -68,28 +70,80 @@ def test_enforce_safe_test_schema_allows_test_schema_under_test_protect(
     assert _enforce_safe_test_schema("gobby_test_12345_1_master_abcd") is None
 
 
-def test_configured_postgres_database_url_requires_test_protect(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
-
-    assert _configured_postgres_database_url() is None
-
-
-def test_configured_postgres_database_url_reads_bootstrap_under_test_protect(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _stub_bootstrap_hub(monkeypatch: pytest.MonkeyPatch, database_url: str | None) -> None:
     from gobby.config import bootstrap
 
-    database_url = "postgresql://user:pass@localhost:60891/gobby"
-    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
     monkeypatch.setattr(
         bootstrap,
         "load_bootstrap",
         lambda **_kwargs: SimpleNamespace(database_url=database_url),
     )
 
-    assert _configured_postgres_database_url() == database_url
+
+def _configure_rejection(config: pytest.Config) -> str | None:
+    """Return the guard's rejection message, or None when the run is allowed."""
+    try:
+        pytest_configure(config)
+    except pytest.UsageError as exc:
+        return str(exc)
+    return None
+
+
+def test_pytest_configure_rejects_database_url_pointing_at_the_live_hub(
+    monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+) -> None:
+    _stub_bootstrap_hub(monkeypatch, "postgresql://gobby:pass@localhost:60891/gobby")
+    # A different user and the loopback alias still reach the same database.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://other@127.0.0.1:60891/gobby")
+
+    rejection = _configure_rejection(pytestconfig)
+
+    assert rejection is not None
+    assert "live Gobby hub database" in rejection
+
+
+def test_pytest_configure_allows_an_isolated_test_database(
+    monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+) -> None:
+    _stub_bootstrap_hub(monkeypatch, "postgresql://gobby:pass@localhost:60891/gobby")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+    )
+
+    assert _configure_rejection(pytestconfig) is None
+
+
+def test_pytest_configure_allows_runs_with_no_configured_hub(
+    monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
+) -> None:
+    _stub_bootstrap_hub(monkeypatch, None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://gobby:pass@localhost:60891/gobby")
+
+    assert _configure_rejection(pytestconfig) is None
+
+
+def test_require_test_database_url_fails_loudly_under_test_protect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An agent with no test database must never silently bind the live hub."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+
+    with pytest.raises(Failed, match="isolated PostgreSQL test database"):
+        _require_test_database_url()
+
+
+def test_require_test_database_url_skips_without_test_protect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
+
+    with pytest.raises(Skipped, match="isolated PostgreSQL test database"):
+        _require_test_database_url()
 
 
 def test_adapt_seed_rows_wraps_json_values() -> None:

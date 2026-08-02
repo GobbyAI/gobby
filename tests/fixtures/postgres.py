@@ -25,6 +25,7 @@ from typing import Any
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 
 from gobby.runner_maintenance.storage_hygiene import (
@@ -38,6 +39,12 @@ from gobby.storage.hub.postgres import (
 )
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
+_DEFAULT_POSTGRES_PORT = "5432"
+_LOOPBACK_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+_TEST_DSN_REQUIRED = (
+    "DATABASE_URL must point at an isolated PostgreSQL test database; start one with "
+    "`docker compose -f docker-compose.test.yml up -d postgres-test`."
+)
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -67,24 +74,70 @@ def _adapt_seed_rows(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
 logger = logging.getLogger(__name__)
 
 
-def _configured_postgres_database_url() -> str | None:
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
+def _dsn_identity(url: str) -> tuple[str, str, str] | None:
+    """Return the (host, port, dbname) a DSN resolves to, or None if unparseable."""
+    try:
+        fields = conninfo_to_dict(url)
+    except psycopg.Error:
         return None
+    host = str(fields.get("host") or "")
+    port = str(fields.get("port") or "") or _DEFAULT_POSTGRES_PORT
+    return (
+        "localhost" if host in _LOOPBACK_HOSTS else host,
+        port,
+        str(fields.get("dbname") or ""),
+    )
+
+
+def _live_hub_identity() -> tuple[str, str, str] | None:
+    """Return the identity of the operator's configured hub, when one is configured."""
     try:
         from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
-        return load_bootstrap(resolve_database_url=True).database_url
+        database_url = load_bootstrap(resolve_database_url=True).database_url
     except BootstrapConfigError as exc:
-        logger.warning("Failed to load bootstrap PostgreSQL DSN for tests: %s", exc)
+        logger.debug("No bootstrap PostgreSQL DSN to guard tests against: %s", exc)
         return None
+    return _dsn_identity(database_url) if database_url else None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run any test against the operator's live hub database.
+
+    The suite creates, resets, and drops schemas, and hub maintenance terminates
+    every backend on the database it fences. Neither is survivable on the hub the
+    running daemon owns, so abort before collection rather than at first connect.
+    """
+    del config
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return
+    hub_identity = _live_hub_identity()
+    if hub_identity is not None and _dsn_identity(url) == hub_identity:
+        raise pytest.UsageError(
+            f"DATABASE_URL points at the live Gobby hub database. {_TEST_DSN_REQUIRED}"
+        )
+
+
+def _require_test_database_url() -> str:
+    """Return the explicit test DSN, refusing to invent one.
+
+    There is deliberately no bootstrap fallback: that DSN names the hub the
+    running daemon owns, and a suite run against it drops schemas out from
+    under production. Under `GOBBY_TEST_PROTECT=1` a missing DSN is an error
+    rather than a skip, so an agent cannot mistake "nothing ran" for "passed".
+    """
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
+        pytest.fail(_TEST_DSN_REQUIRED)
+    pytest.skip(_TEST_DSN_REQUIRED)
 
 
 @pytest.fixture(scope="session")
 def postgres_database_url() -> str:
-    url = os.environ.get("DATABASE_URL") or _configured_postgres_database_url()
-    if not url:
-        pytest.skip("DATABASE_URL or configured bootstrap database_url is required")
-    return url
+    return _require_test_database_url()
 
 
 def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
@@ -220,8 +273,7 @@ def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]
     `isolated_test_schema` so the baseline classifier never sees a schema
     holding foreign tables.
 
-    Uses `DATABASE_URL` when configured, otherwise falls back to the local
-    Gobby bootstrap database_url under `GOBBY_TEST_PROTECT=1`.
+    Requires an explicit `DATABASE_URL` naming an isolated test database.
     """
     with isolated_test_schema(postgres_database_url, worker_id) as schema:
         yield schema
