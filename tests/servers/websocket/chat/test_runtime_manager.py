@@ -1448,6 +1448,106 @@ class TestCodexBackend:
         assert session._turn_id is None
 
     @pytest.mark.asyncio
+    async def test_stale_turn_interrupt_logs_debug_not_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An interrupt arriving after the turn advanced is benign: the target
+        turn is already gone, so it logs at DEBUG and re-raises CancelledError."""
+        import logging as py_logging
+
+        from gobby.servers.websocket.chat.backends.codex_turns import stream_codex_turn
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start_turn = AsyncMock(side_effect=asyncio.CancelledError())
+        client.interrupt_turn = AsyncMock(
+            side_effect=RuntimeError("expected active turn id turn-9 but found turn-10")
+        )
+
+        session = MagicMock()
+        session.conversation_id = "conv-codex"
+        session._thread_id = "thread-1"
+        session._turn_id = "turn-9"
+        session._model = None
+        session.reasoning_effort = None
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._reset_before_tool_state = MagicMock()
+
+        with (
+            caplog.at_level(
+                py_logging.DEBUG, logger="gobby.servers.websocket.chat.backends.codex_turns"
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            async for _ in stream_codex_turn(
+                client=client,
+                session=session,
+                prompt="hello",
+                context_prefix=None,
+                extract_before_tool_dedup_key=lambda _params: None,
+            ):
+                pass
+
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.servers.websocket.chat.backends.codex_turns"
+        ]
+        assert not any(record.levelno >= py_logging.WARNING for record in records)
+        assert any(
+            record.levelno == py_logging.DEBUG
+            and "already finished before interrupt" in record.message
+            for record in records
+        )
+
+    @pytest.mark.asyncio
+    async def test_other_interrupt_runtime_errors_still_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-race RuntimeErrors from interrupt_turn keep the WARNING path."""
+        import logging as py_logging
+
+        from gobby.servers.websocket.chat.backends.codex_turns import stream_codex_turn
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start_turn = AsyncMock(side_effect=asyncio.CancelledError())
+        client.interrupt_turn = AsyncMock(side_effect=RuntimeError("connection reset"))
+
+        session = MagicMock()
+        session.conversation_id = "conv-codex"
+        session._thread_id = "thread-1"
+        session._turn_id = "turn-9"
+        session._model = None
+        session.reasoning_effort = None
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._reset_before_tool_state = MagicMock()
+
+        with (
+            caplog.at_level(
+                py_logging.DEBUG, logger="gobby.servers.websocket.chat.backends.codex_turns"
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            async for _ in stream_codex_turn(
+                client=client,
+                session=session,
+                prompt="hello",
+                context_prefix=None,
+                extract_before_tool_dedup_key=lambda _params: None,
+            ):
+                pass
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.servers.websocket.chat.backends.codex_turns"
+            and record.levelno == py_logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert "Failed to interrupt cancelled Codex turn" in warnings[0].message
+
+    @pytest.mark.asyncio
     async def test_transcript_retry_uses_configured_timing(self, tmp_path: Path) -> None:
         transcript = tmp_path / "codex.jsonl"
         transcript.write_text("ignored\n", encoding="utf-8")

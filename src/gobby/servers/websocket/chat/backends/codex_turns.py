@@ -380,7 +380,7 @@ async def stream_codex_turn(
                     sdk_session_id=session.sdk_session_id,
                 )
                 continue
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as cancel_exc:
         active_turn_id = session._turn_id
         if active_turn_id:
             try:
@@ -388,13 +388,23 @@ async def stream_codex_turn(
                     client.interrupt_turn(thread_id, active_turn_id), timeout=1.0
                 )
             except (TimeoutError, OSError, RuntimeError) as exc:
-                logger.warning(
-                    "Failed to interrupt cancelled Codex turn %s for session %s: %s",
-                    active_turn_id,
-                    session.conversation_id,
-                    exc,
-                )
-        raise
+                if isinstance(exc, RuntimeError) and "expected active turn id" in str(exc):
+                    # The turn already advanced; the one we meant to kill is
+                    # gone, which is the desired end state.
+                    logger.debug(
+                        "Codex turn %s already finished before interrupt for session %s: %s",
+                        active_turn_id,
+                        session.conversation_id,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to interrupt cancelled Codex turn %s for session %s: %s",
+                        active_turn_id,
+                        session.conversation_id,
+                        exc,
+                    )
+        raise cancel_exc
     except Exception as exc:
         logger.error("Codex managed session %s error: %s", session.conversation_id, exc)
         yield TextChunk(content=f"Error: {exc}")
