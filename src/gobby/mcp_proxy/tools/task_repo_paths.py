@@ -71,7 +71,7 @@ def _task_allowed_roots(
     project_manager: LocalProjectManager | None,
     task: Task,
 ) -> Iterable[str]:
-    default_repo = _project_repo_path(project_manager, task.project_id)
+    default_repo = _project_repo_path_value(project_manager, task.project_id)
     if default_repo:
         yield default_repo
 
@@ -131,13 +131,23 @@ def _project_repo_path(
     project_manager: LocalProjectManager | None,
     project_id: str | None,
 ) -> str | None:
+    repo_path = _project_repo_path_value(project_manager, project_id)
+    if repo_path is None:
+        return None
+    return str(_resolve_existing_dir(repo_path, label="project record repo_path"))
+
+
+def _project_repo_path_value(
+    project_manager: LocalProjectManager | None,
+    project_id: str | None,
+) -> str | None:
     if project_manager is None or not project_id:
         return None
     project = project_manager.get(project_id)
     repo_path = getattr(project, "repo_path", None) if project else None
     if not isinstance(repo_path, str) or not repo_path:
         return None
-    return str(_resolve_existing_dir(repo_path, label="task project repository"))
+    return repo_path
 
 
 def _current_project_id() -> str | None:

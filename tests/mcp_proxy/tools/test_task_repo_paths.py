@@ -68,6 +68,48 @@ def test_resolve_project_repo_path_accepts_registered_descendant(tmp_path: Path)
     assert result == str(nested)
 
 
+def test_resolve_task_repo_path_names_project_record_for_missing_repo(tmp_path: Path) -> None:
+    missing_repo = tmp_path / "missing"
+    task = SimpleNamespace(project_id="project-1", id="task-1", parent_task_id=None)
+
+    with pytest.raises(
+        RepoPathValidationError,
+        match=r"project record repo_path does not exist:",
+    ):
+        resolve_task_repo_path(
+            task_manager=_task_manager(),
+            project_manager=_project_manager(missing_repo),
+            task=task,
+            project_path=None,
+        )
+
+
+def test_resolve_task_repo_path_honors_explicit_path_when_project_record_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    explicit_path = tmp_path / "registered-worktree"
+    explicit_path.mkdir()
+    missing_repo = tmp_path / "missing-canonical"
+    task = SimpleNamespace(project_id="project-1", id="task-1", parent_task_id=None)
+    worktree_manager = _IsolationManager([SimpleNamespace(worktree_path=str(explicit_path))])
+    monkeypatch.setattr(task_repo_paths, "LocalWorktreeManager", lambda _db: worktree_manager)
+    monkeypatch.setattr(
+        task_repo_paths,
+        "LocalCloneManager",
+        lambda _db: _IsolationManager([]),
+    )
+
+    result = resolve_task_repo_path(
+        task_manager=_task_manager(),
+        project_manager=_project_manager(missing_repo),
+        task=task,
+        project_path=str(explicit_path),
+    )
+
+    assert result == str(explicit_path)
+
+
 def test_resolve_project_repo_path_rejects_symlinked_final_component(
     tmp_path: Path,
 ) -> None:
