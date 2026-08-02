@@ -22,6 +22,9 @@ RECONCILE_DRIFT_V2_MIGRATION = (
 DROP_DEAD_TABLES_MIGRATION = SRC_ROOT / "storage" / "migrations" / "357_drop_dead_tables.sql"
 DROP_DEAD_COLUMNS_MIGRATION = SRC_ROOT / "storage" / "migrations" / "358_drop_dead_columns.sql"
 DROP_PGAUDIT_PROBE_MIGRATION = SRC_ROOT / "storage" / "migrations" / "359_drop_pgaudit_probe.sql"
+MAINTENANCE_FENCE_MIGRATION = (
+    SRC_ROOT / "storage" / "migrations" / "362_harden_maintenance_login_fence.sql"
+)
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -186,6 +189,29 @@ def test_post_bookkeeping_destructive_migrations_carry_marker() -> None:
             unmarked.append(path.name)
 
     assert unmarked == []
+
+
+def test_maintenance_login_fence_hardening_is_schema_independent_and_token_safe() -> None:
+    migration = MAINTENANCE_FENCE_MIGRATION.read_text(encoding="utf-8")
+
+    _assert_contains_all(
+        "maintenance login fence hardening migration",
+        migration,
+        (
+            "CREATE OR REPLACE FUNCTION %I.gobby_maintenance_epoch_login_guard()",
+            "FROM %I.maintenance_epochs",
+            "current_setting('gobby.maintenance_epoch', TRUE)",
+            "`gobby hub-maintenance status`",
+        ),
+    )
+    _assert_absent_all(
+        "maintenance login fence hardening migration",
+        migration,
+        (
+            "pg_catalog.current_schema()",
+            "GOBBY_MAINTENANCE_EPOCH %s",
+        ),
+    )
 
 
 def _storage_module_name(path: Path) -> str:

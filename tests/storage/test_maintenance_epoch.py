@@ -128,7 +128,11 @@ def test_migration_354_installs_bookkeeping_ledgers_and_login_fence(
     }
     trigger = connection.execute(
         """
-        SELECT event.evtname, event.evtevent, event.evtenabled
+        SELECT
+            event.evtname,
+            event.evtevent,
+            event.evtenabled,
+            pg_catalog.pg_get_functiondef(event.evtfoid) AS function_definition
         FROM pg_catalog.pg_event_trigger AS event
         JOIN pg_catalog.pg_proc AS function ON function.oid = event.evtfoid
         JOIN pg_catalog.pg_namespace AS namespace
@@ -144,6 +148,8 @@ def test_migration_354_installs_bookkeeping_ledgers_and_login_fence(
     assert trigger is not None
     assert trigger["evtevent"] == "login"
     assert trigger["evtenabled"] == "A"
+    assert "pg_catalog.current_schema()" not in trigger["function_definition"]
+    assert "GOBBY_MAINTENANCE_EPOCH %s" not in trigger["function_definition"]
 
 
 def test_database_login_fence_rejects_bare_pre_protocol_client_and_accepts_token(
@@ -152,14 +158,32 @@ def test_database_login_fence_rejects_bare_pre_protocol_client_and_accepts_token
     connection, scoped_dsn = epoch_admin
     epoch_id = _insert_epoch(connection)
 
-    with pytest.raises(psycopg.Error, match=str(epoch_id)):
+    with pytest.raises(psycopg.Error) as exc_info:
         psycopg.connect(scoped_dsn)
+
+    rejection = str(exc_info.value)
+    assert str(epoch_id) not in rejection
+    assert "gobby hub-maintenance status" in rejection
 
     with psycopg.connect(bind_maintenance_epoch(scoped_dsn, epoch_id)) as admitted:
         configured_epoch = admitted.execute(
             "SELECT current_setting('gobby.maintenance_epoch')"
         ).fetchone()
         assert configured_epoch == (str(epoch_id),)
+
+
+def test_database_login_fence_ignores_client_search_path(
+    epoch_admin: tuple[psycopg.Connection[Any], str],
+) -> None:
+    connection, scoped_dsn = epoch_admin
+    epoch_id = _insert_epoch(connection)
+
+    with pytest.raises(psycopg.Error) as exc_info:
+        psycopg.connect(scoped_dsn, options="-csearch_path=pg_catalog")
+
+    rejection = str(exc_info.value)
+    assert str(epoch_id) not in rejection
+    assert "gobby hub-maintenance status" in rejection
 
 
 def test_database_login_fence_rejects_external_libpq_ingress_like_rust_clients(
@@ -191,7 +215,8 @@ def test_database_login_fence_rejects_external_libpq_ingress_like_rust_clients(
     )
 
     assert rejected.returncode != 0
-    assert str(epoch_id) in rejected.stderr
+    assert str(epoch_id) not in rejected.stderr
+    assert "gobby hub-maintenance status" in rejected.stderr
     assert admitted.returncode == 0, admitted.stderr
     assert admitted.stdout.strip() == "1"
 
@@ -215,6 +240,7 @@ def test_python_admission_probe_surfaces_actionable_epoch_error(
         probe_maintenance_admission(scoped_dsn)
 
     assert exc_info.value.epoch_id == epoch_id
+    assert str(epoch_id) not in str(exc_info.value)
     assert "gobby hub-maintenance resume" in str(exc_info.value)
 
 
