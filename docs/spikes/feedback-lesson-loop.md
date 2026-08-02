@@ -111,7 +111,7 @@ unchanged, finding points at B):
 
 | Surface | Disposition |
 |---|---|
-| CodeRabbit, code-reviewer, qa-reviewer, nightly-linter, nightly-test-fixer, trajectory-monitor | Existing loop — unchanged |
+| CodeRabbit, code-reviewer, qa-reviewer, trajectory-monitor | Existing loop — unchanged |
 | Plan adversary, planner, interactive coordinator | Implementation (T3, T6) |
 | Validation gate | Implementation (T4) |
 | Epic QA | Implementation (T5) |

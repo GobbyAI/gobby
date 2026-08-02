@@ -259,6 +259,10 @@ frontmatter for bundled-skill sync (`src/gobby/skills/sync.py`).
 
 ### 4. Wire v1 producers — inline calls while the producer has full context
 
+> **Historical inventory:** References to `nightly-linter` and `nightly-test-fixer` in this
+> completed plan describe agents present at implementation time. Both workflows were
+> subsequently deleted.
+
 Reviewers/agents call `recall_review_context` before triage decisions and
 `record_review_lesson` **inline after confirmed outcomes** (they hold the finding context and can
 generalize `pattern_id`). No post-parsing of `reject_review` notes.
