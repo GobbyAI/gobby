@@ -89,6 +89,7 @@ def update_task(
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
     start_date: MaybeUnset[str | None] = UNSET,
     due_date: MaybeUnset[str | None] = UNSET,
+    _require_escalated: bool = False,
 ) -> bool:
     """Internal storage primitive for task field updates.
 
@@ -267,13 +268,25 @@ def update_task(
 
     params.append(task_id)
 
-    sql = f"UPDATE tasks SET {', '.join(updates)} WHERE id = %s"  # nosec B608
+    where_clause = "id = %s"
+    if _require_escalated:
+        where_clause += " AND is_escalated = TRUE"
+    sql = f"UPDATE tasks SET {', '.join(updates)} WHERE {where_clause}"  # nosec B608
 
     with db.transaction() as conn:
         if parent_task_id is not UNSET:
             _validate_parent_task_id_update(conn, task_id, cast(str | None, parent_task_id))
         cursor = conn.execute(sql, tuple(params))
         if cursor.rowcount == 0:
+            if _require_escalated:
+                existing = conn.execute(
+                    "SELECT 1 FROM tasks WHERE id = %s",
+                    (task_id,),
+                ).fetchone()
+                if existing is not None:
+                    raise ValueError(
+                        "Cannot update escalation_reason for a task that is not escalated."
+                    )
             raise ValueError(f"Task {task_id} not found")
 
     return parent_task_id is not UNSET
@@ -361,9 +374,6 @@ def update_task_metadata(
             f"LocalTaskManager.update_task received unsupported fields: {unsupported_display}"
         )
 
-    if escalation_reason is not UNSET and not get_task(db, task_id).is_escalated:
-        raise ValueError("Cannot update escalation_reason for a task that is not escalated.")
-
     return update_task(
         db,
         task_id=task_id,
@@ -403,4 +413,5 @@ def update_task_metadata(
         additional_skills=additional_skills,
         start_date=start_date,
         due_date=due_date,
+        _require_escalated=escalation_reason is not UNSET,
     )

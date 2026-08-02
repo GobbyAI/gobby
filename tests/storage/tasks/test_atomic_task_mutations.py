@@ -19,6 +19,7 @@ from gobby.storage.tasks import (
     _lifecycle,
     _review_transitions,
     _transitions,
+    _updates,
 )
 
 pytestmark = pytest.mark.unit
@@ -225,3 +226,57 @@ def test_submit_for_review_preserves_label_added_during_transition(
 
     assert "covers:concurrent" in (reviewed.labels or [])
     assert "planning-current-verdict:rejected" not in (reviewed.labels or [])
+
+
+def test_concurrent_de_escalation_does_not_resurrect_reason(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent reason update",
+        validation_criteria="Clearing escalation remains authoritative.",
+    )
+    manager.escalate_task(task.id, reason="stale")
+
+    reason_read = threading.Event()
+    clear_committed = threading.Event()
+    errors: list[BaseException] = []
+    updates_module: Any = _updates
+    real_get_task: Callable[[HubDatabase, str], Task] = updates_module.get_task
+    writer: threading.Thread
+
+    def _pause_reason_writer_after_read(db: HubDatabase, task_id: str) -> Task:
+        current = real_get_task(db, task_id)
+        if threading.current_thread() is writer:
+            reason_read.set()
+            assert clear_committed.wait(timeout=5)
+        return current
+
+    def _update_reason() -> None:
+        try:
+            manager.update_task(task.id, escalation_reason="current")
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(updates_module, "get_task", _pause_reason_writer_after_read)
+    writer = threading.Thread(target=_update_reason)
+
+    try:
+        with temp_db.transaction() as conn:
+            conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (task.id,))
+            writer.start()
+            assert reason_read.wait(timeout=5)
+            manager.de_escalate_task(task.id, reason="resolved")
+    finally:
+        clear_committed.set()
+        writer.join(timeout=5)
+
+    assert not writer.is_alive()
+    assert len(errors) == 1
+    assert str(errors[0]) == "Cannot update escalation_reason for a task that is not escalated."
+    cleared = manager.get_task(task.id)
+    assert cleared.is_escalated is False
+    assert cleared.escalation_reason is None
