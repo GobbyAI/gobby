@@ -178,8 +178,8 @@ def _capture_canonical_seed(
 
 def _delete_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
     """Order tables child-first for immediate RESTRICT/NO ACTION foreign keys."""
-    blockers = {table: set() for table in tables}
-    parents_by_child = {table: set() for table in tables}
+    blockers: dict[str, set[str]] = {table: set() for table in tables}
+    parents_by_child: dict[str, set[str]] = {table: set() for table in tables}
     foreign_keys = conn.execute(
         """
         SELECT child.relname, parent.relname
