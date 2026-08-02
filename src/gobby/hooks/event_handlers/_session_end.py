@@ -13,7 +13,6 @@ class SessionEndMixin(EventHandlersBase):
 
     def handle_session_end(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_END event."""
-        from gobby.tasks.commits import auto_link_commits
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
         external_id = event.session_id
@@ -78,32 +77,27 @@ class SessionEndMixin(EventHandlersBase):
             end_status = "expired"
         terminal_outcome = end_status == "expired"
 
-        # Auto-link commits made during this session to tasks
-        if session and self._task_manager and self._session_manager:
+        # Auto-link outside the critical hook executor. The managed worker drains
+        # accepted work before HookManager closes shared storage.
+        if session and self._session_end_auto_link_worker:
             try:
-                cwd = event.data.get("cwd")
-                from gobby.storage.projects import LocalProjectManager
-                from gobby.utils.datetime import datetime_to_required_iso
+                from gobby.hooks.session_end_auto_link import SessionEndAutoLinkJob
 
-                project = LocalProjectManager(self._session_manager.db).get(session.project_id)
-                if project is None:
-                    raise ValueError(f"Project {session.project_id} not found")
-
-                link_result = auto_link_commits(
-                    task_manager=self._task_manager,
-                    since=datetime_to_required_iso(session.created_at),
-                    cwd=cwd,
-                    project_name=project.name,
-                    project_id=session.project_id,
-                )
-                if link_result.total_linked > 0:
-                    self.logger.info(
-                        "Auto-linked %s commits to tasks: %s",
-                        link_result.total_linked,
-                        list(link_result.linked_tasks.keys()),
+                self._session_end_auto_link_worker.submit(
+                    SessionEndAutoLinkJob(
+                        session_id=session.id,
+                        project_id=session.project_id,
+                        created_at=session.created_at,
+                        cwd=event.data.get("cwd"),
                     )
+                )
             except Exception as e:
-                self.logger.warning("Failed to auto-link session commits: %s", e)
+                self.logger.warning(
+                    "SESSION_END: failed to enqueue commit auto-link for session %s project %s: %s",
+                    session.id,
+                    session.project_id,
+                    e,
+                )
 
         # Complete agent run if this is a terminal-mode agent session
         if terminal_outcome and session and session.agent_run_id and self._session_coordinator:

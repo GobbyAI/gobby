@@ -490,9 +490,9 @@ class TestHookManagerSessionEnd:
             patch.object(
                 hook_manager_with_mocks._session_manager, "get", return_value=mock_session
             ),
-            patch("gobby.storage.projects.LocalProjectManager") as project_manager_cls,
+            patch("gobby.hooks.session_end_auto_link.LocalProjectManager") as project_manager_cls,
             patch(
-                "gobby.tasks.commits.auto_link_commits", return_value=mock_result
+                "gobby.hooks.session_end_auto_link.auto_link_commits", return_value=mock_result
             ) as mock_auto_link,
         ):
             project_manager_cls.return_value.get.return_value = mock_project
@@ -507,6 +507,7 @@ class TestHookManagerSessionEnd:
             )
 
             response = hook_manager_with_mocks.handle(end_event)
+            hook_manager_with_mocks._session_end_auto_link_worker.shutdown()
 
             assert response.decision == "allow"
 
