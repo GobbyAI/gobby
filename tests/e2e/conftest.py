@@ -358,7 +358,11 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
             if response.status_code == 200 and response.json().get("done") is True:
                 return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
-            time.sleep(0.5)
+            pass
+        # Sleep on every non-ready iteration. A 200 with done=false means the
+        # daemon is still starting; polling that without a delay spins at full
+        # CPU and steals cycles from the daemon we are waiting on.
+        time.sleep(0.5)
     return False
 
 
@@ -1331,31 +1335,56 @@ async def async_mcp_client(
 
 _SNAPSHOT_EXCLUDED_DIRS = {"skill-cache"}
 
+# Directories recorded one level deep and never descended into. Task worktrees
+# are full source checkouts whose file count is unbounded and unrelated to what
+# this guard protects: ~/.gobby/worktrees has held 840k files / 85 GiB, which
+# cost ~36s per snapshot and ~72s per test. Recording each worktree's top-level
+# entry still catches a test creating one; descending only prices in churn from
+# concurrent agents.
+_SHALLOW_SNAPSHOT_PREFIXES = ("worktrees/",)
+
+
+def _is_shallow_snapshot_child(rel_dir: str) -> bool:
+    """Return true for a directory nested inside a shallow-snapshot root."""
+    return any(
+        rel_dir.startswith(prefix) and rel_dir != prefix for prefix in _SHALLOW_SNAPSHOT_PREFIXES
+    )
+
 
 def _snapshot_dir(path: Path) -> dict[str, float]:
-    """Return {relative_path: mtime} for all files under *path*."""
+    """Return {relative_path: mtime} for entries under *path*.
+
+    Uses os.scandir so each entry's stat comes from the directory read itself
+    rather than a separate syscall per file. Symlinks are recorded as entries
+    rather than followed, so a symlink appearing in ~/.gobby is caught.
+    """
     if not path.exists():
         return {}
 
     snapshot: dict[str, float] = {}
-    for root, dirs, files in os.walk(path):
-        root_path = Path(root)
-        dirs[:] = [
-            name
-            for name in dirs
-            if name not in _SNAPSHOT_EXCLUDED_DIRS
-            and not any(
-                f"{(root_path / name).relative_to(path).as_posix()}/".startswith(prefix)
-                for prefix in _ALWAYS_EXEMPT_PREFIXES
-            )
-        ]
-        for filename in files:
-            file_path = root_path / filename
+    stack: list[tuple[str, str]] = [(str(path), "")]
+    while stack:
+        current, rel_root = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            rel_path = f"{rel_root}{entry.name}"
             try:
-                snapshot[str(file_path.relative_to(path))] = file_path.stat(
-                    follow_symlinks=False
-                ).st_mtime
-            except FileNotFoundError:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name in _SNAPSHOT_EXCLUDED_DIRS:
+                        continue
+                    rel_dir = f"{rel_path}/"
+                    if rel_dir.startswith(_ALWAYS_EXEMPT_PREFIXES):
+                        continue
+                    if _is_shallow_snapshot_child(rel_dir):
+                        snapshot[rel_path] = entry.stat(follow_symlinks=False).st_mtime
+                        continue
+                    stack.append((entry.path, rel_dir))
+                    continue
+                snapshot[rel_path] = entry.stat(follow_symlinks=False).st_mtime
+            except OSError:
                 continue
     return snapshot
 
@@ -1402,17 +1431,6 @@ _ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/")
 
 
-def _is_worktree_tool_artifact(rel_path: str) -> bool:
-    """Return true for tool caches created inside a concurrent task worktree."""
-    return rel_path.startswith("worktrees/") and (
-        "/__pycache__/" in rel_path
-        or "/.mypy_cache/" in rel_path
-        or "/.ruff_cache/" in rel_path
-        or "/target/" in rel_path
-        or rel_path.endswith((".pyc", ".pyo"))
-    )
-
-
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
     """Fail the test if the E2E daemon created new files in real ~/.gobby/.
@@ -1450,8 +1468,6 @@ def assert_no_external_writes() -> Generator[None]:
             basename = Path(rel_path).name
             if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                 continue
-            if _is_worktree_tool_artifact(rel_path):
-                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (
@@ -1459,6 +1475,7 @@ def assert_no_external_writes() -> Generator[None]:
                 or rel_path.startswith("logs/")
                 or rel_path.startswith("session_summaries/")
                 or rel_path.startswith("session_transcripts/")
+                or rel_path.startswith("worktrees/")
                 or basename.endswith(".pid")
             ):
                 continue  # Known production daemon artifact
@@ -1471,7 +1488,9 @@ def assert_no_external_writes() -> Generator[None]:
             # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
-            if _is_worktree_tool_artifact(rel_path):
+            if rel_path.startswith("worktrees/"):
+                # Shallow-snapshotted: a worktree directory's mtime changes
+                # whenever a concurrent agent writes into it.
                 continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue
