@@ -257,7 +257,7 @@ class TestSessionEndHandling:
         response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "expired"
         )
 
@@ -283,7 +283,7 @@ class TestSessionEndHandling:
         response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "expired"
         )
 
@@ -309,7 +309,7 @@ class TestSessionEndHandling:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "handoff_ready"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
@@ -336,7 +336,7 @@ class TestSessionEndHandling:
         response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "expired"
         )
 
@@ -359,7 +359,7 @@ class TestSessionEndHandling:
         response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "expired"
         )
 
@@ -383,9 +383,10 @@ class TestSessionEndHandling:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "paused"
         )
+        mock_dependencies["session_storage"].update_status.assert_not_called()
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
         manager_cls.return_value.delete_instances_for_session.assert_not_called()
 
@@ -414,7 +415,7 @@ class TestSessionEndHandling:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "expired"
         )
 
@@ -447,7 +448,7 @@ class TestSessionEndHandling:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+        mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
             "sess-123", "paused"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
@@ -463,7 +464,9 @@ class TestSessionEndHandling:
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
         mock_dependencies["session_storage"].get.return_value = mock_session
-        mock_dependencies["session_storage"].update_status.side_effect = Exception("DB write error")
+        mock_dependencies["session_storage"].update_status_if_non_terminal.side_effect = Exception(
+            "DB write error"
+        )
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(

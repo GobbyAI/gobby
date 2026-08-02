@@ -46,6 +46,8 @@ class HookSessionManager(Protocol):
 
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
+    def update_status_if_non_terminal(self, session_id: str, status: str) -> Session | None: ...
+
     def update_summary(
         self,
         session_id: str,

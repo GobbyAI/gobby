@@ -571,21 +571,23 @@ class GwikiGateway:
             ):
                 stdout_task = asyncio.create_task(stdout_pipe.read())
                 stderr_task = asyncio.create_task(stderr_pipe.read())
+                process_wait = asyncio.create_task(proc.wait())
                 started_at = time.monotonic()
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=self._timeout_seconds)
-                except TimeoutError:
-                    elapsed_seconds = time.monotonic() - started_at
-                    await self._kill_process(proc)
-                    stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
-                    return self._timeout_envelope(
-                        command_name,
-                        stdout=stdout,
-                        stderr=stderr,
-                        elapsed_seconds=elapsed_seconds,
-                    )
+                    done, _ = await asyncio.wait((process_wait,), timeout=self._timeout_seconds)
+                    if process_wait not in done:
+                        elapsed_seconds = time.monotonic() - started_at
+                        await self._kill_process(proc, process_wait)
+                        stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
+                        return self._timeout_envelope(
+                            command_name,
+                            stdout=stdout,
+                            stderr=stderr,
+                            elapsed_seconds=elapsed_seconds,
+                        )
+                    await process_wait
                 except asyncio.CancelledError:
-                    await self._kill_process(proc)
+                    await self._kill_process(proc, process_wait)
                     await self._cancel_streams(stdout_task, stderr_task)
                     raise
                 stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
@@ -711,18 +713,32 @@ class GwikiGateway:
             task.cancel()
         await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
 
-    async def _kill_process(self, proc: asyncio.subprocess.Process) -> None:
+    async def _kill_process(
+        self,
+        proc: asyncio.subprocess.Process,
+        process_wait: asyncio.Task[int] | None = None,
+    ) -> None:
+        wait_task = process_wait or asyncio.create_task(proc.wait())
         try:
             proc.terminate()
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
-        except TimeoutError:
+        except ProcessLookupError:
+            await asyncio.gather(wait_task, return_exceptions=True)
+            return
+
+        done, _ = await asyncio.wait((wait_task,), timeout=1.0)
+        if wait_task in done:
             try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
+                await wait_task
+            except TimeoutError:
+                wait_task = asyncio.create_task(proc.wait())
+            else:
+                return
+
+        try:
+            proc.kill()
         except ProcessLookupError:
             pass
+        await asyncio.gather(wait_task, return_exceptions=True)
 
     def _parse_success_payload(self, command_name: str, stdout: bytes) -> dict[str, Any]:
         text = stdout.decode(errors="replace").strip()

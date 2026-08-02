@@ -811,6 +811,39 @@ async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["error"]["elapsed_seconds"] >= 0
 
 
+async def test_timeout_does_not_wait_for_process_wait_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CancellationResistantProcess(FakeProcess):
+        async def wait(self) -> None:
+            self.waited = True
+            while self.timeout and not self.terminated and not self.killed:
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    continue
+
+    process = CancellationResistantProcess(timeout=True)
+    _patch_subprocess(monkeypatch, [process])
+    gateway = GwikiGateway(
+        binary="/bin/gwiki",
+        project_root="/repo",
+        timeout_seconds=0.01,
+    )
+    command = asyncio.create_task(gateway.health())
+
+    try:
+        await asyncio.sleep(0.05)
+        assert command.done()
+        result = await command
+    finally:
+        process.terminate()
+        await command
+
+    assert result["status"] == "degraded"
+    assert result["error"]["type"] == "timeout"
+
+
 async def test_cancellation_terminates_and_reaps_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
