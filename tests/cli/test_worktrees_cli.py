@@ -116,7 +116,10 @@ def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) ->
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"success": True, "result": {"success": True}}
+    mock_response.json.return_value = {
+        "success": True,
+        "result": {"artifact_refs_cleared": 0},
+    }
     mock_httpx.return_value = mock_response
 
     runner = CliRunner()
@@ -134,6 +137,31 @@ def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) ->
         headers={},
         timeout=30.0,
     )
+
+
+@patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+def test_delete_worktree_failure_reports_service_reason(
+    mock_url, mock_worktree_manager, mock_httpx
+) -> None:
+    """Test 'worktrees delete' failure uses the daemon's reason and exits nonzero."""
+    mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
+    mock_worktree_manager.get.return_value = MOCK_WORKTREE
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "success": False,
+        "error": "Worktree has uncommitted changes",
+    }
+    mock_httpx.return_value = mock_response
+
+    runner = CliRunner()
+    result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+
+    assert result.exit_code == 1
+    assert "Failed to delete worktree: Worktree has uncommitted changes" in result.output
+    assert "Failed to delete worktree: None" not in result.output
+    assert "Deleted worktree" not in result.output
 
 
 def test_show_worktree(mock_worktree_manager) -> None:
