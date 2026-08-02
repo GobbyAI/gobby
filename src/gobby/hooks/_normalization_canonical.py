@@ -1,6 +1,5 @@
 """Canonical tool metadata inference."""
 
-import ast
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -31,6 +30,10 @@ from gobby.hooks._normalization_shell import (
     tokenize_shell_command,
 )
 from gobby.hooks._path_scope import apply_path_scope_metadata
+from gobby.hooks._python_pipeline_classifier import (
+    _inline_interpreter_parts,
+    _is_read_only_python_pipeline,
+)
 from gobby.hooks.code_navigation import (
     count_option_line_count,
     gcode_navigation_metadata,
@@ -85,20 +88,6 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
-_PYTHON_PIPELINE_MODULES = frozenset({"json", "sys"})
-_PYTHON_PIPELINE_BUILTINS = frozenset(
-    "all any bool dict enumerate filter float int iter len list map max min next print range "
-    "reversed set sorted str sum tuple zip".split()
-)
-_PYTHON_PIPELINE_METHODS = frozenset(
-    "casefold count decode encode endswith format get index items join keys lower lstrip "
-    "replace rsplit rstrip split splitlines startswith strip upper values".split()
-)
-_PYTHON_PIPELINE_STREAM_CALLS = frozenset(
-    "sys.stdin.buffer.read sys.stdin.buffer.readline sys.stdin.buffer.readlines sys.stdin.read "
-    "sys.stdin.readline sys.stdin.readlines sys.stdout.flush sys.stdout.write "
-    "sys.stdout.writelines".split()
-)
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 
 
@@ -204,95 +193,6 @@ def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> 
     if cmd == "sed" and _has_sed_inplace_option(parts):
         return False
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
-
-
-def _inline_interpreter_parts(parts: list[str]) -> list[str]:
-    if not parts:
-        return []
-    if shell_command_name(parts[0]) != "uv" or parts[1:2] != ["run"]:
-        return parts
-    for index, part in enumerate(parts[2:], start=2):
-        if shell_command_name(part) in {"python", "python3", "node", "ruby"}:
-            return parts[index:]
-    return []
-
-
-def _python_inline_script(parts: list[str]) -> str | None:
-    interpreter_parts = _inline_interpreter_parts(parts)
-    if not interpreter_parts or shell_command_name(interpreter_parts[0]) not in {
-        "python",
-        "python3",
-    }:
-        return None
-    try:
-        script_index = interpreter_parts.index("-c") + 1
-    except ValueError:
-        return None
-    if script_index >= len(interpreter_parts):
-        return None
-    return interpreter_parts[script_index]
-
-
-def _python_attribute_name(node: ast.Attribute) -> str | None:
-    parts = [node.attr]
-    value: ast.expr = node.value
-    while isinstance(value, ast.Attribute):
-        parts.append(value.attr)
-        value = value.value
-    if not isinstance(value, ast.Name):
-        return None
-    parts.append(value.id)
-    return ".".join(reversed(parts))
-
-
-def _is_safe_python_pipeline_call(node: ast.Call) -> bool:
-    if isinstance(node.func, ast.Name):
-        return node.func.id in _PYTHON_PIPELINE_BUILTINS
-    if not isinstance(node.func, ast.Attribute):
-        return False
-    name = _python_attribute_name(node.func)
-    if name in _PYTHON_PIPELINE_STREAM_CALLS or name in {
-        "json.dumps",
-        "json.loads",
-    }:
-        return True
-    if name == "json.load":
-        return (
-            bool(node.args)
-            and isinstance(node.args[0], ast.Attribute)
-            and (_python_attribute_name(node.args[0]) in {"sys.stdin", "sys.stdin.buffer"})
-        )
-    return node.func.attr in _PYTHON_PIPELINE_METHODS and not (name or "").startswith("sys.")
-
-
-def _is_read_only_python_pipeline(parts: list[str]) -> bool:
-    script = _python_inline_script(parts)
-    if script is None:
-        return False
-    try:
-        tree = ast.parse(script)
-    except SyntaxError:
-        return False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            if any(alias.name not in _PYTHON_PIPELINE_MODULES for alias in node.names):
-                return False
-        elif isinstance(node, ast.ImportFrom):
-            return False
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            if node.id in _PYTHON_PIPELINE_MODULES | _PYTHON_PIPELINE_BUILTINS:
-                return False
-        elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
-            node.ctx, (ast.Store, ast.Del)
-        ):
-            return False
-        elif isinstance(node, ast.Call) and not _is_safe_python_pipeline_call(node):
-            return False
-        elif isinstance(
-            node, (ast.AsyncFunctionDef, ast.AsyncWith, ast.ClassDef, ast.FunctionDef, ast.With)
-        ):
-            return False
-    return True
 
 
 def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
