@@ -38,6 +38,23 @@ def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
     assert result.has_behavioral_delta
 
 
+def test_elicit_presents_decision_record_as_plain_conversation_text() -> None:
+    """Verify Decision Records remain visible outside confirmation widgets."""
+    result = run_recorded_skill_scenario(SCENARIOS / "elicit/plain-text-decision-record.yaml")
+
+    assert result.baseline.combined_text == ""
+    assert result.loaded.action_names == ("present_decision_record", "ask_user_question")
+    assert "Storage: PostgreSQL." in result.loaded.combined_text
+    assert "Success criterion: zero lost writes." in result.loaded.combined_text
+
+    repository_root = Path(__file__).resolve().parents[2]
+    skill_text = (
+        repository_root / "src/gobby/install/shared/skills/elicit/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "plain conversation text" in skill_text
+    assert "never solely inside" in skill_text
+
+
 @pytest.mark.parametrize("skill_name", ["plan", "merge-expert", "goal"])
 def test_coordinator_skills_page_bounded_terminal_captures(skill_name: str) -> None:
     """Verify coordinators retrieve complete captures before consuming terminal reports."""
