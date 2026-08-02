@@ -160,6 +160,53 @@ def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
     } <= columns
 
 
+def test_sync_removes_orphaned_bundled_manifest_and_preserves_user_manifest(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    bundled_provider_id = "gemini"
+    current_provider_id = "agy"
+    user_provider_id = "user-profile"
+    provider_ids = (bundled_provider_id, current_provider_id, user_provider_id)
+
+    for provider_id in provider_ids:
+        temp_db.execute("DELETE FROM detection_manifests WHERE provider_id = %s", (provider_id,))
+
+    try:
+        temp_db.execute(
+            """
+            INSERT INTO detection_manifests (provider_id, version, engine, content, source)
+            VALUES (%s, %s, %s, %s, 'bundled')
+            """,
+            (bundled_provider_id, "1", 1, _manifest(bundled_provider_id, "stale")),
+        )
+        save_user_detection_manifest(temp_db, _manifest(user_provider_id, "custom"))
+        (tmp_path / f"{current_provider_id}.toml").write_text(
+            _manifest(current_provider_id, "current"),
+            encoding="utf-8",
+        )
+
+        sync_bundled_detection_manifests(temp_db, manifests_path=tmp_path)
+
+        assert (
+            temp_db.fetchone(
+                "SELECT provider_id FROM detection_manifests WHERE provider_id = %s",
+                (bundled_provider_id,),
+            )
+            is None
+        )
+        assert temp_db.fetchone(
+            "SELECT source FROM detection_manifests WHERE provider_id = %s",
+            (user_provider_id,),
+        ) == {"source": "user"}
+    finally:
+        for provider_id in provider_ids:
+            temp_db.execute(
+                "DELETE FROM detection_manifests WHERE provider_id = %s",
+                (provider_id,),
+            )
+
+
 def test_cache_boundary_and_user_ownership(
     temp_db: HubDatabase,
     tmp_path: Path,
