@@ -5,11 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from unittest.mock import patch
+import threading
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.telemetry.rule_allow_audit import RuleAllowAudit, record_rule_evaluation
+import gobby.telemetry.rule_allow_audit as rule_allow_audit_module
+from gobby.telemetry.rule_allow_audit import (
+    RuleAllowAudit,
+    record_rule_evaluation,
+    shutdown_rule_allow_audit,
+)
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 
 
 def _record(audit: RuleAllowAudit) -> bool:
@@ -88,6 +95,82 @@ async def test_allow_audit_shutdown_counts_in_flight_line_after_deadline() -> No
         amount=1,
         attributes={"reason": "shutdown"},
     )
+
+
+@pytest.mark.asyncio
+async def test_allow_audit_close_drains_writer_on_workflow_runtime_loop() -> None:
+    written: list[dict[str, object]] = []
+
+    async def writer(line: str) -> None:
+        written.append(json.loads(line))
+
+    audit = RuleAllowAudit(capacity=3, shutdown_timeout_seconds=1.0, writer=writer)
+    runtime = WorkflowEvaluationRuntime()
+
+    async def accept_records() -> asyncio.AbstractEventLoop:
+        assert [_record(audit), _record(audit), _record(audit)] == [True, True, True]
+        return asyncio.get_running_loop()
+
+    try:
+        owner_loop = await asyncio.to_thread(runtime.run, accept_records())
+        assert owner_loop is not asyncio.get_running_loop()
+        await audit.close()
+    finally:
+        await asyncio.to_thread(runtime.shutdown)
+
+    assert len(written) == 3
+    assert not audit.started
+
+
+@pytest.mark.asyncio
+async def test_allow_audit_close_counts_residual_records_after_owner_loop_closes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    started = threading.Event()
+
+    async def blocked_writer(_line: str) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    audit = RuleAllowAudit(capacity=2, shutdown_timeout_seconds=1.0, writer=blocked_writer)
+    runtime = WorkflowEvaluationRuntime()
+
+    async def accept_records() -> None:
+        assert _record(audit)
+        assert _record(audit)
+
+    caplog.set_level(logging.WARNING)
+    with patch("gobby.telemetry.rule_allow_audit.inc_counter") as inc_counter:
+        await asyncio.to_thread(runtime.run, accept_records())
+        assert await asyncio.to_thread(started.wait, 1.0)
+        writer_task = audit._writer_task
+        assert writer_task is not None
+        await asyncio.to_thread(runtime.shutdown)
+        assert writer_task.done()
+        await audit.close()
+
+    inc_counter.assert_called_once_with(
+        "rule_allow_audit_dropped_lines_total",
+        amount=2,
+        attributes={"reason": "shutdown"},
+    )
+    assert not audit.started
+    assert caplog.records == []
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rule_allow_audit_keeps_singleton_after_cancellation() -> None:
+    audit = RuleAllowAudit(capacity=1, shutdown_timeout_seconds=1.0)
+    rule_allow_audit_module._configured_audit = audit
+
+    close = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+    with patch.object(audit, "close", close):
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown_rule_allow_audit()
+        assert rule_allow_audit_module._configured_audit is audit
+        await shutdown_rule_allow_audit()
+
+    assert rule_allow_audit_module._configured_audit is None
 
 
 def test_rule_evaluation_process_metrics_use_rule_and_result_attributes(

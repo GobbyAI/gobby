@@ -1616,6 +1616,9 @@ class TestShutdownDaemonServices:
         async def shutdown_workflow_runtime() -> None:
             events.append("workflow-runtime")
 
+        async def drain_rule_allow_audit() -> None:
+            events.append("rule-allow-audit")
+
         runner.http_server._cleanup_pending_interactions = AsyncMock(side_effect=cleanup_pending)
         runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
         runner.http_server._hook_manager = SimpleNamespace(
@@ -1626,17 +1629,21 @@ class TestShutdownDaemonServices:
             stop=AsyncMock(side_effect=stop_communications)
         )
 
-        await runner_lifecycle_shutdown.shutdown_daemon_services(
-            runner,
-            server,
-            server_task,
-            1,
-            await_critical_stop_hook_grace_window=grace_window,
-            shutdown_websocket_server=shutdown_websocket,
-            reap_remaining_child_processes=AsyncMock(),
-            shutdown_telemetry=MagicMock(),
-            cleanup_pid_file=MagicMock(),
-        )
+        with patch(
+            "gobby.telemetry.rule_allow_audit.shutdown_rule_allow_audit",
+            new=AsyncMock(side_effect=drain_rule_allow_audit),
+        ):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                server_task,
+                1,
+                await_critical_stop_hook_grace_window=grace_window,
+                shutdown_websocket_server=shutdown_websocket,
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
 
         assert events[:5] == [
             "grace",
@@ -1646,6 +1653,7 @@ class TestShutdownDaemonServices:
             "websocket",
         ]
         assert events.index("communications") < events.index("workflow-runtime")
+        assert events.index("rule-allow-audit") < events.index("workflow-runtime")
         assert server.should_exit is True
 
     @pytest.mark.asyncio

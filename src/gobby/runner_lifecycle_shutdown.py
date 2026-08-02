@@ -598,6 +598,8 @@ async def _run_graceful_shutdown_sequence(
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
 ) -> None:
+    from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
+
     if shutdown_intent is ShutdownIntent.STOP:
         await _best_effort(
             await_critical_stop_hook_grace_window,
@@ -686,6 +688,7 @@ async def _run_graceful_shutdown_sequence(
         lambda: _stop_ui_dev_server_if_needed(runner),
         "UI development server shutdown",
     )
+    await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     await _best_effort(
         lambda: _close_managers_and_storage(runner),
         "Manager and storage shutdown",

@@ -94,28 +94,71 @@ class RuleAllowAudit:
         if task is None:
             return
 
+        owner_loop = task.get_loop()
+        running_loop = asyncio.get_running_loop()
+        if owner_loop is running_loop:
+            await self._close_on_owner_loop(task)
+            return
+
+        if owner_loop.is_closed() or not owner_loop.is_running():
+            if not task.done():
+                raise RuntimeError("Rule allow audit writer loop stopped with a pending task")
+            self._discard_residual_records()
+            if not task.cancelled():
+                task.exception()
+            self._writer_task = None
+            return
+
+        close_coro = self._close_on_owner_loop(task)
+        try:
+            close_future = asyncio.run_coroutine_threadsafe(close_coro, owner_loop)
+        except RuntimeError:
+            close_coro.close()
+            if not task.done():
+                raise
+            self._discard_residual_records()
+            if not task.cancelled():
+                task.exception()
+            self._writer_task = None
+            return
+
+        try:
+            await asyncio.wrap_future(close_future)
+        except asyncio.CancelledError:
+            close_future.cancel()
+            raise
+
+    async def _close_on_owner_loop(self, task: asyncio.Task[None]) -> None:
         try:
             await asyncio.wait_for(self._queue.join(), timeout=self._shutdown_timeout_seconds)
         except TimeoutError:
-            residual = self._queue.qsize() + int(self._in_flight)
-            while not self._queue.empty():
-                self._queue.get_nowait()
-                self._queue.task_done()
-            if residual:
-                inc_counter(
-                    "rule_allow_audit_dropped_lines_total",
-                    amount=residual,
-                    attributes={"reason": "shutdown"},
-                )
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            self._writer_task = None
+            self._discard_residual_records()
+        else:
+            if task.done() and self._in_flight:
+                self._discard_residual_records()
+
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self._writer_task = None
+
+    def _discard_residual_records(self) -> None:
+        residual = self._queue.qsize() + int(self._in_flight)
+        while not self._queue.empty():
+            self._queue.get_nowait()
+            self._queue.task_done()
+        self._in_flight = False
+        if residual:
+            inc_counter(
+                "rule_allow_audit_dropped_lines_total",
+                amount=residual,
+                attributes={"reason": "shutdown"},
+            )
 
     async def _run_writer(self) -> None:
         while True:
             line = await self._queue.get()
             self._in_flight = True
+            abandoned = True
             try:
                 await self._writer(line)
             except Exception as exc:
@@ -127,8 +170,12 @@ class RuleAllowAudit:
                 ):
                     self._last_write_warning_at = now
                     logger.warning("Failed to write rule allow audit line: %s", exc)
+                abandoned = False
+            else:
+                abandoned = False
             finally:
-                self._in_flight = False
+                if not abandoned:
+                    self._in_flight = False
                 self._queue.task_done()
 
     @staticmethod
@@ -180,6 +227,7 @@ async def shutdown_rule_allow_audit() -> None:
     """Stop accepting records and drain the configured writer."""
     global _configured_audit
     audit = _configured_audit
-    _configured_audit = None
     if audit is not None:
         await audit.close()
+        if _configured_audit is audit:
+            _configured_audit = None
