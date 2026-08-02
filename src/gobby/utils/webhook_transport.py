@@ -20,7 +20,6 @@ from gobby.utils.url_sanitize import sanitize_url
 DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
 DEFAULT_MAX_BACKOFF_SECONDS = 60.0
 ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
-IDEMPOTENT_METHODS = frozenset({"DELETE", "GET", "PUT"})
 DEFAULT_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
@@ -106,7 +105,12 @@ class WebhookTransport:
         )
 
         parsed, hostname, port = self._parse_url(url)
-        addresses = await self._lookup_addresses(hostname, port)
+        deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            async with asyncio.timeout_at(deadline):
+                addresses = await self._lookup_addresses(hostname, port)
+        except TimeoutError:
+            return self._timeout_result(attempts=0)
         self._validate_addresses(addresses)
 
         if client is not None:
@@ -119,7 +123,7 @@ class WebhookTransport:
                 method=normalized_method,
                 headers=request_headers,
                 payload=payload,
-                timeout=timeout,
+                deadline=deadline,
                 max_response_bytes=max_response_bytes,
                 max_attempts=max_attempts,
                 backoff_seconds=backoff_seconds,
@@ -141,7 +145,7 @@ class WebhookTransport:
                 method=normalized_method,
                 headers=request_headers,
                 payload=payload,
-                timeout=timeout,
+                deadline=deadline,
                 max_response_bytes=max_response_bytes,
                 max_attempts=max_attempts,
                 backoff_seconds=backoff_seconds,
@@ -160,7 +164,7 @@ class WebhookTransport:
         method: str,
         headers: dict[str, str],
         payload: dict[str, Any] | str | bytes | None,
-        timeout: float,
+        deadline: float,
         max_response_bytes: int,
         max_attempts: int,
         backoff_seconds: float,
@@ -178,24 +182,34 @@ class WebhookTransport:
                     max_backoff_seconds=max_backoff_seconds,
                 )
                 if delay > 0:
-                    await asyncio.sleep(delay)
+                    try:
+                        async with asyncio.timeout_at(deadline):
+                            await asyncio.sleep(delay)
+                    except TimeoutError:
+                        return self._timeout_result(attempts=attempt - 1)
                 retry_after = None
 
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return self._timeout_result(attempts=attempt - 1)
             try:
-                result = await self._send_to_addresses(
-                    client=client,
-                    parsed=parsed,
-                    hostname=hostname,
-                    port=port,
-                    addresses=addresses,
-                    method=method,
-                    headers=headers,
-                    payload=payload,
-                    timeout=timeout,
-                    max_response_bytes=max_response_bytes,
-                )
+                async with asyncio.timeout_at(deadline):
+                    result = await self._send_to_addresses(
+                        client=client,
+                        parsed=parsed,
+                        hostname=hostname,
+                        port=port,
+                        addresses=addresses,
+                        method=method,
+                        headers=headers,
+                        payload=payload,
+                        timeout=remaining,
+                        max_response_bytes=max_response_bytes,
+                    )
+            except TimeoutError:
+                return self._timeout_result(attempts=attempt)
             except httpx.TransportError as exc:
-                if attempt < max_attempts and self._can_retry_exception(method, exc):
+                if attempt < max_attempts:
                     continue
                 return WebhookTransportResult(
                     success=False,
@@ -206,11 +220,7 @@ class WebhookTransport:
             result.attempts = attempt
             if result.success or result.error_code is not None:
                 return result
-            if (
-                attempt < max_attempts
-                and method in IDEMPOTENT_METHODS
-                and result.status_code in retry_statuses
-            ):
+            if attempt < max_attempts and result.status_code in retry_statuses:
                 retry_after = (result.headers or {}).get("retry-after")
                 continue
             return result
@@ -354,8 +364,12 @@ class WebhookTransport:
         return min(backoff_seconds * (2.0 ** (attempt - 2)), max_backoff_seconds)
 
     @staticmethod
-    def _can_retry_exception(method: str, exc: httpx.TransportError) -> bool:
-        return method in IDEMPOTENT_METHODS or isinstance(exc, _PROVABLY_UNSENT_ERRORS)
+    def _timeout_result(*, attempts: int) -> WebhookTransportResult:
+        return WebhookTransportResult(
+            success=False,
+            error="Request timeout",
+            attempts=attempts,
+        )
 
     @staticmethod
     def _transport_error_message(exc: httpx.TransportError) -> str:
