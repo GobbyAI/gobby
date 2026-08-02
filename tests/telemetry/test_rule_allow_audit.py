@@ -123,6 +123,52 @@ async def test_allow_audit_close_drains_writer_on_workflow_runtime_loop() -> Non
 
 
 @pytest.mark.asyncio
+async def test_allow_audit_close_twice_is_idempotent() -> None:
+    written: list[str] = []
+
+    async def writer(line: str) -> None:
+        written.append(line)
+
+    audit = RuleAllowAudit(capacity=2, shutdown_timeout_seconds=1.0, writer=writer)
+    assert _record(audit)
+
+    await audit.close()
+    await audit.close()
+
+    assert written != []
+    assert not audit.started
+
+
+@pytest.mark.asyncio
+async def test_allow_audit_close_handles_owner_loop_stopping_mid_close() -> None:
+    """If the owner loop stops between run_coroutine_threadsafe and wrap_future,
+    close() discards residuals instead of surfacing 'different loop' errors."""
+    written: list[str] = []
+
+    async def writer(line: str) -> None:
+        written.append(line)
+
+    audit = RuleAllowAudit(capacity=2, shutdown_timeout_seconds=1.0, writer=writer)
+    runtime = WorkflowEvaluationRuntime()
+
+    async def accept_records() -> None:
+        assert _record(audit)
+
+    await asyncio.to_thread(runtime.run, accept_records())
+    task = audit._writer_task
+    assert task is not None
+
+    # Drain normally from the owner loop, then stop the loop before close().
+    await asyncio.to_thread(runtime.shutdown)
+    assert task.done()
+
+    await audit.close()
+
+    assert written != []
+    assert not audit.started
+
+
+@pytest.mark.asyncio
 async def test_allow_audit_close_counts_residual_records_after_owner_loop_closes(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

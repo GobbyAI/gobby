@@ -101,12 +101,7 @@ class RuleAllowAudit:
             return
 
         if owner_loop.is_closed() or not owner_loop.is_running():
-            if not task.done():
-                raise RuntimeError("Rule allow audit writer loop stopped with a pending task")
-            self._discard_residual_records()
-            if not task.cancelled():
-                task.exception()
-            self._writer_task = None
+            self._finish_dead_owner_close(task)
             return
 
         close_coro = self._close_on_owner_loop(task)
@@ -114,19 +109,29 @@ class RuleAllowAudit:
             close_future = asyncio.run_coroutine_threadsafe(close_coro, owner_loop)
         except RuntimeError:
             close_coro.close()
-            if not task.done():
-                raise
-            self._discard_residual_records()
-            if not task.cancelled():
-                task.exception()
-            self._writer_task = None
+            self._finish_dead_owner_close(task)
             return
 
         try:
+            # The owner loop can stop between run_coroutine_threadsafe and the
+            # wrap; awaiting a cross-loop future then raises "different loop".
+            if not owner_loop.is_running():
+                close_future.cancel()
+                self._finish_dead_owner_close(task)
+                return
             await asyncio.wrap_future(close_future)
         except asyncio.CancelledError:
             close_future.cancel()
             raise
+
+    def _finish_dead_owner_close(self, task: asyncio.Task[None]) -> None:
+        """Complete close() when the writer's owner loop is already gone."""
+        if not task.done():
+            raise RuntimeError("Rule allow audit writer loop stopped with a pending task")
+        self._discard_residual_records()
+        if not task.cancelled():
+            task.exception()
+        self._writer_task = None
 
     async def _close_on_owner_loop(self, task: asyncio.Task[None]) -> None:
         try:
