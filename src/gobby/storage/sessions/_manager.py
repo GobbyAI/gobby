@@ -339,6 +339,20 @@ class SessionManager(
             True if updated successfully, False otherwise
         """
         try:
+            current = self.get(session_id)
+            if (
+                status == "handoff_ready"
+                and current is not None
+                and current.status == "expired"
+                and current.session_type == "terminal"
+            ):
+                # A `/compact` (PRE_COMPACT) is fresh activity on an expired
+                # terminal session: revive it through the ownership path first
+                # so the terminal-transition guard does not reject the update.
+                revived = self.revive_expired_terminal_session(session_id)
+                if revived is not None and revived.status != "expired":
+                    current = revived
+
             if activity_confirmed:
                 session = self.update_status_from_activity(session_id, status)
             else:

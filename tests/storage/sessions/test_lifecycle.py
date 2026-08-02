@@ -950,6 +950,92 @@ class TestSessionManagerLifecycle:
         assert row is not None
         assert row["transcript_processed"] is False
 
+    def test_update_session_status_revives_expired_terminal_for_handoff(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """`/compact` on an expired terminal session revives it to handoff_ready."""
+        session = session_manager.register(
+            external_id="compact-after-expiry",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+
+        assert session_manager.update_session_status(session.id, "handoff_ready") is True
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.status == "handoff_ready"
+
+    def test_update_session_status_expired_past_revival_horizon_stays_false(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """An expired session past the revival horizon keeps warning-and-False."""
+        session = session_manager.register(
+            external_id="compact-past-horizon",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+        expired_at = datetime.now(UTC) - timedelta(hours=25)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (expired_at, session.id),
+        )
+
+        assert session_manager.update_session_status(session.id, "handoff_ready") is False
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.status == "expired"
+
+    def test_update_session_status_deleted_session_stays_false(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """Deleted sessions never revive, even toward handoff_ready."""
+        session = session_manager.register(
+            external_id="compact-deleted",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "deleted")
+
+        assert session_manager.update_session_status(session.id, "handoff_ready") is False
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.status == "deleted"
+
+    def test_update_session_status_expired_to_non_revival_target_stays_false(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """Other transitions out of expired remain strictly forbidden."""
+        session = session_manager.register(
+            external_id="expired-to-paused",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+
+        assert session_manager.update_session_status(session.id, "paused") is False
+
+        updated = session_manager.get(session.id)
+        assert updated is not None
+        assert updated.status == "expired"
+
     def test_update_parent_session_id(
         self,
         session_manager: SessionManager,
