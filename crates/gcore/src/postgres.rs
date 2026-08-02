@@ -10,6 +10,8 @@ use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode};
 use postgres::{Client, NoTls, config::SslMode};
 use postgres_openssl::MakeTlsConnector;
 
+const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
+
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
 /// Sets `default_transaction_read_only = on` to guard against accidental writes.
@@ -70,12 +72,18 @@ pub fn validate_schema(
     run_schema_validator(conn, validator)
 }
 
-fn connect(database_url: &str) -> anyhow::Result<Client> {
-    let requested_ssl_mode = requested_ssl_mode(database_url);
+fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     let normalized_url = normalize_sslmode_for_parser(database_url);
-    let config = normalized_url
+    let mut config = normalized_url
         .parse::<postgres::Config>()
         .context("failed to parse PostgreSQL connection URL")?;
+    config.application_name(GOBBY_APPLICATION_NAME);
+    Ok(config)
+}
+
+fn connect(database_url: &str) -> anyhow::Result<Client> {
+    let requested_ssl_mode = requested_ssl_mode(database_url);
+    let config = connection_config(database_url)?;
     match requested_ssl_mode.unwrap_or_else(|| requested_ssl_mode_from_config(&config)) {
         RequestedSslMode::Disable => config
             .connect(NoTls)
@@ -287,6 +295,15 @@ fn run_schema_validator<C>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_config_enforces_gobby_application_name() -> anyhow::Result<()> {
+        let config =
+            connection_config("postgresql://localhost/gobby?application_name=operator-supplied")?;
+
+        assert_eq!(config.get_application_name(), Some(GOBBY_APPLICATION_NAME));
+        Ok(())
+    }
 
     #[test]
     fn attached_validation_is_non_destructive() {

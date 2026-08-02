@@ -367,6 +367,33 @@ class _FakeEpochConnection:
     def commit(self) -> None:
         self.events.append("commit")
 
+    def rollback(self) -> None:
+        self.events.append("rollback")
+
+
+class _MidOpenFailureConnection:
+    """Inject a server error after the epoch commit while preserving cleanup access."""
+
+    def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _MidOpenFailureConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._connection.close()
+
+    def execute(self, sql: str, params: Any = ()) -> Any:
+        if "pg_terminate_backend" in sql:
+            return self._connection.execute("SELECT 1 / 0")
+        return self._connection.execute(sql, params)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
 
 def test_epoch_open_commits_fence_before_terminating_and_verifying_connections(
     monkeypatch: pytest.MonkeyPatch,
@@ -445,8 +472,66 @@ def test_epoch_open_releases_fence_when_quiescence_fails(
             quiescence_poll_seconds=0.0,
         )
 
-    assert connection.events[-3:] == ["release-fence", "commit", "close"]
+    assert connection.events[-4:] == ["rollback", "release-fence", "commit", "close"]
     assert connection.events.count("terminate") >= 1
+
+
+def test_epoch_open_terminates_only_gobby_client_backends(
+    epoch_admin: tuple[psycopg.Connection[Any], str],
+) -> None:
+    _connection, scoped_dsn = epoch_admin
+    operator = psycopg.connect(
+        scoped_dsn,
+        autocommit=True,
+        application_name="operator-psql",
+    )
+    gobby_client = psycopg.connect(
+        scoped_dsn,
+        autocommit=True,
+        application_name="gobby-test-client",
+    )
+    try:
+        open_maintenance_epoch(
+            scoped_dsn,
+            campaign="purge",
+            opened_by="hub-maintenance:purge",
+            scope_note="test application ownership",
+        )
+
+        assert operator.execute("SELECT 1").fetchone() == (1,)
+        with pytest.raises(psycopg.OperationalError):
+            gobby_client.execute("SELECT 1")
+    finally:
+        operator.close()
+        gobby_client.close()
+
+
+def test_epoch_open_releases_fence_after_mid_open_database_error(
+    epoch_admin: tuple[psycopg.Connection[Any], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection, scoped_dsn = epoch_admin
+    real_connect = maintenance._connect
+
+    def failing_connect(*args: Any, **kwargs: Any) -> _MidOpenFailureConnection:
+        return _MidOpenFailureConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(maintenance, "_connect", failing_connect)
+
+    with pytest.raises(psycopg.errors.DivisionByZero):
+        open_maintenance_epoch(
+            scoped_dsn,
+            campaign="purge",
+            opened_by="hub-maintenance:purge",
+            scope_note="test mid-open failure",
+        )
+
+    open_epochs = connection.execute(
+        "SELECT COUNT(*) AS count FROM maintenance_epochs WHERE released_at IS NULL"
+    ).fetchone()
+    assert open_epochs == {"count": 0}
+    with psycopg.connect(scoped_dsn, autocommit=True) as subsequent:
+        assert subsequent.execute("SELECT 1").fetchone() == (1,)
 
 
 def test_connection_pool_recovers_after_fence_release_without_restart(
