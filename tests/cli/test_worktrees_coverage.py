@@ -58,7 +58,7 @@ class TestCreateWorktreeErrors:
     ) -> None:
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["create", "feat/x"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -231,7 +231,7 @@ class TestDeleteWorktreeErrors:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -254,7 +254,7 @@ class TestDeleteWorktreeErrors:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "HTTP Error 404" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -295,16 +295,7 @@ class TestDeleteWorktreeErrors:
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
         assert result.exit_code == 1
-        assert "Failed to delete worktree" in result.output
-
-    @pytest.mark.parametrize("payload", [{}, {"result": {}}])
-    def test_delete_helper_rejects_legacy_empty_success_payloads(
-        self,
-        payload: dict[str, object],
-    ) -> None:
-        from gobby.cli.worktrees import _delete_tool_succeeded
-
-        assert _delete_tool_succeeded(payload) is False
+        assert "missing boolean 'success'" in result.output
 
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("not found"))
     @patch("gobby.cli.worktrees.get_worktree_manager")
@@ -363,6 +354,7 @@ class TestReleaseWorktree:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["release", "wt-123"])
+        assert result.exit_code == 1
         assert "Failed to release worktree" in result.output
         assert "not claimed" in result.output
         mock_mgr.return_value.release.assert_not_called()
@@ -380,7 +372,7 @@ class TestReleaseWorktree:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["release", "wt-123"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
         mock_mgr.return_value.release.assert_not_called()
 
@@ -410,6 +402,7 @@ class TestClaimWorktree:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
+        assert result.exit_code == 1
         assert "Failed to claim worktree" in result.output
         assert "already claimed" in result.output
         mock_mgr.return_value.claim.assert_not_called()
@@ -459,7 +452,7 @@ class TestClaimWorktree:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
         mock_mgr.return_value.claim.assert_not_called()
 
@@ -483,7 +476,7 @@ class TestSyncWorktree:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["sync", "wt-123"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -524,7 +517,7 @@ class TestSyncWorktree:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["sync", "wt-123"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to sync worktree" in result.output
 
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("bad"))
@@ -570,9 +563,16 @@ class TestDetectStale:
     ) -> None:
         resp = MagicMock()
         resp.json.return_value = {
-            "stale_worktrees": [
-                {"id": "wt-1", "branch_name": "old-feat", "updated_at": "2023-01-01"}
-            ]
+            "success": True,
+            "result": {
+                "stale_worktrees": [
+                    {
+                        "id": "wt-1",
+                        "branch_name": "old-feat",
+                        "updated_at": "2023-01-01",
+                    }
+                ]
+            },
         }
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
@@ -587,7 +587,7 @@ class TestDetectStale:
         self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner
     ) -> None:
         resp = MagicMock()
-        resp.json.return_value = {"stale_worktrees": []}
+        resp.json.return_value = {"success": True, "result": {"stale_worktrees": []}}
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["stale"])
@@ -598,7 +598,7 @@ class TestDetectStale:
     @patch("httpx.post")
     def test_stale_json(self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner) -> None:
         resp = MagicMock()
-        resp.json.return_value = {"stale_worktrees": []}
+        resp.json.return_value = {"success": True, "result": {"stale_worktrees": []}}
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["stale", "--json"])
@@ -612,6 +612,7 @@ class TestDetectStale:
         self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner
     ) -> None:
         result = runner.invoke(worktrees, ["stale"])
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -627,7 +628,7 @@ class TestDetectStale:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["stale"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "HTTP Error 500" in result.output
 
 
@@ -643,7 +644,10 @@ class TestCleanupWorktrees:
         self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner
     ) -> None:
         resp = MagicMock()
-        resp.json.return_value = {"stale_worktrees": [{"id": "wt-1", "branch_name": "old"}]}
+        resp.json.return_value = {
+            "success": True,
+            "result": {"stale_worktrees": [{"id": "wt-1", "branch_name": "old"}]},
+        }
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["cleanup", "--dry-run"])
@@ -656,6 +660,7 @@ class TestCleanupWorktrees:
         self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner
     ) -> None:
         result = runner.invoke(worktrees, ["cleanup", "--dry-run"])
+        assert result.exit_code == 1
         assert "Error: oops" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -664,6 +669,7 @@ class TestCleanupWorktrees:
         self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner
     ) -> None:
         result = runner.invoke(worktrees, ["cleanup", "--yes"])
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -676,7 +682,8 @@ class TestCleanupWorktrees:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["cleanup", "--yes"])
-        assert "Failed to cleanup worktrees" in result.output
+        assert result.exit_code == 1
+        assert "Failed to cleanup stale worktrees" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
     @patch("httpx.post")
@@ -691,7 +698,7 @@ class TestCleanupWorktrees:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["cleanup", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "HTTP Error 500" in result.output
 
 
@@ -708,8 +715,17 @@ class TestWorktreeStats:
     ) -> None:
         resp = MagicMock()
         resp.json.return_value = {
-            "total": 5,
-            "counts": {"active": 3, "stale": 1, "merged": 1, "abandoned": 0, "with_sessions": 2},
+            "success": True,
+            "result": {
+                "total": 5,
+                "counts": {
+                    "active": 3,
+                    "stale": 1,
+                    "merged": 1,
+                    "abandoned": 0,
+                    "with_sessions": 2,
+                },
+            },
         }
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
@@ -724,7 +740,10 @@ class TestWorktreeStats:
     @patch("httpx.post")
     def test_stats_json(self, mock_post: MagicMock, mock_url: MagicMock, runner: CliRunner) -> None:
         resp = MagicMock()
-        resp.json.return_value = {"total": 0, "counts": {}}
+        resp.json.return_value = {
+            "success": True,
+            "result": {"total": 0, "counts": {}},
+        }
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         with patch("os.getcwd", return_value="/app"):
@@ -740,6 +759,7 @@ class TestWorktreeStats:
     ) -> None:
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["stats"])
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -756,7 +776,7 @@ class TestWorktreeStats:
         mock_post.return_value = resp
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["stats"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "HTTP Error 500" in result.output
 
 
