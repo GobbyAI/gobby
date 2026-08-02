@@ -27,7 +27,9 @@ _POSTGRES_TEST_DB = "gobby_test"
 _POSTGRES_TEST_IMAGE = "gobby-postgres-local:18-pgsearch"
 _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
-_POSTGRES_TEST_TMPFS = "/var/lib/postgresql:rw,size=3g"
+_POSTGRES_TEST_TMPFS_SIZE_GIB = 3
+_POSTGRES_TEST_TMPFS_BYTES = _POSTGRES_TEST_TMPFS_SIZE_GIB * 1024**3
+_POSTGRES_TEST_TMPFS = f"/var/lib/postgresql:rw,size={_POSTGRES_TEST_TMPFS_SIZE_GIB}g"
 _POSTGRES_TEST_USER = "gobby_test"
 _POSTGRES_SKIP_REASONS = [
     "DATABASE_URL must point at an isolated PostgreSQL test database",
@@ -52,6 +54,15 @@ _POSTGRES_COMMAND = [
     "postgres",
     *(option for command_option in _PGAUDIT_COMMAND_OPTIONS for option in ("-c", command_option)),
 ]
+
+# Recorded during task #19485's 1,170-test, 627.57-second storage stress run.
+_MEASURED_DATABASE_SIZE_PEAK_BYTES = 67_090_111
+_MEASURED_TMPFS_USAGE_PEAK_BYTES = 191_967_232
+
+
+def test_recorded_postgres_tmpfs_peak_has_headroom() -> None:
+    assert _MEASURED_TMPFS_USAGE_PEAK_BYTES > _MEASURED_DATABASE_SIZE_PEAK_BYTES
+    assert _POSTGRES_TEST_TMPFS_BYTES >= 10 * _MEASURED_TMPFS_USAGE_PEAK_BYTES
 
 
 def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -> None:
