@@ -1,5 +1,6 @@
 """Canonical tool metadata inference."""
 
+import ast
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -84,6 +85,21 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
+_PYTHON_PIPELINE_MODULES = frozenset({"json", "sys"})
+_PYTHON_PIPELINE_BUILTINS = frozenset(
+    "all any bool dict enumerate filter float int iter len list map max min next print range "
+    "reversed set sorted str sum tuple zip".split()
+)
+_PYTHON_PIPELINE_METHODS = frozenset(
+    "casefold count decode encode endswith format get index items join keys lower lstrip "
+    "replace rsplit rstrip split splitlines startswith strip upper values".split()
+)
+_PYTHON_PIPELINE_STREAM_CALLS = frozenset(
+    "sys.stdin.buffer.read sys.stdin.buffer.readline sys.stdin.buffer.readlines sys.stdin.read "
+    "sys.stdin.readline sys.stdin.readlines sys.stdout.flush sys.stdout.write "
+    "sys.stdout.writelines".split()
+)
+_CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +203,174 @@ def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> 
     cmd = shell_command_name(parts[0])
     if cmd == "sed" and _has_sed_inplace_option(parts):
         return False
-    return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS
+    return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
+
+
+def _inline_interpreter_parts(parts: list[str]) -> list[str]:
+    if not parts:
+        return []
+    if shell_command_name(parts[0]) != "uv" or parts[1:2] != ["run"]:
+        return parts
+    for index, part in enumerate(parts[2:], start=2):
+        if shell_command_name(part) in {"python", "python3", "node", "ruby"}:
+            return parts[index:]
+    return []
+
+
+def _python_inline_script(parts: list[str]) -> str | None:
+    interpreter_parts = _inline_interpreter_parts(parts)
+    if not interpreter_parts or shell_command_name(interpreter_parts[0]) not in {
+        "python",
+        "python3",
+    }:
+        return None
+    try:
+        script_index = interpreter_parts.index("-c") + 1
+    except ValueError:
+        return None
+    if script_index >= len(interpreter_parts):
+        return None
+    return interpreter_parts[script_index]
+
+
+def _python_attribute_name(node: ast.Attribute) -> str | None:
+    parts = [node.attr]
+    value: ast.expr = node.value
+    while isinstance(value, ast.Attribute):
+        parts.append(value.attr)
+        value = value.value
+    if not isinstance(value, ast.Name):
+        return None
+    parts.append(value.id)
+    return ".".join(reversed(parts))
+
+
+def _is_safe_python_pipeline_call(node: ast.Call) -> bool:
+    if isinstance(node.func, ast.Name):
+        return node.func.id in _PYTHON_PIPELINE_BUILTINS
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    name = _python_attribute_name(node.func)
+    if name in _PYTHON_PIPELINE_STREAM_CALLS or name in {
+        "json.dumps",
+        "json.loads",
+    }:
+        return True
+    if name == "json.load":
+        return (
+            bool(node.args)
+            and isinstance(node.args[0], ast.Attribute)
+            and (_python_attribute_name(node.args[0]) in {"sys.stdin", "sys.stdin.buffer"})
+        )
+    return node.func.attr in _PYTHON_PIPELINE_METHODS and not (name or "").startswith("sys.")
+
+
+def _is_read_only_python_pipeline(parts: list[str]) -> bool:
+    script = _python_inline_script(parts)
+    if script is None:
+        return False
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name not in _PYTHON_PIPELINE_MODULES for alias in node.names):
+                return False
+        elif isinstance(node, ast.ImportFrom):
+            return False
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if node.id in _PYTHON_PIPELINE_MODULES | _PYTHON_PIPELINE_BUILTINS:
+                return False
+        elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            return False
+        elif isinstance(node, ast.Call) and not _is_safe_python_pipeline_call(node):
+            return False
+        elif isinstance(
+            node, (ast.AsyncFunctionDef, ast.AsyncWith, ast.ClassDef, ast.FunctionDef, ast.With)
+        ):
+            return False
+    return True
+
+
+def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
+    interpreter_parts = _inline_interpreter_parts(parts)
+    if not interpreter_parts:
+        return False
+    interpreter = shell_command_name(interpreter_parts[0])
+    if interpreter not in {"node", "python", "python3", "ruby"}:
+        return False
+    args = interpreter_parts[1:]
+    if any(flag in args for flag in {"-c", "-e", "--eval", "-m"}):
+        return False
+    return "-" in args or not any(not arg.startswith("-") for arg in args)
+
+
+def _curl_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
+    output_dir: str | None = None
+    for index, part in enumerate(parts[1:], start=1):
+        if part == "--output-dir" and index + 1 < len(parts):
+            output_dir = parts[index + 1]
+        elif part.startswith("--output-dir="):
+            output_dir = part.partition("=")[2]
+
+    paths: list[str] = []
+    writes_file = False
+    unknown_output = False
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        output: str | None = None
+        short_config = False
+        short_remote_name = False
+        if part in {"-o", "--output"}:
+            if index + 1 >= len(parts):
+                return True, []
+            output = parts[index + 1]
+            index += 1
+        elif part.startswith("--output="):
+            output = part.partition("=")[2]
+        elif part.startswith("-") and not part.startswith("--"):
+            for option_index, option in enumerate(part[1:], start=1):
+                if option == "o":
+                    output = part[option_index + 1 :]
+                    if not output:
+                        if index + 1 >= len(parts):
+                            return True, []
+                        output = parts[index + 1]
+                        index += 1
+                    break
+                if option == "O":
+                    short_remote_name = True
+                elif option == "K":
+                    short_config = True
+                    break
+                elif option in _CURL_SHORT_OPTIONS_WITH_VALUES:
+                    break
+
+        if output is not None and output != "-":
+            writes_file = True
+            if output_dir and not posixpath.isabs(output):
+                output = posixpath.join(output_dir, output)
+            if output not in paths:
+                paths.append(output)
+
+        if short_config or part in {"-K", "--config"} or part.startswith("--config="):
+            unknown_output = True
+
+        remote_name = short_remote_name or part in {"-O", "--remote-name", "--remote-name-all"}
+        if remote_name:
+            writes_file = True
+            if output_dir:
+                if output_dir not in paths:
+                    paths.append(output_dir)
+            else:
+                unknown_output = True
+        index += 1
+
+    return writes_file or unknown_output, [] if unknown_output else paths
 
 
 def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool:
@@ -409,6 +592,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     extra = _merge_code_navigation_extra(active)
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
+    if any(item.repo_mutation and not item.paths for item in active):
+        extra["_canonical_repo_mutation_scope_unknown"] = True
 
     return _build_canonical_tool_metadata(
         kind,
@@ -520,6 +705,8 @@ def _classify_shell_segment(
 
     if input_paths:
         base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
+        if _interpreter_reads_program_from_stdin(plain_parts):
+            base_metadata = _ShellSegmentMetadata("write", repo_mutation=True)
         base_paths = list(base_metadata.paths)
         if base_metadata.repo_mutation and not base_paths:
             input_paths = []
@@ -534,6 +721,8 @@ def _classify_shell_segment(
         )
 
     if has_shell_input_redirection(tokens):
+        if _interpreter_reads_program_from_stdin(plain_parts):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
         return _ShellSegmentMetadata("execute")
 
     if _is_neutral_echo_segment(tokens, plain_parts):
@@ -573,13 +762,7 @@ def _classify_shell_segment_without_redirection(
             return _ShellSegmentMetadata("execute")
         return _ShellSegmentMetadata("write", repo_mutation=True)
 
-    interpreter_parts = parts
-    if cmd == "uv" and parts[1:2] == ["run"]:
-        interpreter_parts = []
-        for index, part in enumerate(parts[2:], start=2):
-            if shell_command_name(part) in {"python", "python3", "node", "ruby"}:
-                interpreter_parts = parts[index:]
-                break
+    interpreter_parts = _inline_interpreter_parts(parts)
     if interpreter_parts:
         interpreter = shell_command_name(interpreter_parts[0])
         interpreter_args = interpreter_parts[1:]
@@ -592,6 +775,16 @@ def _classify_shell_segment_without_redirection(
         )
         if inline_interpreter:
             return _ShellSegmentMetadata("write", repo_mutation=True)
+
+    if cmd == "curl":
+        writes_file, paths = _curl_output_paths(parts)
+        if writes_file:
+            return _ShellSegmentMetadata(
+                "write",
+                paths=tuple(_rebase_shell_paths(paths, cwd)),
+                repo_mutation=True,
+            )
+        return _ShellSegmentMetadata("execute")
 
     if cmd in {"rg", "grep", "git", "find"}:
         if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):
