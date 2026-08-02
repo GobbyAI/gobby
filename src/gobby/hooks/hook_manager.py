@@ -148,6 +148,7 @@ class HookManager:
         self._session_manager = cast(HookSessionManager, components.session_manager)
         self._project_id_resolver.session_manager = self._session_manager
         self._session_coordinator = components.session_coordinator
+        self._session_end_auto_link_worker = components.session_end_auto_link_worker
         self._health_monitor = components.health_monitor
         self._event_handlers = components.event_handlers
 
@@ -732,6 +733,7 @@ class HookManager:
         # Stop health check monitoring (delegated to HealthMonitor)
         self._health_monitor.stop()
 
+        self._session_end_auto_link_worker.shutdown()
         self._close_webhook_dispatcher_sync()
         self._workflow_handler.shutdown()
 
@@ -752,6 +754,7 @@ class HookManager:
         # Stop health check monitoring (delegated to HealthMonitor)
         self._health_monitor.stop()
 
+        await asyncio.to_thread(self._session_end_auto_link_worker.shutdown)
         await self._close_webhook_dispatcher_async()
         self._workflow_handler.shutdown()
 

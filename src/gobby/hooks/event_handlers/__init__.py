@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
+    from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
     from gobby.hooks.skill_manager import HookSkillManager
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
     from gobby.storage.session_tasks import SessionTaskManager
@@ -65,6 +66,7 @@ class EventHandlers(
         progress_tracker: ProgressTracker | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
+        session_end_auto_link_worker: SessionEndAutoLinkWorker | None = None,
         skill_manager: HookSkillManager | None = None,
         skills_config: SkillsConfig | None = None,
         memory_recall_config: MemoryRecallConfig | None = None,
@@ -88,6 +90,7 @@ class EventHandlers(
             message_processor: SessionMessageProcessor for message handling
             task_manager: LocalTaskManager for task operations
             session_coordinator: SessionCoordinator for session tracking
+            session_end_auto_link_worker: Managed worker for session commit auto-linking
             skill_manager: HookSkillManager for skill discovery
             skills_config: SkillsConfig for skill discovery/manifest settings
             memory_recall_config: MemoryRecallConfig for memory recall settings
@@ -117,6 +120,7 @@ class EventHandlers(
         self._progress_tracker = progress_tracker
         self._worktree_manager = worktree_manager
         self._session_coordinator = session_coordinator
+        self._session_end_auto_link_worker = session_end_auto_link_worker
         self._skill_manager = skill_manager
         self._skills_config = skills_config
         self._memory_recall_config = memory_recall_config

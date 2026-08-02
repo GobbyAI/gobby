@@ -19,6 +19,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
 from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
 from gobby.hooks.webhooks import WebhookDispatcher
@@ -103,6 +104,7 @@ class HookManagerComponents:
     webhook_dispatcher: WebhookDispatcher
     session_manager: SessionManager
     session_coordinator: SessionCoordinator
+    session_end_auto_link_worker: SessionEndAutoLinkWorker
     health_monitor: HealthMonitor
     event_handlers: EventHandlers
 
@@ -229,6 +231,11 @@ class HookManagerFactory:
             worktree_manager=storage.worktree,
             logger=hook_logger,
         )
+        session_end_auto_link_worker = SessionEndAutoLinkWorker(
+            database=resolved_database,
+            task_manager=storage.task,
+            logger=hook_logger,
+        )
 
         health_monitor = HealthMonitor(
             daemon_client=daemon_client,
@@ -248,6 +255,7 @@ class HookManagerFactory:
             progress_tracker=autonomous.progress_tracker,
             worktree_manager=storage.worktree,
             session_coordinator=session_coordinator,
+            session_end_auto_link_worker=session_end_auto_link_worker,
             skill_manager=workflow_components.skill_manager,
             skills_config=config.skills if config else None,
             memory_recall_config=config.memory_recall if config else None,
@@ -282,6 +290,7 @@ class HookManagerFactory:
             webhook_dispatcher=webhook_dispatcher,
             session_manager=session_mgr,
             session_coordinator=session_coordinator,
+            session_end_auto_link_worker=session_end_auto_link_worker,
             health_monitor=health_monitor,
             event_handlers=event_handlers,
         )
