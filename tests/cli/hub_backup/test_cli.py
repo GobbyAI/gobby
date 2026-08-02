@@ -60,13 +60,17 @@ DATABASE_OID = 16401
 STARTING_HEAD = 187
 
 ROW_PROBES = {"tasks": 1204, "sessions": 88}
+SCHEMA_OBJECTS = {"table": 22, "index": 37}
 # postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, and the
 # rule_allow_audit log archive_rule_allow_audit_logs adds (d41adc20c, #19418).
 NON_VOLUME_ARTIFACTS = 5
 QDRANT_COLLECTION = "gobby_memories"
 QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
 QDRANT_POINTS = 4211
+QDRANT_DIGEST = "c" * 64
 FALKORDB_GRAPHS = ["gobby_kg"]
+FALKORDB_INVENTORY = {"gobby_kg": {"nodes": 44, "edges": 31}}
+VOLUME_INVENTORY = {"members": 9, "sha256": "d" * 64}
 
 SOURCE_ROLES: list[dict[str, object]] = [
     {"rolname": "gobby", "rolsuper": False, "rolcanlogin": True},
@@ -85,6 +89,7 @@ CONTRACT_ORDER = [
     "stop_daemon",
     "collect_postgres_identity",
     "collect_row_count_probes",
+    "collect_schema_object_counts",
     "collect_source_roles",
     "dump_postgres",
     "snapshot_qdrant",
@@ -110,12 +115,16 @@ class _StepFailure(click.ClickException):
     """Injected failure proving the command's cleanup paths still run."""
 
 
-def _artifact(name: str, relpath: str) -> ArtifactRecord:
+def _artifact(name: str, relpath: str, backup_root: Path) -> ArtifactRecord:
+    content = f"artifact:{name}\n".encode()
+    path = backup_root / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
     return ArtifactRecord(
         name=name,
         path=relpath,
-        sha256=hashlib.sha256(name.encode("utf-8")).hexdigest(),
-        size_bytes=4096,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
     )
 
 
@@ -152,12 +161,15 @@ class _Harness:
         self.stop_quiet_seen: bool | None = None
         self.postgres_paths_seen: tuple[Path, Path] | None = None
         self.probes_seen: dict[str, int] | None = None
+        self.schema_objects_seen: dict[str, int] | None = None
         self.roles_seen: list[RoleExpectation] | None = None
         self.snapshots_seen: dict[str, Path] | None = None
         self.point_counts_seen: dict[str, int] | None = None
+        self.point_digests_seen: dict[str, str] | None = None
         self.rdb_path_seen: Path | None = None
-        self.graphs_seen: list[str] | None = None
+        self.graph_inventory_seen: dict[str, dict[str, int]] | None = None
         self.archives_seen: dict[str, Path] | None = None
+        self.volume_inventories_seen: dict[str, dict[str, object]] | None = None
 
     # -- recording --------------------------------------------------------
 
@@ -236,6 +248,10 @@ class _Harness:
         self._step("collect_row_count_probes")
         return dict(ROW_PROBES)
 
+    def collect_schema_object_counts(self, database_url: str) -> dict[str, int]:
+        self._step("collect_schema_object_counts")
+        return dict(SCHEMA_OBJECTS)
+
     def collect_source_roles(self, database_url: str) -> list[dict[str, object]]:
         self._step("collect_source_roles")
         return [dict(role) for role in SOURCE_ROLES]
@@ -249,8 +265,8 @@ class _Harness:
         self.dump_url_seen = database_url
         self.backup_root_seen = backup_root
         artifacts = [
-            _artifact("postgres-dump", POSTGRES_DUMP_RELPATH),
-            _artifact("postgres-globals", GLOBALS_DUMP_RELPATH),
+            _artifact("postgres-dump", POSTGRES_DUMP_RELPATH, backup_root),
+            _artifact("postgres-globals", GLOBALS_DUMP_RELPATH, backup_root),
         ]
         return artifacts, {"postgres_version": "16.4", "archive_list_checked": True}
 
@@ -259,12 +275,13 @@ class _Harness:
     ) -> tuple[list[ArtifactRecord], dict[str, object]]:
         self._step("snapshot_qdrant")
         self.qdrant_snapshot_settings = (url, api_key)
-        artifacts = [_artifact(f"qdrant-{QDRANT_COLLECTION}", QDRANT_SNAPSHOT_RELPATH)]
+        artifacts = [_artifact(f"qdrant-{QDRANT_COLLECTION}", QDRANT_SNAPSHOT_RELPATH, backup_root)]
         details: dict[str, object] = {
             "collections": {
                 QDRANT_COLLECTION: {
                     "points": QDRANT_POINTS,
                     "snapshot": QDRANT_SNAPSHOT_RELPATH,
+                    "content_sha256": QDRANT_DIGEST,
                 }
             }
         }
@@ -272,8 +289,12 @@ class _Harness:
 
     def dump_falkordb(self, backup_root: Path) -> tuple[list[ArtifactRecord], dict[str, object]]:
         self._step("dump_falkordb")
-        artifacts = [_artifact("falkordb-rdb", FALKORDB_DUMP_RELPATH)]
-        return artifacts, {"graphs": list(FALKORDB_GRAPHS), "dbsize": 12}
+        artifacts = [_artifact("falkordb-rdb", FALKORDB_DUMP_RELPATH, backup_root)]
+        return artifacts, {
+            "graphs": list(FALKORDB_GRAPHS),
+            "graph_inventory": FALKORDB_INVENTORY,
+            "dbsize": 12,
+        }
 
     def services_stop(self, gobby_home: Path) -> bool:
         self._step("services_stop")
@@ -294,9 +315,17 @@ class _Harness:
         self._step("tar_volumes")
         names = list(volumes)
         artifacts = [
-            _artifact(f"volume-{name}", f"{VOLUME_ARCHIVE_DIR}/{name}.tar.gz") for name in names
+            _artifact(
+                f"volume-{name}",
+                f"{VOLUME_ARCHIVE_DIR}/{name}.tar.gz",
+                backup_root,
+            )
+            for name in names
         ]
-        return artifacts, {"volumes": names}
+        return artifacts, {
+            "volumes": names,
+            "source_inventories": {name: dict(VOLUME_INVENTORY) for name in names},
+        }
 
     # -- verifiers ---------------------------------------------------------
 
@@ -307,11 +336,13 @@ class _Harness:
         *,
         expected_probes: dict[str, int],
         expected_roles: list[RoleExpectation],
+        expected_schema_objects: dict[str, int],
     ) -> tuple[VerificationState, dict[str, object]]:
         self._step("verify_postgres_restore")
         self.postgres_paths_seen = (dump_path, globals_path)
         self.probes_seen = dict(expected_probes)
         self.roles_seen = list(expected_roles)
+        self.schema_objects_seen = dict(expected_schema_objects)
         return _verified("pg-scratch-restore"), {"tables_checked": len(expected_probes)}
 
     def verify_qdrant_restore(
@@ -320,26 +351,31 @@ class _Harness:
         api_key: str | None,
         snapshots: dict[str, Path],
         expected_counts: dict[str, int],
+        expected_digests: dict[str, str],
     ) -> tuple[VerificationState, dict[str, object]]:
         self._step("verify_qdrant_restore")
         self.qdrant_verify_settings = (url, api_key)
         self.snapshots_seen = dict(snapshots)
         self.point_counts_seen = dict(expected_counts)
+        self.point_digests_seen = dict(expected_digests)
         return _verified("qdrant-snapshot-recover"), {"collections_checked": len(snapshots)}
 
     def verify_falkordb_restore(
-        self, rdb_path: Path, expected_graphs: list[str]
+        self, rdb_path: Path, expected_inventory: dict[str, dict[str, int]]
     ) -> tuple[VerificationState, dict[str, object]]:
         self._step("verify_falkordb_restore")
         self.rdb_path_seen = rdb_path
-        self.graphs_seen = list(expected_graphs)
-        return _verified("falkordb-scratch-load"), {"graphs_verified": len(expected_graphs)}
+        self.graph_inventory_seen = dict(expected_inventory)
+        return _verified("falkordb-scratch-load"), {"graphs_verified": len(expected_inventory)}
 
     def verify_volume_archives(
-        self, archives: dict[str, Path]
+        self,
+        archives: dict[str, Path],
+        expected_inventories: dict[str, dict[str, object]],
     ) -> tuple[VerificationState, dict[str, object]]:
         self._step("verify_volume_archives")
         self.archives_seen = dict(archives)
+        self.volume_inventories_seen = dict(expected_inventories)
         counts = dict.fromkeys(archives, 9)
         return _verified("tar-extract"), {"archives": counts}
 
@@ -359,6 +395,7 @@ class _Harness:
             "_start_daemon": self.start_daemon,
             "collect_postgres_identity": self.collect_postgres_identity,
             "collect_row_count_probes": self.collect_row_count_probes,
+            "collect_schema_object_counts": self.collect_schema_object_counts,
             "collect_source_roles": self.collect_source_roles,
             "dump_postgres": self.dump_postgres,
             "snapshot_qdrant": self.snapshot_qdrant,
@@ -439,22 +476,38 @@ class TestOrchestration:
         backup_root = tmp_path / "backup"
         _run_ok(runtime, backup_root)
 
-        assert harness.postgres_paths_seen == (
-            backup_root / POSTGRES_DUMP_RELPATH,
-            backup_root / GLOBALS_DUMP_RELPATH,
+        assert harness.backup_root_seen is not None
+        assert harness.postgres_paths_seen is not None
+        assert tuple(
+            path.relative_to(harness.backup_root_seen) for path in harness.postgres_paths_seen
+        ) == (
+            Path(POSTGRES_DUMP_RELPATH),
+            Path(GLOBALS_DUMP_RELPATH),
         )
         assert harness.probes_seen == ROW_PROBES
+        assert harness.schema_objects_seen == SCHEMA_OBJECTS
         assert harness.roles_seen == [
             RoleExpectation(rolname="gobby", rolsuper=False, rolcanlogin=True),
             RoleExpectation(rolname="gobby_ro", rolsuper=False, rolcanlogin=False),
         ]
-        assert harness.snapshots_seen == {QDRANT_COLLECTION: backup_root / QDRANT_SNAPSHOT_RELPATH}
+        assert harness.snapshots_seen is not None
+        assert {
+            name: path.relative_to(harness.backup_root_seen)
+            for name, path in harness.snapshots_seen.items()
+        } == {QDRANT_COLLECTION: Path(QDRANT_SNAPSHOT_RELPATH)}
         assert harness.point_counts_seen == {QDRANT_COLLECTION: QDRANT_POINTS}
-        assert harness.rdb_path_seen == backup_root / FALKORDB_DUMP_RELPATH
-        assert harness.graphs_seen == FALKORDB_GRAPHS
-        assert harness.archives_seen == {
-            volume: backup_root / VOLUME_ARCHIVE_DIR / f"{volume}.tar.gz" for volume in HUB_VOLUMES
-        }
+        assert harness.point_digests_seen == {QDRANT_COLLECTION: QDRANT_DIGEST}
+        assert harness.rdb_path_seen is not None
+        assert harness.rdb_path_seen.relative_to(harness.backup_root_seen) == Path(
+            FALKORDB_DUMP_RELPATH
+        )
+        assert harness.graph_inventory_seen == FALKORDB_INVENTORY
+        assert harness.archives_seen is not None
+        assert {
+            volume: path.relative_to(harness.backup_root_seen)
+            for volume, path in harness.archives_seen.items()
+        } == {volume: Path(VOLUME_ARCHIVE_DIR) / f"{volume}.tar.gz" for volume in HUB_VOLUMES}
+        assert harness.volume_inventories_seen == dict.fromkeys(HUB_VOLUMES, VOLUME_INVENTORY)
 
 
 class TestManifest:
@@ -560,6 +613,37 @@ class TestOutputDirectory:
         assert backup_root.is_dir()
         assert backup_root.stat().st_mode & 0o777 == 0o700
 
+    def test_refuses_pre_existing_output_without_touching_old_manifest(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        backup_root.mkdir()
+        old_manifest = backup_root / MANIFEST_NAME
+        old_manifest.write_text("old-complete-backup\n")
+
+        result = _invoke(runtime, "--output", str(backup_root))
+
+        assert result.exit_code != 0
+        assert str(backup_root) in result.output
+        assert old_manifest.read_text() == "old-complete-backup\n"
+        assert "stop_daemon" not in harness.calls
+
+    def test_refuses_symlinked_output_root_and_names_it(
+        self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        backup_root = tmp_path / "backup-link"
+        backup_root.symlink_to(target, target_is_directory=True)
+
+        result = _invoke(runtime, "--output", str(backup_root))
+
+        assert result.exit_code != 0
+        assert "symlink" in result.output.lower()
+        assert str(backup_root) in result.output
+        assert list(target.iterdir()) == []
+        assert "stop_daemon" not in harness.calls
+
     def test_default_output_directory_is_timestamped_under_gobby_home(
         self, harness: _Harness, runtime: CliRuntime
     ) -> None:
@@ -635,12 +719,40 @@ class TestCleanup:
     ) -> None:
         harness.fail_at = "dump_postgres"
 
-        result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+        backup_root = tmp_path / "backup"
+        result = _invoke(runtime, "--output", str(backup_root))
 
         assert result.exit_code != 0
         assert harness.calls.index("stop_daemon") < harness.calls.index("dump_postgres")
         assert harness.calls[-1] == "start_daemon"
         assert "snapshot_qdrant" not in harness.calls
+        assert not backup_root.exists()
+        assert not list(tmp_path.glob(f"*/{MANIFEST_NAME}"))
+
+    def test_corrupted_artifact_is_refused_before_manifest_publication(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        original = hub_cli._run_backup
+
+        def corrupt_after_recording(**kwargs: Any) -> object:
+            manifest = original(**kwargs)
+            artifact = manifest.artifacts[0]
+            (kwargs["backup_root"] / artifact.path).write_bytes(b"write-time-corruption")
+            return manifest
+
+        monkeypatch.setattr(hub_cli, "_run_backup", corrupt_after_recording)
+        backup_root = tmp_path / "backup"
+
+        result = _invoke(runtime, "--output", str(backup_root))
+
+        assert result.exit_code != 0
+        assert "artifact" in result.output.lower()
+        assert "sha256" in result.output.lower()
+        assert not (backup_root / MANIFEST_NAME).exists()
 
     def test_services_are_restarted_when_tar_volumes_fails(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path

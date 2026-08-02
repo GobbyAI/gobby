@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
+from gobby.cli.hub_backup._integrity import file_digest, refuse_symlink_traversal
 from gobby.cli.hub_backup._manifest import (
     DEFAULT_MAX_AGE_HOURS,
     MANIFEST_NAME,
@@ -43,6 +44,7 @@ class SchemaGateError(RuntimeError):
 def validate_destructive_manifest(
     manifest: HubBackupManifest,
     *,
+    backup_root: Path,
     manifest_sha256: str,
     current_identity: SourceIdentity,
     epoch: MaintenanceEpoch,
@@ -53,6 +55,7 @@ def validate_destructive_manifest(
     """Validate every external fact required before a destructive batch."""
     decision = check_manifest_gate(
         manifest,
+        backup_root=backup_root,
         current_identity=current_identity,
         now=now,
         max_age_hours=max_age_hours,
@@ -157,7 +160,9 @@ def _apply_verified_batch(
     manifest_path = _newest_manifest_path(get_gobby_home() / "backups" / "hub")
     if batch.backup_manifest_path is None:
         raise SchemaGateError("Destructive batch has no backup manifest path")
-    if manifest_path.resolve() != Path(batch.backup_manifest_path).resolve():
+    bound_manifest_path = Path(os.path.abspath(batch.backup_manifest_path))
+    refuse_symlink_traversal(bound_manifest_path, label="Destructive backup manifest")
+    if Path(os.path.abspath(manifest_path)) != bound_manifest_path:
         raise SchemaGateError(
             "Newest backup manifest is not the epoch-bound destructive batch manifest"
         )
@@ -167,6 +172,7 @@ def _apply_verified_batch(
     current_identity, _current_head = collect_postgres_identity(bound_url)
     context = validate_destructive_manifest(
         manifest,
+        backup_root=manifest_path.parent,
         manifest_sha256=manifest_sha256,
         current_identity=current_identity,
         epoch=epoch,
@@ -178,7 +184,12 @@ def _apply_verified_batch(
 
 
 def _newest_manifest_path(backup_root: Path) -> Path:
-    candidates = list(backup_root.glob(f"*/{MANIFEST_NAME}"))
+    refuse_symlink_traversal(backup_root, label="Hub backup root")
+    candidates = [
+        path
+        for path in backup_root.glob(f"*/{MANIFEST_NAME}")
+        if not path.parent.name.startswith(".")
+    ]
     if not candidates:
         raise SchemaGateError(f"No hub backup manifests found under {backup_root}")
     manifests = [(load_manifest(path), path) for path in candidates]
@@ -189,8 +200,7 @@ def _newest_manifest_path(backup_root: Path) -> Path:
 
 
 def _file_sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+    return file_digest(path, label="backup manifest")[0]
 
 
 class _SchemaApplyExecutor(CampaignExecutor):

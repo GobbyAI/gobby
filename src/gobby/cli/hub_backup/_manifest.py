@@ -16,6 +16,12 @@ from typing import Any
 
 import jsonschema
 
+from gobby.cli.hub_backup._integrity import (
+    artifact_integrity_errors,
+    open_exclusive_binary,
+    read_bytes_no_follow,
+)
+
 MANIFEST_FORMAT = "gobby-hub-backup-manifest"
 MANIFEST_VERSION = 2
 MANIFEST_NAME = "manifest.json"
@@ -228,16 +234,18 @@ def write_manifest(manifest: HubBackupManifest, path: Path) -> None:
     """Validate and write the manifest with owner-only permissions."""
     data = manifest.to_dict()
     validate_manifest_data(data)
-    payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
-    path.write_text(payload, encoding="utf-8")
-    os.chmod(path, 0o600)
+    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
+    with open_exclusive_binary(path, label="backup manifest") as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
 
 
 def load_manifest(path: Path) -> HubBackupManifest:
     """Load and schema-validate a manifest file."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        data = json.loads(read_bytes_no_follow(path, label="backup manifest").decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"manifest is not valid JSON: {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"manifest must be a JSON object: {path}")
@@ -247,17 +255,18 @@ def load_manifest(path: Path) -> HubBackupManifest:
 def check_manifest_gate(
     manifest: HubBackupManifest,
     *,
+    backup_root: Path,
     current_identity: SourceIdentity,
     now: datetime,
     max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
 ) -> GateDecision:
     """Decide whether a manifest authorizes destructive work.
 
-    Refuses a manifest older than the max age, one lacking earned
-    ``restore_verified`` on any store, or one whose source identity does
-    not fingerprint-match the target database.
+    Refuses stale or altered artifacts, an old manifest, unverified stores,
+    or a source identity that does not fingerprint-match the target database.
     """
     reasons: list[str] = []
+    reasons.extend(artifact_integrity_errors(backup_root, manifest.artifacts))
 
     created_at = datetime.fromisoformat(manifest.created_at)
     age = now - created_at

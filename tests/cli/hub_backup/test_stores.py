@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import subprocess
+import tarfile
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
+from unittest.mock import ANY
 
 import click
 import httpx
@@ -55,11 +58,13 @@ class _FakeConnection:
         counts: dict[str, int] | None = None,
         head: object = 41,
         roles: Sequence[tuple[str, bool, bool]] = (),
+        schema_objects: Sequence[tuple[str, int]] = (),
     ) -> None:
         self.tables = list(tables)
         self.counts = dict(counts or {})
         self.head = head
         self.roles = list(roles)
+        self.schema_objects = list(schema_objects)
         self.statements: list[str] = []
 
     def __enter__(self) -> _FakeConnection:
@@ -81,6 +86,8 @@ class _FakeConnection:
             return _FakeCursor([(name,) for name in self.tables])
         if "from pg_roles" in lowered:
             return _FakeCursor([tuple(role) for role in self.roles])
+        if "from pg_class" in lowered:
+            return _FakeCursor([tuple(row) for row in self.schema_objects])
         if "server_version" in lowered:
             return _FakeCursor([("17.6",)])
         if lowered.startswith("select count(*)"):
@@ -170,6 +177,18 @@ def test_collect_row_count_probes_quotes_identifiers_and_counts_exactly(
     listing = next(s for s in connection.statements if "pg_tables" in s)
     assert "'public'" in listing
     assert "ORDER BY tablename" in listing
+
+
+def test_collect_schema_object_counts_groups_public_schema_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _FakeConnection(schema_objects=[("index", 14), ("table", 7), ("view", 2)])
+    _patch_psycopg(monkeypatch, connection)
+
+    result = stores.collect_schema_object_counts(DATABASE_URL)
+
+    assert result == {"index": 14, "table": 7, "view": 2}
+    assert any("from pg_class" in sql.lower() for sql in connection.statements)
 
 
 def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
@@ -359,6 +378,10 @@ class _FakeQdrantClient:
         self.api_key = api_key
         self.timeout = timeout
         self.points = {"memories": 12, "notes": 3}
+        self.records: dict[str, list[dict[str, object]]] = {
+            "memories": [{"id": 1, "payload": {"kind": "memory"}, "vector": [1.0]}],
+            "notes": [{"id": 2, "payload": {"kind": "note"}, "vector": [2.0]}],
+        }
         self.created: list[str] = []
         self.deleted: list[tuple[str, str]] = []
 
@@ -368,6 +391,21 @@ class _FakeQdrantClient:
     def count(self, collection_name: str, exact: bool = False) -> _FakeCount:
         assert exact is True
         return _FakeCount(self.points[collection_name])
+
+    def scroll(
+        self,
+        collection_name: str,
+        *,
+        limit: int,
+        offset: object = None,
+        with_payload: bool,
+        with_vectors: bool,
+    ) -> tuple[list[dict[str, object]], None]:
+        assert limit > 0
+        assert offset is None
+        assert with_payload is True
+        assert with_vectors is True
+        return self.records[collection_name], None
 
     def create_snapshot(self, collection_name: str, wait: bool = False) -> _FakeNamed:
         assert wait is True
@@ -452,8 +490,16 @@ def test_snapshot_qdrant_downloads_then_deletes_each_snapshot(
     assert artifacts[0].size_bytes == len(b"snapshot-of-memories")
     assert details == {
         "collections": {
-            "memories": {"points": 12, "snapshot": "qdrant/memories.snapshot"},
-            "notes": {"points": 3, "snapshot": "qdrant/notes.snapshot"},
+            "memories": {
+                "points": 12,
+                "snapshot": "qdrant/memories.snapshot",
+                "content_sha256": ANY,
+            },
+            "notes": {
+                "points": 3,
+                "snapshot": "qdrant/notes.snapshot",
+                "content_sha256": ANY,
+            },
         }
     }
     assert clients[0].deleted == [
@@ -499,12 +545,17 @@ class _FalkorRunner:
         persistence: Sequence[str],
         graphs: str = "social\nmemory\n",
         dbsize: str = "4",
+        graph_counts: dict[str, dict[str, int]] | None = None,
     ) -> None:
         self.commands: list[list[str]] = []
         self._lastsave = [str(value) for value in lastsave]
         self._persistence = list(persistence)
         self._graphs = graphs
         self._dbsize = dbsize
+        self._graph_counts = graph_counts or {
+            "memory": {"nodes": 5, "edges": 3},
+            "social": {"nodes": 9, "edges": 7},
+        }
 
     def _pop(self, values: list[str]) -> str:
         """Return the next scripted reply, repeating the final one forever."""
@@ -524,6 +575,10 @@ class _FalkorRunner:
             return _completed(args, stdout=b"Background saving started\n")
         if request.endswith("GRAPH.LIST"):
             return _completed(args, stdout=self._graphs.encode())
+        if "GRAPH.QUERY" in request:
+            graph = next(name for name in self._graph_counts if f"GRAPH.QUERY {name} " in request)
+            metric = "nodes" if "count(n)" in request else "edges"
+            return _completed(args, stdout=f"{self._graph_counts[graph][metric]}\n".encode())
         if request.endswith("DBSIZE"):
             return _completed(args, stdout=self._dbsize.encode() + b"\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -560,7 +615,14 @@ def test_dump_falkordb_polls_bgsave_to_completion_and_copies_rdb(
     assert [artifact.path for artifact in artifacts] == ["falkordb/dump.rdb"]
     assert artifacts[0].sha256 == hashlib.sha256(b"REDIS0011-RDB").hexdigest()
     assert artifacts[0].size_bytes == len(b"REDIS0011-RDB")
-    assert details == {"graphs": ["memory", "social"], "dbsize": 4}
+    assert details == {
+        "graphs": ["memory", "social"],
+        "graph_inventory": {
+            "memory": {"nodes": 5, "edges": 3},
+            "social": {"nodes": 9, "edges": 7},
+        },
+        "dbsize": 4,
+    }
     assert pauses, "poll loop should wait between INFO persistence probes"
     info_polls = [c for c in runner.commands if c[-1].endswith("INFO persistence")]
     assert len(info_polls) == 2
@@ -584,7 +646,7 @@ def test_dump_falkordb_authenticates_with_in_container_password_env(
 
     bgsave = next(c for c in runner.commands if c[-1].endswith("BGSAVE"))
     assert bgsave[:5] == ["docker", "exec", "services-falkordb-1", "sh", "-c"]
-    assert bgsave[5] == ('redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning BGSAVE')
+    assert bgsave[5] == ('redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw BGSAVE')
     assert all("secret" not in " ".join(command) for command in runner.commands)
 
 
@@ -641,12 +703,61 @@ def _volume_runner(
     return _run
 
 
+def _patch_source_volume_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        stores,
+        "_source_volume_inventory",
+        lambda _volume: {"members": 2, "sha256": "b" * 64},
+    )
+
+
+def test_source_volume_inventory_hashes_regular_file_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"source-volume-content"
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        member = tarfile.TarInfo("data/value.bin")
+        member.size = len(payload)
+        tar.addfile(member, io.BytesIO(payload))
+    commands: list[list[str]] = []
+
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        commands.append(args)
+        kwargs["stdout"].write(archive.getvalue())
+        return _completed(args)
+
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    inventory = stores._source_volume_inventory("gobby_qdrant_data")
+
+    assert inventory["members"] == 1
+    assert isinstance(inventory["sha256"], str)
+    assert commands == [
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            "gobby_qdrant_data:/source:ro",
+            "alpine",
+            "tar",
+            "cf",
+            "-",
+            "-C",
+            "/source",
+            ".",
+        ]
+    ]
+
+
 def test_tar_volumes_archives_each_volume_via_docker_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     commands: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", _volume_runner(commands))
+    _patch_source_volume_inventory(monkeypatch)
 
     artifacts, details = stores.tar_volumes(tmp_path, ["gobby_qdrant_data"])
 
@@ -674,7 +785,10 @@ def test_tar_volumes_archives_each_volume_via_docker_run(
     assert artifacts[0].size_bytes == archive.stat().st_size
     assert archive.stat().st_mode & 0o777 == 0o600
     assert archive.parent.stat().st_mode & 0o777 == 0o700
-    assert details == {"volumes": ["gobby_qdrant_data"]}
+    assert details == {
+        "volumes": ["gobby_qdrant_data"],
+        "source_inventories": {"gobby_qdrant_data": {"members": 2, "sha256": "b" * 64}},
+    }
 
 
 def test_tar_volumes_uses_generous_timeout_for_multi_gigabyte_volumes(
@@ -689,6 +803,7 @@ def test_tar_volumes_uses_generous_timeout_for_multi_gigabyte_volumes(
         return _completed(args)
 
     monkeypatch.setattr(subprocess, "run", _run)
+    _patch_source_volume_inventory(monkeypatch)
 
     stores.tar_volumes(tmp_path, ["gobby_postgres_data"])
 
@@ -701,6 +816,7 @@ def test_tar_volumes_defaults_to_every_hub_volume(
 ) -> None:
     commands: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", _volume_runner(commands))
+    _patch_source_volume_inventory(monkeypatch)
 
     artifacts, details = stores.tar_volumes(tmp_path)
 
@@ -710,7 +826,12 @@ def test_tar_volumes_defaults_to_every_hub_volume(
         "gobby_qdrant_data",
         "gobby_falkordb_data",
     )
-    assert details == {"volumes": list(stores.HUB_VOLUMES)}
+    assert details == {
+        "volumes": list(stores.HUB_VOLUMES),
+        "source_inventories": {
+            volume: {"members": 2, "sha256": "b" * 64} for volume in stores.HUB_VOLUMES
+        },
+    }
     assert [artifact.path for artifact in artifacts] == [
         f"volumes/{volume}.tar.gz" for volume in stores.HUB_VOLUMES
     ]
@@ -727,8 +848,40 @@ def test_tar_volumes_raises_when_docker_run_fails(
         return _completed(args, returncode=2)
 
     monkeypatch.setattr(subprocess, "run", _run)
+    _patch_source_volume_inventory(monkeypatch)
 
     with pytest.raises(click.ClickException) as excinfo:
         stores.tar_volumes(tmp_path, ["gobby_pgaudit_log"])
 
     assert "gobby_pgaudit_log" in str(excinfo.value)
+
+
+def test_artifact_destination_refuses_symlinked_leaf(tmp_path: Path) -> None:
+    backup_root = tmp_path / "backup"
+    artifact_dir = backup_root / "postgres"
+    artifact_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.dump"
+    outside.write_bytes(b"must-remain-untouched")
+    destination = artifact_dir / "gobby.dump"
+    destination.symlink_to(outside)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        stores._prepare_artifact_path(backup_root, "postgres/gobby.dump")
+
+    assert "symlink" in str(excinfo.value).lower()
+    assert str(destination) in str(excinfo.value)
+    assert outside.read_bytes() == b"must-remain-untouched"
+
+
+def test_audit_log_source_refuses_symlinked_parent(tmp_path: Path) -> None:
+    real_logs = tmp_path / "real-logs"
+    real_logs.mkdir()
+    (real_logs / "rule-allow-audit.jsonl").write_text('{"result":"allow"}\n')
+    logs_dir = tmp_path / "logs-link"
+    logs_dir.symlink_to(real_logs, target_is_directory=True)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        stores.archive_rule_allow_audit_logs(logs_dir, tmp_path / "backup")
+
+    assert "symlink" in str(excinfo.value).lower()
+    assert str(logs_dir) in str(excinfo.value)
