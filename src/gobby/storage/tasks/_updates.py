@@ -333,7 +333,6 @@ def update_task_metadata(
             ("closed_in_session_id", closed_in_session_id),
             ("closed_commit_sha", closed_commit_sha),
             ("escalated_at", escalated_at),
-            ("escalation_reason", escalation_reason),
         )
         if value is not UNSET
     ]
@@ -361,6 +360,9 @@ def update_task_metadata(
         raise ValueError(
             f"LocalTaskManager.update_task received unsupported fields: {unsupported_display}"
         )
+
+    if escalation_reason is not UNSET and not get_task(db, task_id).is_escalated:
+        raise ValueError("Cannot update escalation_reason for a task that is not escalated.")
 
     return update_task(
         db,

@@ -275,6 +275,7 @@ class TestUpdateTaskTool:
             category="research",
             validation_criteria="The requested task metadata is stored.",
             implementation_domain=None,
+            is_escalated=False,
         )
 
     @pytest.mark.asyncio
@@ -498,6 +499,63 @@ class TestUpdateTaskTool:
             "550e8400-e29b-41d4-a716-446655440000", allow_automation=False
         )
         assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_escalation_reason_without_transition(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        """Updating an escalation reason leaves lifecycle state untouched."""
+        registry = create_task_registry(mock_task_manager)
+        escalated_at = object()
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
+            category="research",
+            validation_criteria="The requested task metadata is stored.",
+            implementation_domain=None,
+            is_escalated=True,
+            escalated_at=escalated_at,
+        )
+        mock_task_manager.update_task.return_value = SimpleNamespace(
+            escalation_reason="Migration emergency resolved; design review remains.",
+            escalated_at=escalated_at,
+        )
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "escalation_reason": "Migration emergency resolved; design review remains.",
+            },
+        )
+
+        assert result == {}
+        mock_task_manager.update_task.assert_called_once_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            escalation_reason="Migration emergency resolved; design review remains.",
+        )
+        mock_task_manager.escalate_task.assert_not_called()
+        mock_task_manager.de_escalate_task.assert_not_called()
+        assert mock_task_manager.update_task.return_value.escalated_at is escalated_at
+
+    @pytest.mark.asyncio
+    async def test_update_task_rejects_escalation_reason_when_not_escalated(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        """A non-escalated task cannot retain orphan escalation text."""
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "escalation_reason": "Orphan reason",
+            },
+        )
+
+        assert result == {
+            "error": "Cannot update escalation_reason for a task that is not escalated."
+        }
+        mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_task_isolation(self, mock_task_manager: MagicMock) -> None:

@@ -88,6 +88,47 @@ def test_update_task_persists_normalized_validation_criteria(
     assert updated.validation_criteria == "Updated observable criterion."
 
 
+def test_update_task_changes_only_escalation_reason(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Correct escalation reason",
+        task_type="task",
+        validation_criteria="The escalation reason is current.",
+    )
+    escalated = manager.escalate_task(task.id, reason="Stale reason")
+
+    updated = manager.update_task(task.id, escalation_reason="Current reason")
+
+    assert updated.escalation_reason == "Current reason"
+    assert updated.escalated_at == escalated.escalated_at
+    assert updated.is_escalated is True
+
+
+def test_update_task_rejects_escalation_reason_for_non_escalated_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Reject orphan escalation reason",
+        task_type="task",
+        validation_criteria="No orphan escalation reason is stored.",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Cannot update escalation_reason for a task that is not escalated",
+    ):
+        manager.update_task(task.id, escalation_reason="Orphan reason")
+
+    assert manager.get_task(task.id).escalation_reason is None
+
+
 def test_update_task_only_refetches_once_for_non_contract_fields(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
