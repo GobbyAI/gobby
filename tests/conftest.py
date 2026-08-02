@@ -17,6 +17,17 @@ import pytest
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
+@pytest.fixture(autouse=True)
+def _assert_postgres_pools_bounded() -> Iterator[None]:
+    """Require each test to release every PostgreSQL pool it creates."""
+    from gobby.storage.hub.postgres import _OPEN_DATABASES
+
+    open_before = set(_OPEN_DATABASES)
+    yield
+    leaked = _OPEN_DATABASES - open_before
+    assert not leaked, f"test left {len(leaked)} PostgresHubDatabase pool(s) open"
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register CLI flags for opt-in local-only test suites."""
     parser.addoption(

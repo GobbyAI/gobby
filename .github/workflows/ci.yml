@@ -293,7 +293,7 @@ jobs:
             -e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}" \
             -e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}" \
             -p "${GOBBY_POSTGRES_TEST_PORT}:5432" \
-            --tmpfs /var/lib/postgresql:rw,size=3g \
+            --tmpfs /var/lib/postgresql:rw,size=3g,nr_inodes=6000000 \
             --health-cmd "pg_isready -U ${GOBBY_POSTGRES_TEST_USER}" \
             --health-interval 2s \
             --health-timeout 2s \
@@ -458,7 +458,7 @@ jobs:
             -e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}" \
             -e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}" \
             -p "${GOBBY_POSTGRES_TEST_PORT}:5432" \
-            --tmpfs /var/lib/postgresql:rw,size=3g \
+            --tmpfs /var/lib/postgresql:rw,size=3g,nr_inodes=6000000 \
             --health-cmd "pg_isready -U ${GOBBY_POSTGRES_TEST_USER}" \
             --health-interval 2s \
             --health-timeout 2s \

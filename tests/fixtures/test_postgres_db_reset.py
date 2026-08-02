@@ -157,3 +157,73 @@ def test_seed_rows_survive_reset(
         assert "schema_migrations" in all_tables
         # (6) Removed PostgreSQL import marker table is absent from the baseline.
         assert "gobby_migration_state" not in all_tables
+
+
+def test_reset_deletes_rows_with_immediate_restrict_fk(
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> None:
+    psycopg = pytest.importorskip("psycopg")
+
+    from tests.fixtures.postgres import _reset_schema
+
+    dsn = _require_database_url()
+    _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(
+            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
+        )
+        conn.execute(
+            "INSERT INTO recall_gate_runs "
+            "(holdout_consumption_key, status, fit_settings_digest, claim_token, "
+            "created_at, updated_at) VALUES (%s, 'reserved', %s, %s, NOW(), NOW())",
+            ("reset-fk", "digest", "claim"),
+        )
+        conn.execute(
+            "INSERT INTO recall_holdout_consumed "
+            "(request_id, holdout_consumption_key, consumed_at) VALUES (%s, %s, NOW())",
+            ("reset-request", "reset-fk"),
+        )
+
+    _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(
+            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
+        )
+        assert conn.execute("SELECT count(*) FROM recall_gate_runs").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM recall_holdout_consumed").fetchone() == (0,)
+
+
+def test_reset_restarts_owned_sequences(
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> None:
+    psycopg = pytest.importorskip("psycopg")
+
+    from tests.fixtures.postgres import _reset_schema
+
+    dsn = _require_database_url()
+    _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(
+            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
+        )
+        first_id = conn.execute(
+            "INSERT INTO metric_snapshots (metrics_json) VALUES ('{}'::jsonb) RETURNING id"
+        ).fetchone()
+
+    _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(
+            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
+        )
+        second_id = conn.execute(
+            "INSERT INTO metric_snapshots (metrics_json) VALUES ('{}'::jsonb) RETURNING id"
+        ).fetchone()
+
+    assert first_id == (1,)
+    assert second_id == first_id
