@@ -26,7 +26,6 @@ def _model() -> ModelInfo:
     return ModelInfo(
         id="openai/gpt-5.6-sol",
         name="GPT-5.6 Sol",
-        provider="codex",
         context_length=258_400,
         max_completion_tokens=128_000,
     )

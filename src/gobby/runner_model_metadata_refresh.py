@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg
 
-from gobby.llm.model_registry import ModelInfo, fetch_models_async, strip_provider_prefix
+from gobby.llm.model_registry import ModelInfo, fetch_models_async, normalize_model_id
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError, run_bounded_db
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -32,23 +32,26 @@ def _statement_timeout_ms(cutoff: float) -> int:
     return max(1, math.floor(_require_remaining(cutoff) * 1000.0))
 
 
-def _metadata_rows(models: list[ModelInfo]) -> list[tuple[str, str, int, int | None, str]]:
-    return [
-        (
-            strip_provider_prefix(model.id),
-            model.provider,
+def _metadata_rows(models: list[ModelInfo]) -> list[tuple[str, int, int | None, str]]:
+    rows: dict[str, tuple[str, int, int | None, str]] = {}
+    for model in models:
+        model_key = normalize_model_id(model.id)
+        existing = rows.get(model_key)
+        if existing is not None and model.context_length <= existing[1]:
+            continue
+        rows[model_key] = (
+            model_key,
             model.context_length,
             model.max_completion_tokens,
             "registry",
         )
-        for model in models
-    ]
+    return list(rows.values())
 
 
 async def _replace_rows(
     connection: psycopg.AsyncConnection[Any],
     cutoff: float,
-    rows: list[tuple[str, str, int, int | None, str]],
+    rows: list[tuple[str, int, int | None, str]],
 ) -> int:
     _require_remaining(cutoff)
     await connection.execute("DELETE FROM model_metadata")
@@ -57,11 +60,11 @@ async def _replace_rows(
     await connection.execute(f"SET LOCAL statement_timeout = {statement_timeout_ms}")
 
     _require_remaining(cutoff)
-    placeholders = ", ".join(["(%s, %s, %s, %s, %s)"] * len(rows))
+    placeholders = ", ".join(["(%s, %s, %s, %s)"] * len(rows))
     parameters = tuple(value for row in rows for value in row)
     await connection.execute(
         "INSERT INTO model_metadata "
-        "(model, provider, context_length, max_completion_tokens, source) VALUES "
+        "(model, context_length, max_completion_tokens, source) VALUES "
         f"{placeholders}",
         parameters,
     )

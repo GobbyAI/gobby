@@ -6,10 +6,13 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from gobby.adapters.acp_client import ACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
@@ -70,6 +73,9 @@ _PROVIDERS = tuple(_PROVIDER_METADATA)
 _CACHE_VERSION = 5
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
+_DROID_DOCS_MODELS_URL = "https://docs.factory.ai/models.md"
+_DROID_DOCS_FETCH_TIMEOUT = 5.0
+_DROID_DOCS_EFFORT_RE = re.compile(r"`([^`]+)`(\s*\(default\))?")
 
 
 def context_length_for_model(provider: str | None, model: str | None) -> int | None:
@@ -101,7 +107,7 @@ def _fallback_context_candidate(
         return ContextLengthCandidate(provider_catalog, "provider_catalog")
     from gobby.llm.model_registry import lookup_context_window
 
-    registry_value = lookup_context_window(f"{provider}/{identifier}")
+    registry_value = lookup_context_window(identifier)
     if registry_value is not None:
         return ContextLengthCandidate(registry_value, "registry")
     return None
@@ -169,6 +175,77 @@ def _static_provider_models(provider: str) -> list[dict[str, Any]]:
     if provider == "agy":
         return copy.deepcopy(AGY_MODEL_CATALOG)
     return []
+
+
+def _parse_droid_docs_models(content: str) -> dict[str, dict[str, Any]]:
+    """Parse Factory docs Markdown tables into droid catalog entries by model ID.
+
+    Rows look like: ``| Label | `model-id` | 1× | `low`, `high` (default) |``.
+    Raises ValueError when no model table rows parse — the docs format is an
+    empirical contract and a silent empty parse must degrade to cache/static.
+    """
+    entries: dict[str, dict[str, Any]] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        label_cell, id_cell, _multiplier, reasoning_cell = cells[0], cells[1], cells[2], cells[3]
+        id_match = re.fullmatch(r"`([^`]+)`", id_cell)
+        if not id_match:
+            continue
+        model_id = id_match.group(1)
+        label = re.sub(r"<[^>]+>", "", label_cell).strip()
+
+        efforts: list[str] = []
+        default_effort: str | None = None
+        for effort, default_marker in _DROID_DOCS_EFFORT_RE.findall(reasoning_cell):
+            efforts.append(effort)
+            if default_marker:
+                default_effort = effort
+
+        entry: dict[str, Any] = {"value": model_id, "label": label or model_id}
+        if efforts:
+            entry["reasoning"] = {
+                "supported_efforts": efforts,
+                "default_effort": default_effort or efforts[0],
+            }
+        entries[model_id] = entry
+
+    if not entries:
+        raise ValueError("no model table rows parsed from Factory docs models page")
+    return entries
+
+
+def _merge_droid_docs_models(
+    docs_entries: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge docs-parsed droid entries with the static catalog.
+
+    Docs win on reasoning effort data; static entries missing from the docs
+    are kept (deprecations lag the docs).
+    """
+    merged: dict[str, dict[str, Any]] = {
+        model["value"]: copy.deepcopy(model) for model in _DROID_MODEL_CATALOG
+    }
+    for model_id, docs_entry in docs_entries.items():
+        static_entry = merged.get(model_id)
+        if static_entry is not None:
+            static_entry.update(docs_entry)
+        else:
+            merged[model_id] = docs_entry
+    return list(merged.values())
+
+
+async def _discover_droid_models() -> list[dict[str, Any]]:
+    """Fetch Factory's machine-readable model docs and merge with the static catalog."""
+    async with httpx.AsyncClient(timeout=_DROID_DOCS_FETCH_TIMEOUT) as client:
+        response = await client.get(_DROID_DOCS_MODELS_URL)
+        response.raise_for_status()
+    docs_entries = _parse_droid_docs_models(response.text)
+    return _merge_droid_docs_models(docs_entries)
 
 
 def _model_discovery_cwd_path(provider: str) -> Path:
@@ -323,20 +400,6 @@ class ProviderModelCatalog:
                     return resolved
             return None
 
-        if normalized_provider == "droid":
-            resolved = self._get_provider_context_window(
-                normalized_provider, model, include_static=False
-            )
-            if resolved is not None:
-                return resolved
-            for underlying_provider in self._droid_underlying_providers(model):
-                resolved = self._get_provider_context_window(
-                    underlying_provider, model, include_static=False
-                )
-                if resolved is not None:
-                    return resolved
-            return self._get_provider_context_window(normalized_provider, model)
-
         return self._get_provider_context_window(normalized_provider, model)
 
     def _get_provider_context_window(
@@ -410,18 +473,7 @@ class ProviderModelCatalog:
 
     def _alias_matches(self, provider: str, candidate: str, target: str) -> bool:
         families = {"opus", "sonnet", "haiku", "fable"}
-        return provider in {"claude", "droid"} and candidate in families and candidate in target
-
-    @staticmethod
-    def _droid_underlying_providers(model: str) -> tuple[str, ...]:
-        normalized = normalize_model_lookup_id(model)
-        if normalized.startswith("claude-") or any(
-            family in normalized for family in ("opus", "sonnet", "haiku", "fable")
-        ):
-            return ("claude",)
-        if normalized.startswith(("gpt-", "o1-", "o3-", "o4-")):
-            return ("codex",)
-        return ()
+        return provider == "claude" and candidate in families and candidate in target
 
     def status_snapshot(self) -> dict[str, dict[str, Any]]:
         """Return a compact health/status view for each provider catalog."""
@@ -529,7 +581,7 @@ class ProviderModelCatalog:
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         if provider == "droid":
-            return _static_provider_models(provider)
+            return await _discover_droid_models()
         raise ValueError(f"Unknown provider: {provider}")
 
     async def _discover_codex_models(

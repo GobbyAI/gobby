@@ -12,7 +12,7 @@ from gobby.storage import model_metadata
 from gobby.storage.model_metadata import ModelMetadataStore
 
 
-def test_populate_keeps_same_model_suffix_for_different_providers(
+def test_populate_dedupes_shared_model_ids_keeping_larger_context_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.llm.model_registry import ModelInfo
@@ -24,26 +24,21 @@ def test_populate_keeps_same_model_suffix_for_different_providers(
         ModelInfo(
             id="anthropic/shared-model",
             name="Shared Claude",
-            provider="claude",
             context_length=200_000,
             max_completion_tokens=8_000,
         ),
         ModelInfo(
-            id="openai/shared-model",
-            name="Shared Codex",
-            provider="codex",
+            id="shared-model",
+            name="Shared (smaller tier)",
             context_length=128_000,
             max_completion_tokens=4_000,
         ),
     ]
 
-    assert ModelMetadataStore(db).populate(models) == 2
+    assert ModelMetadataStore(db).populate(models) == 1
 
     rows = connection.executemany.call_args.args[1]
-    assert rows == [
-        ("shared-model", "claude", 200_000, 8_000, "registry"),
-        ("shared-model", "codex", 128_000, 4_000, "registry"),
-    ]
+    assert rows == [("shared-model", 200_000, 8_000, "registry")]
     assert model_metadata._stale_warning_emitted is False
 
 
@@ -86,29 +81,42 @@ def test_exact_positive_context_window_wins_without_prefix_lookup() -> None:
     assert "context_length > 0" in db.fetchone.call_args.args[0]
 
 
-def test_provider_prefixed_lookup_is_provider_scoped() -> None:
+def test_vendor_prefixed_lookup_normalizes_to_bare_model() -> None:
     db = MagicMock()
     db.fetchone.return_value = {"context_length": 200_000}
 
-    result = ModelMetadataStore(db).get_context_window("claude/shared-model")
+    result = ModelMetadataStore(db).get_context_window("anthropic/shared-model")
 
     assert result == 200_000
     query, params = db.fetchone.call_args.args
-    assert "provider = %s" in query
-    assert params == ("claude", "shared-model")
+    assert "provider" not in query
+    assert "WHERE model = %s" in query
+    assert params == ("shared-model",)
 
 
-def test_provider_prefixed_prefix_lookup_is_provider_scoped() -> None:
+def test_endpoint_prefixed_lookup_normalizes_to_bare_model() -> None:
+    db = MagicMock()
+    db.fetchone.return_value = {"context_length": 200_000}
+
+    result = ModelMetadataStore(db).get_context_window("endpoint:fast/openai/gpt-5.4")
+
+    assert result == 200_000
+    _query, params = db.fetchone.call_args.args
+    assert params == ("gpt-5.4",)
+
+
+def test_prefix_lookup_matches_longest_bare_model_key() -> None:
     db = MagicMock()
     db.fetchone.side_effect = [None, {"context_length": 200_000}]
 
-    result = ModelMetadataStore(db).get_context_window("claude/shared-model-versioned")
+    result = ModelMetadataStore(db).get_context_window("anthropic/shared-model-versioned")
 
     assert result == 200_000
     query, params = db.fetchone.call_args.args
-    assert "provider = %s" in query
+    assert "provider" not in query
     assert "LEFT(%s, LENGTH(model)) = model" in query
-    assert params == ("claude", "shared-model-versioned")
+    assert "ORDER BY LENGTH(model) DESC" in query
+    assert params == ("shared-model-versioned",)
 
 
 @pytest.mark.parametrize(

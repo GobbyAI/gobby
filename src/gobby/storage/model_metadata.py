@@ -21,20 +21,6 @@ MODEL_METADATA_STALE_AFTER = timedelta(hours=48)
 _stale_warning_emitted = False
 
 
-def _model_lookup_parts(model_id: str) -> tuple[str | None, str]:
-    """Return an optional Gobby provider and the provider-local model id."""
-    from gobby.llm.model_registry import PROVIDER_MAP, strip_provider_prefix
-
-    if "/" in model_id:
-        prefix, suffix = model_id.split("/", 1)
-        provider = PROVIDER_MAP.get(f"{prefix}/")
-        if provider is not None:
-            return provider, suffix
-        if prefix in PROVIDER_MAP.values():
-            return prefix, suffix
-    return None, strip_provider_prefix(model_id)
-
-
 class ModelMetadata(NamedTuple):
     """Model metadata from registry."""
 
@@ -71,27 +57,28 @@ class ModelMetadataStore:
             logger.warning("No models available — keeping existing cached metadata")
             return 0
 
-        from gobby.llm.model_registry import strip_provider_prefix
+        from gobby.llm.model_registry import normalize_model_id
 
-        rows: list[tuple[str, str, int, int | None, str]] = []
+        by_model: dict[str, tuple[str, int, int | None, str]] = {}
         for m in models:
-            model_key = strip_provider_prefix(m.id)
-            rows.append(
-                (
-                    model_key,
-                    m.provider,
-                    m.context_length,
-                    m.max_completion_tokens,
-                    "registry",
-                )
+            model_key = normalize_model_id(m.id)
+            existing = by_model.get(model_key)
+            if existing is not None and m.context_length <= existing[1]:
+                continue
+            by_model[model_key] = (
+                model_key,
+                m.context_length,
+                m.max_completion_tokens,
+                "registry",
             )
+        rows = list(by_model.values())
 
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM model_metadata")
             conn.executemany(
-                "INSERT INTO model_metadata (model, provider, "
+                "INSERT INTO model_metadata (model, "
                 "context_length, max_completion_tokens, "
-                "source) VALUES (%s, %s, %s, %s, %s)",
+                "source) VALUES (%s, %s, %s, %s)",
                 rows,
             )
 
@@ -115,15 +102,15 @@ class ModelMetadataStore:
             logger.warning("Model metadata cache is older than 48 hours")
 
     def get_all(self) -> dict[str, ModelMetadata]:
-        """Return all model metadata keyed by ``provider/model``."""
+        """Return all model metadata keyed by bare model ID."""
         rows = self.db.fetchall(
-            "SELECT provider, model, context_length, max_completion_tokens, "
+            "SELECT model, context_length, max_completion_tokens, "
             "MAX(updated_at) OVER () AS metadata_updated_at FROM model_metadata"
         )
         if rows:
             self._warn_if_stale(rows[0])
         return {
-            f"{row['provider']}/{row['model']}": ModelMetadata(
+            row["model"]: ModelMetadata(
                 context_length=row["context_length"],
                 max_completion_tokens=row["max_completion_tokens"],
             )
@@ -132,44 +119,26 @@ class ModelMetadataStore:
 
     def get_context_window(self, model: str) -> int | None:
         """Look up context_length for a model (exact match, then prefix match)."""
-        provider, model = _model_lookup_parts(model)
+        from gobby.llm.model_registry import normalize_model_id
 
-        if provider is None:
-            exact_query = (
-                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
-                "WHERE model = %s AND context_length > 0 "
-                "ORDER BY provider LIMIT 1"
-            )
-            exact_params: tuple[str, ...] = (model,)
-        else:
-            exact_query = (
-                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
-                "WHERE provider = %s AND model = %s AND context_length > 0"
-            )
-            exact_params = (provider, model)
-        row = self.db.fetchone(exact_query, exact_params)
+        model = normalize_model_id(model)
+
+        row = self.db.fetchone(
+            "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
+            "WHERE model = %s AND context_length > 0",
+            (model,),
+        )
         self._warn_if_stale(row)
         exact_context_window = positive_context_window(row["context_length"] if row else None)
         if exact_context_window is not None:
             return exact_context_window
 
         # Prefix match — find longest matching model key via SQL
-        prefix_params: tuple[str, ...]
-        if provider is None:
-            prefix_query = (
-                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
-                "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
-                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
-            )
-            prefix_params = (model,)
-        else:
-            prefix_query = (
-                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
-                "WHERE provider = %s AND LEFT(%s, LENGTH(model)) = model "
-                "AND context_length > 0 "
-                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
-            )
-            prefix_params = (provider, model)
-        row = self.db.fetchone(prefix_query, prefix_params)
+        row = self.db.fetchone(
+            "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
+            "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
+            "ORDER BY LENGTH(model) DESC LIMIT 1",
+            (model,),
+        )
         self._warn_if_stale(row)
         return positive_context_window(row["context_length"] if row else None)

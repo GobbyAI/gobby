@@ -13,12 +13,10 @@ from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
     ModelInfo,
-    _provider_for_model,
     fetch_models_async,
     fetch_models_sync,
-    group_by_provider,
     lookup_context_window,
-    strip_provider_prefix,
+    normalize_model_id,
 )
 
 pytestmark = pytest.mark.unit
@@ -145,7 +143,7 @@ SAMPLE_OPENROUTER_RESPONSE = {
             "context_length": 200000,
             "top_provider": {"max_completion_tokens": 32768},
         },
-        # Should be filtered out — not a provider we care about
+        # Unknown vendors enter the catalog — metadata is provider-independent
         {
             "id": "mistral/mistral-large",
             "name": "Mistral: Large",
@@ -165,46 +163,12 @@ SAMPLE_OPENROUTER_RESPONSE = {
 }
 
 
-# -- _provider_for_model -----------------------------------------------------
-
-
-class TestProviderForModel:
-    def test_anthropic(self) -> None:
-        assert _provider_for_model("anthropic/claude-opus-4-6") == "claude"
-
-    def test_openai(self) -> None:
-        assert _provider_for_model("openai/gpt-4o") == "codex"
-
-    def test_google_models_are_not_assigned_to_a_gobby_provider(self) -> None:
-        assert _provider_for_model("google/gemini-2.5-pro") is None
-
-    def test_qwen(self) -> None:
-        assert _provider_for_model("qwen/qwen3-coder") == "qwen"
-
-    @pytest.mark.parametrize(
-        "model_id",
-        [
-            "z-ai/glm-5",
-            "moonshotai/kimi-k2.5",
-            "minimax/minimax-m2.5",
-        ],
-    )
-    def test_droid_core_provider_prefixes(self, model_id: str) -> None:
-        assert _provider_for_model(model_id) == "droid"
-
-    def test_unknown_provider(self) -> None:
-        assert _provider_for_model("mistral/mistral-large") is None
-
-    def test_no_prefix(self) -> None:
-        assert _provider_for_model("claude-opus-4-6") is None
-
-
 # -- fetch_models_sync -------------------------------------------------------
 
 
 class TestFetchModelsSync:
     @patch("gobby.llm.model_registry.httpx.get")
-    def test_fetches_and_filters(
+    def test_fetches_all_vendors(
         self,
         mock_get: MagicMock,
         caplog: pytest.LogCaptureFixture,
@@ -217,14 +181,15 @@ class TestFetchModelsSync:
         with caplog.at_level(logging.DEBUG, logger="gobby.llm.model_registry"):
             models = fetch_models_sync()
 
-        # 7 valid models (Google/Mistral filtered by provider, free Claude passes through)
-        assert len(models) == 7
-        providers = {m.provider for m in models}
-        assert providers == {"claude", "codex", "qwen", "droid"}
+        # 9 valid models — no vendor filter, unknown vendors enter the catalog
+        assert len(models) == 9
+        ids = {m.id for m in models}
+        assert "google/gemini-2.5-pro" in ids
+        assert "mistral/mistral-large" in ids
         fetch_record = next(
             record
             for record in caplog.records
-            if record.getMessage() == "Fetched 7 models from OpenRouter"
+            if record.getMessage() == "Fetched 9 models from OpenRouter"
         )
         assert fetch_record.levelno == logging.DEBUG
 
@@ -334,8 +299,12 @@ async def test_fetch_models_async_uses_shared_parser() -> None:
 
     models = await fetch_models_async(client=client)
 
-    assert len(models) == 7
-    assert {model.provider for model in models} == {"claude", "codex", "qwen", "droid"}
+    assert len(models) == 9
+    assert {model.id for model in models} >= {
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-2.5-pro",
+        "mistral/mistral-large",
+    }
     client.get.assert_awaited_once()
 
 
@@ -358,46 +327,75 @@ async def test_fetch_models_async_is_cancellable() -> None:
         await task
 
 
-# -- group_by_provider -------------------------------------------------------
+# -- normalize_model_id ------------------------------------------------------
 
 
-class TestGroupByProvider:
-    def test_groups_correctly(self) -> None:
-        models = [
-            ModelInfo("anthropic/a", "A", "claude", 100000, None),
-            ModelInfo("anthropic/b", "B", "claude", 200000, None),
-            ModelInfo("openai/c", "C", "codex", 128000, None),
-        ]
-        grouped = group_by_provider(models)
-        assert set(grouped) == {"claude", "codex"}
-        assert len(grouped["claude"]) == 2
-        assert len(grouped["codex"]) == 1
-
-    def test_empty_list(self) -> None:
-        assert group_by_provider([]) == {}
-
-
-# -- strip_provider_prefix ---------------------------------------------------
-
-
-class TestStripProviderPrefix:
-    def test_strips_anthropic(self) -> None:
-        assert strip_provider_prefix("anthropic/claude-opus-4-6") == "claude-opus-4-6"
-
-    def test_strips_openai(self) -> None:
-        assert strip_provider_prefix("openai/gpt-4o") == "gpt-4o"
-
+class TestNormalizeModelId:
     @pytest.mark.parametrize(
         ("model_id", "expected"),
         [
+            ("anthropic/claude-opus-4-6", "claude-opus-4-6"),
+            ("openai/gpt-4o", "gpt-4o"),
             ("qwen/qwen3-coder", "qwen3-coder"),
             ("z-ai/glm-5", "glm-5"),
             ("moonshotai/kimi-k2.5", "kimi-k2.5"),
             ("minimax/minimax-m2.5", "minimax-m2.5"),
+            ("google/gemini-2.5-pro", "gemini-2.5-pro"),
         ],
     )
-    def test_strips_new_provider_prefixes(self, model_id: str, expected: str) -> None:
-        assert strip_provider_prefix(model_id) == expected
+    def test_strips_known_vendor_prefix(self, model_id: str, expected: str) -> None:
+        assert normalize_model_id(model_id) == expected
 
     def test_no_prefix(self) -> None:
-        assert strip_provider_prefix("claude-opus-4-6") == "claude-opus-4-6"
+        assert normalize_model_id("claude-opus-4-6") == "claude-opus-4-6"
+
+    def test_unknown_prefix_kept(self) -> None:
+        assert normalize_model_id("custom/my-model") == "custom/my-model"
+        assert normalize_model_id("mistral/mistral-large") == "mistral/mistral-large"
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("endpoint:fast/anthropic/claude-opus-4-6", "claude-opus-4-6"),
+            ("endpoint:fast/gpt-5.4", "gpt-5.4"),
+            ("endpoint:fast/custom/my-model", "custom/my-model"),
+        ],
+    )
+    def test_strips_endpoint_selector(self, model_id: str, expected: str) -> None:
+        assert normalize_model_id(model_id) == expected
+
+
+# -- duplicate normalized keys keep the larger context window ----------------
+
+
+class TestDuplicateModelKeys:
+    @patch("gobby.llm.model_registry.httpx.get")
+    def test_duplicate_normalized_keys_keep_larger_context_window(
+        self,
+        mock_get: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "openai/gpt-5.4",
+                    "name": "GPT-5.4 (standard tier)",
+                    "context_length": 200_000,
+                },
+                {
+                    "id": "gpt-5.4",
+                    "name": "GPT-5.4 (extended tier)",
+                    "context_length": 400_000,
+                },
+            ]
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.llm.model_registry"):
+            models = fetch_models_sync()
+
+        assert len(models) == 1
+        assert models[0].context_length == 400_000
+        assert "differing context lengths" in caplog.text

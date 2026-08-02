@@ -12,6 +12,8 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
         "label": "Gemini 3.5 Flash",
         "reasoning": {
             "supported_efforts": ["minimal", "low", "medium", "high"],
+            # Docs list high as droid's default; AGY defaults to low. The
+            # per-provider capability matrix (#19483) reconciles defaults.
             "default_effort": "medium",
         },
     },
@@ -229,7 +231,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "gpt-5.4",
         "label": "GPT-5.4",
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "medium",
         },
     },
@@ -237,7 +239,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "gpt-5.4-fast",
         "label": "GPT-5.4 Fast Mode",
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "medium",
         },
     },
@@ -245,7 +247,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "gpt-5.4-mini",
         "label": "GPT-5.4 Mini",
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "high",
         },
     },
@@ -253,7 +255,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "gpt-5.3-codex",
         "label": "GPT-5.3-Codex",
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "medium",
         },
     },
@@ -261,7 +263,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "gpt-5.3-codex-fast",
         "label": "GPT-5.3-Codex Fast Mode",
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "medium",
         },
     },
@@ -298,6 +300,11 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
     },
     {
+        "value": "kimi-k3",
+        "label": "Droid Core (Kimi K3)",
+        "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
+    },
+    {
         "value": "kimi-k2.5",
         "label": "Droid Core (Kimi K2.5)",
         "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
@@ -318,7 +325,11 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
             "default_effort": "high",
         },
     },
-    {"value": "glm-5.1", "label": "Droid Core (GLM-5.1)"},
+    {
+        "value": "glm-5.1",
+        "label": "Droid Core (GLM-5.1)",
+        "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
+    },
     {"value": "glm-5", "label": "Droid Core (GLM-5)"},
     {"value": "glm-4.7", "label": "Droid Core (GLM-4.7) [Deprecated]"},
     {

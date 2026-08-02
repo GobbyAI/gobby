@@ -554,9 +554,9 @@ class TestResolveContextWindow:
 
         assert result == 128_000
 
-    def test_registry_lookup_tries_provider_scoped_key_first(self) -> None:
+    def test_registry_lookup_uses_bare_model_id(self) -> None:
         def lookup(model: str) -> int | None:
-            return 333_000 if model == "claude/shared-model" else None
+            return 333_000 if model == "shared-model" else None
 
         with patch(
             "gobby.llm.model_registry.lookup_context_window", side_effect=lookup
@@ -564,7 +564,7 @@ class TestResolveContextWindow:
             result = resolve_context_window("shared-model", provider="claude")
 
         assert result == 333_000
-        assert registry_lookup.call_args_list[0].args == ("claude/shared-model",)
+        assert registry_lookup.call_args_list[0].args == ("shared-model",)
 
     def test_config_overrides_partial(self) -> None:
         """Config overrides only affect matched families, others use registry."""

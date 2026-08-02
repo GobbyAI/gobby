@@ -518,7 +518,7 @@ def _registry_context_window(
 ) -> int | None:
     from gobby.llm.model_registry import lookup_context_window
 
-    for candidate in _registry_lookup_candidates(provider, model):
+    for candidate in _registry_lookup_candidates(model):
         registry_val = (
             lookup_context_window(candidate, db=db)
             if db is not None
@@ -530,12 +530,10 @@ def _registry_context_window(
     return None
 
 
-def _registry_lookup_candidates(provider: str | None, model: str) -> list[str]:
-    candidates = [f"{provider}/{model}" if provider else model, model]
-    if provider == "qwen":
-        stripped = strip_qwen_auth_suffix(model)
-        candidates.extend((f"qwen/{stripped}", stripped))
-    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+def _registry_lookup_candidates(model: str) -> list[str]:
+    """Registry lookups key on the bare model ID alone; provider never keys metadata."""
+    stripped = strip_qwen_auth_suffix(model)
+    return list(dict.fromkeys(candidate for candidate in (model, stripped) if candidate))
 
 
 def _get_provider_model_catalog() -> Any | None:

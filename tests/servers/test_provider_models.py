@@ -92,7 +92,7 @@ class TestProviderModelCatalog:
         assert result["context_length_source"] == "registry"
         create_process.assert_awaited_once()
         process.communicate.assert_awaited_once_with()
-        registry.assert_called_once_with("claude/claude-sonnet-4-6-20260410")
+        registry.assert_called_once_with("claude-sonnet-4-6-20260410")
 
     @pytest.mark.asyncio
     async def test_probe_claude_model_reports_malformed_final_json(self, temp_dir: Path) -> None:
@@ -147,7 +147,7 @@ class TestProviderModelCatalog:
         assert result["context_length_source"] == "registry"
         create_process.assert_awaited_once()
         process.communicate.assert_awaited_once_with()
-        registry.assert_called_once_with("claude/claude-fable-5")
+        registry.assert_called_once_with("claude-fable-5")
 
     @pytest.mark.asyncio
     async def test_discover_claude_models_keeps_successful_alias_probes(
@@ -324,10 +324,10 @@ class TestProviderModelCatalog:
         assert model["context_length"] == 123_000
         assert model["context_length_source"] == "provider_catalog"
 
-    def test_get_context_window_matches_aliases_suffixes_and_droid_core(
+    def test_get_context_window_matches_aliases_suffixes_and_registry_fallback(
         self, temp_dir: Path
     ) -> None:
-        """Context lookup should match aliases, dated IDs, and Droid core fallbacks."""
+        """Context lookup matches aliases, dated IDs, and registry fallback."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         catalog._providers = {
             "claude": {
@@ -355,31 +355,35 @@ class TestProviderModelCatalog:
             },
             "droid": {
                 "models": [
-                    {"value": "glm-5", "label": "Droid Core (GLM-5)", "context_length": 128_000}
-                ]
-            },
-            "codex": {
-                "models": [
                     {"value": "gpt-5.6-sol", "context_length": 321_000},
-                    {"value": "gpt-5.4", "context_length": 333_000},
+                    {
+                        "value": "glm-5",
+                        "label": "Droid Core (GLM-5)",
+                        "context_length": 128_000,
+                        "match_identifiers": ["z-ai/glm-5"],
+                    },
                 ]
             },
+            "codex": {"models": []},
         }
 
-        assert catalog.get_context_window("claude", "sonnet") == 200_000
-        assert catalog.get_context_window("claude", "fable") == 1_000_000
-        assert catalog.get_context_window("claude", "claude-fable-5") == 1_000_000
-        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20260410") == 200_000
-        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
-        assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
-        assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
-        assert catalog.get_context_window("droid", "gpt-5.6-sol") == 321_000
-        assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
-        assert catalog.get_context_window("droid", "claude-fable-5") == 1_000_000
-        assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
-        assert catalog.get_context_window("droid", "custom/byok-model") is None
+        with patch(
+            "gobby.llm.model_registry.lookup_context_window",
+            side_effect=lambda model: 333_000 if model == "gpt-5.9-sol" else None,
+        ):
+            assert catalog.get_context_window("claude", "sonnet") == 200_000
+            assert catalog.get_context_window("claude", "fable") == 1_000_000
+            assert catalog.get_context_window("claude", "claude-fable-5") == 1_000_000
+            assert catalog.get_context_window("claude", "claude-sonnet-4-6-20260410") == 200_000
+            assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
+            assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
+            assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
+            assert catalog.get_context_window("droid", "gpt-5.6-sol") == 321_000
+            assert catalog.get_context_window("droid", "gpt-5.9-sol") == 333_000
+            assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
+            assert catalog.get_context_window("droid", "custom/byok-model") is None
 
-    def test_droid_catalog_precedes_underlying_static_default(self, temp_dir: Path) -> None:
+    def test_droid_catalog_resolves_from_droid_static_default(self, temp_dir: Path) -> None:
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         catalog._providers = {"droid": {"models": []}, "codex": {"models": []}}
 
@@ -388,9 +392,6 @@ class TestProviderModelCatalog:
         assert resolved is not None
         assert resolved.value == 200_000
         assert resolved.source == "provider_catalog"
-
-    def test_droid_gemini_family_does_not_delegate_to_a_removed_provider(self) -> None:
-        assert ProviderModelCatalog._droid_underlying_providers("gemini-3.5-flash") == ()
 
     def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
         """Live discovery owns catalog model order and metadata."""
@@ -441,12 +442,19 @@ class TestProviderModelCatalog:
         assert status["claude"]["source"] == "failed"
         assert set(status) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert status["droid"]["source"] == "static"
-        assert status["droid"]["model_count"] == 28
+        assert status["droid"]["model_count"] == 29
+        assert status["droid"]["error"] == "provider CLI not found in PATH"
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
 
         droid = {
             model["value"]: model for model in catalog.get_provider_snapshot("droid")["models"]
+        }
+        kimi_k3 = droid["kimi-k3"]
+        assert kimi_k3["label"] == "Droid Core (Kimi K3)"
+        assert kimi_k3["reasoning"] == {
+            "supported_efforts": ["off", "high"],
+            "default_effort": "high",
         }
         gemini_flash = droid["gemini-3.5-flash"]
         assert gemini_flash["label"] == "Gemini 3.5 Flash"
@@ -755,80 +763,165 @@ class TestProviderModelCatalog:
         assert models[0]["label"] == "gpt-5"
 
     @pytest.mark.asyncio
-    async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
-        """Droid provider discovery should return the bundled static model catalog."""
-        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+    async def test_discover_droid_models_parses_docs_tables(self, temp_dir: Path) -> None:
+        """Droid discovery parses Factory docs tables and merges with the static catalog."""
+        from gobby.servers.provider_models import _merge_droid_docs_models, _parse_droid_docs_models
 
-        models = await catalog._discover_provider_models("droid")
+        docs_md = """# Available Models
 
-        assert {model["value"] for model in models} == {
-            "claude-fable-5",
-            "claude-opus-4-7",
-            "claude-opus-4-6",
-            "claude-opus-4-6-fast",
-            "claude-opus-4-5-20251101",
-            "claude-sonnet-4-6",
-            "claude-sonnet-4-5-20250929",
-            "claude-haiku-4-5-20251001",
-            "gpt-5.4",
-            "gpt-5.4-fast",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex",
-            "gpt-5.3-codex-fast",
-            "gpt-5.2",
-            "gpt-5.2-codex",
-            "gemini-3.5-flash",
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "minimax-m2.7",
-            "minimax-m2.5",
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "glm-5.2",
-            "glm-5.2-fast",
-            "glm-5.1",
-            "glm-5",
-            "glm-4.7",
-            "gpt-5.1-codex-max",
+| Model | Model ID | Multiplier | Reasoning |
+| --- | --- | --- | --- |
+| Claude Fable 5 | `claude-fable-5` | 4\u00d7 | `off`, `low`, `medium`, `high` (default), `xhigh`, `max` |
+| Kimi K3 | `kimi-k3` | 0.6\u00d7 | `off`, `high` (default) |
+| Nemotron 3 Ultra | `nemotron-3-ultra` | 0.24\u00d7 | `off`, `high` (default) |
+| GLM-5.1 | `glm-5.1` | 0.55\u00d7 | `off`, `high` (default) |
+"""
+
+        entries = _parse_droid_docs_models(docs_md)
+
+        assert entries["kimi-k3"] == {
+            "value": "kimi-k3",
+            "label": "Kimi K3",
+            "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
         }
-        assert len(models) == 28
+        assert entries["claude-fable-5"]["reasoning"]["default_effort"] == "high"
 
-        by_id = {model["value"]: model for model in models}
-        assert by_id["claude-fable-5"]["label"] == "Claude Fable 5"
-        assert by_id["claude-fable-5"]["context_length"] == 1_000_000
-        assert by_id["claude-fable-5"]["context_length_source"] == "provider_catalog"
-        assert by_id["claude-fable-5"]["reasoning"] == {
-            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+        merged = _merge_droid_docs_models(entries)
+        by_id = {model["value"]: model for model in merged}
+        # Docs-only models enter the catalog
+        assert by_id["nemotron-3-ultra"]["reasoning"] == {
+            "supported_efforts": ["off", "high"],
             "default_effort": "high",
         }
-        assert "xhigh" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
-        assert "max" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
-        assert by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
-        assert by_id["gemini-3.5-flash"]["reasoning"] == {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
-            "default_effort": "medium",
+        # Docs win on effort data for shared entries (static glm-5.1 had none)
+        assert by_id["glm-5.1"]["reasoning"] == {
+            "supported_efforts": ["off", "high"],
+            "default_effort": "high",
         }
-        assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
-        assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
-        assert {
-            model_id: by_id[model_id]["context_length"]
-            for model_id in ("minimax-m2.7", "minimax-m2.5", "kimi-k2.6", "kimi-k2.5")
-        } == {
-            "minimax-m2.7": 204_800,
-            "minimax-m2.5": 204_800,
-            "kimi-k2.6": 262_144,
-            "kimi-k2.5": 262_144,
+        # Static entries missing from the docs are kept (deprecations lag the docs)
+        assert "glm-4.7" in by_id
+        assert "gpt-5.1-codex-max" in by_id
+
+    @pytest.mark.asyncio
+    async def test_discover_droid_models_fetches_docs_and_parses(self, temp_dir: Path) -> None:
+        """Droid provider discovery fetches docs.factory.ai/models.md and parses tables."""
+        import httpx as _httpx
+
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        docs_md = (
+            "| Model | Model ID | Multiplier | Reasoning |\n"
+            "| --- | --- | --- | --- |\n"
+            "| Kimi K3 | `kimi-k3` | 0.6\u00d7 | `off`, `high` (default) |\n"
+        )
+        response = MagicMock()
+        response.text = docs_md
+        response.raise_for_status = MagicMock()
+
+        class FakeClient:
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeClient":
+                return self
+
+            async def __aexit__(self, *_args: object) -> None:
+                return None
+
+            async def get(self, url: str) -> MagicMock:
+                assert url == "https://docs.factory.ai/models.md"
+                return response
+
+        with patch("gobby.servers.provider_models.httpx.AsyncClient", FakeClient):
+            models = await catalog._discover_provider_models("droid")
+
+        by_id = {model["value"]: model for model in models}
+        assert by_id["kimi-k3"]["reasoning"] == {
+            "supported_efforts": ["off", "high"],
+            "default_effort": "high",
         }
-        for model_id in ("glm-5.2", "glm-5.2-fast"):
-            assert by_id[model_id]["reasoning"] == {
-                "supported_efforts": ["off", "high", "max"],
-                "default_effort": "high",
-            }
-        assert by_id["glm-5.2"]["label"] == "Droid Core (GLM-5.2)"
-        assert by_id["glm-5.2-fast"]["label"] == "Droid Core (GLM-5.2 Fast)"
-        assert all(model.get("context_length") is not None for model in models)
-        for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
-            assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
+
+    @pytest.mark.asyncio
+    async def test_discover_droid_models_fetch_failure_raises_for_refresh_fallback(
+        self, temp_dir: Path
+    ) -> None:
+        """Fetch failures raise so refresh() falls back to cache/static with the error."""
+        import httpx as _httpx
+
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+
+        class FailingClient:
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FailingClient":
+                return self
+
+            async def __aexit__(self, *_args: object) -> None:
+                return None
+
+            async def get(self, url: str) -> MagicMock:
+                raise _httpx.ConnectError("docs unreachable")
+
+        with (
+            patch("gobby.servers.provider_models.httpx.AsyncClient", FailingClient),
+            pytest.raises(_httpx.ConnectError, match="docs unreachable"),
+        ):
+            await catalog._discover_provider_models("droid")
+
+    def test_parse_droid_docs_models_malformed_table_raises(self) -> None:
+        """A docs page with no parseable model rows is a parser failure, not an empty catalog."""
+        from gobby.servers.provider_models import _parse_droid_docs_models
+
+        with pytest.raises(ValueError, match="no model table rows"):
+            _parse_droid_docs_models("# Available Models\n\nNo tables here.\n")
+
+    @pytest.mark.asyncio
+    async def test_droid_static_catalog_efforts_match_factory_docs(self) -> None:
+        """Drift guard: every static droid entry's efforts match the live Factory docs."""
+        from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
+        from gobby.servers.provider_models import (
+            _DROID_DOCS_MODELS_URL,
+            _parse_droid_docs_models,
+        )
+
+        import httpx as _httpx
+
+        try:
+            async with _httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(_DROID_DOCS_MODELS_URL)
+                response.raise_for_status()
+        except _httpx.HTTPError:
+            pytest.skip("Factory docs unreachable (offline)")
+
+        docs_entries = _parse_droid_docs_models(response.text)
+        for model in DROID_MODEL_CATALOG:
+            model_id = model["value"]
+            docs_entry = docs_entries.get(model_id)
+            if docs_entry is None or "reasoning" not in docs_entry:
+                continue  # deprecations lag the docs; docs without efforts give no signal
+            static_reasoning = model.get("reasoning")
+            if static_reasoning is None:
+                raise AssertionError(
+                    f"{model_id}: docs have efforts {docs_entry['reasoning']}, static has none"
+                )
+            assert (
+                static_reasoning["supported_efforts"]
+                == docs_entry["reasoning"]["supported_efforts"]
+            ), (
+                f"{model_id}: static efforts {static_reasoning['supported_efforts']} "
+                f"!= docs {docs_entry['reasoning']['supported_efforts']}"
+            )
+            # Default efforts can differ per provider for shared models
+            # (e.g. AGY vs droid on gemini-3.5-flash); the capability matrix
+            # in #19483 owns default reconciliation. Flag only docs-only skips:
+            if model_id == "gemini-3.5-flash":
+                continue
+            assert (
+                static_reasoning["default_effort"] == docs_entry["reasoning"]["default_effort"]
+            ), (
+                f"{model_id}: static default {static_reasoning['default_effort']} "
+                f"!= docs {docs_entry['reasoning']['default_effort']}"
+            )
 
     @pytest.mark.asyncio
     async def test_discover_grok_models_uses_cache_before_static_fallback(

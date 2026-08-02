@@ -50,7 +50,15 @@ class ProviderMetadata:
 _PROVIDERS: tuple[ProviderMetadata, ...] = (
     ProviderMetadata("claude", "claude", "Claude Code", ".claude"),
     ProviderMetadata("codex", "codex", "Codex", ".codex"),
-    ProviderMetadata("droid", "droid", "Droid", ".factory"),
+    ProviderMetadata(
+        "droid",
+        "droid",
+        "Droid",
+        ".factory",
+        # Live discovery fetches Factory's machine-readable model docs
+        # (docs.factory.ai/models.md); no droid CLI endpoint exposes the catalog.
+        live_model_discovery=True,
+    ),
     ProviderMetadata("grok", "grok", "Grok", ".grok"),
     ProviderMetadata("qwen", "qwen", "Qwen", ".qwen"),
     ProviderMetadata(

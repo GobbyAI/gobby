@@ -11,7 +11,6 @@ if OpenRouter is unreachable, the daemon uses whatever was last fetched.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -19,6 +18,7 @@ import httpx
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.ai.endpoints import ENDPOINT_PROVIDER_PREFIX
 from gobby.llm.context_window_values import positive_context_window
 
 if TYPE_CHECKING:
@@ -28,15 +28,20 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
-# Maps OpenRouter provider prefixes to Gobby provider names
-PROVIDER_MAP: dict[str, str] = {
-    "anthropic/": "claude",
-    "openai/": "codex",
-    "qwen/": "qwen",
-    "z-ai/": "droid",
-    "moonshotai/": "droid",
-    "minimax/": "droid",
-}
+# LLM vendor prefixes that OpenRouter-style model IDs carry as their first
+# slash segment. These describe who published the model, never which Gobby
+# provider can run it — metadata is keyed on the model ID alone.
+_KNOWN_VENDOR_PREFIXES: frozenset[str] = frozenset(
+    {
+        "anthropic",
+        "openai",
+        "moonshotai",
+        "z-ai",
+        "minimax",
+        "qwen",
+        "google",
+    }
+)
 
 # Request timeout — startup shouldn't block forever on a slow network
 _FETCH_TIMEOUT = 10.0
@@ -49,21 +54,19 @@ class ModelInfo:
 
     id: str
     name: str
-    provider: str  # Gobby provider name assigned by PROVIDER_MAP
     context_length: int
     max_completion_tokens: int | None
 
 
-def _provider_for_model(model_id: str) -> str | None:
-    """Map an OpenRouter model ID to a Gobby provider name, or None if not relevant."""
-    for prefix, provider in PROVIDER_MAP.items():
-        if model_id.startswith(prefix):
-            return provider
-    return None
-
-
 def _parse_models_payload(data: object) -> list[ModelInfo]:
-    """Parse the shared OpenRouter response shape for sync and async fetches."""
+    """Parse the shared OpenRouter response shape for sync and async fetches.
+
+    Every entry with a valid context_length is kept — model metadata is
+    provider-independent, so models from any vendor enter the catalog.
+    Duplicate normalized model IDs keep the larger context window (OpenRouter
+    context lengths for one model differ by serving tier; the ceiling avoids
+    premature truncation).
+    """
     if not isinstance(data, dict):
         logger.warning("OpenRouter response is not a dict, skipping")
         return []
@@ -73,15 +76,12 @@ def _parse_models_payload(data: object) -> list[ModelInfo]:
         logger.warning("OpenRouter 'data' field is not a list, skipping")
         return []
 
-    models: list[ModelInfo] = []
+    models: dict[str, ModelInfo] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             continue
 
         model_id = entry.get("id", "")
-        provider = _provider_for_model(model_id)
-        if provider is None:
-            continue
 
         top_provider = entry.get("top_provider") or {}
         if not isinstance(top_provider, dict):
@@ -91,18 +91,27 @@ def _parse_models_payload(data: object) -> list[ModelInfo]:
             continue
         max_completion = top_provider.get("max_completion_tokens")
 
-        models.append(
-            ModelInfo(
-                id=model_id,
-                name=str(entry.get("name", model_id)),
-                provider=provider,
-                context_length=context_length,
-                max_completion_tokens=max_completion,
+        normalized_id = normalize_model_id(model_id)
+        existing = models.get(normalized_id)
+        if existing is not None:
+            if context_length <= existing.context_length:
+                continue
+            logger.debug(
+                "Model %s appears with differing context lengths (%s vs %s); keeping the larger",
+                normalized_id,
+                existing.context_length,
+                context_length,
             )
+
+        models[normalized_id] = ModelInfo(
+            id=model_id,
+            name=str(entry.get("name", model_id)),
+            context_length=context_length,
+            max_completion_tokens=max_completion,
         )
 
     logger.debug("Fetched %s models from OpenRouter", len(models))
-    return models
+    return list(models.values())
 
 
 def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
@@ -179,26 +188,26 @@ def lookup_context_window(model: str, db: HubDatabase | None = None) -> int | No
     return None
 
 
-def group_by_provider(models: list[ModelInfo]) -> dict[str, list[ModelInfo]]:
-    """Group models by Gobby provider name."""
-    grouped: dict[str, list[ModelInfo]] = defaultdict(list)
-    for model in models:
-        grouped[model.provider].append(model)
-    return dict(grouped)
+def normalize_model_id(model_id: str) -> str:
+    """Normalize a model ID to the bare, provider-independent form.
 
+    Strips ``endpoint:<name>/`` routing prefixes first, then strips the first
+    slash segment when it is a known LLM vendor prefix. Unknown prefixes are
+    left intact.
 
-def strip_provider_prefix(model_id: str) -> str:
-    """Strip a known OpenRouter provider prefix from a model ID.
-
-    Only strips prefixes that match keys in PROVIDER_MAP (e.g. 'anthropic/',
-    'openai/', 'google/'). Unknown prefixes are left intact.
-
+    'endpoint:fast/anthropic/claude-opus-4-6' -> 'claude-opus-4-6'
     'anthropic/claude-opus-4-6' -> 'claude-opus-4-6'
     'claude-opus-4-6' -> 'claude-opus-4-6'  (no-op if no prefix)
     'custom/my-model' -> 'custom/my-model'  (unknown prefix, kept)
     """
-    if "/" in model_id:
-        prefix = model_id.split("/", 1)[0] + "/"
-        if prefix in PROVIDER_MAP:
-            return model_id.split("/", 1)[1]
-    return model_id
+    normalized = model_id.strip()
+    if normalized.startswith(ENDPOINT_PROVIDER_PREFIX):
+        body = normalized[len(ENDPOINT_PROVIDER_PREFIX) :]
+        _endpoint_name, separator, model = body.partition("/")
+        if separator and model.strip():
+            normalized = model.strip()
+    if "/" in normalized:
+        prefix, rest = normalized.split("/", 1)
+        if prefix.lower() in _KNOWN_VENDOR_PREFIXES:
+            return rest
+    return normalized
