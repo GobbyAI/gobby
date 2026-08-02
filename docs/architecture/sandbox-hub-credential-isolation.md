@@ -297,7 +297,17 @@ Use one stable `NOLOGIN` capability role for agent gcode operations, one
 stable `NOLOGIN` issuer role, one stable `NOLOGIN` daemon runtime role, and one
 ephemeral `LOGIN` role per managed execution. The issuer owns the registry and
 fixed issue, rotate, revoke, and reconcile functions. It has only the
-role-management and backend-termination privileges needed by those functions.
+`CREATEROLE` and `pg_signal_backend` privileges needed by those functions. Its
+membership in the capability role has `ADMIN TRUE`, `INHERIT FALSE`, and
+`SET FALSE`, allowing it to grant membership without using the capability's
+data privileges or becoming the capability role.
+
+Grant the capability role to each ephemeral login with `INHERIT TRUE`,
+`SET FALSE`, and `ADMIN FALSE`. The login therefore receives the data-plane
+privileges without being able to become or re-grant the capability role. The
+capability role owns no SQL objects, as required for safe inherited-only
+membership.
+
 After privileged startup migrations, every served daemon pool connection
 assumes the daemon runtime role and verifies `current_user` on checkout. That
 role can execute the lifecycle functions but cannot become the issuer, reset
@@ -316,12 +326,22 @@ every gcode query at HEAD:
   migration, backup, or maintenance data;
 - no global prune, setup, schema migration, or cross-project administration.
 
-RLS policies resolve the project from `session_user` through the registry.
-Security-definer helpers use a fixed `search_path`, reject missing, expired,
-revoked, or duplicated bindings, and return only the bound project. Policies
-cover project-bearing tables directly and dependent code-index rows through
-their project-bearing parent. The login and capability roles remain
-`NOBYPASSRLS` and own no protected table.
+RLS policies resolve the project from the stable authenticating identity in
+`session_user` through the registry. Every protected table has both
+`ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`, including tables
+owned by the migration owner. Policies cover project-bearing tables directly
+and dependent code-index rows through their project-bearing parent. The login
+and capability roles remain `NOBYPASSRLS` and own no SQL objects.
+
+Security-definer lifecycle helpers live in a trusted schema and set
+`search_path` to only that schema followed by `pg_temp`. Role-creating helpers
+also set `createrole_self_grant` to the empty value, preventing automatic
+`INHERIT` or `SET` membership in roles they create. The migration creates each
+helper, revokes default `PUBLIC` execution, and grants
+execution only to the daemon runtime role in one transaction. Helpers reject
+missing, expired, revoked, or duplicated bindings; accept execution IDs rather
+than role names; derive reserved role identifiers from locked registry rows;
+and quote every identifier.
 
 The migration also normalizes database defaults: agent roles receive only
 `CONNECT`, explicit schema `USAGE`, and enumerated table, sequence, and
@@ -423,8 +443,9 @@ Issuance:
 
 1. Create the agent-run record and determine its project and deadline.
 2. In one daemon-controlled operation, create the ephemeral PostgreSQL login,
-   register its binding, grant the capability role, and set `VALID UNTIL`
-   through the fixed issuer function.
+   register its binding, grant the capability role with `INHERIT TRUE`,
+   `SET FALSE`, and `ADMIN FALSE`, and set `VALID UNTIL` through the fixed
+   issuer function.
 3. Materialize the runtime bootstrap with mode `0600` and the authenticated
    service-capability endpoint.
 4. Preflight database scope and the selected sandbox backend.
@@ -455,8 +476,11 @@ Revocation and exit:
 1. Agent exit is a terminal transition. `complete`, `fail`, `timeout`, `cancel`,
    explicit termination, spawn rollback, and watchdog cleanup enqueue an
    idempotent revocation.
-2. Revocation disables login, removes role membership, terminates active
-   sessions for that role, drops the role, and deletes the runtime bootstrap.
+2. Revocation disables login, removes role membership, and calls
+`pg_terminate_backend` with a nonzero wait timeout for every catalog session
+whose authenticated role matches the locked registry record. It verifies zero
+remaining sessions before dropping the role and deleting the runtime
+bootstrap; a timeout leaves durable retry state instead of reporting success.
 3. The run reaches its terminal state even when the hub is temporarily
    unavailable; the failed revocation remains durable for retry.
 4. Daemon startup reconciles every non-active agent role against agent-run
@@ -503,6 +527,11 @@ Scope:
 - Add a migration and baseline schema for agent DB principal bindings, the
   non-login issuer and gcode capability roles, fixed lifecycle functions,
   grants, RLS policies, expiry metadata, and audit events.
+- Grant ephemeral-to-capability membership with `INHERIT TRUE`, `SET FALSE`,
+  and `ADMIN FALSE`; make the capability role own no SQL object.
+- Force RLS on every protected table. Lock down each security-definer function
+  with a trusted-schema-plus-`pg_temp` search path, empty
+  `createrole_self_grant`, and same-transaction removal of `PUBLIC` execution.
 - Normalize database/schema/function default privileges and prove the daemon
   runtime role has lifecycle-function execution without `CREATEROLE`, issuer
   membership, or raw role-management privileges.
@@ -522,7 +551,8 @@ Exit evidence:
   and status commands through an ephemeral role.
 - Direct SQL adversary tests cannot bypass project scope through crafted IDs,
   `search_path`, transactions, prepared statements, `SET ROLE`, caller-set
-  session values, public defaults, or role changes.
+  session values, table ownership, disabled RLS, public defaults, or role
+  changes.
 
 ### WP2 — Credential manager and run lifecycle
 
@@ -545,6 +575,9 @@ Exit evidence:
 - Tests cover success plus partial-create rollback, repeated revocation,
   daemon restart, hub outage, hard-killed agent, rotation race, expired live
   connection, tool-request cancellation/disconnect, and orphan role recovery.
+- Revocation tests require a nonzero backend-termination wait, prove all
+  sessions for the authenticated role are gone before role deletion, and keep
+  a durable retry record when termination times out.
 - No terminal run or completed tool request retains a login-capable PostgreSQL
   role after reconciliation.
 - The password and full DSN exist only in bounded issuance/runtime buffers and
