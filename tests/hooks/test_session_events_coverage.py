@@ -198,7 +198,9 @@ class TestHandleSessionEnd:
         handler._task_manager = MagicMock()
         handler._session_coordinator.complete_agent_run.assert_called_once()
         handler._message_processor.unregister_session.assert_called_with("sess-1")
-        handler._session_manager.update_status.assert_called_with("sess-1", "expired")
+        handler._session_manager.update_status_if_non_terminal.assert_called_with(
+            "sess-1", "expired"
+        )
 
     def test_handle_session_end_clear_expires(self) -> None:
         handler = _TestHandler()
@@ -211,7 +213,9 @@ class TestHandleSessionEnd:
 
         resp = handler.handle_session_end(event)
         assert resp.decision == "allow"
-        handler._session_manager.update_status.assert_called_with("sess-1", "expired")
+        handler._session_manager.update_status_if_non_terminal.assert_called_with(
+            "sess-1", "expired"
+        )
 
     def test_handle_session_end_missing_platform_session_id(self) -> None:
         handler = _TestHandler()
@@ -231,7 +235,9 @@ class TestHandleSessionEnd:
         # Setting up exceptions
         handler._session_coordinator.complete_agent_run.side_effect = Exception("test run")
         handler._message_processor.unregister_session.side_effect = Exception("test proc")
-        handler._session_manager.update_status.side_effect = Exception("test storage")
+        handler._session_manager.update_status_if_non_terminal.side_effect = Exception(
+            "test storage"
+        )
 
         with patch("gobby.tasks.commits.auto_link_commits", side_effect=Exception("test link")):
             resp = handler.handle_session_end(event)

@@ -3625,7 +3625,12 @@ class TestCodeIndexNavigationRules:
             project_path=str(repo),
         )
 
-        assert event.data.get("canonical_code_index_navigation") is not True
+        # The read-only interpreter payload is a pipeline filter, so the whole
+        # pipeline still normalizes to gcode navigation. #19250's guarantee is
+        # that it is allowed, which the rule-level shell_command_invokes_gcode
+        # guard provides; the flag itself simply describes the command.
+        assert event.data.get("canonical_code_index_navigation") is True
+        assert event.data.get("canonical_code_index_command") == "gcode search"
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
