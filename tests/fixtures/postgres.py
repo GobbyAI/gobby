@@ -176,6 +176,47 @@ def _capture_canonical_seed(
     return snapshot
 
 
+def _delete_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
+    """Order tables child-first for immediate RESTRICT/NO ACTION foreign keys."""
+    blockers = {table: set() for table in tables}
+    parents_by_child = {table: set() for table in tables}
+    foreign_keys = conn.execute(
+        """
+        SELECT child.relname, parent.relname
+        FROM pg_constraint AS fk
+        JOIN pg_class AS child ON child.oid = fk.conrelid
+        JOIN pg_namespace AS child_schema ON child_schema.oid = child.relnamespace
+        JOIN pg_class AS parent ON parent.oid = fk.confrelid
+        JOIN pg_namespace AS parent_schema ON parent_schema.oid = parent.relnamespace
+        WHERE fk.contype = 'f'
+          AND (fk.confdeltype = 'r' OR (fk.confdeltype = 'a' AND NOT fk.condeferrable))
+          AND child_schema.nspname = current_schema()
+          AND parent_schema.nspname = current_schema()
+        """
+    ).fetchall()
+    for child, parent in foreign_keys:
+        if child == parent or child not in tables or parent not in tables:
+            continue
+        blockers[parent].add(child)
+        parents_by_child[child].add(parent)
+
+    ready = {table for table, children in blockers.items() if not children}
+    ordered: list[str] = []
+    while ready:
+        table = min(ready)
+        ready.remove(table)
+        ordered.append(table)
+        for parent in parents_by_child[table]:
+            blockers[parent].remove(table)
+            if not blockers[parent]:
+                ready.add(parent)
+
+    if len(ordered) != len(tables):
+        blocked = sorted(tables - set(ordered))
+        raise RuntimeError(f"Cannot reset schema with cyclic immediate foreign keys: {blocked}")
+    return ordered
+
+
 def _reset_schema(
     url: str,
     schema: str,
@@ -186,7 +227,9 @@ def _reset_schema(
     Algorithm:
       - Bookkeeping tables (`schema_migrations`) are left untouched; both rows
         and table existence are preserved verbatim.
-      - All other application tables are TRUNCATE … RESTART IDENTITY CASCADE'd.
+      - All other application tables are emptied with DELETE, preserving their
+        relfilenodes while deferred constraints allow dependency-safe ordering.
+      - Sequences owned by reset tables are restarted to their fresh-schema values.
       - Every table present in `canonical_seed` is re-INSERTed inside the
         same transaction with all FK constraints deferred, so re-seed order
         does not need to follow the dependency graph.
@@ -204,13 +247,40 @@ def _reset_schema(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
         }
-        truncate_tables = sorted(all_tables - _BASELINE_BOOKKEEPING_TABLES)
+        reset_tables = _delete_order(conn, all_tables - _BASELINE_BOOKKEEPING_TABLES)
+        sequences = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT sequence.relname
+                FROM pg_class AS sequence
+                JOIN pg_namespace AS sequence_schema
+                  ON sequence_schema.oid = sequence.relnamespace
+                JOIN pg_depend AS dependency
+                  ON dependency.objid = sequence.oid
+                JOIN pg_class AS owner_table
+                  ON owner_table.oid = dependency.refobjid
+                JOIN pg_namespace AS owner_schema
+                  ON owner_schema.oid = owner_table.relnamespace
+                WHERE sequence.relkind = 'S'
+                  AND sequence_schema.nspname = current_schema()
+                  AND owner_schema.nspname = current_schema()
+                  AND dependency.classid = 'pg_class'::regclass
+                  AND dependency.refclassid = 'pg_class'::regclass
+                  AND dependency.deptype IN ('a', 'i')
+                  AND owner_table.relname = ANY(%s)
+                ORDER BY sequence.relname
+                """,
+                (reset_tables,),
+            ).fetchall()
+        ]
 
         with conn.transaction():
             conn.execute("SET CONSTRAINTS ALL DEFERRED")
-            if truncate_tables:
-                joined = sql.SQL(", ").join(sql.Identifier(t) for t in truncate_tables)
-                conn.execute(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(joined))
+            for table in reset_tables:
+                conn.execute(sql.SQL("DELETE FROM {}").format(sql.Identifier(table)))
+            for sequence in sequences:
+                conn.execute(sql.SQL("ALTER SEQUENCE {} RESTART").format(sql.Identifier(sequence)))
             for table in sorted(canonical_seed):
                 rows = canonical_seed[table]
                 if not rows:
