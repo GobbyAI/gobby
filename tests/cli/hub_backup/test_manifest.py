@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +25,15 @@ from gobby.cli.hub_backup._manifest import (
 pytestmark = pytest.mark.unit
 
 _NOW = datetime(2026, 7, 31, 12, 0, 0, tzinfo=UTC)
+_ARTIFACT_CONTENT = b"complete-postgres-dump"
+
+
+def _backup_root(tmp_path: Path) -> Path:
+    backup_root = tmp_path / "backup"
+    artifact_path = backup_root / "postgres" / "gobby.dump"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_bytes(_ARTIFACT_CONTENT)
+    return backup_root
 
 
 def _identity(**overrides: object) -> SourceIdentity:
@@ -70,8 +80,8 @@ def _manifest(
             ArtifactRecord(
                 name="postgres-dump",
                 path="postgres/gobby.dump",
-                sha256="a" * 64,
-                size_bytes=1024,
+                sha256=hashlib.sha256(_ARTIFACT_CONTENT).hexdigest(),
+                size_bytes=len(_ARTIFACT_CONTENT),
             )
         ],
         stores={
@@ -97,7 +107,7 @@ class TestManifestRoundTrip:
         assert loaded.source_identity == _identity()
         assert loaded.backup_starting_head == 353
         assert loaded.row_count_probes["tasks"] == 19388
-        assert loaded.artifacts[0].sha256 == "a" * 64
+        assert loaded.artifacts[0].sha256 == hashlib.sha256(_ARTIFACT_CONTENT).hexdigest()
         assert loaded.stores["postgres"].restore_verified.verified is True
         assert loaded.stores["postgres"].restore_verified.method == "scratch-restore"
 
@@ -142,33 +152,38 @@ class TestManifestRoundTrip:
 
 
 class TestManifestGate:
-    def test_accepts_fresh_fully_verified_manifest(self) -> None:
+    def test_accepts_fresh_fully_verified_manifest(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW + timedelta(hours=1),
         )
         assert decision == GateDecision(ok=True, reasons=[])
 
-    def test_refuses_manifest_older_than_max_age(self) -> None:
+    def test_refuses_manifest_older_than_max_age(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(created_at=_NOW - timedelta(hours=25)),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW,
         )
         assert decision.ok is False
         assert any("max age" in reason for reason in decision.reasons)
 
-    def test_max_age_is_configurable(self) -> None:
+    def test_max_age_is_configurable(self, tmp_path: Path) -> None:
         manifest = _manifest(created_at=_NOW - timedelta(hours=2))
+        backup_root = _backup_root(tmp_path)
         refused = check_manifest_gate(
             manifest,
+            backup_root=backup_root,
             current_identity=_identity(),
             now=_NOW,
             max_age_hours=1,
         )
         accepted = check_manifest_gate(
             manifest,
+            backup_root=backup_root,
             current_identity=_identity(),
             now=_NOW,
             max_age_hours=3,
@@ -176,42 +191,61 @@ class TestManifestGate:
         assert refused.ok is False
         assert accepted.ok is True
 
-    def test_refuses_manifest_lacking_restore_verified(self) -> None:
+    def test_refuses_manifest_lacking_restore_verified(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(restore_verified=False),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW,
         )
         assert decision.ok is False
         assert any("restore_verified" in reason for reason in decision.reasons)
 
-    def test_refuses_fingerprint_mismatch_on_database_oid(self) -> None:
+    def test_refuses_fingerprint_mismatch_on_database_oid(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(identity=_identity(database_oid=99999)),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW,
         )
         assert decision.ok is False
         assert any("identity" in reason for reason in decision.reasons)
 
-    def test_refuses_fingerprint_mismatch_on_system_identifier(self) -> None:
+    def test_refuses_fingerprint_mismatch_on_system_identifier(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(identity=_identity(pg_system_identifier="1111111111")),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW,
         )
         assert decision.ok is False
         assert any("identity" in reason for reason in decision.reasons)
 
-    def test_collects_every_refusal_reason(self) -> None:
+    def test_collects_every_refusal_reason(self, tmp_path: Path) -> None:
         decision = check_manifest_gate(
             _manifest(
                 created_at=_NOW - timedelta(hours=48),
                 identity=_identity(database_name="other"),
                 restore_verified=False,
             ),
+            backup_root=_backup_root(tmp_path),
             current_identity=_identity(),
             now=_NOW,
         )
         assert decision.ok is False
         assert len(decision.reasons) == 3
+
+    def test_refuses_artifact_mutated_after_manifest_verification(self, tmp_path: Path) -> None:
+        backup_root = _backup_root(tmp_path)
+        (backup_root / "postgres" / "gobby.dump").write_bytes(b"mutated-after-verification")
+
+        decision = check_manifest_gate(
+            _manifest(),
+            backup_root=backup_root,
+            current_identity=_identity(),
+            now=_NOW,
+        )
+
+        assert decision.ok is False
+        assert any("postgres/gobby.dump" in reason for reason in decision.reasons)
+        assert any("sha256" in reason for reason in decision.reasons)

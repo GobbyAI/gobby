@@ -1,15 +1,18 @@
 """Scratch-restore verification for hub backups.
 
-`restore_verified` in the manifest is earned only by the restores performed here:
-every verifier rebuilds the payload in a throwaway container (or throwaway
-directory) and proves the restored content matches what was captured. Archive
-readability alone never counts. Failures raise `click.ClickException` so the
-backup command can treat unverified output as a failed backup.
+`restore_verified` is earned by rebuilding payloads in throwaway containers or
+directories and comparing source inventories: PostgreSQL per-table rows plus
+public schema-object counts, Qdrant point ids/payloads/vectors, FalkorDB graph
+node/edge counts, and volume path/type/regular-file byte digests. These probes do
+not prove PostgreSQL row values, FalkorDB property values, or volume ownership,
+mode, timestamps, links, and special files; volume links and special files are
+refused. Archive readability alone never counts.
 """
 
 from __future__ import annotations
 
 import secrets
+import shlex
 import shutil
 import subprocess  # nosec B404 # fixed docker argv, no shell
 import tarfile
@@ -25,16 +28,28 @@ from typing import IO
 import click
 from qdrant_client import QdrantClient
 
+from gobby.cli.hub_backup._content import (
+    ContentInventory,
+    qdrant_collection_digest,
+)
+from gobby.cli.hub_backup._content import (
+    archive_inventory as _archive_inventory,
+)
+from gobby.cli.hub_backup._integrity import (
+    open_exclusive_binary,
+    open_regular_binary,
+    require_regular_file,
+)
 from gobby.cli.hub_backup._manifest import VerificationState
 from gobby.cli.postgres_backup import _process_output, _raise_for_subprocess_error
 
 POSTGRES_VERIFY_IMAGE = "gobby-postgres-local:18-pgsearch"
 FALKORDB_VERIFY_IMAGE = "falkordb/falkordb:latest"
 
-_PG_METHOD = "scratch-pg-restore+globals-replay+role-acl+row-counts"
-_QDRANT_METHOD = "qdrant-scratch-collection-recover+count"
-_FALKOR_METHOD = "falkordb-scratch-rdb-load+graph-list"
-_VOLUME_METHOD = "tar-extract-scratch"
+_PG_METHOD = "scratch-pg-restore+roles+rows+schema-counts"
+_QDRANT_METHOD = "qdrant-scratch-recover+point-content-digest"
+_FALKOR_METHOD = "falkordb-scratch-rdb-load+graph-counts"
+_VOLUME_METHOD = "tar-extract+source-content-inventory"
 
 _QDRANT_SCRATCH_PREFIX = "hub_backup_verify_"
 _QDRANT_TIMEOUT_SECONDS = 120
@@ -42,7 +57,7 @@ _SCRATCH_DB = "gobby"
 _SCRATCH_REPAIR_PGOPTIONS = "PGOPTIONS=-c event_triggers=off"
 _SUPERUSER = "postgres"
 _FALKOR_DATA_DIR = "/var/lib/falkordb/data"
-_REDIS_CLI = 'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning'
+_REDIS_CLI = 'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw'
 
 _DOCKER_TIMEOUT_SECONDS = 600
 _DOCKER_RM_TIMEOUT_SECONDS = 60
@@ -74,6 +89,7 @@ def verify_postgres_restore(
     *,
     expected_probes: dict[str, int],
     expected_roles: list[RoleExpectation],
+    expected_schema_objects: dict[str, int] | None = None,
 ) -> tuple[VerificationState, dict[str, object]]:
     """Restore dump + globals into a throwaway cluster and prove roles and row counts."""
     _require_file(dump_path, "PostgreSQL dump")
@@ -87,6 +103,8 @@ def verify_postgres_restore(
         _check_roles(container, expected_roles)
         _restore_dump(container, dump_path)
         _check_row_counts(container, expected_probes)
+        if expected_schema_objects is not None:
+            _check_schema_object_counts(container, expected_schema_objects)
     finally:
         _remove_container(container)
 
@@ -95,6 +113,8 @@ def verify_postgres_restore(
         "roles_checked": len(expected_roles),
         "scratch_container": container,
     }
+    if expected_schema_objects is not None:
+        details["schema_objects_checked"] = len(expected_schema_objects)
     return _verified(_PG_METHOD), details
 
 
@@ -143,7 +163,7 @@ def _replay_globals(container: str, globals_path: Path) -> None:
     # Deliberately no ON_ERROR_STOP: pg_dumpall globals re-create bootstrap roles
     # that already exist in a fresh cluster. Verification is outcome-based — the
     # role/ACL check below is what proves the replay worked.
-    with globals_path.open("rb") as handle:
+    with open_regular_binary(globals_path, label="PostgreSQL globals") as handle:
         _docker(
             "exec",
             "-i",
@@ -206,7 +226,7 @@ def _restore_dump(container: str, dump_path: Path) -> None:
 
     # No --no-owner: the dump carries ownership and the roles exist from the
     # globals replay, so a clean restore also proves ownership is restorable.
-    with dump_path.open("rb") as handle:
+    with open_regular_binary(dump_path, label="PostgreSQL dump") as handle:
         result = _docker(
             "exec",
             "-i",
@@ -241,6 +261,52 @@ def _check_row_counts(container: str, expected_probes: dict[str, int]) -> None:
     if mismatches:
         raise click.ClickException(
             "Scratch restore row-count verification failed: " + "; ".join(mismatches)
+        )
+
+
+def _check_schema_object_counts(container: str, expected: dict[str, int]) -> None:
+    query = """
+        SELECT CASE c.relkind
+                   WHEN 'r' THEN 'table'
+                   WHEN 'p' THEN 'partitioned_table'
+                   WHEN 'i' THEN 'index'
+                   WHEN 'I' THEN 'partitioned_index'
+                   WHEN 'S' THEN 'sequence'
+                   WHEN 'v' THEN 'view'
+                   WHEN 'm' THEN 'materialized_view'
+               END AS object_kind,
+               count(*)
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relkind IN ('r', 'p', 'i', 'I', 'S', 'v', 'm')
+         GROUP BY object_kind
+         ORDER BY object_kind
+    """
+    output = _psql_query(
+        container,
+        _SCRATCH_DB,
+        query,
+        action="Scratch schema object inventory",
+    )
+    actual: dict[str, int] = {}
+    for line in output.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2:
+            continue
+        try:
+            actual[fields[0]] = int(fields[1])
+        except ValueError:
+            continue
+    if actual != expected:
+        keys = sorted(set(expected) | set(actual))
+        mismatches = [
+            f"{key} (expected {expected.get(key, 0)}, got {actual.get(key, 0)})"
+            for key in keys
+            if expected.get(key, 0) != actual.get(key, 0)
+        ]
+        raise click.ClickException(
+            "Scratch restore schema object verification failed: " + "; ".join(mismatches)
         )
 
 
@@ -288,8 +354,9 @@ def verify_qdrant_restore(
     api_key: str | None,
     snapshots: dict[str, Path],
     expected_counts: dict[str, int],
+    expected_digests: dict[str, str],
 ) -> tuple[VerificationState, dict[str, object]]:
-    """Recover each snapshot into a scratch collection and prove exact point counts."""
+    """Recover snapshots and prove point counts plus canonical point content."""
     if not url:
         raise click.ClickException(
             "Qdrant restore verification requires a remote Qdrant url; "
@@ -300,6 +367,7 @@ def verify_qdrant_restore(
 
     client = QdrantClient(url=url, api_key=api_key, timeout=_QDRANT_TIMEOUT_SECONDS)
     verified: dict[str, int] = {}
+    verified_digests: dict[str, str] = {}
     try:
         for collection, snapshot_path in sorted(snapshots.items()):
             if collection not in expected_counts:
@@ -307,10 +375,16 @@ def verify_qdrant_restore(
                     f"Qdrant restore verification failed: no expected point count "
                     f"recorded for collection {collection}"
                 )
+            if collection not in expected_digests:
+                raise click.ClickException(
+                    f"Qdrant restore verification failed: no source content digest "
+                    f"recorded for collection {collection}"
+                )
             scratch = f"{_QDRANT_SCRATCH_PREFIX}{collection}"
             try:
                 _recover_qdrant_collection(client, scratch, snapshot_path)
                 actual = client.count(scratch, exact=True).count
+                actual_digest = qdrant_collection_digest(client, scratch)
             finally:
                 _delete_qdrant_collection(client, scratch)
             expected = expected_counts[collection]
@@ -319,13 +393,21 @@ def verify_qdrant_restore(
                     f"Qdrant restore verification failed for collection {collection}: "
                     f"expected {expected} points, got {actual}"
                 )
+            expected_digest = expected_digests[collection]
+            if actual_digest != expected_digest:
+                raise click.ClickException(
+                    f"Qdrant restore verification failed for collection {collection}: "
+                    f"source content digest {expected_digest}, restored {actual_digest}"
+                )
             verified[collection] = actual
+            verified_digests[collection] = actual_digest
     finally:
         _close_qdrant_client(client)
 
     details: dict[str, object] = {
         "collections_checked": len(verified),
         "points_verified": verified,
+        "content_digests_verified": verified_digests,
     }
     return _verified(_QDRANT_METHOD), details
 
@@ -365,31 +447,51 @@ def _close_qdrant_client(client: QdrantClient) -> None:
 
 def verify_falkordb_restore(
     rdb_path: Path,
-    expected_graphs: list[str],
+    expected_inventory: dict[str, dict[str, int]],
 ) -> tuple[VerificationState, dict[str, object]]:
-    """Boot a scratch FalkorDB on a copy of the RDB and prove every graph loaded."""
+    """Boot a scratch FalkorDB and compare each graph's node and edge counts."""
     _require_file(rdb_path, "FalkorDB RDB")
 
     container = f"gobby-hub-verify-falkor-{uuid.uuid4().hex[:8]}"
-    scratch_dir = Path(tempfile.mkdtemp(prefix="gobby-hub-verify-falkor-"))
+    scratch_dir = Path(tempfile.mkdtemp(prefix="gobby-hub-verify-falkor-")).resolve(strict=True)
     try:
         scratch_dir.chmod(0o700)
         # FalkorDB loads its RDB at startup only, so the copy must be in place first.
-        shutil.copyfile(rdb_path, scratch_dir / "dump.rdb")
+        with open_regular_binary(rdb_path, label="FalkorDB RDB") as source:
+            with open_exclusive_binary(
+                scratch_dir / "dump.rdb", label="FalkorDB scratch RDB"
+            ) as destination:
+                while chunk := source.read(1024 * 1024):
+                    destination.write(chunk)
         _start_scratch_falkordb(container, scratch_dir)
         _wait_for_falkordb(container)
         actual = set(_list_graphs(container))
-        expected = set(expected_graphs)
+        expected = set(expected_inventory)
         if actual != expected:
             raise click.ClickException(
                 "FalkorDB restore verification failed: "
                 f"missing {sorted(expected - actual)}, unexpected {sorted(actual - expected)}"
             )
+        restored_inventory = {graph: _graph_counts(container, graph) for graph in sorted(actual)}
+        if restored_inventory != expected_inventory:
+            mismatches = [
+                f"{graph} {metric} (expected {expected_inventory[graph][metric]}, "
+                f"got {restored_inventory[graph][metric]})"
+                for graph in sorted(expected)
+                for metric in ("nodes", "edges")
+                if restored_inventory[graph][metric] != expected_inventory[graph][metric]
+            ]
+            raise click.ClickException(
+                "FalkorDB restore content verification failed: " + "; ".join(mismatches)
+            )
     finally:
         _remove_container(container)
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
-    details: dict[str, object] = {"graphs_verified": len(set(expected_graphs))}
+    details: dict[str, object] = {
+        "graphs_verified": len(expected_inventory),
+        "graph_inventory_verified": expected_inventory,
+    }
     return _verified(_FALKOR_METHOD), details
 
 
@@ -430,6 +532,37 @@ def _list_graphs(container: str) -> list[str]:
     return [line.strip() for line in _process_output(result.stdout).splitlines() if line.strip()]
 
 
+def _graph_counts(container: str, graph: str) -> dict[str, int]:
+    graph_arg = shlex.quote(graph)
+    node_query = shlex.quote("MATCH (n) RETURN count(n)")
+    edge_query = shlex.quote("MATCH ()-[r]->() RETURN count(r)")
+    nodes = _graph_count_query(container, graph_arg, node_query, graph=graph, metric="nodes")
+    edges = _graph_count_query(container, graph_arg, edge_query, graph=graph, metric="edges")
+    return {"nodes": nodes, "edges": edges}
+
+
+def _graph_count_query(
+    container: str,
+    graph_arg: str,
+    query_arg: str,
+    *,
+    graph: str,
+    metric: str,
+) -> int:
+    result = _redis_cli(
+        container,
+        f"GRAPH.QUERY {graph_arg} {query_arg} --compact",
+        timeout=_DOCKER_TIMEOUT_SECONDS,
+    )
+    _raise_for_subprocess_error(result, f"Scratch GRAPH.QUERY {graph} {metric}")
+    for line in _process_output(result.stdout).splitlines():
+        try:
+            return int(line.strip())
+        except ValueError:
+            continue
+    raise click.ClickException(f"Scratch GRAPH.QUERY returned no {metric} count for {graph}")
+
+
 def _redis_cli(container: str, command: str, *, timeout: int) -> subprocess.CompletedProcess[bytes]:
     # `sh -c` so the password expands from the container environment; it is never
     # resolved into argv on this side.
@@ -450,28 +583,45 @@ def _redis_cli(container: str, command: str, *, timeout: int) -> subprocess.Comp
 
 def verify_volume_archives(
     archives: dict[str, Path],
+    expected_inventories: dict[str, dict[str, object]],
 ) -> tuple[VerificationState, dict[str, object]]:
-    """Extract each volume archive into a scratch directory and count real members."""
+    """Extract archives and compare path/type/file-byte inventories to the source."""
     for volume, archive_path in archives.items():
         _require_file(archive_path, f"Volume archive for {volume}")
 
     counts: dict[str, int] = {}
+    verified_inventories: dict[str, dict[str, object]] = {}
     for volume, archive_path in sorted(archives.items()):
-        scratch_dir = Path(tempfile.mkdtemp(prefix="gobby-hub-verify-vol-"))
+        expected = _expected_content_inventory(volume, expected_inventories)
+        actual = _archive_inventory(archive_path, label=f"Volume archive for {volume}")
+        if actual != expected:
+            raise click.ClickException(
+                f"Volume archive {volume} content inventory differs from source: "
+                f"expected {expected.to_dict()}, got {actual.to_dict()}"
+            )
+        scratch_dir = Path(tempfile.mkdtemp(prefix="gobby-hub-verify-vol-")).resolve(strict=True)
         try:
             counts[volume] = _extract_archive(volume, archive_path, scratch_dir)
         finally:
             shutil.rmtree(scratch_dir, ignore_errors=True)
+        verified_inventories[volume] = actual.to_dict()
 
-    details: dict[str, object] = {"archives": counts}
+    details: dict[str, object] = {
+        "archives": counts,
+        "source_inventories_verified": verified_inventories,
+    }
     return _verified(_VOLUME_METHOD), details
 
 
 def _extract_archive(volume: str, archive_path: Path, scratch_dir: Path) -> int:
     try:
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=scratch_dir, filter="data")  # nosec B202 # data filter applied
-            members = tar.getmembers()
+        with open_regular_binary(archive_path, label=f"Volume archive for {volume}") as source:
+            with tarfile.open(fileobj=source, mode="r:gz") as tar:
+                tar.extractall(  # nosec B202 # data filter applied
+                    path=scratch_dir,
+                    filter="data",
+                )
+                members = tar.getmembers()
     except (tarfile.TarError, OSError, EOFError) as exc:
         raise click.ClickException(
             f"Volume archive {volume} failed scratch extraction: {exc}"
@@ -481,6 +631,22 @@ def _extract_archive(volume: str, archive_path: Path, scratch_dir: Path) -> int:
             f"Volume archive {volume} extracted 0 members; archive is empty or corrupt"
         )
     return len(members)
+
+
+def _expected_content_inventory(
+    volume: str,
+    inventories: dict[str, dict[str, object]],
+) -> ContentInventory:
+    record = inventories.get(volume)
+    if not isinstance(record, dict):
+        raise click.ClickException(
+            f"Volume restore verification has no source inventory for {volume}"
+        )
+    members = record.get("members")
+    sha256 = record.get("sha256")
+    if not isinstance(members, int) or not isinstance(sha256, str):
+        raise click.ClickException(f"Volume source inventory for {volume} is incomplete")
+    return ContentInventory(members=members, sha256=sha256)
 
 
 # ---------------------------------------------------------------------------
@@ -536,8 +702,7 @@ def _remove_container(container: str) -> None:
 
 
 def _require_file(path: Path, label: str) -> None:
-    if not path.is_file():
-        raise click.ClickException(f"{label} not found for restore verification: {path}")
+    require_regular_file(path, label=f"{label} for restore verification")
 
 
 def _stderr_tail(result: subprocess.CompletedProcess[bytes], *, limit: int = 800) -> str:

@@ -8,8 +8,10 @@ here proves a backup is restorable, it only makes one.
 from __future__ import annotations
 
 import os
-import shutil
+import shlex
+import stat
 import subprocess  # nosec B404 # fixed docker/pg_dump/redis-cli argv, never shell=True
+import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,6 +21,14 @@ import httpx
 import psycopg
 from qdrant_client import QdrantClient
 
+from gobby.cli.hub_backup._content import qdrant_collection_digest, tar_stream_inventory
+from gobby.cli.hub_backup._integrity import (
+    file_digest,
+    open_exclusive_binary,
+    open_regular_binary,
+    refuse_symlink_traversal,
+    require_regular_file,
+)
 from gobby.cli.hub_backup._manifest import ArtifactRecord, SourceIdentity
 from gobby.cli.installers.container_restart import FALKORDB_CONTAINER, POSTGRES_CONTAINER
 from gobby.cli.installers.postgres import DEFAULT_POSTGRES_DB, DEFAULT_POSTGRES_USER
@@ -28,7 +38,6 @@ from gobby.cli.postgres_backup import (
     _dsn_user,
     _process_output,
     _raise_for_subprocess_error,
-    _sha256_file,
 )
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
@@ -122,6 +131,34 @@ def collect_row_count_probes(database_url: str) -> dict[str, int]:
     except psycopg.Error as exc:
         raise click.ClickException(f"Unable to collect row-count probes: {exc}") from exc
     return probes
+
+
+def collect_schema_object_counts(database_url: str) -> dict[str, int]:
+    """Count public-schema object kinds for source-equivalent restore checks."""
+    query = """
+        SELECT CASE c.relkind
+                   WHEN 'r' THEN 'table'
+                   WHEN 'p' THEN 'partitioned_table'
+                   WHEN 'i' THEN 'index'
+                   WHEN 'I' THEN 'partitioned_index'
+                   WHEN 'S' THEN 'sequence'
+                   WHEN 'v' THEN 'view'
+                   WHEN 'm' THEN 'materialized_view'
+               END AS object_kind,
+               count(*)
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relkind IN ('r', 'p', 'i', 'I', 'S', 'v', 'm')
+         GROUP BY object_kind
+         ORDER BY object_kind
+    """
+    try:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            rows = connection.execute(query).fetchall()
+    except psycopg.Error as exc:
+        raise click.ClickException(f"Could not collect PostgreSQL schema inventory: {exc}") from exc
+    return {str(kind): int(count) for kind, count in rows}
 
 
 def collect_source_roles(database_url: str) -> list[dict[str, object]]:
@@ -241,6 +278,7 @@ def snapshot_qdrant(
 
     for name in sorted(item.name for item in client.get_collections().collections):
         points = int(client.count(name, exact=True).count)
+        content_sha256 = qdrant_collection_digest(client, name)
         snapshot = client.create_snapshot(collection_name=name, wait=True)
         if snapshot is None or not snapshot.name:
             raise click.ClickException(f"Qdrant did not create a snapshot for collection {name}")
@@ -257,7 +295,11 @@ def snapshot_qdrant(
         client.delete_snapshot(collection_name=name, snapshot_name=snapshot.name, wait=True)
 
         artifacts.append(_artifact_record(f"qdrant-{name}", backup_root, relpath))
-        collections[name] = {"points": points, "snapshot": relpath}
+        collections[name] = {
+            "points": points,
+            "snapshot": relpath,
+            "content_sha256": content_sha256,
+        }
 
     return artifacts, {"collections": collections}
 
@@ -279,14 +321,17 @@ def _download_qdrant_snapshot(
             timeout=_QDRANT_TIMEOUT_SECONDS,
         ) as response:
             response.raise_for_status()
-            with destination.open("wb") as output:
+            with open_exclusive_binary(
+                destination, label=f"Qdrant snapshot for {collection}"
+            ) as output:
                 for chunk in response.iter_bytes():
                     output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
     except httpx.HTTPError as exc:
         raise click.ClickException(
             f"Qdrant snapshot download failed for collection {collection}: {exc}"
         ) from exc
-    destination.chmod(0o600)
 
 
 # ---------------------------------------------------------------------------
@@ -303,13 +348,40 @@ def dump_falkordb(backup_root: Path) -> tuple[list[ArtifactRecord], dict[str, ob
     graphs = sorted(
         line.strip() for line in _redis_cli(_REDIS_GRAPH_LIST).splitlines() if line.strip()
     )
+    graph_inventory = {graph: _falkordb_graph_counts(graph) for graph in graphs}
     dbsize = _parse_int(_redis_cli(_REDIS_DBSIZE), what="FalkorDB DBSIZE")
 
     destination = _prepare_artifact_path(backup_root, FALKORDB_DUMP_RELPATH)
     _copy_from_container(f"{FALKORDB_CONTAINER}:{_FALKORDB_RDB_PATH}", destination)
 
     artifacts = [_artifact_record("falkordb-rdb", backup_root, FALKORDB_DUMP_RELPATH)]
-    return artifacts, {"graphs": graphs, "dbsize": dbsize}
+    return artifacts, {"graphs": graphs, "graph_inventory": graph_inventory, "dbsize": dbsize}
+
+
+def _falkordb_graph_counts(graph: str) -> dict[str, int]:
+    graph_arg = shlex.quote(graph)
+    node_query = shlex.quote("MATCH (n) RETURN count(n)")
+    edge_query = shlex.quote("MATCH ()-[r]->() RETURN count(r)")
+    nodes = _parse_graph_count(
+        _redis_cli(f"GRAPH.QUERY {graph_arg} {node_query} --compact"),
+        graph=graph,
+        metric="nodes",
+    )
+    edges = _parse_graph_count(
+        _redis_cli(f"GRAPH.QUERY {graph_arg} {edge_query} --compact"),
+        graph=graph,
+        metric="edges",
+    )
+    return {"nodes": nodes, "edges": edges}
+
+
+def _parse_graph_count(payload: str, *, graph: str, metric: str) -> int:
+    for line in payload.splitlines():
+        try:
+            return int(line.strip())
+        except ValueError:
+            continue
+    raise click.ClickException(f"FalkorDB graph inventory returned no {metric} count for {graph}")
 
 
 def _await_falkordb_bgsave(previous_save: int) -> None:
@@ -347,7 +419,7 @@ def _redis_cli(request: str) -> str:
         FALKORDB_CONTAINER,
         "sh",
         "-c",
-        f'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning {request}',
+        f'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw {request}',
     ]
     action = f"FalkorDB {request}"
     try:
@@ -384,8 +456,7 @@ def _copy_from_container(source: str, destination: Path) -> None:
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
         raise click.ClickException(f"Docker cp of {source} failed: {exc}") from exc
     _raise_for_subprocess_error(result, f"Docker cp of {source}")
-    if not destination.is_file():
-        raise click.ClickException(f"Docker cp produced no file at {destination}")
+    require_regular_file(destination, label="Docker cp artifact")
     destination.chmod(0o600)
 
 
@@ -401,7 +472,9 @@ def tar_volumes(
     """Archive each hub Docker volume. The caller must have stopped the services."""
     artifacts: list[ArtifactRecord] = []
     archived: list[str] = []
+    source_inventories: dict[str, dict[str, object]] = {}
     for volume in volumes:
+        source_inventories[volume] = _source_volume_inventory(volume)
         relpath = f"{VOLUME_ARCHIVE_DIR}/{volume}.tar.gz"
         destination = _prepare_artifact_path(backup_root, relpath)
         command = [
@@ -430,12 +503,42 @@ def tar_volumes(
         except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
             raise click.ClickException(f"{action} failed: {exc}") from exc
         _raise_for_subprocess_error(result, action)
-        if not destination.is_file():
-            raise click.ClickException(f"{action} produced no archive at {destination}")
+        require_regular_file(destination, label=action)
         destination.chmod(0o600)
         artifacts.append(_artifact_record(f"volume-{volume}", backup_root, relpath))
         archived.append(volume)
-    return artifacts, {"volumes": archived}
+    return artifacts, {"volumes": archived, "source_inventories": source_inventories}
+
+
+def _source_volume_inventory(volume: str) -> dict[str, object]:
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        f"{volume}:/source:ro",
+        "alpine",
+        "tar",
+        "cf",
+        "-",
+        "-C",
+        "/source",
+        ".",
+    ]
+    action = f"Docker source inventory for volume {volume}"
+    with tempfile.TemporaryFile() as stream:
+        try:
+            result = subprocess.run(  # nosec B603
+                command,
+                stdout=stream,
+                stderr=subprocess.PIPE,
+                timeout=_VOLUME_ARCHIVE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+            raise click.ClickException(f"{action} failed: {exc}") from exc
+        _raise_for_subprocess_error(result, action)
+        stream.seek(0)
+        return tar_stream_inventory(stream, label=action).to_dict()
 
 
 def archive_rule_allow_audit_logs(
@@ -443,8 +546,13 @@ def archive_rule_allow_audit_logs(
     backup_root: Path,
 ) -> list[ArtifactRecord]:
     """Copy the active allow audit log and numeric rotations into the backup."""
-    if not logs_dir.is_dir():
+    refuse_symlink_traversal(logs_dir, label="Allow-audit log source")
+    try:
+        mode = logs_dir.lstat().st_mode
+    except FileNotFoundError:
         return []
+    if not stat.S_ISDIR(mode):
+        raise click.ClickException(f"Allow-audit log source is not a directory: {logs_dir}")
 
     artifacts: list[ArtifactRecord] = []
     prefix = f"{RULE_ALLOW_AUDIT_LOG_FILENAME}."
@@ -452,12 +560,16 @@ def archive_rule_allow_audit_logs(
         is_rotation = source.name.startswith(prefix) and source.name.removeprefix(prefix).isdigit()
         if source.name != RULE_ALLOW_AUDIT_LOG_FILENAME and not is_rotation:
             continue
-        if source.is_symlink() or not source.is_file():
-            continue
+        require_regular_file(source, label="Allow-audit log source")
         relpath = f"{ALLOW_AUDIT_ARCHIVE_DIR}/{source.name}"
         destination = _prepare_artifact_path(backup_root, relpath)
-        shutil.copyfile(source, destination)
-        destination.chmod(0o600)
+        with open_regular_binary(source, label="Allow-audit log source") as source_stream:
+            output = open_exclusive_binary(destination, label="Allow-audit log artifact")
+            with output:
+                while chunk := source_stream.read(1024 * 1024):
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
         artifacts.append(_artifact_record(f"rule_allow_audit:{source.name}", backup_root, relpath))
     return artifacts
 
@@ -469,13 +581,15 @@ def archive_rule_allow_audit_logs(
 
 def _capture_stdout(command: list[str], destination: Path, *, action: str, timeout: int) -> None:
     try:
-        with destination.open("wb") as output:
+        with open_exclusive_binary(destination, label=action) as output:
             result = subprocess.run(  # nosec B603
                 command,
                 stdout=output,
                 stderr=subprocess.PIPE,
                 timeout=timeout,
             )
+            output.flush()
+            os.fsync(output.fileno())
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
         raise click.ClickException(f"{action} failed: {exc}") from exc
     _raise_for_subprocess_error(result, action)
@@ -484,8 +598,19 @@ def _capture_stdout(command: list[str], destination: Path, *, action: str, timeo
 
 def _prepare_artifact_path(backup_root: Path, relpath: str) -> Path:
     """Create the artifact's parent directories as 0700 and return its path."""
+    relative = Path(relpath)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise click.ClickException(f"Unsafe backup artifact path: {relpath!r}")
+    refuse_symlink_traversal(backup_root, label="Backup artifact destination")
     destination = backup_root / relpath
     destination.parent.mkdir(parents=True, exist_ok=True)
+    refuse_symlink_traversal(destination, label="Backup artifact destination")
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        raise click.ClickException(f"Backup artifact destination already exists: {destination}")
     directory = backup_root
     directory.chmod(0o700)
     for part in Path(relpath).parent.parts:
@@ -496,11 +621,12 @@ def _prepare_artifact_path(backup_root: Path, relpath: str) -> Path:
 
 def _artifact_record(name: str, backup_root: Path, relpath: str) -> ArtifactRecord:
     path = backup_root / relpath
+    sha256, size = file_digest(path, label=f"backup artifact {relpath}")
     return ArtifactRecord(
         name=name,
         path=relpath,
-        sha256=_sha256_file(path),
-        size_bytes=path.stat().st_size,
+        sha256=sha256,
+        size_bytes=size,
     )
 
 

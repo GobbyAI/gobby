@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -85,12 +86,13 @@ def _batch(epoch_id: uuid.UUID, digest: str) -> DestructiveBatch:
     )
 
 
-def test_destructive_manifest_gate_accepts_all_bound_evidence() -> None:
+def test_destructive_manifest_gate_accepts_all_bound_evidence(tmp_path: Path) -> None:
     epoch_id = uuid.uuid4()
     digest = "a" * 64
 
     context = validate_destructive_manifest(
         _manifest(epoch_id),
+        backup_root=tmp_path,
         manifest_sha256=digest,
         current_identity=IDENTITY,
         epoch=_epoch(epoch_id),
@@ -117,6 +119,7 @@ def test_destructive_manifest_gate_accepts_all_bound_evidence() -> None:
 def test_destructive_manifest_gate_refuses_each_failure_mode(
     failure: str,
     message: str,
+    tmp_path: Path,
 ) -> None:
     epoch_id = uuid.uuid4()
     digest = "a" * 64
@@ -142,6 +145,7 @@ def test_destructive_manifest_gate_refuses_each_failure_mode(
     with pytest.raises(SchemaGateError, match=message):
         validate_destructive_manifest(
             manifest,
+            backup_root=tmp_path,
             manifest_sha256=digest,
             current_identity=identity,
             epoch=epoch,

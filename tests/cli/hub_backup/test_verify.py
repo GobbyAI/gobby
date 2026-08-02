@@ -6,6 +6,8 @@ exact docker/psql/redis-cli surface each verifier drives. No real docker is used
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import subprocess
 import tarfile
@@ -18,9 +20,28 @@ import click
 import pytest
 
 from gobby.cli.hub_backup import _verify
+from gobby.cli.hub_backup._content import archive_inventory
 from gobby.cli.hub_backup._verify import RoleExpectation
 
 pytestmark = pytest.mark.unit
+
+
+def _point_digest(points: list[dict[str, object]]) -> str:
+    records = sorted(
+        hashlib.sha256(
+            json.dumps(
+                {key: point.get(key) for key in ("id", "payload", "vector")},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).digest()
+        for point in points
+    )
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update(len(record).to_bytes(8, "big"))
+        digest.update(record)
+    return digest.hexdigest()
 
 
 class _DockerFake:
@@ -33,7 +54,9 @@ class _DockerFake:
         self.falkor_ready_after: int = 1
         self.role_rows: list[tuple[str, bool, bool]] = []
         self.table_counts: dict[str, int] = {}
+        self.schema_object_counts: dict[str, int] = {}
         self.graphs: list[str] = []
+        self.graph_counts: dict[str, dict[str, int]] = {}
         self.globals_returncode: int = 3
         self.globals_stderr: bytes = b'ERROR:  role "postgres" already exists'
         self.pg_restore_returncode: int = 0
@@ -122,6 +145,11 @@ class _DockerFake:
                 for name, is_super, can_login in self.role_rows
             )
             return self._done(args, stdout=f"{rows}\n".encode())
+        if "pg_class" in sql:
+            rows = "\n".join(
+                f"{kind}\t{count}" for kind, count in sorted(self.schema_object_counts.items())
+            )
+            return self._done(args, stdout=f"{rows}\n".encode())
         if "count(*)" in sql.lower():
             table = sql.rsplit("FROM ", 1)[1].strip().strip('"')
             assert table in self.table_counts, f"unexpected count target: {sql}"
@@ -137,6 +165,10 @@ class _DockerFake:
             return self._done(args, stdout=b"PONG\n" if ready else b"")
         if "GRAPH.LIST" in command:
             return self._done(args, stdout=("\n".join(self.graphs) + "\n").encode())
+        if "GRAPH.QUERY" in command:
+            graph = next(name for name in self.graph_counts if f"GRAPH.QUERY {name} " in command)
+            metric = "nodes" if "count(n)" in command else "edges"
+            return self._done(args, stdout=f"{self.graph_counts[graph][metric]}\n".encode())
         raise AssertionError(f"unexpected redis command: {command}")
 
     @staticmethod
@@ -197,6 +229,7 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     fake = _DockerFake()
     fake.role_rows = [("postgres", True, True), ("gobby", False, True)]
     fake.table_counts = {"tasks": 3, "sessions": 5}
+    fake.schema_object_counts = {"index": 8, "table": 2}
     _install(monkeypatch, fake)
     dump_path, globals_path = _pg_fixture(tmp_path)
 
@@ -204,6 +237,7 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
         dump_path,
         globals_path,
         expected_probes={"tasks": 3, "sessions": 5},
+        expected_schema_objects={"index": 8, "table": 2},
         expected_roles=[
             RoleExpectation("gobby", rolsuper=False, rolcanlogin=True),
             RoleExpectation("postgres", rolsuper=True, rolcanlogin=True),
@@ -211,12 +245,13 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     )
 
     assert state.verified is True
-    assert state.method == "scratch-pg-restore+globals-replay+role-acl+row-counts"
+    assert state.method == "scratch-pg-restore+roles+rows+schema-counts"
     assert state.timestamp is not None
     assert state.timestamp.endswith("+00:00")
     assert details == {
         "tables_checked": 2,
         "roles_checked": 2,
+        "schema_objects_checked": 2,
         "scratch_container": fake.container,
     }
 
@@ -423,6 +458,30 @@ def test_verify_postgres_restore_raises_on_row_count_mismatch_naming_the_table(
     assert fake.argv_starting("docker", "rm", "-f", fake.container)
 
 
+def test_verify_postgres_restore_rejects_schema_object_count_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 3}
+    fake.schema_object_counts = {"index": 7, "table": 1}
+    _install(monkeypatch, fake)
+    dump_path, globals_path = _pg_fixture(tmp_path)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_postgres_restore(
+            dump_path,
+            globals_path,
+            expected_probes={"tasks": 3},
+            expected_schema_objects={"index": 8, "table": 1},
+            expected_roles=[RoleExpectation("gobby", rolsuper=False, rolcanlogin=True)],
+        )
+
+    assert "schema object" in str(excinfo.value).lower()
+    assert "index" in str(excinfo.value)
+
+
 def test_verify_postgres_restore_raises_with_stderr_tail_when_pg_restore_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -459,6 +518,26 @@ def test_verify_postgres_restore_raises_when_dump_missing(tmp_path: Path) -> Non
         )
 
 
+def test_verify_postgres_restore_refuses_symlinked_artifact_parent(tmp_path: Path) -> None:
+    real_dir = tmp_path / "real-backup"
+    real_dir.mkdir()
+    (real_dir / "gobby.dump").write_bytes(b"dump")
+    (real_dir / "globals.sql").write_bytes(b"globals")
+    linked_dir = tmp_path / "backup-link"
+    linked_dir.symlink_to(real_dir, target_is_directory=True)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_postgres_restore(
+            linked_dir / "gobby.dump",
+            linked_dir / "globals.sql",
+            expected_probes={},
+            expected_roles=[],
+        )
+
+    assert "symlink" in str(excinfo.value).lower()
+    assert str(linked_dir) in str(excinfo.value)
+
+
 # ---------------------------------------------------------------------------
 # FalkorDB
 # ---------------------------------------------------------------------------
@@ -477,15 +556,22 @@ def test_verify_falkordb_restore_seeds_scratch_dir_and_verifies_graph_list(
     fake = _DockerFake()
     fake.falkor_ready_after = 2
     fake.graphs = ["memory", "code"]
+    fake.graph_counts = {
+        "code": {"nodes": 2, "edges": 1},
+        "memory": {"nodes": 5, "edges": 4},
+    }
     _install(monkeypatch, fake)
     rdb_path = _falkor_rdb(tmp_path)
 
-    state, details = _verify.verify_falkordb_restore(rdb_path, ["code", "memory"])
+    state, details = _verify.verify_falkordb_restore(rdb_path, fake.graph_counts)
 
     assert state.verified is True
-    assert state.method == "falkordb-scratch-rdb-load+graph-list"
+    assert state.method == "falkordb-scratch-rdb-load+graph-counts"
     assert state.timestamp is not None
-    assert details == {"graphs_verified": 2}
+    assert details == {
+        "graphs_verified": 2,
+        "graph_inventory_verified": fake.graph_counts,
+    }
 
     run_argv = fake.run_argv
     assert fake.container.startswith("gobby-hub-verify-falkor-")
@@ -520,7 +606,10 @@ def test_verify_falkordb_restore_raises_on_graph_set_mismatch_and_cleans_up(
     rdb_path = _falkor_rdb(tmp_path)
 
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_falkordb_restore(rdb_path, ["memory", "code"])
+        _verify.verify_falkordb_restore(
+            rdb_path,
+            {"memory": {"nodes": 1, "edges": 0}, "code": {"nodes": 1, "edges": 0}},
+        )
 
     assert "code" in str(excinfo.value)
     assert fake.argv_starting("docker", "rm", "-f", fake.container)
@@ -538,7 +627,7 @@ def test_verify_falkordb_restore_raises_when_container_never_answers_ping(
     rdb_path = _falkor_rdb(tmp_path)
 
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_falkordb_restore(rdb_path, ["memory"])
+        _verify.verify_falkordb_restore(rdb_path, {"memory": {"nodes": 1, "edges": 0}})
 
     assert "ready" in str(excinfo.value).lower()
     assert fake.argv_starting("docker", "rm", "-f", fake.container)
@@ -546,7 +635,28 @@ def test_verify_falkordb_restore_raises_when_container_never_answers_ping(
 
 def test_verify_falkordb_restore_raises_when_rdb_missing(tmp_path: Path) -> None:
     with pytest.raises(click.ClickException):
-        _verify.verify_falkordb_restore(tmp_path / "absent.rdb", ["memory"])
+        _verify.verify_falkordb_restore(
+            tmp_path / "absent.rdb", {"memory": {"nodes": 1, "edges": 0}}
+        )
+
+
+def test_verify_falkordb_restore_rejects_same_graph_names_with_missing_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake = _DockerFake()
+    fake.graphs = ["memory"]
+    fake.graph_counts = {"memory": {"nodes": 2, "edges": 1}}
+    _install(monkeypatch, fake)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_falkordb_restore(
+            _falkor_rdb(tmp_path),
+            {"memory": {"nodes": 3, "edges": 1}},
+        )
+
+    assert "memory" in str(excinfo.value)
+    assert "nodes" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -587,11 +697,27 @@ class _FakeQdrantClient:
         self.deleted: list[str] = []
         self.closed = False
         self.counts: dict[str, int] = {}
+        self.points: dict[str, list[dict[str, object]]] = {}
         self.http = _FakeHttp(self)
 
     def count(self, collection_name: str, exact: bool = True) -> _FakeCountResult:
         self.counted.append((collection_name, exact))
         return _FakeCountResult(self.counts.get(collection_name, 0))
+
+    def scroll(
+        self,
+        collection_name: str,
+        *,
+        limit: int,
+        offset: object = None,
+        with_payload: bool,
+        with_vectors: bool,
+    ) -> tuple[list[dict[str, object]], None]:
+        assert limit > 0
+        assert offset is None
+        assert with_payload is True
+        assert with_vectors is True
+        return self.points.get(collection_name, []), None
 
     def delete_collection(self, collection_name: str) -> bool:
         self.deleted.append(collection_name)
@@ -601,9 +727,16 @@ class _FakeQdrantClient:
         self.closed = True
 
 
-def _install_qdrant(monkeypatch: pytest.MonkeyPatch, counts: dict[str, int]) -> _FakeQdrantClient:
+def _install_qdrant(
+    monkeypatch: pytest.MonkeyPatch,
+    counts: dict[str, int],
+    points: dict[str, list[dict[str, object]]] | None = None,
+) -> _FakeQdrantClient:
     client = _FakeQdrantClient()
     client.counts = counts
+    client.points = points or {
+        name: [{"id": count, "payload": {"value": count}}] for name, count in counts.items()
+    }
 
     def _factory(**kwargs: Any) -> _FakeQdrantClient:
         client.kwargs = kwargs
@@ -623,9 +756,14 @@ def test_verify_qdrant_restore_recovers_each_collection_into_scratch_and_counts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    points = {
+        "hub_backup_verify_memory": [{"id": 1, "payload": {"kind": "memory"}}],
+        "hub_backup_verify_code": [{"id": 2, "payload": {"kind": "code"}}],
+    }
     client = _install_qdrant(
         monkeypatch,
         {"hub_backup_verify_memory": 7, "hub_backup_verify_code": 2},
+        points,
     )
     snapshots = {"memory": _snapshot(tmp_path, "memory"), "code": _snapshot(tmp_path, "code")}
 
@@ -634,12 +772,23 @@ def test_verify_qdrant_restore_recovers_each_collection_into_scratch_and_counts(
         "sekrit",
         snapshots,
         {"memory": 7, "code": 2},
+        {
+            "memory": _point_digest(points["hub_backup_verify_memory"]),
+            "code": _point_digest(points["hub_backup_verify_code"]),
+        },
     )
 
     assert state.verified is True
-    assert state.method == "qdrant-scratch-collection-recover+count"
+    assert state.method == "qdrant-scratch-recover+point-content-digest"
     assert state.timestamp is not None
-    assert details == {"collections_checked": 2, "points_verified": {"memory": 7, "code": 2}}
+    assert details == {
+        "collections_checked": 2,
+        "points_verified": {"memory": 7, "code": 2},
+        "content_digests_verified": {
+            "memory": _point_digest(points["hub_backup_verify_memory"]),
+            "code": _point_digest(points["hub_backup_verify_code"]),
+        },
+    }
 
     assert client.kwargs["url"] == "http://localhost:6333"
     assert client.kwargs["api_key"] == "sekrit"
@@ -666,7 +815,7 @@ def test_verify_qdrant_restore_refuses_local_mode_without_url(
     monkeypatch.setattr(_verify, "QdrantClient", _factory)
 
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_qdrant_restore(None, None, {"memory": _snapshot(tmp_path, "memory")}, {})
+        _verify.verify_qdrant_restore(None, None, {"memory": _snapshot(tmp_path, "memory")}, {}, {})
 
     assert "url" in str(excinfo.value).lower()
 
@@ -683,6 +832,7 @@ def test_verify_qdrant_restore_raises_on_count_mismatch_and_still_deletes_scratc
             None,
             {"memory": _snapshot(tmp_path, "memory")},
             {"memory": 9},
+            {"memory": "0" * 64},
         )
 
     message = str(excinfo.value)
@@ -704,9 +854,35 @@ def test_verify_qdrant_restore_raises_when_expected_count_missing(
             None,
             {"memory": _snapshot(tmp_path, "memory")},
             {},
+            {},
         )
 
     assert "memory" in str(excinfo.value)
+
+
+def test_verify_qdrant_restore_rejects_same_count_with_different_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    restored = [{"id": 1, "payload": {"text": "truncated"}}]
+    source = [{"id": 1, "payload": {"text": "complete"}}]
+    client = _install_qdrant(
+        monkeypatch,
+        {"hub_backup_verify_memory": 1},
+        {"hub_backup_verify_memory": restored},
+    )
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_qdrant_restore(
+            "http://localhost:6333",
+            None,
+            {"memory": _snapshot(tmp_path, "memory")},
+            {"memory": 1},
+            {"memory": _point_digest(source)},
+        )
+
+    assert "content digest" in str(excinfo.value).lower()
+    assert client.deleted == ["hub_backup_verify_memory"]
 
 
 # ---------------------------------------------------------------------------
@@ -732,9 +908,9 @@ def _record_scratch_dirs(monkeypatch: pytest.MonkeyPatch) -> tuple[list[Path], l
     real_rmtree = shutil.rmtree
 
     def _mkdtemp(*, prefix: str | None = None) -> str:
-        path = real_mkdtemp(prefix=prefix)
-        created.append(Path(path))
-        return path
+        path = Path(real_mkdtemp(prefix=prefix)).resolve(strict=True)
+        created.append(path)
+        return str(path)
 
     def _rmtree(path: Any, **kwargs: Any) -> None:
         target = Path(path)
@@ -756,13 +932,19 @@ def test_verify_volume_archives_extracts_each_archive_and_counts_members(
         "gobby_qdrant_data": _make_archive(tmp_path, "qdrant", 2),
         "gobby_falkordb_data": _make_archive(tmp_path, "falkor", 1),
     }
+    inventories = {
+        volume: archive_inventory(path, label=volume).to_dict() for volume, path in archives.items()
+    }
 
-    state, details = _verify.verify_volume_archives(archives)
+    state, details = _verify.verify_volume_archives(archives, inventories)
 
     assert state.verified is True
-    assert state.method == "tar-extract-scratch"
+    assert state.method == "tar-extract+source-content-inventory"
     assert state.timestamp is not None
-    assert details == {"archives": {"gobby_qdrant_data": 2, "gobby_falkordb_data": 1}}
+    assert details == {
+        "archives": {"gobby_qdrant_data": 2, "gobby_falkordb_data": 1},
+        "source_inventories_verified": inventories,
+    }
     assert extracted == [
         ["falkor", "falkor/0.bin"],
         ["qdrant", "qdrant/0.bin", "qdrant/1.bin"],
@@ -779,7 +961,9 @@ def test_verify_volume_archives_raises_on_empty_archive(
     archives = {"gobby_empty": _make_archive(tmp_path, "empty", 0)}
 
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_volume_archives(archives)
+        _verify.verify_volume_archives(
+            archives, {"gobby_empty": {"members": 1, "sha256": "0" * 64}}
+        )
 
     assert "gobby_empty" in str(excinfo.value)
     assert not any(path.exists() for path in created)
@@ -795,7 +979,10 @@ def test_verify_volume_archives_raises_on_truncated_archive(
     archive.write_bytes(data[: len(data) // 2])
 
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_volume_archives({"gobby_truncated": archive})
+        _verify.verify_volume_archives(
+            {"gobby_truncated": archive},
+            {"gobby_truncated": {"members": 1, "sha256": "0" * 64}},
+        )
 
     assert "gobby_truncated" in str(excinfo.value)
     assert not any(path.exists() for path in created)
@@ -803,6 +990,44 @@ def test_verify_volume_archives_raises_on_truncated_archive(
 
 def test_verify_volume_archives_raises_on_missing_archive(tmp_path: Path) -> None:
     with pytest.raises(click.ClickException) as excinfo:
-        _verify.verify_volume_archives({"gobby_absent": tmp_path / "nope.tar.gz"})
+        _verify.verify_volume_archives(
+            {"gobby_absent": tmp_path / "nope.tar.gz"},
+            {"gobby_absent": {"members": 1, "sha256": "0" * 64}},
+        )
 
     assert "gobby_absent" in str(excinfo.value)
+
+
+def test_verify_volume_archives_rejects_same_members_with_different_bytes(
+    tmp_path: Path,
+) -> None:
+    source = _make_archive(tmp_path, "source", 1)
+    expected = archive_inventory(source, label="source").to_dict()
+    backup = tmp_path / "backup.tar.gz"
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"different-content-with-the-same-member-count")
+    with tarfile.open(backup, "w:gz") as tar:
+        tar.add(payload, arcname="source/0.bin")
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_volume_archives({"volume": backup}, {"volume": expected})
+
+    assert "content inventory" in str(excinfo.value).lower()
+
+
+def test_verify_volume_archives_refuses_symlink_member(tmp_path: Path) -> None:
+    archive = tmp_path / "symlink.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        member = tarfile.TarInfo("data/link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "/etc/passwd"
+        tar.addfile(member)
+
+    with pytest.raises(click.ClickException) as excinfo:
+        _verify.verify_volume_archives(
+            {"volume": archive},
+            {"volume": {"members": 1, "sha256": "0" * 64}},
+        )
+
+    assert "symlink" in str(excinfo.value).lower()
+    assert "data/link" in str(excinfo.value)

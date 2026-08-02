@@ -21,6 +21,13 @@ from pathlib import Path
 import click
 
 from gobby.cli.daemon import ServiceStartResult, _services_start, _services_stop
+from gobby.cli.hub_backup._integrity import (
+    create_staging_directory,
+    publish_staged_backup,
+    remove_staging_directory,
+    require_absent_output_path,
+    verify_artifacts,
+)
 from gobby.cli.hub_backup._manifest import (
     MANIFEST_NAME,
     ArtifactRecord,
@@ -38,6 +45,7 @@ from gobby.cli.hub_backup._stores import (
     archive_rule_allow_audit_logs,
     collect_postgres_identity,
     collect_row_count_probes,
+    collect_schema_object_counts,
     collect_source_roles,
     dump_falkordb,
     dump_postgres,
@@ -86,7 +94,6 @@ REQUIRED_CONTAINERS: tuple[str, ...] = (
 )
 
 MIN_FREE_BYTES = 5 * 1024**3
-OUTPUT_DIR_MODE = 0o700
 DOCKER_INSPECT_TIMEOUT_SECONDS = 30
 TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 COMPOSE_START_TIMEOUT_SECONDS = 120
@@ -143,8 +150,8 @@ def hub_backup(
 
     gobby_home = get_gobby_home()
     backup_root = _resolve_output_dir(output)
+    require_absent_output_path(backup_root)
     _preflight(backup_root)
-    _create_output_dir(backup_root)
 
     database_url = _resolve_database_url(gobby_home)
     if epoch is not None:
@@ -154,11 +161,12 @@ def hub_backup(
 
     # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
     restart_daemon = _daemon_is_running() and epoch is None
+    staging_root = create_staging_directory(backup_root)
     manifest_path = backup_root / MANIFEST_NAME
     try:
         stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
         manifest = _run_backup(
-            backup_root=backup_root,
+            backup_root=staging_root,
             gobby_home=gobby_home,
             logs_dir=resolved_logs_dir(ctx.obj.config.logging),
             database_url=database_url,
@@ -166,10 +174,15 @@ def hub_backup(
             qdrant_api_key=qdrant_api_key,
             epoch=epoch,
         )
-        write_manifest(manifest, manifest_path)
+        verify_artifacts(staging_root, manifest.artifacts)
+        write_manifest(manifest, staging_root / MANIFEST_NAME)
+        publish_staged_backup(staging_root, backup_root)
     finally:
-        if restart_daemon:
-            _start_daemon()
+        try:
+            remove_staging_directory(staging_root)
+        finally:
+            if restart_daemon:
+                _start_daemon()
 
     _emit_result(manifest, manifest_path, json_output=json_output)
 
@@ -233,15 +246,6 @@ def _resolve_output_dir(output: Path | None) -> Path:
     return get_gobby_home() / "backups" / "hub" / stamp
 
 
-def _create_output_dir(backup_root: Path) -> None:
-    """Create the backup root owner-only, including every parent we create."""
-    created = [path for path in (backup_root, *backup_root.parents) if not path.exists()]
-    backup_root.mkdir(parents=True, exist_ok=True)
-    for path in created:
-        path.chmod(OUTPUT_DIR_MODE)
-    backup_root.chmod(OUTPUT_DIR_MODE)
-
-
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -260,10 +264,12 @@ def _run_backup(
     """Collect source facts, archive every store, verify each one, and describe it."""
     identity, starting_head = collect_postgres_identity(database_url)
     probes = collect_row_count_probes(database_url)
+    schema_objects = collect_schema_object_counts(database_url)
     roles = collect_source_roles(database_url)
 
     artifacts: list[ArtifactRecord] = []
     postgres_artifacts, postgres_details = dump_postgres(database_url, backup_root)
+    postgres_details["schema_object_counts"] = schema_objects
     artifacts.extend(postgres_artifacts)
     qdrant_artifacts, qdrant_details = snapshot_qdrant(qdrant_url, qdrant_api_key, backup_root)
     artifacts.extend(qdrant_artifacts)
@@ -278,6 +284,7 @@ def _run_backup(
         qdrant_url=qdrant_url,
         qdrant_api_key=qdrant_api_key,
         probes=probes,
+        schema_objects=schema_objects,
         roles=roles,
         postgres_details=postgres_details,
         qdrant_details=qdrant_details,
@@ -396,6 +403,7 @@ def _verify_stores(
     qdrant_url: str | None,
     qdrant_api_key: str | None,
     probes: dict[str, int],
+    schema_objects: dict[str, int],
     roles: list[dict[str, object]],
     postgres_details: dict[str, object],
     qdrant_details: dict[str, object],
@@ -408,19 +416,24 @@ def _verify_stores(
         backup_root / GLOBALS_DUMP_RELPATH,
         expected_probes=probes,
         expected_roles=_role_expectations(roles),
+        expected_schema_objects=schema_objects,
     )
-    snapshots, expected_points = _qdrant_expectations(qdrant_details, backup_root)
+    snapshots, expected_points, expected_digests = _qdrant_expectations(qdrant_details, backup_root)
     qdrant_state, qdrant_proof = verify_qdrant_restore(
         qdrant_url,
         qdrant_api_key,
         snapshots,
         expected_points,
+        expected_digests,
     )
     falkordb_state, falkordb_proof = verify_falkordb_restore(
         backup_root / FALKORDB_DUMP_RELPATH,
-        _expected_graphs(falkordb_details),
+        _expected_graph_inventory(falkordb_details),
     )
-    volumes_state, volumes_proof = verify_volume_archives(_volume_archives(backup_root))
+    volumes_state, volumes_proof = verify_volume_archives(
+        _volume_archives(backup_root),
+        _expected_volume_inventories(volume_details),
+    )
 
     return {
         "postgres": _store_record(
@@ -472,25 +485,51 @@ def _role_expectations(roles: list[dict[str, object]]) -> list[RoleExpectation]:
 def _qdrant_expectations(
     details: dict[str, object],
     backup_root: Path,
-) -> tuple[dict[str, Path], dict[str, int]]:
+) -> tuple[dict[str, Path], dict[str, int], dict[str, str]]:
     collections = details.get("collections")
     if not isinstance(collections, dict):
         raise click.ClickException("Qdrant snapshot driver reported no collections to verify")
     snapshots: dict[str, Path] = {}
     expected_points: dict[str, int] = {}
+    expected_digests: dict[str, str] = {}
     for name, record in collections.items():
-        if not isinstance(record, dict) or "snapshot" not in record or "points" not in record:
+        if (
+            not isinstance(record, dict)
+            or "snapshot" not in record
+            or "points" not in record
+            or "content_sha256" not in record
+        ):
             raise click.ClickException(f"Qdrant snapshot record for {name} is incomplete")
         snapshots[str(name)] = backup_root / str(record["snapshot"])
         expected_points[str(name)] = int(record["points"])
-    return snapshots, expected_points
+        expected_digests[str(name)] = str(record["content_sha256"])
+    return snapshots, expected_points, expected_digests
 
 
-def _expected_graphs(details: dict[str, object]) -> list[str]:
-    graphs = details.get("graphs")
-    if not isinstance(graphs, list):
-        raise click.ClickException("FalkorDB dump driver reported no graph list to verify")
-    return [str(graph) for graph in graphs]
+def _expected_graph_inventory(details: dict[str, object]) -> dict[str, dict[str, int]]:
+    inventory = details.get("graph_inventory")
+    if not isinstance(inventory, dict):
+        raise click.ClickException("FalkorDB dump driver reported no graph inventory to verify")
+    result: dict[str, dict[str, int]] = {}
+    for graph, record in inventory.items():
+        if not isinstance(record, dict) or "nodes" not in record or "edges" not in record:
+            raise click.ClickException(f"FalkorDB graph inventory for {graph} is incomplete")
+        result[str(graph)] = {"nodes": int(record["nodes"]), "edges": int(record["edges"])}
+    return result
+
+
+def _expected_volume_inventories(
+    details: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    inventories = details.get("source_inventories")
+    if not isinstance(inventories, dict):
+        raise click.ClickException("Volume archive driver reported no source inventories")
+    result: dict[str, dict[str, object]] = {}
+    for volume, record in inventories.items():
+        if not isinstance(record, dict):
+            raise click.ClickException(f"Volume source inventory for {volume} is incomplete")
+        result[str(volume)] = dict(record)
+    return result
 
 
 def _volume_archives(backup_root: Path) -> dict[str, Path]:
