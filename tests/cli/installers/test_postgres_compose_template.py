@@ -32,6 +32,13 @@ def compose_data(repo_root: Path) -> dict[str, object]:
     return data
 
 
+def test_postgres_compose_templates_are_byte_equivalent(repo_root: Path) -> None:
+    source = repo_root / "src/gobby/data/docker-compose.services.yml"
+    gcore_asset = repo_root / "crates/gcore/assets/docker-compose.services.yml"
+
+    assert source.read_bytes() == gcore_asset.read_bytes()
+
+
 def test_compose_defines_postgres_alongside_shared_services(
     compose_data: dict[str, object],
 ) -> None:
@@ -92,10 +99,13 @@ def test_postgres_service_preloads_pg_search_and_pgaudit(
 
 def test_postgres_service_healthcheck_validates_pgaudit_configuration(
     compose_data: dict[str, object],
+    repo_root: Path,
 ) -> None:
+    """Pin option C: runtime validates configuration while CI proves write emission."""
     environment = compose_data["services"]["postgres"]["environment"]
     healthcheck = compose_data["services"]["postgres"]["healthcheck"]
     test_command = " ".join(str(part) for part in healthcheck["test"])
+    template = (repo_root / "src/gobby/data/docker-compose.services.yml").read_text()
 
     assert environment["GOBBY_PGAUDIT_LOG"] == "${GOBBY_PGAUDIT_LOG:-ddl}"
     assert "pg_isready" in test_command
@@ -108,6 +118,10 @@ def test_postgres_service_healthcheck_validates_pgaudit_configuration(
     assert "pgaudit-*.log" in test_command
     assert "stat -c '%U %a'" in test_command
     assert "postgres 640" in test_command
+    assert "UPDATE" not in test_command
+    assert "AUDIT: SESSION" not in test_command
+    assert "configuration-only by design" in template
+    assert ".github/scripts/verify-pgaudit-emission.sh" in template
 
 
 def test_postgres_service_has_pg_isready_healthcheck(
