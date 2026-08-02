@@ -71,6 +71,8 @@ mod tests {
     use super::*;
 
     fn set_env(name: &str, value: Option<&str>) {
+        // SAFETY: callers hold TEST_ENV_LOCK while mutating and restoring
+        // the process environment.
         match value {
             Some(value) => unsafe { std::env::set_var(name, value) },
             None => unsafe { std::env::remove_var(name) },
@@ -78,8 +80,10 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn env_capability_preferred() -> anyhow::Result<()> {
+        let _lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let home = tempfile::tempdir()?;
         let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
         let saved_home = std::env::var("GOBBY_HOME").ok();
@@ -110,11 +114,13 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn env_capability_preferred_for_an_explicit_home() -> anyhow::Result<()> {
         // A sandboxed agent's home legitimately carries no token file. Callers
         // that pass the home explicitly must still honor the run-scoped
         // capability, or the daemon answers 401 (#19458).
+        let _lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let home = tempfile::tempdir()?;
         let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
 
