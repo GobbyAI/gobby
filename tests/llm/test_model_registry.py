@@ -12,7 +12,6 @@ import pytest
 from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
-    ModelInfo,
     fetch_models_async,
     fetch_models_sync,
     lookup_context_window,

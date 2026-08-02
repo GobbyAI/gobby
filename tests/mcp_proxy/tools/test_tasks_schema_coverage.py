@@ -121,6 +121,7 @@ class TestToolSchemas:
             "assigned_agent",
             "implementation_domain",
             "additional_skills",
+            "escalation_reason",
         }
 
         assert set(props) == expected_props

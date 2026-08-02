@@ -496,6 +496,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
+        escalation_reason: str | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
         # Resolve task reference (supports #N, path, UUID formats)
@@ -509,6 +510,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         current_task = ctx.task_manager.get_task(resolved_id)
         if current_task is None:
             return {"error": f"Task {task_id} not found"}
+        if escalation_reason is not None and not current_task.is_escalated:
+            return {"error": "Cannot update escalation_reason for a task that is not escalated."}
         if labels is not None:
             label_error = live_session_label_change_error(
                 ctx,
@@ -586,6 +589,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["implementation_domain"] = implementation_domain
         if additional_skills is not None:
             kwargs["additional_skills"] = additional_skills
+        if escalation_reason is not None:
+            kwargs["escalation_reason"] = escalation_reason
 
         try:
             task = ctx.task_manager.update_task(resolved_id, **kwargs)
@@ -676,6 +681,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
+                    "default": None,
+                },
+                "escalation_reason": {
+                    "type": "string",
+                    "description": "New reason for a currently escalated task. The escalation timestamp is preserved.",
                     "default": None,
                 },
             },

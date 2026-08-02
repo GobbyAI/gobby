@@ -805,7 +805,6 @@ class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_discover_droid_models_fetches_docs_and_parses(self, temp_dir: Path) -> None:
         """Droid provider discovery fetches docs.factory.ai/models.md and parses tables."""
-        import httpx as _httpx
 
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         docs_md = (
@@ -821,7 +820,7 @@ class TestProviderModelCatalog:
             def __init__(self, **_kwargs: object) -> None:
                 pass
 
-            async def __aenter__(self) -> "FakeClient":
+            async def __aenter__(self) -> FakeClient:
                 return self
 
             async def __aexit__(self, *_args: object) -> None:
@@ -853,7 +852,7 @@ class TestProviderModelCatalog:
             def __init__(self, **_kwargs: object) -> None:
                 pass
 
-            async def __aenter__(self) -> "FailingClient":
+            async def __aenter__(self) -> FailingClient:
                 return self
 
             async def __aexit__(self, *_args: object) -> None:
@@ -878,13 +877,13 @@ class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_droid_static_catalog_efforts_match_factory_docs(self) -> None:
         """Drift guard: every static droid entry's efforts match the live Factory docs."""
+        import httpx as _httpx
+
         from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
         from gobby.servers.provider_models import (
             _DROID_DOCS_MODELS_URL,
             _parse_droid_docs_models,
         )
-
-        import httpx as _httpx
 
         try:
             async with _httpx.AsyncClient(timeout=10.0) as client:
