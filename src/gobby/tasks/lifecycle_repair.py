@@ -244,7 +244,7 @@ class LifecycleRepair:
 
     def _unused_auto_seed_candidate(self, task: Task) -> LifecycleRepairCandidate | None:
         rows = self.task_manager.stage_states.list_for_task(task.id)
-        if not rows or task.task_type == "review_anchor":
+        if not rows:
             return None
         if not _is_pristine_manifest(rows):
             return None

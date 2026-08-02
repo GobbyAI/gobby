@@ -160,11 +160,11 @@ def test_stage_registry_default_stages_are_sorted_and_replace_atomically(temp_db
     ]
 
 
-def test_review_anchor_default_stage_is_planning(temp_db) -> None:
+def test_retired_review_anchor_has_no_default_stage(temp_db) -> None:
     _, StageRegistryManager = require_stage_registry_types()
     manager = StageRegistryManager(temp_db)
 
-    assert manager.list_default_stages("review_anchor") == [("planning", 0)]
+    assert manager.list_default_stages("review_anchor") == []
 
 
 def test_stage_registry_uses_information_schema_for_postgres_columns() -> None:

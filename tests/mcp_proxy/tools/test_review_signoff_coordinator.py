@@ -74,7 +74,7 @@ def _coordinated_review_fixture(
         project.id,
         f"Plan review {name}",
         parent_task_id=root.id,
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         validation_criteria="Test task completion is observable.",
     )

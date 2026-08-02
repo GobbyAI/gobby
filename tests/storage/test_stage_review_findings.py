@@ -110,7 +110,7 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
     task = manager.create_task(
         project.id,
         "Plan review anchor",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         isolation="none",
         validation_criteria="Test task completion is observable.",
@@ -314,7 +314,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
     other_task = stage_review_setup.manager.create_task(
         stage_review_setup.project_id,
         "Other plan",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         validation_criteria="Test task completion is observable.",
     )

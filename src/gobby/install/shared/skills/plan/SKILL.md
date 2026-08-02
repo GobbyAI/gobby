@@ -63,8 +63,8 @@ user may explicitly opt into either Full phase later without redrafting.
 
 ## Full Workflow
 
-Full depth is artifact-first: it creates and revises a plan artifact. Full depth
-does not create a planning epic, review-anchor task, or per-round review tasks.
+Full depth is artifact-first: it creates and revises a plan artifact without
+creating task records for planning or per-round reviews.
 
 Make the first line of every user-facing Full plan body — validated draft,
 revised plan, or final plan — the authoritative artifact path:
@@ -397,7 +397,6 @@ user approves the optional handoff.
 - Do not create or claim tasks during plan drafting or plan review.
 - Any `.md` under `.gobby/`, `.claude/`, or `.codex/` (CLI-owned artifact
   trees) is exempt from `require-task-before-edit`.
-- Do not create review anchors.
 - Enhancement (step 4.5) is advisory: apply only user-accepted suggestions, and
   never let it gate, approve, reject, or block the adversary review. The human
   is the scope gate.

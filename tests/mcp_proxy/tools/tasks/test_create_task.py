@@ -111,7 +111,7 @@ def test_simple_fix_type(task_registry: InternalToolRegistry) -> None:
     task_type_schema = schema["inputSchema"]["properties"]["task_type"]
 
     assert "simple_fix" in task_type_schema.get("enum", [])
-    assert "review_anchor" in task_type_schema.get("enum", [])
+    assert "review_anchor" not in task_type_schema.get("enum", [])
 
 
 @pytest.mark.asyncio
@@ -136,10 +136,10 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(
         result = await registry.call(
             "create_task",
             {
-                "title": "Metadata-only review anchor",
+                "title": "Metadata-only task",
                 "category": "planning",
-                "task_type": "review_anchor",
-                "validation_criteria": "The review anchor metadata is stored.",
+                "task_type": "task",
+                "validation_criteria": "The task metadata is stored.",
             },
         )
 
@@ -232,16 +232,16 @@ async def test_update_task_schema_rejects_unsupported_fields(
 
 
 @pytest.mark.asyncio
-async def test_initialize_task_manifest_persists_review_anchor_cap(
+async def test_initialize_task_manifest_persists_explicit_cap(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
-        title="Capped review anchor",
+        title="Capped planning task",
         category="planning",
-        task_type="review_anchor",
+        task_type="task",
         validation_criteria="Test task completion is observable.",
     )
     ctx = RegistryContext(task_manager=manager)
@@ -276,7 +276,7 @@ async def test_initialize_task_manifest_rejects_unknown_stage(
         project_id=sample_project["id"],
         title="Bad stage task",
         category="planning",
-        task_type="review_anchor",
+        task_type="task",
         validation_criteria="Test task completion is observable.",
     )
     registry = create_stage_ops_registry(RegistryContext(task_manager=manager))

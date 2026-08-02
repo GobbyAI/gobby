@@ -14,7 +14,6 @@ TASK_TYPE_CHOICES: tuple[str, ...] = (
     "research_spike",
     "architecture_doc",
     "prd_doc",
-    "review_anchor",
 )
 VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
 TASK_TYPE_ALIASES: dict[str, str] = {

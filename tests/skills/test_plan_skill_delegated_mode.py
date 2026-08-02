@@ -133,15 +133,14 @@ def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     normalized = " ".join(lowered.split())
 
     assert "artifact-first" in lowered
-    assert "does not create a planning" in lowered
-    assert "review-anchor task" in lowered
-    assert "per-round review tasks" in lowered
+    assert "creating task records for planning or per-round reviews" in lowered
     assert "do not create or claim tasks" in lowered
     assert (
         "any `.md` under `.gobby/`, `.claude/`, or `.codex/` (cli-owned artifact "
         "trees) is exempt from `require-task-before-edit`" in normalized
     )
-    assert "do not create review anchors" in lowered
+    assert "review-anchor" not in lowered
+    assert "review anchor" not in lowered
 
 
 def test_full_plan_body_starts_with_authoritative_artifact_path(body: str) -> None:
