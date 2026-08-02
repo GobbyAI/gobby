@@ -364,9 +364,9 @@ def postgres_db(
     # apply_migrations is idempotent; the session-scoped seed fixture ran it
     # before this test was created, so this call is a no-op.
     db = PostgresHubDatabase(scoped_url)
-    db.apply_migrations()
-    _reset_schema(base_url, postgres_schema, postgres_canonical_seed)
     try:
+        db.apply_migrations()
+        _reset_schema(base_url, postgres_schema, postgres_canonical_seed)
         yield db
     finally:
         try:
