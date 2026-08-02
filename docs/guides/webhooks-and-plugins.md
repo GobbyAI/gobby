@@ -15,7 +15,7 @@ older plugin-action examples as retired documentation patterns.
 | --- | --- | --- |
 | Notify or gate on CLI hook activity | Hook extension webhooks | `hook_extensions.webhooks` |
 | Notify on pipeline approval, completion, or failure | Pipeline webhooks | `webhooks` inside a `type: pipeline` workflow |
-| Call HTTP from custom workflow action code | Webhook action model | `src/gobby/workflows/webhook.py` and `webhook_executor.py` support models, but there is no general YAML action dispatcher wired for docs users |
+| Send HTTP from contributor-owned runtime code | Shared webhook transport | `src/gobby/utils/webhook_transport.py`; callers supply payload construction and policy |
 
 ## Hook Extension Webhooks
 
@@ -208,21 +208,29 @@ payloads include `execution_id`, `pipeline_name`, `status`, `outputs`, and
 Pipeline webhook delivery logs failures but does not retry or block pipeline
 state transitions.
 
-## Workflow Webhook Action Models
+## Shared Transport And Workflow Action Model
 
-The source tree still contains webhook action support models:
+The live delivery stack uses these source paths:
 
-- `src/gobby/workflows/webhook.py` defines `WebhookAction`, `RetryConfig`, and
-  `CaptureConfig`.
-- `src/gobby/workflows/webhook_executor.py` executes direct URLs and registered
-  webhook IDs with retry logic, secret interpolation in headers, and optional
-  callbacks.
-- `docs/guides/webhook-action-schema.md` records the model schema.
+- `src/gobby/utils/webhook_transport.py` provides `WebhookTransport`, the shared
+  bounded HTTP transport. It validates and pins destinations, disables redirects
+  and environment proxy inheritance, caps response bodies, and applies retry
+  bounds supplied by each caller.
+- `src/gobby/hooks/webhooks.py` provides the hook endpoint dispatcher. It matches
+  configured events, builds payloads, interprets blocking decisions, and maps an
+  endpoint's `retry_count` to transport attempts.
+- `src/gobby/hooks/dispatchers/webhook.py` connects that dispatcher to the hook
+  manager's synchronous blocking and asynchronous observer paths.
+- `src/gobby/workflows/pipeline_webhooks.py` sends pipeline notifications through
+  the same transport with its one-attempt default.
 
-Those files are useful source references for contributors, but this guide should
-not imply that arbitrary workflow YAML can currently run `action: webhook`
-through a shipped action dispatcher. For user-facing automation, use
-hook extension webhooks or pipeline webhooks.
+`src/gobby/workflows/webhook.py` still defines `WebhookAction`, `RetryConfig`,
+and `CaptureConfig`, but these classes only parse and serialize configuration.
+There is no general YAML workflow action dispatcher, registered-webhook lookup,
+callback runner, or response-capture integration for that model. See
+`docs/guides/webhook-action-schema.md` for the exact model/runtime boundary.
+
+For user-facing automation, use hook extension webhooks or pipeline webhooks.
 
 ## Plugin Development Status
 
