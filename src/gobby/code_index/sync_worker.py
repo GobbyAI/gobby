@@ -24,6 +24,8 @@ from gobby.code_index.gcode_gateway import (
     GcodeUnavailableError,
 )
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
     from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
+
+_pool_outage_log = ThrottledLogger()
 
 _GRAPH_SYNC_LANGUAGES = frozenset(
     {
@@ -225,7 +229,14 @@ async def sync_worker_loop(
                 gateway_breaker=context.daemon_config_breaker,
             )
         except Exception as e:
-            logger.exception("Sync worker pass error: %s", e)
+            if is_pool_unavailable(e):
+                _pool_outage_log(
+                    logger,
+                    logging.WARNING,
+                    "Sync worker: hub temporarily unavailable; skipping pass",
+                )
+            else:
+                logger.exception("Sync worker pass error: %s", e)
 
         try:
             await asyncio.wait_for(shutdown_flag.wait(), timeout=interval)

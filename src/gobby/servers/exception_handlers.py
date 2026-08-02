@@ -10,8 +10,12 @@ from fastapi import FastAPI, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
 from gobby.servers.responses import JSONResponse
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.utils.logging import ThrottledLogger
 
 logger = logging.getLogger(__name__)
+
+_pool_outage_log = ThrottledLogger()
 
 
 def _is_hook_path(path: str) -> bool:
@@ -87,6 +91,22 @@ def register_exception_handlers(app: FastAPI) -> None:
                 content={
                     "status": "ok",
                     "warning": "client_disconnected",
+                },
+            )
+
+        if is_pool_unavailable(exc):
+            _pool_outage_log(
+                logger,
+                logging.WARNING,
+                "Hub temporarily unavailable for HTTP request: %s %s",
+                request.method,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": "Hub temporarily unavailable",
                 },
             )
 

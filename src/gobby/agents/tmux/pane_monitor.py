@@ -22,6 +22,8 @@ from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, Tmux
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 from gobby.storage.attention import session_attention_entry_id
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 _RECENTLY_ENDED_TTL = 60.0
 _AGENT_RUN_PAGE_SIZE = 100
 _INTERACTIVE_SESSION_PAGE_SIZE = 100
+_pool_outage_log = ThrottledLogger()
 
 
 class TmuxPaneMonitor:
@@ -180,8 +183,15 @@ class TmuxPaneMonitor:
         try:
             arm = LocalAgentRunManager(self._session_manager.db)
             all_runs = await self._list_active_runs(arm)
-        except Exception:
-            logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
+        except Exception as exc:
+            if is_pool_unavailable(exc):
+                _pool_outage_log(
+                    logger,
+                    logging.WARNING,
+                    "TmuxPaneMonitor: hub temporarily unavailable; skipping pass",
+                )
+            else:
+                logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
             return
         await self._check_attention_panes(active_runs=all_runs)
         tmux_agents = [r for r in all_runs if r.tmux_session_name]

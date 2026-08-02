@@ -1,5 +1,6 @@
 """HTTP server exception handler tests."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -101,3 +102,41 @@ class TestExceptionHandlers:
         assert response.json() == {"status": "ok", "warning": "client_disconnected"}
         assert mock_logger.error.called is False
         assert mock_logger.debug.called is True
+
+    def test_global_exception_handler_maps_pool_outage_to_503(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Pool outages return 503 with a short body and log at WARNING."""
+        from psycopg_pool import PoolTimeout
+
+        import gobby.servers.exception_handlers as handlers_module
+
+        handlers_module._pool_outage_log._last_logged.clear()
+        services = ServiceContainer(
+            config=DaemonConfig(),
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+
+        @server.app.get("/pool-outage")
+        def trigger_pool_outage() -> None:
+            raise PoolTimeout("couldn't get a connection after 5.00 sec")
+
+        client = TestClient(server.app, raise_server_exceptions=False)
+
+        with patch("gobby.servers.exception_handlers.logger") as mock_logger:
+            response = client.get("/pool-outage")
+            second = client.get("/pool-outage")
+
+        assert response.status_code == 503
+        assert second.status_code == 503
+        assert response.json() == {"status": "error", "message": "Hub temporarily unavailable"}
+        assert mock_logger.error.called is False
+        warning_calls = [c for c in mock_logger.log.call_args_list if c.args[0] == logging.WARNING]
+        assert len(warning_calls) == 1

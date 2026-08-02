@@ -57,6 +57,34 @@ POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+_POOL_UNAVAILABLE_MESSAGE_MARKERS = (
+    "couldn't get a connection",
+    "terminating connection",
+    "connection is closed",
+    "connection not open",
+)
+
+
+def is_pool_unavailable(exc: BaseException) -> bool:
+    """Classify an exception as a transient hub pool outage.
+
+    Matches PoolTimeout and psycopg operational failures whose message
+    indicates dead or unavailable pool connections, including causes wrapped
+    by ``raise ... from ...``.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, PoolTimeout):
+            return True
+        if isinstance(current, psycopg.OperationalError):
+            message = str(current).lower()
+            if any(marker in message for marker in _POOL_UNAVAILABLE_MESSAGE_MARKERS):
+                return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 class _TransactionContext(Protocol):
     def __call__(

@@ -28,6 +28,7 @@ from gobby.sessions.tmux_context import (
     get_tmux_socket_name,
     get_tmux_window_id,
 )
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     OwnershipState,
@@ -36,6 +37,7 @@ from gobby.terminal_ownership import (
     resolve_pane_ownership,
     terminal_session_identity,
 )
+from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
@@ -45,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # How long a session_id stays in the recently-handled set (seconds)
 _RECENTLY_HANDLED_TTL = 120.0
+_pool_outage_log = ThrottledLogger()
 
 # Default polling interval (seconds)
 _DEFAULT_POLL_INTERVAL = 30.0
@@ -376,11 +379,18 @@ class SessionLivenessMonitor:
                 """,
                 (list(TERMINAL_OWNER_STATUSES),),
             )
-        except Exception:
-            logger.warning(
-                "SessionLivenessMonitor: failed to query active sessions",
-                exc_info=True,
-            )
+        except Exception as exc:
+            if is_pool_unavailable(exc):
+                _pool_outage_log(
+                    logger,
+                    logging.WARNING,
+                    "SessionLivenessMonitor: hub temporarily unavailable; skipping pass",
+                )
+            else:
+                logger.warning(
+                    "SessionLivenessMonitor: failed to query active sessions",
+                    exc_info=True,
+                )
             return []
 
         result: list[_TerminalLivenessRecord] = []

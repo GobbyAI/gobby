@@ -17,6 +17,7 @@ from gobby.storage.external_issue_sync import (
     ExternalIssueSyncStatusStore,
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github_issue_sync import (
@@ -26,8 +27,11 @@ from gobby.sync.github_issue_sync import (
 from gobby.sync.github_validation import is_github_rate_limit_error
 from gobby.sync.linear import LinearSyncService
 from gobby.utils.datetime import utc_now
+from gobby.utils.logging import ThrottledLogger
 
 logger = logging.getLogger(__name__)
+
+_pool_outage_log = ThrottledLogger()
 
 
 class ExternalIssueSyncCoordinator:
@@ -81,8 +85,15 @@ class ExternalIssueSyncCoordinator:
                     await self.refresh()
                 except asyncio.CancelledError:
                     raise
-                except Exception:
-                    logger.exception("External issue sync configuration refresh failed")
+                except Exception as exc:
+                    if is_pool_unavailable(exc):
+                        _pool_outage_log(
+                            logger,
+                            logging.WARNING,
+                            "External issue sync: hub temporarily unavailable; skipping pass",
+                        )
+                    else:
+                        logger.exception("External issue sync configuration refresh failed")
                 try:
                     await asyncio.wait_for(shutdown.wait(), timeout=self.refresh_interval_seconds)
                 except TimeoutError:

@@ -571,3 +571,27 @@ class TestGetActiveTerminalSessions:
         monitor = SessionLivenessMonitor(session_storage=cast(Any, storage))
 
         assert monitor._get_active_terminal_sessions() == []
+
+    def test_pool_outage_logs_throttled_warning(
+        self,
+        storage: _Storage,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        from psycopg_pool import PoolTimeout
+
+        import gobby.sessions.liveness_monitor as liveness_module
+
+        liveness_module._pool_outage_log._last_logged.clear()
+        storage.db.fetchall.side_effect = PoolTimeout("couldn't get a connection after 5.00 sec")
+        monitor = SessionLivenessMonitor(session_storage=cast(Any, storage))
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.sessions.liveness_monitor"):
+            assert monitor._get_active_terminal_sessions() == []
+            assert monitor._get_active_terminal_sessions() == []
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "hub temporarily unavailable; skipping pass" in warnings[0].getMessage()
+        assert warnings[0].exc_info is None

@@ -494,3 +494,38 @@ async def test_github_recovery_skips_triage_when_disabled() -> None:
 
     service.recover_project.assert_awaited_once_with(project.id)
     triage_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_logs_throttled_warning_on_pool_outage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PoolTimeout during refresh logs a throttled WARNING and the loop continues."""
+    import logging
+
+    from psycopg_pool import PoolTimeout
+
+    import gobby.sync.external_coordinator as coordinator_module
+
+    coordinator_module._pool_outage_log._last_logged.clear()
+    coordinator, _ = _coordinator([_project()])
+    coordinator.refresh_interval_seconds = 0.01
+    refresh_mock = AsyncMock(side_effect=PoolTimeout("couldn't get a connection after 5.00 sec"))
+
+    shutdown = asyncio.Event()
+
+    async def stop_after_passes() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    with (
+        patch.object(coordinator, "refresh", refresh_mock),
+        caplog.at_level(logging.DEBUG, logger="gobby.sync.external_coordinator"),
+    ):
+        await asyncio.gather(coordinator.run(shutdown), stop_after_passes())
+
+    assert refresh_mock.await_count >= 2
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "hub temporarily unavailable; skipping pass" in warnings[0].getMessage()
+    assert warnings[0].exc_info is None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import UTC, datetime
@@ -359,3 +360,43 @@ async def test_callback_exception_no_crash() -> None:
     # Callback was called but raised; session should still be marked recently ended
     assert "sess-err" in monitor._recently_ended
     assert len(monitor._recently_ended) == 1
+
+
+@pytest.mark.asyncio
+async def test_pool_outage_logs_throttled_warning_without_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PoolTimeout from the DB layer logs a throttled WARNING and skips the pass."""
+    from psycopg_pool import PoolTimeout
+
+    import gobby.agents.tmux.pane_monitor as pane_monitor_module
+
+    callback = MagicMock()
+    monitor = _make_monitor_with_db(callback)
+    pane_monitor_module._pool_outage_log._last_logged.clear()
+
+    with (
+        patch(
+            "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+            return_value=[],
+        ),
+        patch(
+            "gobby.storage.agents.LocalAgentRunManager",
+        ) as mock_arm_cls,
+        caplog.at_level(logging.DEBUG, logger="gobby.agents.tmux.pane_monitor"),
+    ):
+        mock_arm_cls.return_value.list_active.side_effect = PoolTimeout(
+            "couldn't get a connection after 5.00 sec"
+        )
+        await monitor._check_panes()
+        await monitor._check_panes()
+
+    callback.assert_not_called()
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "hub temporarily unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "hub temporarily unavailable; skipping pass" in warnings[0].getMessage()
+    assert warnings[0].exc_info is None

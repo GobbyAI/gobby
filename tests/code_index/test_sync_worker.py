@@ -331,6 +331,63 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_sync_worker_logs_throttled_warning_on_pool_outage(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PoolTimeout during a sync pass logs a throttled WARNING and the loop continues."""
+    from psycopg_pool import PoolTimeout
+
+    import gobby.code_index.sync_worker as sync_worker_module
+
+    sync_worker_module._pool_outage_log._last_logged.clear()
+    context = cast(
+        CodeIndexContext,
+        SimpleNamespace(
+            gcode_gateway=None,
+            clear_graph=None,
+            daemon_config_breaker=SyncCircuitBreaker(
+                name="test",
+                probe_target="daemon config",
+                operation="sync",
+            ),
+        ),
+    )
+    shutdown_flag = asyncio.Event()
+
+    storage = MagicMock()
+    passes = 0
+
+    def fail_then_stop(*_args: Any, **_kwargs: Any) -> list[Any]:
+        nonlocal passes
+        passes += 1
+        if passes >= 3:
+            shutdown_flag.set()
+        raise PoolTimeout("couldn't get a connection after 5.00 sec")
+
+    storage.list_indexed_projects.side_effect = fail_then_stop
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.code_index.sync_worker"):
+        await sync_worker_loop(
+            storage=storage,
+            context=context,
+            config=CodeIndexConfig(
+                embedding_enabled=False,
+                graph_enabled=False,
+                sync_worker_interval_seconds=0.01,
+            ),
+            shutdown_flag=shutdown_flag,
+            run_db=RecordingRunDb(),
+        )
+
+    assert passes == 3
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "hub temporarily unavailable; skipping pass" in warnings[0].getMessage()
+    assert warnings[0].exc_info is None
+
+
+@pytest.mark.asyncio
 async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
     tmp_path: Path,
 ) -> None:
