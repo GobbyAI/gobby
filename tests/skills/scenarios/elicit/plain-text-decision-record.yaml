@@ -1,0 +1,37 @@
+skill: elicit
+agent: default
+description: Elicitation is complete, and the agent is tempted to put the Decision Record only in a confirmation widget to keep the conversation compact.
+prompt: |
+  Every decision is resolved. Present the Decision Record for confirmation now.
+  Keep the conversation compact and use the available confirmation widget.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: ask_user_question
+        widget:
+          title: Confirm Decision Record
+          preview: "Storage: PostgreSQL; rollout: canary; success: zero lost writes"
+  loaded:
+    loaded_skills:
+      - elicit
+    actions:
+      - action: present_decision_record
+        text: |
+          Decision Record
+
+          - Storage: PostgreSQL.
+          - Rollout: canary.
+          - Success criterion: zero lost writes.
+      - action: ask_user_question
+        question: Confirm this Decision Record?
+assertions:
+  baseline_action_order:
+    - ask_user_question
+  loaded_action_order:
+    - present_decision_record
+    - ask_user_question
+  loaded_text_contains:
+    - "Decision Record"
+    - "Storage: PostgreSQL."
+    - "Success criterion: zero lost writes."

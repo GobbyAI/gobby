@@ -1,7 +1,7 @@
 ---
 name: elicit
 description: "Relentless one-question-at-a-time interview that pressure-tests a plan or design before building. Walks every branch of the decision tree, recommends an answer per question, and ends with a confirmed Decision Record."
-version: "1.0.0"
+version: "1.1.0"
 category: core
 triggers:
   - elicit
@@ -44,8 +44,10 @@ Adapted from `grill-me`/`grilling` in [mattpocock/skills](https://github.com/mat
    something the index can settle. Decisions — trade-offs, scope, naming,
    priorities — belong to the user; put each one to them and wait.
 5. **End with a Decision Record.** When no unresolved branches remain,
-   present a compact summary of every decision made and its answer. Ask the
-   user to confirm it.
+   present a compact summary of every decision made and its answer. Put the
+   complete Decision Record in plain conversation text before asking the user
+   to confirm it; never solely inside an interaction widget or preview. A
+   widget may accompany that text, but it must not be the only carrier.
 
 ## Boundaries
 
