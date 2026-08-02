@@ -192,6 +192,7 @@ class PostgresHubDatabase:
             min_size=pool_config.min_size,
             max_size=pool_config.max_size,
             timeout=pool_config.acquire_timeout_seconds,
+            max_lifetime=pool_config.max_lifetime_seconds,
             kwargs={
                 "application_name": self._application_name,
                 "connect_timeout": 10,

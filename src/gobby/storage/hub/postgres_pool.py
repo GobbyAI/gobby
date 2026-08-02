@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -51,7 +52,8 @@ from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
 
-POOL_TIMEOUT_RETRY_BACKOFF_SECONDS = 0.05
+POOL_TIMEOUT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.5, 1.0, 2.0)
+POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -70,27 +72,48 @@ def pool_connection(
     pool: ConnectionPool[Any],
     pool_stats: Callable[[], dict[str, Any]],
 ) -> Iterator[psycopg.Connection[Any]]:
-    """Acquire a pooled connection, retrying once after a timeout."""
+    """Acquire a pooled connection, retrying with backoff after a timeout.
+
+    Dead connections linger after a hub restart, so each retry first asks the
+    pool to check (and recycle) its connections, then waits with exponential
+    backoff plus jitter before the next acquisition attempt.
+    """
     with ExitStack() as stack:
         try:
             conn = stack.enter_context(pool.connection())
         except PoolTimeout:
-            logger.warning(
-                "PostgreSQL hub pool acquisition timed out; retrying once: pool_stats=%s",
-                pool_stats(),
-            )
-            pool.check()
-            time.sleep(POOL_TIMEOUT_RETRY_BACKOFF_SECONDS)
-            try:
-                conn = stack.enter_context(pool.connection())
-            except PoolTimeout:
-                logger.warning(
-                    "PostgreSQL hub pool acquisition retry failed: pool_stats=%s",
-                    pool_stats(),
-                    exc_info=True,
-                )
-                raise
+            conn = _acquire_with_backoff(stack, pool, pool_stats)
         yield conn
+
+
+def _acquire_with_backoff(
+    stack: ExitStack,
+    pool: ConnectionPool[Any],
+    pool_stats: Callable[[], dict[str, Any]],
+) -> psycopg.Connection[Any]:
+    """Retry pool acquisition after an initial PoolTimeout with backoff."""
+    for attempt, backoff in enumerate(POOL_TIMEOUT_RETRY_BACKOFF_SECONDS, start=1):
+        logger.debug(
+            "PostgreSQL hub pool acquisition timed out (attempt %d/%d); "
+            "retrying in %.2fs: pool_stats=%s",
+            attempt,
+            len(POOL_TIMEOUT_RETRY_BACKOFF_SECONDS),
+            backoff,
+            pool_stats(),
+        )
+        pool.check()
+        time.sleep(backoff * (1 + random.uniform(0, POOL_TIMEOUT_RETRY_JITTER_RATIO)))
+        try:
+            return stack.enter_context(pool.connection())
+        except PoolTimeout:
+            continue
+    logger.error(
+        "PostgreSQL hub pool acquisition failed after %d retries: pool_stats=%s",
+        len(POOL_TIMEOUT_RETRY_BACKOFF_SECONDS),
+        pool_stats(),
+        exc_info=True,
+    )
+    raise
 
 
 @contextmanager

@@ -115,6 +115,7 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
         "max_size": 20,
         "acquire_timeout_seconds": 5.0,
         "open_timeout_seconds": 30.0,
+        "max_lifetime_seconds": 300.0,
     }
     assert read_bootstrap_database_url(temp_dir) == database_url
 
@@ -145,6 +146,7 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
             "max_size": 20,
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
+            "max_lifetime_seconds": 300.0,
         }
 
 

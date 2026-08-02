@@ -401,14 +401,14 @@ def test_transaction_pool_timeout_checks_pool_before_retry(
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
 
-    with caplog.at_level(logging.WARNING, logger=module.__name__):
+    with caplog.at_level(logging.DEBUG, logger="gobby.storage.hub.postgres_pool"):
         with db.transaction():
             pass
 
     pool = pool_holder["pool"]
     assert pool.connection_calls == 2
     assert pool.check_calls == 1
-    assert "retrying once" in caplog.text
+    assert "timed out (attempt 1/" in caplog.text
     assert "pool_size" in caplog.text
 
 
@@ -451,15 +451,15 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
 
-    with caplog.at_level(logging.WARNING, logger=module.__name__):
+    with caplog.at_level(logging.DEBUG, logger="gobby.storage.hub.postgres_pool"):
         with pytest.raises(module._postgres_pool.PoolTimeout):
             with db.transaction():
                 pass
 
     pool = pool_holder["pool"]
-    assert pool.connection_calls == 2
-    assert pool.check_calls == 1
-    assert "retry failed" in caplog.text
+    assert pool.connection_calls == 4
+    assert pool.check_calls == 3
+    assert "failed after 3 retries" in caplog.text
     assert "pool_size" in caplog.text
 
 

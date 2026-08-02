@@ -14,6 +14,7 @@ class PostgresPoolConfig:
     max_size: int = 20
     acquire_timeout_seconds: float = 5.0
     open_timeout_seconds: float = 30.0
+    max_lifetime_seconds: float = 300.0
 
     def __post_init__(self) -> None:
         _validate_positive_int(self.min_size, "postgres_pool.min_size")
@@ -26,6 +27,10 @@ class PostgresPoolConfig:
             self.open_timeout_seconds,
             "postgres_pool.open_timeout_seconds",
         )
+        _validate_positive_float(
+            self.max_lifetime_seconds,
+            "postgres_pool.max_lifetime_seconds",
+        )
         if self.min_size > self.max_size:
             raise ValueError("postgres_pool.min_size must be less than or equal to max_size")
 
@@ -36,6 +41,7 @@ class PostgresPoolConfig:
             "max_size": self.max_size,
             "acquire_timeout_seconds": self.acquire_timeout_seconds,
             "open_timeout_seconds": self.open_timeout_seconds,
+            "max_lifetime_seconds": self.max_lifetime_seconds,
         }
 
 
@@ -57,6 +63,10 @@ def postgres_pool_config_from_mapping(data: object) -> PostgresPoolConfig:
         open_timeout_seconds=_parse_float(
             data.get("open_timeout_seconds", defaults.open_timeout_seconds),
             "postgres_pool.open_timeout_seconds",
+        ),
+        max_lifetime_seconds=_parse_float(
+            data.get("max_lifetime_seconds", defaults.max_lifetime_seconds),
+            "postgres_pool.max_lifetime_seconds",
         ),
     )
 
