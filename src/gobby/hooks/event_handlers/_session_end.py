@@ -189,7 +189,7 @@ class SessionEndMixin(EventHandlersBase):
         # AFTER_AGENT/STOP as paused.
         if session_id and self._session_manager:
             try:
-                self._session_manager.update_status(session_id, end_status)
+                self._session_manager.update_status_if_non_terminal(session_id, end_status)
             except Exception as e:
                 self.logger.warning("Failed to update session %s status on end: %s", session_id, e)
 

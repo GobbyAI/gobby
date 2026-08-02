@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_lifecycle import _build_empty_session_prune_reference_guards
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._field_update import _FieldUpdateMixin
 
 pytestmark = pytest.mark.unit
 
@@ -46,6 +49,23 @@ def test_empty_session_prune_reference_guards_use_postgres_information_schema() 
     assert guards == (
         "NOT EXISTS (SELECT 1 FROM sessions ref WHERE ref.parent_session_id = sessions.id)",
     )
+
+
+def test_update_status_if_non_terminal_loses_race_to_expiration() -> None:
+    manager = MagicMock()
+    manager.get.return_value.status = "active"
+    manager.db.execute.return_value.rowcount = 0
+
+    updated = _FieldUpdateMixin.update_status_if_non_terminal(manager, "session-1", "paused")
+
+    assert updated is None
+    manager.get.assert_called_once_with("session-1")
+    manager._notify_session_change.assert_not_called()
+    query, params = manager.db.execute.call_args.args
+    assert "status != ALL(%s)" in query
+    assert params[0] == "paused"
+    assert params[2] == "session-1"
+    assert set(params[3]) == {"expired", "deleted"}
 
 
 def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(

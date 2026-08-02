@@ -16,6 +16,7 @@ from gobby.utils.datetime import utc_now
 
 from ._constants import (
     SYSTEM_SESSION_ID,
+    TERMINAL_SESSION_STATUSES,
     ensure_system_session,
     get_logger,
     past_terminal_revival_horizon,
@@ -56,6 +57,37 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
                 "UPDATE sessions SET status = %s, updated_at = %s WHERE id = %s",
                 (status, now, session_id),
             )
+        updated = self.get(session_id)
+        if updated is not None:
+            event = "session_expired" if status == "expired" else "session_updated"
+            self._notify_session_change(event, session_id)
+            if current is not None and current.status != status:
+                self._notify_status_transition(
+                    SessionStatusTransition.from_session(updated, transitioned_at=now)
+                )
+        return updated
+
+    def update_status_if_non_terminal(
+        self: _ManagerState,
+        session_id: str,
+        status: str,
+    ) -> Session | None:
+        """Persist a status only while the stored session remains non-terminal."""
+        validate_session_status_transition(None, status)
+        current = self.get(session_id)
+        now = utc_now()
+        with self.db.transaction():
+            cursor = self.db.execute(
+                """
+                UPDATE sessions
+                SET status = %s, updated_at = %s
+                WHERE id = %s AND status != ALL(%s)
+                """,
+                (status, now, session_id, list(TERMINAL_SESSION_STATUSES)),
+            )
+        if cursor.rowcount <= 0:
+            return None
+
         updated = self.get(session_id)
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"
