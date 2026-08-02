@@ -27,6 +27,7 @@ _POSTGRES_TEST_DB = "gobby_test"
 _POSTGRES_TEST_IMAGE = "gobby-postgres-local:18-pgsearch"
 _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
+_POSTGRES_TEST_TMPFS = "/var/lib/postgresql:rw,size=3g"
 _POSTGRES_TEST_USER = "gobby_test"
 _POSTGRES_SKIP_REASONS = [
     "DATABASE_URL must point at an isolated PostgreSQL test database",
@@ -88,7 +89,7 @@ def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -
     assert postgres["ports"] == [
         f"{_compose_default(_POSTGRES_TEST_PORT_ENV, _POSTGRES_TEST_PORT)}:5432"
     ]
-    assert postgres["tmpfs"] == ["/var/lib/postgresql"]
+    assert postgres["tmpfs"] == [_POSTGRES_TEST_TMPFS]
 
     healthcheck = _mapping(postgres["healthcheck"])
     assert healthcheck["test"] == [
@@ -149,7 +150,7 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
         '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
         '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
-        "--tmpfs /var/lib/postgresql",
+        f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
         *_PGAUDIT_COMMAND_OPTIONS,
@@ -207,7 +208,7 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
         '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
         '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
         '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
-        "--tmpfs /var/lib/postgresql",
+        f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
         *_PGAUDIT_COMMAND_OPTIONS,
