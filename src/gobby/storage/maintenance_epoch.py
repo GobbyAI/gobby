@@ -184,13 +184,13 @@ def open_maintenance_epoch(
     quiescence_deadline_seconds: float = _QUIESCENCE_DEADLINE_SECONDS,
     quiescence_poll_seconds: float = _QUIESCENCE_POLL_SECONDS,
 ) -> MaintenanceEpoch:
-    """Commit the fence, terminate older clients, then prove quiescence.
+    """Commit the fence, terminate older Gobby clients, then prove quiescence.
 
     ``pg_terminate_backend`` is asynchronous, so terminated backends may
     linger briefly in ``pg_stat_activity``. Quiescence is therefore polled
-    up to ``quiescence_deadline_seconds``. If clients still remain, the
-    just-committed fence is released before raising so a failed open can
-    never strand live clients behind an ownerless epoch.
+    up to ``quiescence_deadline_seconds``. Every failure after the fence commit
+    releases it before propagating so an unsuccessful open cannot strand clients
+    behind an ownerless epoch.
     """
     _validate_campaign(campaign)
     if not opened_by.strip():
@@ -226,62 +226,66 @@ def open_maintenance_epoch(
             raise MaintenanceEpochError("The maintenance epoch insert returned no row")
 
         connection.commit()
-        deadline = time.monotonic() + quiescence_deadline_seconds
-        while True:
-            connection.execute(
-                """
-                SELECT pg_catalog.pg_terminate_backend(activity.pid)
-                FROM pg_catalog.pg_stat_activity AS activity
-                WHERE activity.datname = current_database()
-                  AND activity.pid <> pg_backend_pid()
-                  AND activity.backend_type = 'client backend'
-                """
-            ).fetchall()
-            # PostgreSQL caches activity statistics until the transaction snapshot is cleared.
-            connection.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
-            remaining = connection.execute(
-                """
-                SELECT COUNT(*) AS foreign_connections
-                FROM pg_catalog.pg_stat_activity AS activity
-                WHERE activity.datname = current_database()
-                  AND activity.pid <> pg_backend_pid()
-                  AND activity.backend_type = 'client backend'
-                """
-            ).fetchone()
-            foreign_connections = (
-                int(remaining["foreign_connections"]) if remaining is not None else 0
-            )
-            if not foreign_connections:
-                return _epoch_from_row(row)
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(quiescence_poll_seconds)
         try:
-            _release_fence_after_failed_open(connection, epoch_id)
-        except psycopg.Error as release_error:
+            deadline = time.monotonic() + quiescence_deadline_seconds
+            while True:
+                connection.execute(
+                    """
+                    SELECT pg_catalog.pg_terminate_backend(activity.pid)
+                    FROM pg_catalog.pg_stat_activity AS activity
+                    WHERE activity.datname = current_database()
+                      AND activity.pid <> pg_backend_pid()
+                      AND activity.backend_type = 'client backend'
+                      AND activity.application_name LIKE 'gobby%'
+                    """
+                ).fetchall()
+                # PostgreSQL caches activity statistics until the transaction snapshot is cleared.
+                connection.execute("SELECT pg_catalog.pg_stat_clear_snapshot()")
+                remaining = connection.execute(
+                    """
+                    SELECT COUNT(*) AS foreign_connections
+                    FROM pg_catalog.pg_stat_activity AS activity
+                    WHERE activity.datname = current_database()
+                      AND activity.pid <> pg_backend_pid()
+                      AND activity.backend_type = 'client backend'
+                      AND activity.application_name LIKE 'gobby%'
+                    """
+                ).fetchone()
+                foreign_connections = (
+                    int(remaining["foreign_connections"]) if remaining is not None else 0
+                )
+                if not foreign_connections:
+                    return _epoch_from_row(row)
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(quiescence_poll_seconds)
             raise MaintenanceQuiescenceError(
-                f"Maintenance epoch {epoch_id} could not quiesce "
-                f"({foreign_connections} foreign client connection(s) remain) "
-                "and the fence could not be released; "
-                "run `gobby hub-maintenance abort`."
-            ) from release_error
-        raise MaintenanceQuiescenceError(
-            f"Maintenance epoch {epoch_id} could not quiesce: "
-            f"{foreign_connections} foreign client connection(s) remained after "
-            f"{quiescence_deadline_seconds:.1f}s; the fence was released."
-        )
+                f"Maintenance epoch {epoch_id} could not quiesce: "
+                f"{foreign_connections} Gobby client connection(s) remained after "
+                f"{quiescence_deadline_seconds:.1f}s; the fence was released."
+            )
+        except BaseException:
+            try:
+                _release_fence_after_failed_open(connection, epoch_id)
+            except psycopg.Error as release_error:
+                raise MaintenanceQuiescenceError(
+                    f"Maintenance epoch {epoch_id} failed to open and the fence "
+                    "could not be released; run `gobby hub-maintenance abort`."
+                ) from release_error
+            raise
 
 
 def _release_fence_after_failed_open(
     connection: psycopg.Connection[dict[str, Any]],
     epoch_id: uuid.UUID,
 ) -> None:
-    """Roll the fence back on the opening connection after failed quiescence."""
+    """Roll the fence back on the opening connection after any failed open."""
+    connection.rollback()
     connection.execute(
         """
         UPDATE maintenance_epochs
         SET released_at = NOW(),
-            released_by_command = 'open-maintenance-epoch quiescence failure'
+            released_by_command = 'open-maintenance-epoch failure'
         WHERE id = %s
           AND released_at IS NULL
         """,
