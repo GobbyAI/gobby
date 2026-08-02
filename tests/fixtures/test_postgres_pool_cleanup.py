@@ -1,5 +1,8 @@
 """Regression tests for PostgreSQL fixture pool ownership."""
 
+import inspect
+from collections.abc import Callable, Iterator
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,7 +20,11 @@ def test_postgres_db_closes_pool_when_setup_reset_fails(
     monkeypatch.setattr(postgres_fixtures, "PostgresHubDatabase", database_type)
     monkeypatch.setattr(postgres_fixtures, "_reset_schema", reset_schema)
 
-    fixture = postgres_fixtures.postgres_db.__wrapped__(
+    fixture_factory = cast(
+        Callable[..., Iterator[object]],
+        inspect.unwrap(postgres_fixtures.postgres_db),
+    )
+    fixture = fixture_factory(
         "postgresql://test:test@127.0.0.1:60892/test",
         "gobby_test_pool_cleanup",
         {},

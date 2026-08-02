@@ -4,9 +4,6 @@ import logging
 import os
 import subprocess
 import tempfile
-import traceback
-import weakref
-from collections import Counter
 from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,106 +17,9 @@ import pytest
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _trace_postgres_pool_ownership() -> Iterator[dict[str, Any] | None]:
-    """Trace and clean unclosed PostgreSQL pools for leak diagnosis."""
-    if os.environ.get("GOBBY_TRACE_POSTGRES_POOLS") != "1":
-        yield
-        return
-
-    from gobby.storage.hub.postgres import PostgresHubDatabase
-
-    original_init = PostgresHubDatabase.__init__
-    original_close = PostgresHubDatabase.close
-    records: list[dict[str, Any]] = []
-    state = {"records": records}
-
-    def mark_finalized(record: dict[str, Any]) -> None:
-        if not record["closed"]:
-            record["finalized_unclosed"] = True
-            record["leaked"] = True
-
-    def traced_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        original_init(self, *args, **kwargs)
-        record: dict[str, Any] = {
-            "closed": False,
-            "finalized_unclosed": False,
-            "leaked": False,
-            "ref": weakref.ref(self),
-            "stack": traceback.extract_stack()[:-1],
-        }
-        self._pool_trace_record = record
-        records.append(record)
-        weakref.finalize(self, mark_finalized, record)
-
-    def traced_close(self: Any) -> None:
-        original_close(self)
-        record = getattr(self, "_pool_trace_record", None)
-        if record is not None:
-            record["closed"] = True
-
-    PostgresHubDatabase.__init__ = traced_init
-    PostgresHubDatabase.close = traced_close
-    try:
-        yield state
-    finally:
-        leaked = [record for record in records if record["leaked"]]
-
-        def call_site(record: dict[str, Any]) -> str:
-            for frame in reversed(record["stack"]):
-                if frame.filename.endswith("tests/conftest.py"):
-                    continue
-                if frame.filename.endswith("src/gobby/storage/hub/postgres.py"):
-                    continue
-                return f"{frame.filename}:{frame.lineno} in {frame.name}"
-            return "<unknown>"
-
-        counts = Counter(call_site(record) for record in leaked)
-        print(
-            f"\nPOSTGRES_POOL_TRACE constructed={len(records)} leaked={len(leaked)} "
-            f"finalized_unclosed={sum(bool(r['finalized_unclosed']) for r in records)}"
-        )
-        for site, count in counts.most_common():
-            print(f"POSTGRES_POOL_LEAK count={count} site={site}")
-            first = next(record for record in leaked if call_site(record) == site)
-            print("".join(traceback.format_list(first["stack"])))
-
-        for record in leaked:
-            database = record["ref"]()
-            if database is not None:
-                original_close(database)
-        PostgresHubDatabase.__init__ = original_init
-        PostgresHubDatabase.close = original_close
-
-
-@pytest.fixture(autouse=True)
-def _close_traced_postgres_pools(
-    _trace_postgres_pool_ownership: dict[str, Any] | None,
-) -> Iterator[None]:
-    """Close pools a test constructed without transferring ownership."""
-    if _trace_postgres_pool_ownership is None:
-        yield
-        return
-
-    records = _trace_postgres_pool_ownership["records"]
-    start = len(records)
-    yield
-    for record in records[start:]:
-        if record["closed"]:
-            continue
-        record["leaked"] = True
-        database = record["ref"]()
-        if database is not None:
-            database.close()
-
-
 @pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""
-    if os.environ.get("GOBBY_TRACE_POSTGRES_POOLS") == "1":
-        yield
-        return
-
     from gobby.storage.hub.postgres import _OPEN_DATABASES
 
     open_before = set(_OPEN_DATABASES)
