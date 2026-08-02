@@ -326,8 +326,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 session_id,
             )
 
-        # Reconcile stale claimed_tasks on semantic turn-end before rule evaluation
-        if _is_turn_end_event(event.event_type):
+        # SessionStart is the hydration boundary after resume/compaction. Reconcile
+        # there so the first tool gate sees authoritative DB claims.
+        if event.event_type == HookEventType.SESSION_START or _is_turn_end_event(event.event_type):
             run_observer(
                 "reconcile_claimed_tasks",
                 reconcile_claimed_tasks,
