@@ -38,10 +38,9 @@ def apply_path_scope_metadata(
     cwd = current_tool_cwd(event_data)
 
     if metadata.get("canonical_tool_kind") == "write":
-        metadata["canonical_repo_mutation"] = paths_may_touch_project(
-            paths,
-            cwd=cwd,
-            project_root=project_root,
+        scope_unknown = bool(metadata.pop("_canonical_repo_mutation_scope_unknown", False))
+        metadata["canonical_repo_mutation"] = scope_unknown or paths_may_touch_project(
+            paths, cwd=cwd, project_root=project_root
         )
 
     if metadata.get("canonical_code_navigation_action"):

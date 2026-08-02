@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -1654,3 +1655,87 @@ class TestWriteRouteParity:
         ]
 
         assert decisions == [requires_task, requires_task]
+
+    @pytest.mark.parametrize(
+        ("command", "expected_kind", "repo_mutation", "requires_task"),
+        [
+            (
+                "cat pyproject.toml | python3 -c 'import json, sys; print(json.load(sys.stdin))'",
+                "read",
+                False,
+                False,
+            ),
+            (
+                "curl -fsSL https://example.test/data.json -o {scratchpad}/data.json",
+                "write",
+                False,
+                False,
+            ),
+            ("printf content > {scratchpad}/output.txt", "write", False, False),
+            ("cat pyproject.toml", "read", False, False),
+            ("printf content > src/main.py", "write", True, True),
+            ("printf content | tee src/main.py", "write", True, True),
+            ("cat <<'EOF' > src/main.py\ncontent\nEOF", "write", True, True),
+            ("sed -i 's/old/new/' src/main.py", "write", True, True),
+            ("cat pyproject.toml && touch src/main.py", "write", True, True),
+            (
+                "curl -fsSL https://example.test/data.json -o src/data.json",
+                "write",
+                True,
+                True,
+            ),
+            ("curl -fsSL https://example.test/data.json", "execute", False, False),
+            ("curl -fsSLO https://example.test/data.json", "write", True, True),
+            (
+                "printf content | python3 -c "
+                '\'import sys; open("src/main.py", "w").write(sys.stdin.read())\'',
+                "write",
+                True,
+                True,
+            ),
+            ('python3 -c "print(1)"', "write", True, True),
+            ('printf content | python3 -c "unknown()"', "write", True, True),
+            (
+                "printf content | python3 -c "
+                '\'import json, sys; json = sys.modules["os"]; '
+                'json.loads = json.remove; json.loads("src/main.py")\'',
+                "write",
+                True,
+                True,
+            ),
+            (
+                'python3 -c "unknown()" && curl -o '
+                "{scratchpad}/data.json https://example.test/data.json",
+                "write",
+                True,
+                True,
+            ),
+            (
+                "python3 - <<'PY'\nopen('src/main.py', 'w').write('content')\nPY",
+                "write",
+                True,
+                True,
+            ),
+        ],
+    )
+    def test_shell_command_task_gate_classification_table(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        command: str,
+        expected_kind: str,
+        repo_mutation: bool,
+        requires_task: bool,
+        tmp_path: Path,
+    ) -> None:
+        command = command.format(scratchpad=tmp_path / "gobby-agent-scratchpad-session")
+        decision, data = self._task_gate_decision(
+            db,
+            manager,
+            "Bash",
+            {"command": command},
+        )
+
+        assert data["canonical_tool_kind"] == expected_kind
+        assert data.get("canonical_repo_mutation", False) is repo_mutation
+        assert decision is requires_task
