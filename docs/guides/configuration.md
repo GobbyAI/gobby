@@ -67,7 +67,6 @@ in `wiki.roots` load as the sibling `<project>/wiki` vault.
 available:
 
 ```yaml
-hub_backend: postgres
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_pool:
   min_size: 2
@@ -81,9 +80,10 @@ ui_port: 60889
 auth_mode: required
 ```
 
-`database_url` is the required connection string for Gobby's Docker-managed
-PostgreSQL container. PostgreSQL is the only runtime hub. The host must be a
-local or loopback address; external PostgreSQL servers are not supported.
+`database_url` is the sole PostgreSQL selector and the required connection
+string for Gobby's Docker-managed container. PostgreSQL is the only runtime
+hub. The host must be a local or loopback address; external PostgreSQL servers
+are not supported.
 Startup fails when the DSN or managed service configuration is missing.
 
 `postgres_pool` configures the daemon's PostgreSQL client pool. All four values

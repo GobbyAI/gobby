@@ -20,8 +20,7 @@ Runtime indexing/search requires Gobby's PostgreSQL hub. gcode asks the local
 daemon broker for the hub DSN first. If the daemon is unavailable, it checks
 fallback sources in order: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
 `~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap `database_url`.
-Bootstrap fallback is valid only when `hub_backend: postgres` and bootstrap
-contains an inline `database_url`.
+Bootstrap fallback requires an inline `database_url`.
 
 For daemon-independent service provisioning:
 
@@ -547,7 +546,7 @@ gcode vector cleanup-orphans
 
 gcode is daemon-independent but not database-independent:
 - Database: PostgreSQL hub from `~/.gobby/bootstrap.yaml`
-- Required bootstrap: `hub_backend: postgres` plus `database_url`
+- Required bootstrap: inline `database_url`
 - Identity: `.gobby/project.json`, `.gobby/gcode.json`, isolated root, linked worktree, or generated identity from `gcode init`
 - Required service configs: FalkorDB, Qdrant, and embeddings via env vars or PostgreSQL `config_store`
 

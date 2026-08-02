@@ -36,10 +36,9 @@ uv run gobby start
 ```
 
 Bind the daemon to its Tailscale address in `~/.gobby/bootstrap.yaml`. Keep the
-PostgreSQL connection local:
+PostgreSQL connection local through the sole selector, `database_url`:
 
 ```yaml
-hub_backend: postgres
 database_url: "postgresql://gobby:<password>@127.0.0.1:60891/gobby"
 daemon_port: 60887
 bind_host: "100.x.y.z"
