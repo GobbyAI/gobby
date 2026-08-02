@@ -16,7 +16,6 @@ NEW_TASK_TYPES = (
     "research_spike",
     "prd_doc",
     "architecture_doc",
-    "review_anchor",
 )
 
 LEGACY_TASK_COLUMNS = ("lifecycle", "lifecycle_stage", "status")

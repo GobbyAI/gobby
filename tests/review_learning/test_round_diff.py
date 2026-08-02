@@ -416,7 +416,7 @@ def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLine
     task = manager.create_task(
         project.id,
         "Plan review lesson lineage",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         isolation="none",
         validation_criteria="Test task completion is observable.",

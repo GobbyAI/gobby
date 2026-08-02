@@ -204,7 +204,7 @@ class Task:
     title: str
     priority: int
     # task, bug, feature, epic, chore, refactor, simple_fix, research_spike,
-    # architecture_doc, prd_doc, review_anchor
+    # architecture_doc, prd_doc
     task_type: str
     created_at: datetime
     updated_at: datetime

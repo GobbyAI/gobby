@@ -84,9 +84,8 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 | `test` | Test-writing and test infrastructure. |
 
 Valid task types are `task`, `bug`, `feature`, `epic`, `chore`, `refactor`,
-`simple_fix`, `research_spike`, `architecture_doc`, `prd_doc`, and
-`review_anchor`. Some legacy aliases normalize on input, such as `docs` to
-`chore` and `fix` to `simple_fix`.
+`simple_fix`, `research_spike`, `architecture_doc`, and `prd_doc`. Some legacy
+aliases normalize on input, such as `docs` to `chore` and `fix` to `simple_fix`.
 
 To claim existing work:
 

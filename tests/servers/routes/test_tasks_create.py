@@ -37,7 +37,7 @@ def test_post_simple_fix(temp_db, sample_project) -> None:
     assert response.json()["task_type"] == "simple_fix"
 
 
-def test_post_review_anchor(temp_db, sample_project) -> None:
+def test_post_rejects_review_anchor(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     server = create_http_server(
         config=DaemonConfig(),
@@ -56,10 +56,8 @@ def test_post_review_anchor(temp_db, sample_project) -> None:
             },
         )
 
-    assert response.status_code == 201
-    payload = response.json()
-    assert payload["task_type"] == "review_anchor"
-    assert task_manager.stage_states.list_for_task(payload["id"]) == []
+    assert response.status_code == 422
+    assert "review_anchor" in response.text
 
 
 def test_post_rejects_unknown_project_id(temp_db) -> None:

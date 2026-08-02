@@ -1037,7 +1037,7 @@ class TestRequireCommitBeforeStatus:
 
 
 class TestBlockNeedsReviewInteractive:
-    """Verify interactive review tools stay blocked except active plan anchors."""
+    """Verify interactive review tools stay blocked for interactive sessions."""
 
     @staticmethod
     def _review_event(
@@ -1065,33 +1065,10 @@ class TestBlockNeedsReviewInteractive:
         )
 
     @pytest.mark.asyncio
-    async def test_submit_for_review_blocks_for_non_anchor(self, db) -> None:
+    async def test_submit_for_review_blocks_interactive_session(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = {
-            "loaded_skills": ["tasks"],
-            "plan_review_mode": "delegated",
-            "active_anchor_id": "anchor-1",
-        }
-
-        response = await engine.evaluate(
-            self._review_event("submit_for_review", task_id="other-task"),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-
-        assert response.decision == "block"
-        assert "block-needs-review-interactive" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_submit_for_review_blocks_even_with_stale_plan_anchor_variables(self, db) -> None:
-        _sync_bundled(db)
-        engine = RuleEngine(db)
-        variables = {
-            "loaded_skills": ["tasks"],
-            "plan_review_mode": "delegated",
-            "active_anchor_id": "anchor-1",
-        }
+        variables = {"loaded_skills": ["tasks"]}
 
         response = await engine.evaluate(
             self._review_event("submit_for_review"),
@@ -1121,14 +1098,10 @@ class TestBlockNeedsReviewInteractive:
         assert "block-needs-review-interactive" not in (response.reason or "")
 
     @pytest.mark.asyncio
-    async def test_approve_review_stays_blocked_for_active_plan_anchor(self, db) -> None:
+    async def test_approve_review_blocks_interactive_session(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
-        variables = {
-            "loaded_skills": ["tasks"],
-            "plan_review_mode": "delegated",
-            "active_anchor_id": "anchor-1",
-        }
+        variables = {"loaded_skills": ["tasks"]}
 
         response = await engine.evaluate(
             self._review_event("approve_review"),

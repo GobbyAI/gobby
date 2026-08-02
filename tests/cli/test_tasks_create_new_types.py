@@ -43,18 +43,12 @@ def test_create_simple_fix() -> None:
     assert manager.create_task.call_args.kwargs["task_type"] == "simple_fix"
 
 
-def test_create_review_anchor() -> None:
-    task = MagicMock()
-    task.id = "task-1"
-    task.seq_num = 1
-    task.title = "Round anchor"
-
+def test_create_rejects_review_anchor() -> None:
     with (
         patch("gobby.cli.tasks.crud.get_project_context", return_value={"id": "proj-1"}),
         patch("gobby.cli.tasks.crud.get_task_manager") as get_manager,
     ):
         manager = MagicMock()
-        manager.create_task.return_value = task
         get_manager.return_value = manager
 
         result = CliRunner().invoke(
@@ -70,5 +64,6 @@ def test_create_review_anchor() -> None:
             ],
         )
 
-    assert result.exit_code == 0
-    assert manager.create_task.call_args.kwargs["task_type"] == "review_anchor"
+    assert result.exit_code == 2
+    assert "review_anchor" in result.output
+    manager.create_task.assert_not_called()

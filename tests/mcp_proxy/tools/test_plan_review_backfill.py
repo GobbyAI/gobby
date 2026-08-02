@@ -58,7 +58,7 @@ async def test_backfill_wire_contract(
     empty_task = durable_lineage_fixture.manager.create_task(
         project_id,
         "Empty approval lineage",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         isolation="none",
         validation_criteria="Test task completion is observable.",
@@ -95,7 +95,7 @@ async def test_backfill_wire_contract(
     missing = durable_lineage_fixture.manager.create_task(
         project_id,
         "No approval checkpoint",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         isolation="none",
         validation_criteria="Test task completion is observable.",
@@ -225,7 +225,7 @@ async def test_non_plan_approval_unaffected(
     planning = manager.create_task(
         project.id,
         "Planning approval requires evidence",
-        task_type="review_anchor",
+        task_type="task",
         category="planning",
         isolation="none",
         validation_criteria="Test task completion is observable.",
