@@ -344,7 +344,7 @@ class TestExpansionRuns:
         assert refreshed.completed_at == before.completed_at
 
     @pytest.mark.asyncio
-    async def test_resume_expansion_run_restarts_failed_run(
+    async def test_resume_persists_compile_and_applies_after_precompile_failure(
         self,
         expansion_registry,
         task_manager,
@@ -359,14 +359,14 @@ class TestExpansionRuns:
             project_id=parent.project_id,
             triggering_session_id=None,
             input_source="task",
-            options={"auto_apply": False},
+            options={"auto_apply": True},
         )
-        run_manager.fail(run.id, "failed before resume")
+        run_manager.fail(run.id, "precompile failure")
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
-            new=AsyncMock(return_value=None),
-        ):
+            "gobby.tasks.expansion_service.ExpansionService._generate_raw_spec",
+            new=AsyncMock(return_value=_compiled_spec()),
+        ) as generate_spec:
             with session_context_for_test(test_session):
                 result = await expansion_registry.call(
                     "resume_expansion_run",
@@ -376,3 +376,24 @@ class TestExpansionRuns:
 
         assert result["success"] is True
         assert result["status"] == "running"
+        generate_spec.assert_awaited_once()
+
+        resumed = run_manager.get(run.id)
+        assert resumed is not None
+        assert resumed.status == "completed"
+        assert resumed.error is None
+        assert resumed.compiled_spec is not None
+        assert resumed.task_id_map is not None
+        assert set(resumed.task_id_map) == {"task-1"}
+        assert resumed.created_task_ids is not None
+        assert len(resumed.created_task_ids) == 1
+
+        read_result = await expansion_registry.call(
+            "get_expansion_run",
+            {"run_id": run.id},
+        )
+        assert read_result["run"]["compiled_summary"] == {
+            "phase_count": 1,
+            "task_count": 1,
+            "dependency_count": 0,
+        }
