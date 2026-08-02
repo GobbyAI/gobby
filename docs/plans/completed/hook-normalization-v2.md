@@ -286,6 +286,9 @@ Apply these changes across all bundled agent YAMLs:
 - Clarify that approval or escalation must happen before the workflow may end
   the turn and terminate.
 
+> **Historical inventory:** The following two sections describe agents present when this
+> completed plan ran. Both workflows were subsequently deleted.
+
 #### `nightly-linter.yaml`
 
 - Add the standard `Lifecycle Model` note.
