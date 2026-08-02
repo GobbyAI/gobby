@@ -327,7 +327,6 @@ def test_tdd_discipline_skills_are_bundled() -> None:
 def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     qa = _agent("qa-reviewer")
     epic = _agent("epic-reviewer")
-    qa_skill = (SKILLS_DIR / "qa/SKILL.md").read_text()
     epic_skill = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 
     for text in (
@@ -335,7 +334,6 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
         _step(qa, "review")["status_message"],
         epic["instructions"],
         _step(epic, "review")["status_message"],
-        qa_skill,
         epic_skill,
     ):
         assert "tdd:required" in text

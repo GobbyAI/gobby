@@ -14,6 +14,8 @@ BUNDLED_SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
 REMOVED_BUNDLED_SKILLS = (
     "orchestrate",
     "automate",
+    "dev",
+    "qa",
     "test-battery",
     "agent-" + "monitoring",
     "nano-banana",

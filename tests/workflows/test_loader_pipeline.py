@@ -133,44 +133,6 @@ class TestLoadPipeline:
         assert enabled is not None
         assert enabled.enabled is True
 
-    @pytest.mark.parametrize(
-        ("path", "step_id"),
-        [
-            (
-                Path("src/gobby/install/shared/workflows/pipelines/spawn-developer.yaml"),
-                "spawn",
-            ),
-            (Path("src/gobby/install/shared/workflows/dev.yaml"), "spawn_developer"),
-        ],
-    )
-    def test_legacy_developer_dispatch_defaults_to_enabled_backend_agent(
-        self,
-        path: Path,
-        step_id: str,
-        bundled_workflow_payload: Callable[[Path], dict[str, object]],
-    ) -> None:
-        payload = bundled_workflow_payload(path)
-        pipeline = PipelineDefinition.model_validate(payload)
-        step = next(item for item in pipeline.steps if item.id == step_id)
-
-        assert pipeline.inputs["agent"]["default"] == "backend-developer"
-        assert step.mcp is not None
-        assert step.mcp.arguments is not None
-        assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
-
-    def test_qa_dispatch_targets_enabled_reviewer_agent(
-        self,
-        bundled_workflow_payload: Callable[[Path], dict[str, object]],
-    ) -> None:
-        path = Path("src/gobby/install/shared/workflows/qa.yaml")
-        payload = bundled_workflow_payload(path)
-        pipeline = PipelineDefinition.model_validate(payload)
-        step = next(item for item in pipeline.steps if item.id == "spawn_qa_reviewer")
-
-        assert step.mcp is not None
-        assert step.mcp.arguments is not None
-        assert step.mcp.arguments["agent"] == "qa-reviewer"
-
     @pytest.mark.asyncio
     async def test_load_pipeline_not_found(self, loader: WorkflowLoader) -> None:
         """Test loading non-existent pipeline returns None."""
