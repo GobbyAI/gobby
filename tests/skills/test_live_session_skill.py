@@ -41,7 +41,7 @@ def test_live_session_skill_defines_complete_lifecycle_and_recovery() -> None:
     assert "`allow_automation=false`" in content
     assert '`isolation="none"`' in content
     assert "No changes: skip commit creation." in content
-    assert "`memory_review_completed=true`" in content
+    assert "Review durable memories" in content
     assert "dirty or indeterminate claims" in content
 
 

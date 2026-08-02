@@ -58,7 +58,6 @@ class TestToolHygieneSync:
 
         assert "block-escaped-quotes" not in rule_names
         assert "require-uv" in rule_names
-        assert "track-pending-memory-review" in rule_names
         assert CLAUDE_MEMORY_RULES.issubset(rule_names)
 
     def test_all_rules_have_group(self, db, manager) -> None:
@@ -67,7 +66,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"} | CLAUDE_MEMORY_RULES:
+            if row.name in {"require-uv"} | CLAUDE_MEMORY_RULES:
                 body = json.loads(row.definition_json)
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
@@ -77,7 +76,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"} | CLAUDE_MEMORY_RULES:
+            if row.name in {"require-uv"} | CLAUDE_MEMORY_RULES:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
@@ -213,41 +212,6 @@ class TestRequireUvRule:
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
         assert response.modified_input is None
         assert response.auto_approve is False
-
-
-class TestTrackPendingMemoryReview:
-    """Verify track-pending-memory-review sets variable after edits."""
-
-    def test_is_set_variable_effect(self, db, manager) -> None:
-        """track-pending-memory-review should use set_variable effect."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("track-pending-memory-review")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "after_tool"
-        assert body.effects[0].type == "set_variable"
-
-    def test_sets_memory_review_completed_variable(self, db, manager) -> None:
-        """Should set the memory_review_completed variable to false."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("track-pending-memory-review")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.effects[0].variable == "memory_review_completed"
-        assert body.effects[0].value is False
-
-    def test_has_when_condition_for_canonical_mutation(self, db, manager) -> None:
-        """Should fire for any canonical file mutation."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("track-pending-memory-review")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "canonical_repo_mutation" in body.when
 
 
 def _make_normalized_bash_event(command: str) -> HookEvent:

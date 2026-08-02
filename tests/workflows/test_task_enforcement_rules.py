@@ -99,7 +99,6 @@ def _status_gate_variables(
         "active_task_id": active_task_id,
         "task_edited_files": task_edited_files or {},
         "task_has_commits": True,
-        "memory_review_completed": True,
     }
 
 

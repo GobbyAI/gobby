@@ -118,6 +118,8 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+  variables:
+    plan_mode: true
 step_variables:
   task_claimed: false
   skill_loaded: false

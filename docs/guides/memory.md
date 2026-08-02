@@ -394,8 +394,6 @@ Current bundled memory rules:
 | `memory-capture-nudge` | `turn_start` | Reminds the agent once per session to save durable facts or preferences. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
-| `require-memory-review-before-status` | `before_tool` | Blocks close/review transitions after edits until memory review is complete. |
-| `clear-memory-review-on-create` | `before_tool` | Marks memory review complete when `create_memory` is called. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 

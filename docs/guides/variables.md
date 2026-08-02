@@ -382,7 +382,6 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `_agent_identity_reinject` | `false` | bool | Whether persona identity should be reinjected |
 | `edit_write_pending` | `false` | bool | Whether a write-like tool call is pending |
 | `edit_write_stop_blocks` | `0` | int | Circuit breaker for write-pending stop gate |
-| `context7_available` | `true` | bool | Whether Context7 is configured and available |
 
 ### Internal Variables (Set by Rules/Engine)
 
