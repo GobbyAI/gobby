@@ -222,7 +222,7 @@ Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) a
 | `bootstrap.yaml` `database_url` | Runtime hub database connection |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
-| `.gobby/tasks.jsonl` | Task sync file (git-native) |
+| `.gobby/tasks.jsonl` | Local task backup exported by pre-push; gitignored, imported only on demand |
 | `src/gobby/runner.py` | Main daemon entry point (GobbyRunner) |
 | `src/gobby/cli/__init__.py` | CLI entry point (Click) |
 

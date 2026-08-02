@@ -26,8 +26,8 @@ escalates instead of merging garbage.
 
 **Gobby built Gobby.** 5K+ commits. 15K+ tasks across my projects. Two
 paying clients running production systems on it. The 0.4.x line was assembled
-through Gobby's own task, dispatch, review, and documentation flows — the
-receipts live in this repo's `.gobby/tasks.jsonl`.
+through Gobby's own task, dispatch, review, and documentation flows — every
+commit in this repo is task-linked, and the receipts live in the hub.
 
 <p align="center">
   <img src="img/web-chat.png" alt="Gobby web chat" width="49%" />
@@ -240,11 +240,11 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - Optional Qdrant + FalkorDB for vector and graph-backed search
 - Companion Rust toolchain under `crates/`
 
-The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
-is the git-native sync projection — checked in, diffable in PRs, and reconciled
-with the DB so task-linked commits stay auditable across machines. Linear is
-supported as an optional external sync target for teams that already track work
-there. PostgreSQL is the only runtime hub.
+The PostgreSQL hub is the source of truth for task state, and it is the only
+runtime hub. The pre-push hook exports `.gobby/tasks.jsonl` and
+`.gobby/memories.jsonl` as local backups; they are gitignored, and importing one
+is an explicit operator action. Linear is supported as an optional external sync
+target for teams that already track work there.
 
 The guides set is the source of truth for behavior:
 
@@ -354,9 +354,8 @@ Gobby Pro.
 ### 0.5.0: new baseline
 
 0.5.0 locks in the post-data-migration platform: PostgreSQL as the runtime hub,
-FalkorDB as the graph backend, `.gobby/tasks.jsonl` as the git-native task
-projection, and the current Python daemon as the supported local-first control
-plane.
+FalkorDB as the graph backend, local JSONL exports as the backup path, and the
+current Python daemon as the supported local-first control plane.
 
 ### 0.5.0+: UI hardening and Rust port work
 

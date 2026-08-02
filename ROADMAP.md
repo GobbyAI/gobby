@@ -7,8 +7,8 @@ automation around the tools developers already use.
 Last refreshed: July 10, 2026.
 
 The data migration is complete. PostgreSQL is the runtime hub, FalkorDB is the
-graph backend, and `.gobby/tasks.jsonl` remains the git-native task projection.
-The roadmap now tracks the post-migration release line.
+graph backend, and `.gobby/tasks.jsonl` is a gitignored local backup rather than
+a checked-in projection. The roadmap now tracks the post-migration release line.
 
 ## 0.5.0 - New Baseline
 
@@ -17,8 +17,8 @@ The roadmap now tracks the post-migration release line.
 - Ship the current Python daemon as the supported local-first runtime.
 - Treat PostgreSQL as the only runtime hub and FalkorDB as the supported graph
   backend across daemon, web UI, admin payloads, setup, and docs.
-- Keep `.gobby/tasks.jsonl` as the checked-in task sync projection for
-  reviewable, task-linked commits.
+- Keep `.gobby/tasks.jsonl` and `.gobby/memories.jsonl` as automated pre-push
+  exports with manual-only import, so a lost hub is recoverable locally.
 - Tighten operator docs, install/status output, and release notes around the
   new storage baseline.
 
