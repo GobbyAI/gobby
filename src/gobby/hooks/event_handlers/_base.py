@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
+    from gobby.hooks.session_end_auto_link import SessionEndAutoLinkWorker
     from gobby.hooks.skill_manager import HookSkillManager
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
     from gobby.storage.session_tasks import SessionTaskManager
@@ -42,6 +43,7 @@ class EventHandlersBase:
     _progress_tracker: ProgressTracker | None
     _worktree_manager: LocalWorktreeManager | None
     _session_coordinator: SessionCoordinator | None
+    _session_end_auto_link_worker: SessionEndAutoLinkWorker | None
     _skill_manager: HookSkillManager | None
     _skills_config: SkillsConfig | None
     _memory_recall_config: MemoryRecallConfig | None
