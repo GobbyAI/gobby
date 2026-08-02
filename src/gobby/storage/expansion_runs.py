@@ -282,14 +282,21 @@ class LocalExpansionRunManager:
         return [ExpansionRun.from_row(row) for row in self.db.fetchall(query, tuple(params))]
 
     def start(self, run_id: str) -> ExpansionRun | None:
-        """Mark a run as running."""
+        """Mark a pending or precompile-failed run as running."""
         now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE expansion_runs
-            SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s, error = NULL
+            SET status = 'running',
+                started_at = COALESCE(started_at, %s),
+                completed_at = NULL,
+                updated_at = %s,
+                error = NULL
             WHERE id = %s
-              AND status = 'pending'
+              AND (
+                  status = 'pending'
+                  OR (status = 'failed' AND compiled_spec_json IS NULL)
+              )
             """,
             (now, now, run_id),
         )

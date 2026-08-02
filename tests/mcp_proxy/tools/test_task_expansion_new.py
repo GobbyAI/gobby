@@ -344,7 +344,7 @@ class TestExpansionRuns:
         assert refreshed.completed_at == before.completed_at
 
     @pytest.mark.asyncio
-    async def test_resume_expansion_run_restarts_failed_run(
+    async def test_resume_persists_compile_and_applies_after_precompile_failure(
         self,
         expansion_registry,
         task_manager,
@@ -359,14 +359,14 @@ class TestExpansionRuns:
             project_id=parent.project_id,
             triggering_session_id=None,
             input_source="task",
-            options={"auto_apply": False},
+            options={"auto_apply": True},
         )
-        run_manager.fail(run.id, "failed before resume")
+        run_manager.fail(run.id, "precompile failure")
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
-            new=AsyncMock(return_value=None),
-        ):
+            "gobby.tasks.expansion_service.ExpansionService._generate_raw_spec",
+            new=AsyncMock(return_value=_compiled_spec()),
+        ) as generate_spec:
             with session_context_for_test(test_session):
                 result = await expansion_registry.call(
                     "resume_expansion_run",
@@ -376,3 +376,50 @@ class TestExpansionRuns:
 
         assert result["success"] is True
         assert result["status"] == "running"
+        generate_spec.assert_awaited_once()
+
+        resumed = run_manager.get(run.id)
+        assert resumed is not None
+        assert resumed.status == "completed"
+        assert resumed.error is None
+        assert resumed.compiled_spec is not None
+        assert resumed.task_id_map is not None
+        assert set(resumed.task_id_map) == {"task-1"}
+        assert resumed.created_task_ids is not None
+        assert len(resumed.created_task_ids) == 1
+
+        read_result = await expansion_registry.call(
+            "get_expansion_run",
+            {"run_id": run.id},
+        )
+        assert read_result["run"]["compiled_summary"] == {
+            "phase_count": 1,
+            "task_count": 1,
+            "dependency_count": 0,
+        }
+
+    def test_failed_compiled_run_cannot_restart(
+        self,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+    ) -> None:
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
+        assert run_manager.start(run.id) is not None
+        assert run_manager.save_compiled_spec(run.id, _compiled_spec()) is not None
+        failed = run_manager.fail(run.id, "postcompile failure")
+        assert failed is not None
+
+        assert run_manager.start(run.id) is None
+        refreshed = run_manager.get(run.id)
+        assert refreshed is not None
+        assert refreshed.status == "failed"
+        assert refreshed.error == "postcompile failure"
+        assert refreshed.completed_at == failed.completed_at
