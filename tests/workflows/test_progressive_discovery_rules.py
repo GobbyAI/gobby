@@ -741,6 +741,48 @@ class TestRuleEngineIntegration:
             assert result.decision == "allow"
 
     @pytest.mark.parametrize(
+        ("server_name", "tool_name", "other_tool"),
+        [
+            ("gobby-tasks", "list_tasks", "get_task"),
+            ("gobby-memory", "create_memory", "search_memories"),
+        ],
+    )
+    async def test_reported_schema_flows_are_tool_scoped(
+        self,
+        engine: RuleEngine,
+        server_name: str,
+        tool_name: str,
+        other_tool: str,
+    ) -> None:
+        """A fresh lease unlocks only the exact reported server and tool pair."""
+        variables: dict[str, object] = {"enforce_tool_schema_check": True}
+        after_schema = _make_hook_event(
+            HookEventType.AFTER_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server_name": server_name, "tool_name": tool_name},
+        )
+        await engine.evaluate(after_schema, SESSION_ID, variables)
+
+        leased_call = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={"server_name": server_name, "tool_name": tool_name, "arguments": {}},
+        )
+        leased_result = await engine.evaluate(leased_call, SESSION_ID, variables)
+        assert leased_result.decision == "allow"
+
+        unleased_call = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={"server_name": server_name, "tool_name": other_tool, "arguments": {}},
+        )
+        unleased_result = await engine.evaluate(unleased_call, SESSION_ID, variables)
+        assert unleased_result.decision == "block"
+        assert unleased_result.reason is not None
+        assert f"server_name='{server_name}'" in unleased_result.reason
+        assert f"tool_name='{other_tool}'" in unleased_result.reason
+
+    @pytest.mark.parametrize(
         ("source", "pending_context_reset"),
         [("clear", False), ("compact", False), ("resume", True)],
     )
