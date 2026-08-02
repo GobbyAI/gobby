@@ -244,6 +244,9 @@ class TextGenerationService:
         return remaining if remaining > 0.0 else 0.0
 
     def _breaker_record_success(self, key: str) -> None:
+        self._prune_breaker_state()
+        if key in self._breaker_open_until or key in self._breaker_failures:
+            logger.info("circuit closed for '%s' (probe succeeded)", key)
         self._breaker_failures.pop(key, None)
         self._breaker_open_until.pop(key, None)
         self._prune_breaker_state()
@@ -252,6 +255,7 @@ class TextGenerationService:
         if self._circuit_breaker_failure_threshold <= 0:
             return
         self._prune_breaker_state()
+        was_open = self._breaker_open_until.get(key, 0.0) > time.monotonic()
         if retry_after is not None and retry_after > 0.0:
             # A provider-reported cooldown (e.g. a rate-limit reset window) is
             # definitive: open the breaker immediately for the reported window
@@ -261,6 +265,12 @@ class TextGenerationService:
                 self._breaker_open_until.get(key, 0.0),
                 time.monotonic() + retry_after,
             )
+            if not was_open:
+                logger.info(
+                    "circuit open for '%s' (provider-reported retry-after %.1fs)",
+                    key,
+                    retry_after,
+                )
             self._prune_breaker_state()
             return
         failures = self._breaker_failures.get(key, 0) + 1
@@ -269,6 +279,12 @@ class TextGenerationService:
             self._breaker_open_until[key] = (
                 time.monotonic() + self._circuit_breaker_cooldown_seconds
             )
+            if not was_open:
+                logger.info(
+                    "circuit open for '%s' after %d consecutive failures",
+                    key,
+                    failures,
+                )
         self._prune_breaker_state()
 
     def _prune_breaker_state(self) -> None:
@@ -788,6 +804,9 @@ class TextGenerationService:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
         if success:
+            log_event = logger.debug
+            message = "feature_llm_call"
+        elif isinstance(error, _CircuitOpenError):
             log_event = logger.debug
             message = "feature_llm_call"
         elif isinstance(error, _ReasoningEffortRejectedError):

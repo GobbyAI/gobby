@@ -11,6 +11,8 @@ is purely time-based so it can never latch permanently.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from gobby.ai import (
@@ -186,6 +188,73 @@ async def test_breaker_reopens_immediately_when_probe_fails(
     with pytest.raises(_CircuitOpenError):
         await _call(service)
     assert adapter.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_breaker_open_logs_single_info_and_debug_rejections(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Opening the breaker logs one INFO transition; rejections stay DEBUG."""
+    adapter = _CountingFailAdapter()
+    service = _breaker_service(adapter, threshold=2, cooldown=60.0)
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.ai.text_generation"):
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await _call(service)
+        for _ in range(3):
+            with pytest.raises(_CircuitOpenError):
+                await _call(service)
+
+    records = [record for record in caplog.records if record.name == "gobby.ai.text_generation"]
+    open_transitions = [
+        record
+        for record in records
+        if record.levelno == logging.INFO and "circuit open for 'claude:haiku'" in record.message
+    ]
+    assert len(open_transitions) == 1
+    assert "after 2 consecutive failures" in open_transitions[0].message
+
+    rejections = [
+        record
+        for record in records
+        if record.getMessage() == "feature_llm_call"
+        and "circuit open for 'claude:haiku'" in str(getattr(record, "error", ""))
+    ]
+    # One DEBUG rejection per short-circuited call, none at ERROR.
+    assert len(rejections) == 3
+    assert all(record.levelno == logging.DEBUG for record in rejections)
+
+
+@pytest.mark.asyncio
+async def test_breaker_probe_success_logs_close_transition(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A successful probe after cooldown logs the circuit-closed transition."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_service.time.monotonic",
+        lambda: clock["now"],
+    )
+    adapter = _ScriptedAdapter([True, True])
+    service = _breaker_service(adapter, threshold=2, cooldown=30.0)
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.ai.text_generation"):
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await _call(service)
+        clock["now"] += 31.0
+        assert await _call(service) == "ok"
+
+    close_transitions = [
+        record
+        for record in caplog.records
+        if record.name == "gobby.ai.text_generation"
+        and record.levelno == logging.INFO
+        and "circuit closed for 'claude:haiku'" in record.message
+    ]
+    assert len(close_transitions) == 1
 
 
 @pytest.mark.asyncio

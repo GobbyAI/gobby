@@ -61,6 +61,22 @@ _RATE_LIMIT_MARKERS: tuple[str, ...] = (
 )
 _USAGE_LIMIT_RESET_RE = re.compile(r"\|\s*(\d{9,13})\s*$")
 
+_CONNECTIVITY_MARKERS: tuple[str, ...] = (
+    "enotfound",
+    "econnrefused",
+    "econnreset",
+    "etimedout",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "network is unreachable",
+)
+
+
+def is_connectivity_error(error: BaseException) -> bool:
+    """True when a provider failure is a transient network/DNS outage."""
+    text = str(error).lower()
+    return any(marker in text for marker in _CONNECTIVITY_MARKERS)
+
 
 def _parse_usage_limit_reset(text: str, *, now: float) -> tuple[float | None, float | None]:
     """Return ``(reset_epoch_seconds, retry_after_seconds)`` from a usage-limit body."""

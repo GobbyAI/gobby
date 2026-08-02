@@ -93,6 +93,12 @@ class MockClaudeAgentOptions:
         self.stderr: object = None
 
 
+# Matches the ClaudeAgentOptions shape mypy expects at the execute_sdk_query
+# boundary without coupling tests to the real SDK class (#14544: no ignores).
+def _mock_agent_options() -> Any:
+    return MockClaudeAgentOptions()
+
+
 class MockExitCodeError(Exception):
     def __init__(self, message: str, exit_code: int) -> None:
         super().__init__(message)
@@ -510,6 +516,117 @@ class TestExecuteSdkQuery:
             )
 
         assert "generate_json failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_connectivity_provider_failure_logs_debug_not_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """DNS/network outages demote provider-degraded logging to DEBUG."""
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = _mock_agent_options()
+
+        async def dns_failure() -> str:
+            raise ClaudeSDKProviderFailure(
+                "generate_text[code_index.symbol_summary] provider degraded: "
+                "Claude SDK returned error result (subtype=error_during_execution): "
+                "getaddrinfo ENOTFOUND api.anthropic.com",
+                classification="error_result",
+                subtype="error_during_execution",
+            )
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.llm.claude"),
+            pytest.raises(ClaudeSDKProviderFailure),
+        ):
+            await execute_sdk_query(
+                "generate_text[code_index.symbol_summary]",
+                dns_failure,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=1,
+                retry_delay=0.01,
+            )
+
+        records = [record for record in caplog.records if record.name == "gobby.llm.claude"]
+        assert not any(record.levelno >= logging.WARNING for record in records)
+        assert any(
+            record.levelno == logging.DEBUG and "ENOTFOUND" in record.message for record in records
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_connectivity_provider_failure_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = _mock_agent_options()
+
+        async def other_failure() -> str:
+            raise ClaudeSDKProviderFailure(
+                "generate_text provider degraded: Claude SDK returned error result "
+                "(subtype=error_during_execution): internal provider error",
+                classification="error_result",
+                subtype="error_during_execution",
+            )
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.llm.claude"),
+            pytest.raises(ClaudeSDKProviderFailure),
+        ):
+            await execute_sdk_query(
+                "generate_text",
+                other_failure,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=1,
+                retry_delay=0.01,
+            )
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.llm.claude" and record.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+
+    @pytest.mark.asyncio
+    async def test_connectivity_error_result_success_logs_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Raw connectivity failures wrapped as error-result-success also demote."""
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = _mock_agent_options()
+
+        async def socket_failure() -> str:
+            raise RuntimeError(
+                "Claude Code returned an error result: success "
+                "(getaddrinfo ENOTFOUND api.anthropic.com)"
+            )
+
+        with (
+            patch(
+                "gobby.llm.claude_runtime.read_active_shutdown_intent",
+                return_value=None,
+            ),
+            caplog.at_level(logging.DEBUG, logger="gobby.llm.claude"),
+            pytest.raises(ClaudeSDKProviderFailure),
+        ):
+            await execute_sdk_query(
+                "generate_text",
+                socket_failure,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=1,
+                retry_delay=0.01,
+            )
+
+        records = [record for record in caplog.records if record.name == "gobby.llm.claude"]
+        assert not any(record.levelno >= logging.WARNING for record in records)
 
 
 # ─── _prepare_image_data tests ──────────────────────────────────────────

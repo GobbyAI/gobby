@@ -12,7 +12,11 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError
 
 from gobby.llm.base import LLMProviderCancellation
-from gobby.llm.claude_errors import ClaudeSDKProviderFailure, classify_result_message
+from gobby.llm.claude_errors import (
+    ClaudeSDKProviderFailure,
+    classify_result_message,
+    is_connectivity_error,
+)
 from gobby.shutdown_intent import read_active_shutdown_intent
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
@@ -220,7 +224,10 @@ async def execute_sdk_query[T](
             raise _shutdown_cancellation(error) from error
 
         if isinstance(error, ClaudeSDKProviderFailure):
-            logger.warning("%s", error)
+            if is_connectivity_error(error):
+                logger.debug("%s", error)
+            else:
+                logger.warning("%s", error)
             raise
 
         if _is_error_result_success(error):
@@ -232,8 +239,12 @@ async def execute_sdk_query[T](
                 + (f" [exit_code={exit_code}]" if exit_code else "")
                 + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
             )
-            logger.warning("%s", message)
-            raise ClaudeSDKProviderFailure(message, classification="error_result") from error
+            wrapped = ClaudeSDKProviderFailure(message, classification="error_result")
+            if is_connectivity_error(wrapped) or is_connectivity_error(error):
+                logger.debug("%s", message)
+            else:
+                logger.warning("%s", message)
+            raise wrapped from error
 
         await asyncio.sleep(0.2)
         exit_code = extract_exit_code(error)
