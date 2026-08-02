@@ -10,7 +10,9 @@ import pytest
 import yaml
 
 from gobby.agents.sync import sync_bundled_agents
+from gobby.skills.sync import sync_bundled_skills
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.skills import LocalSkillManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
@@ -22,6 +24,7 @@ PIPELINES_DIR = WORKFLOWS_DIR / "pipelines"
 AGENTS_DIR = WORKFLOWS_DIR / "agents"
 RULES_DIR = WORKFLOWS_DIR / "rules"
 PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
+SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
 
 RETIRED_PIPELINES = (
     "orchestrator",
@@ -38,6 +41,7 @@ RETIRED_PIPELINES = (
     "wiki-research",
 )
 RETIRED_AGENTS = ("developer", "pipeline-worker", "nightly-linter", "nightly-test-fixer")
+RETIRED_SKILLS = ("dev", "qa")
 RETIRED_RULES = {
     "block-and-teach-context7",
     "block-writes-outside-plan-artifact",
@@ -88,6 +92,11 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
 
     assert not active_path.exists(), f"retired agent remains active: {active_path}"
     assert not deprecated_path.exists(), f"retired agent tombstone remains: {deprecated_path}"
+
+
+@pytest.mark.parametrize("name", RETIRED_SKILLS)
+def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
+    assert not (SKILLS_DIR / name).exists(), f"retired skill remains bundled: {name}"
 
 
 def test_retired_rules_are_absent_from_bundled_templates() -> None:
@@ -216,3 +225,27 @@ def test_removed_bundled_agent_sync_soft_deletes_installed_row(
         "description": "old definition",
         "enabled": True,
     }
+
+
+@pytest.mark.parametrize("name", RETIRED_SKILLS)
+def test_removed_bundled_skill_sync_soft_deletes_installed_row(
+    name: str, temp_db: HubDatabase
+) -> None:
+    manager = LocalSkillManager(temp_db)
+    manager.create_skill(
+        name=name,
+        description="old bundled launcher",
+        content=f"# {name}\nOld bundled launcher content.",
+        metadata={"gobby": {"audience": "all"}},
+        source="installed",
+        source_type="filesystem",
+    )
+
+    result = sync_bundled_skills(temp_db)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == 1
+    assert manager.get_by_name(name) is None
+    row = manager.get_by_name(name, include_deleted=True)
+    assert row is not None
+    assert row.deleted_at is not None
