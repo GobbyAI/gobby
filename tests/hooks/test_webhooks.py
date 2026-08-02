@@ -212,7 +212,7 @@ class TestWebhookDispatcherTrigger:
     """Tests for webhook triggering."""
 
     @pytest.mark.asyncio
-    async def test_trigger_disabled(self, sample_event: HookEvent):
+    async def test_trigger_disabled(self, sample_event: HookEvent) -> None:
         """Test that disabled config returns empty results."""
         config = WebhooksConfig(enabled=False)
         dispatcher = WebhookDispatcher(config)
@@ -222,7 +222,7 @@ class TestWebhookDispatcherTrigger:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_trigger_no_matching_endpoints(self, sample_event: HookEvent):
+    async def test_trigger_no_matching_endpoints(self, sample_event: HookEvent) -> None:
         """Test triggering with no matching endpoints."""
         endpoint = WebhookEndpointConfig(
             name="wrong-event",
@@ -239,7 +239,7 @@ class TestWebhookDispatcherTrigger:
     @pytest.mark.asyncio
     async def test_trigger_success(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
-    ):
+    ) -> None:
         """Test successful webhook dispatch."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
@@ -400,6 +400,7 @@ class TestWebhookDispatcherTrigger:
         assert results[0].success is True
         mock_post.assert_awaited_once()
         call = mock_post.await_args
+        assert call is not None
         request = call.args[0]
         assert str(request.url) == "https://93.184.216.34/hook"
         assert request.headers["host"] == "hooks.example.com"
@@ -411,7 +412,7 @@ class TestWebhookDispatcherTrigger:
     @pytest.mark.asyncio
     async def test_trigger_client_error_no_retry(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
-    ):
+    ) -> None:
         """Test that 4xx errors don't trigger retries."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
@@ -431,10 +432,10 @@ class TestWebhookDispatcherTrigger:
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_trigger_server_error_is_not_retried_for_post(
+    async def test_trigger_server_error_retries_post(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
-    ):
-        """A POST response proves the request was sent, so 5xx is not retried."""
+    ) -> None:
+        """Configured retries give POST webhooks at-least-once delivery after 5xx."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
 
@@ -447,16 +448,16 @@ class TestWebhookDispatcherTrigger:
 
             assert len(results) == 1
             assert results[0].success is False
-            assert results[0].attempts == 1
-            mock_post.assert_awaited_once()
+            assert results[0].attempts == 3
+            assert mock_post.await_count == 3
 
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_trigger_timeout_is_not_retried_for_post(
+    async def test_trigger_timeout_retries_post(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
-    ):
-        """A generic timeout may happen after sending POST and is not retried."""
+    ) -> None:
+        """Configured retries give timed-out POST webhooks at-least-once delivery."""
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
 
@@ -468,8 +469,8 @@ class TestWebhookDispatcherTrigger:
             assert len(results) == 1
             assert results[0].success is False
             assert results[0].error == "Request timeout"
-            assert results[0].attempts == 1
-            mock_post.assert_awaited_once()
+            assert results[0].attempts == 3
+            assert mock_post.await_count == 3
 
         await dispatcher.close()
 
@@ -478,7 +479,7 @@ class TestBlockingWebhooks:
     """Tests for blocking webhook functionality."""
 
     @pytest.mark.asyncio
-    async def test_blocking_webhook_allow(self, blocking_endpoint: WebhookEndpointConfig):
+    async def test_blocking_webhook_allow(self, blocking_endpoint: WebhookEndpointConfig) -> None:
         """Test blocking webhook that allows action."""
         blocking_endpoint = blocking_endpoint.model_copy(update={"fail_closed": True})
         event = HookEvent(
@@ -511,7 +512,7 @@ class TestBlockingWebhooks:
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_blocking_webhook_block(self, blocking_endpoint: WebhookEndpointConfig):
+    async def test_blocking_webhook_block(self, blocking_endpoint: WebhookEndpointConfig) -> None:
         """Test blocking webhook that blocks action."""
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -543,7 +544,7 @@ class TestBlockingWebhooks:
         await dispatcher.close()
 
     @pytest.mark.asyncio
-    async def test_blocking_webhook_deny(self, blocking_endpoint: WebhookEndpointConfig):
+    async def test_blocking_webhook_deny(self, blocking_endpoint: WebhookEndpointConfig) -> None:
         """Test blocking webhook with deny decision."""
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -630,7 +631,7 @@ class TestBlockingWebhooks:
 
         assert len(results) == 1
         assert results[0].success is False
-        expected_attempts = 2 if failure_mode == "connection_error" else 1
+        expected_attempts = 1 if failure_mode == "client_error" else 2
         assert results[0].attempts == expected_attempts
         assert dispatcher.get_blocking_decision(results)[0] == expected_decision
 

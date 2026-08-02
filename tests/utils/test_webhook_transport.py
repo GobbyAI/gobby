@@ -1,5 +1,7 @@
 """Tests for the shared outbound webhook transport."""
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
@@ -129,6 +131,92 @@ class ChunkedStream(httpx.AsyncByteStream):
         self.closed = True
 
 
+class SlowTrickleStream(httpx.AsyncByteStream):
+    """Response stream whose chunks arrive within the inactivity timeout."""
+
+    def __init__(self, *, delay: float, chunks: int) -> None:
+        self.delay = delay
+        self.chunks = chunks
+        self.yielded = 0
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for _ in range(self.chunks):
+            await asyncio.sleep(self.delay)
+            self.yielded += 1
+            yield b"x"
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_per_attempt_timeout_bounds_slow_trickle_response() -> None:
+    stream = SlowTrickleStream(delay=0.02, chunks=10)
+    transport = WebhookTransport()
+    started = time.monotonic()
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, stream=stream))
+    ) as client:
+        with patch.object(
+            transport,
+            "_lookup_addresses",
+            new=AsyncMock(return_value=("93.184.216.34",)),
+        ):
+            result = await transport.execute(
+                "https://hooks.example/hook",
+                client=client,
+                timeout=0.05,
+            )
+
+    elapsed = time.monotonic() - started
+    assert result.success is False
+    assert result.error == "Request timeout"
+    assert result.attempts == 1
+    assert stream.yielded < stream.chunks
+    assert elapsed < 0.15
+
+
+async def test_total_deadline_bounds_multiple_slow_attempts() -> None:
+    calls = 0
+    request_timeouts: list[float] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        timeout_config = request.extensions["timeout"]
+        assert isinstance(timeout_config, dict)
+        read_timeout = timeout_config["read"]
+        assert isinstance(read_timeout, float)
+        request_timeouts.append(read_timeout)
+        return httpx.Response(503, stream=SlowTrickleStream(delay=0.04, chunks=1))
+
+    transport = WebhookTransport()
+    started = time.monotonic()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request)) as client:
+        with patch.object(
+            transport,
+            "_lookup_addresses",
+            new=AsyncMock(return_value=("93.184.216.34",)),
+        ):
+            result = await transport.execute(
+                "https://hooks.example/hook",
+                method="POST",
+                client=client,
+                timeout=0.1,
+                max_attempts=10,
+                backoff_seconds=0,
+            )
+
+    elapsed = time.monotonic() - started
+    assert result.success is False
+    assert result.error == "Request timeout"
+    assert result.attempts == calls
+    assert 2 <= calls < 10
+    assert request_timeouts == sorted(request_timeouts, reverse=True)
+    assert request_timeouts[-1] < request_timeouts[0] <= 0.1
+    assert elapsed < 0.25
+
+
 async def test_response_cap_stops_chunked_body_mid_stream() -> None:
     stream = ChunkedStream([b"1234", b"5678", b"9", b"unread"])
 
@@ -239,13 +327,13 @@ async def test_idempotent_status_failure_is_retried() -> None:
     sleep.assert_awaited_once_with(0.25)
 
 
-async def test_non_idempotent_status_failure_is_not_retried() -> None:
+async def test_post_status_failure_is_retried() -> None:
     calls = 0
 
     def handle_request(_request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(503)
+        return httpx.Response(503 if calls == 1 else 200)
 
     transport = WebhookTransport()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request)) as client:
@@ -258,13 +346,13 @@ async def test_non_idempotent_status_failure_is_not_retried() -> None:
                 "https://hooks.example/hook",
                 method="POST",
                 client=client,
-                max_attempts=3,
+                max_attempts=2,
                 backoff_seconds=0,
             )
 
-    assert result.success is False
-    assert result.attempts == 1
-    assert calls == 1
+    assert result.success is True
+    assert result.attempts == 2
+    assert calls == 2
 
 
 async def test_non_idempotent_connect_failure_is_retried() -> None:
@@ -300,13 +388,15 @@ async def test_non_idempotent_connect_failure_is_retried() -> None:
     assert calls == 2
 
 
-async def test_non_idempotent_read_timeout_is_not_retried() -> None:
+async def test_post_read_timeout_is_retried() -> None:
     calls = 0
 
     def handle_request(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        raise httpx.ReadTimeout("timed out after send", request=request)
+        if calls < 3:
+            raise httpx.ReadTimeout("timed out after send", request=request)
+        return httpx.Response(200)
 
     transport = WebhookTransport()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request)) as client:
@@ -319,13 +409,14 @@ async def test_non_idempotent_read_timeout_is_not_retried() -> None:
                 "https://hooks.example/hook",
                 method="POST",
                 client=client,
+                timeout=1,
                 max_attempts=3,
                 backoff_seconds=0,
             )
 
-    assert result.success is False
-    assert result.attempts == 1
-    assert calls == 1
+    assert result.success is True
+    assert result.attempts == 3
+    assert calls == 3
 
 
 async def test_retry_after_and_exponential_backoff_are_capped() -> None:
