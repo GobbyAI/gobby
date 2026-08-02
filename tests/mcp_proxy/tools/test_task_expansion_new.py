@@ -397,3 +397,29 @@ class TestExpansionRuns:
             "task_count": 1,
             "dependency_count": 0,
         }
+
+    def test_failed_compiled_run_cannot_restart(
+        self,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+    ) -> None:
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
+        assert run_manager.start(run.id) is not None
+        assert run_manager.save_compiled_spec(run.id, _compiled_spec()) is not None
+        failed = run_manager.fail(run.id, "postcompile failure")
+        assert failed is not None
+
+        assert run_manager.start(run.id) is None
+        refreshed = run_manager.get(run.id)
+        assert refreshed is not None
+        assert refreshed.status == "failed"
+        assert refreshed.error == "postcompile failure"
+        assert refreshed.completed_at == failed.completed_at

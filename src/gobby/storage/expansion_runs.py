@@ -293,7 +293,10 @@ class LocalExpansionRunManager:
                 updated_at = %s,
                 error = NULL
             WHERE id = %s
-              AND status IN ('pending', 'failed')
+              AND (
+                  status = 'pending'
+                  OR (status = 'failed' AND compiled_spec_json IS NULL)
+              )
             """,
             (now, now, run_id),
         )
