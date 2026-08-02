@@ -160,6 +160,18 @@ def test_default_apply_halts_before_destructive_migration_after_safe_prefix(
     assert hub.applied == [354]
 
 
+def test_retire_review_anchor_migration_is_classified_destructive() -> None:
+    module = _migration_module()
+    runner = module.MigrationRunner(_PostgresMigrationHub())
+
+    migration = next(
+        migration for migration in runner._discover_migrations() if migration.version == 361
+    )
+
+    assert migration.path.name == "361_retire_review_anchor.sql"
+    assert runner._is_destructive(migration)
+
+
 def test_fresh_schema_apply_may_cross_destructive_marker(tmp_path: Path) -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
