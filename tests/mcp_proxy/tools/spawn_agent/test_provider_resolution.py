@@ -18,46 +18,44 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "droid", "grok", "qwen"])
-def test_inherit_uses_spawn_capable_parent_provider(provider: str) -> None:
+def test_inherit_uses_spawn_capable_default_provider(provider: str) -> None:
     assert (
         resolve_spawn_provider(
             explicit_provider="inherit",
             agent_provider="inherit",
-            parent_provider=provider,
+            default_provider=provider,
         )
         == provider
     )
 
 
 @pytest.mark.parametrize("provider", [None, "", "inherit", "agy", "pipeline", "unknown"])
-def test_inherit_falls_back_for_unsupported_parent_provider(provider: str | None) -> None:
-    assert (
+def test_inherit_fails_for_unsupported_default_provider(provider: str | None) -> None:
+    with pytest.raises(ValueError, match="Set the provider argument"):
         resolve_spawn_provider(
             explicit_provider=None,
             agent_provider="inherit",
-            parent_provider=provider,
+            default_provider=provider,
         )
-        == "claude"
-    )
 
 
-def test_explicit_provider_precedes_agent_and_parent() -> None:
+def test_explicit_provider_precedes_agent_and_default() -> None:
     assert (
         resolve_spawn_provider(
             explicit_provider="codex",
             agent_provider="qwen",
-            parent_provider="droid",
+            default_provider="droid",
         )
         == "codex"
     )
 
 
-def test_concrete_agent_provider_precedes_parent() -> None:
+def test_concrete_agent_provider_precedes_default() -> None:
     assert (
         resolve_spawn_provider(
             explicit_provider=None,
             agent_provider="grok",
-            parent_provider="codex",
+            default_provider="codex",
         )
         == "grok"
     )
@@ -145,7 +143,7 @@ def test_agent_worker_inherits_spawning_agent_provider_not_coordinator() -> None
     resolved = resolve_spawn_provider(
         explicit_provider=None,
         agent_provider="inherit",
-        parent_provider=spawning_session_provider(
+        default_provider=spawning_session_provider(
             manager,
             caller_session_id="adversary",
             parent_session_id="coordinator",

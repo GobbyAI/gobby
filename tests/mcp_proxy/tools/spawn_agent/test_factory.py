@@ -626,9 +626,7 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "gpt-5.4"
 
     @pytest.mark.asyncio
-    async def test_model_prefix_infers_provider_without_provider_override(
-        self, mock_runner
-    ) -> None:
+    async def test_model_selector_does_not_override_agent_provider(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
             provider="codex",
@@ -644,11 +642,31 @@ class TestSpawnAgentParamOverrides:
             },
         )
 
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "claude-sonnet-4-6"
+        assert spawn_request.provider == "codex"
+        assert spawn_request.model == "claude/sonnet-4-6"
 
     @pytest.mark.asyncio
-    async def test_claude_fable_model_prefix_infers_provider(self, mock_runner) -> None:
+    async def test_model_name_does_not_infer_provider(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="claude",
+            model="sonnet-4-6",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "model": "gpt-5.6-sol",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "gpt-5.6-sol"
+
+    @pytest.mark.asyncio
+    async def test_explicit_provider_accepts_opaque_model_selector(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
             provider="codex",
@@ -660,22 +678,18 @@ class TestSpawnAgentParamOverrides:
             agent_body,
             {
                 "agent": "merge-worker",
-                "model": "claude/fable-5",
+                "provider": "codex",
+                "model": "claude/sonnet-4-6",
             },
         )
 
-        assert spawn_request.provider == "claude"
-        assert spawn_request.model == "claude-fable-5"
+        assert spawn_request.provider == "codex"
+        assert spawn_request.model == "claude/sonnet-4-6"
 
     @pytest.mark.asyncio
-    async def test_explicit_provider_rejects_mismatched_model_prefix(self, mock_runner) -> None:
+    async def test_missing_provider_sources_returns_actionable_error(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = AgentDefinitionBody(
-            name="merge-worker",
-            provider="codex",
-            model="gpt-5.4",
-        )
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
         with (
@@ -688,7 +702,7 @@ class TestSpawnAgentParamOverrides:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
-                return_value=agent_body,
+                return_value=None,
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
@@ -696,17 +710,13 @@ class TestSpawnAgentParamOverrides:
         ):
             result = await registry.call(
                 "spawn_agent",
-                {
-                    "prompt": "Test prompt",
-                    "parent_session_id": "parent-789",
-                    "agent": "merge-worker",
-                    "provider": "codex",
-                    "model": "claude/sonnet-4-6",
-                },
+                {"prompt": "Test prompt", "model": "gpt-5.6-sol"},
             )
 
         assert result["success"] is False
-        assert "does not match explicit provider" in result["error"]
+        assert "Set the provider argument" in result["error"]
+        assert "agent definition" in result["error"]
+        assert "default provider" in result["error"]
         mock_execute.assert_not_called()
 
 
@@ -910,12 +920,13 @@ class TestSpawnAgentPromptPreamble:
     """Tests for prompt handling — preamble is injected via hooks, not prompt."""
 
     @pytest.mark.asyncio
-    async def test_prompt_passed_without_preamble(self, mock_runner) -> None:
+    async def test_prompt_passed_without_preamble(self, mock_runner: MagicMock) -> None:
         """Preamble is injected via session_start hooks, not prepended to prompt."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = AgentDefinitionBody(
             name="dev",
+            provider="claude",
             role="Backend developer",
             instructions="Write clean code.",
         )

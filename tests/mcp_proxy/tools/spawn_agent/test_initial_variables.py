@@ -249,6 +249,7 @@ class TestSpawnAgentStepVariables:
 
         agent_body = AgentDefinitionBody(
             name="qa-agent",
+            provider="claude",
             workflows=AgentWorkflows(rules=["no-code-writing"]),
         )
 

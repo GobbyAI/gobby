@@ -48,7 +48,6 @@ from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import (
     concrete_provider,
-    provider_prefixed_model,
     resolve_spawn_provider,
     spawning_session_provider,
 )
@@ -234,32 +233,22 @@ async def spawn_agent_impl(
         _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none",
     )
 
-    model_from_prefix = provider_prefixed_model(_normalize_optional_model(model))
     explicit_provider = concrete_provider(provider)
-    if explicit_provider is None and model_from_prefix is not None:
-        explicit_provider = model_from_prefix[0]
-    parent_provider = spawning_session_provider(
+    default_provider = spawning_session_provider(
         session_manager,
         caller_session_id=caller_session_id,
         parent_session_id=parent_session_id,
     )
     agent_provider = agent_body.provider if agent_body else None
-    effective_provider = resolve_spawn_provider(
-        explicit_provider=explicit_provider,
-        agent_provider=agent_provider,
-        parent_provider=parent_provider,
-    )
+    try:
+        effective_provider = resolve_spawn_provider(
+            explicit_provider=explicit_provider,
+            agent_provider=agent_provider,
+            default_provider=default_provider,
+        )
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     provider_was_overridden = explicit_provider is not None
-
-    if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
-        return {
-            "success": False,
-            "error": (
-                "model provider prefix "
-                f"'{model_from_prefix[0]}' does not match explicit provider "
-                f"'{effective_provider}'"
-            ),
-        }
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
@@ -268,9 +257,7 @@ async def spawn_agent_impl(
             concrete_agent_provider is not None and effective_provider != concrete_agent_provider
         )
 
-    effective_model = (
-        model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)
-    )
+    effective_model = _normalize_optional_model(model)
     if effective_model is None and agent_body and not provider_differs_from_agent:
         effective_model = _normalize_optional_model(agent_body.model)
     is_local_run = False
