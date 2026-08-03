@@ -3,22 +3,35 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from gobby.hooks.project_context import ProjectIdResolver
+from gobby.hooks.session_types import HookSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager, Project
+from gobby.storage.projects import IsolatedAgentProjectPathError, LocalProjectManager, Project
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.utils.project_init import initialize_project
-from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+
+
+def _isolation_path_variant(tmp_path: Path, isolated_path: Path, variant: str) -> str:
+    if variant == "exact":
+        return str(isolated_path)
+    if variant == "trailing-separator":
+        return f"{isolated_path}{os.sep}"
+
+    alias_path = tmp_path / f"{isolated_path.name}-alias"
+    alias_path.symlink_to(isolated_path, target_is_directory=True)
+    return str(alias_path)
 
 
 def _register_isolated_agent(
@@ -114,10 +127,12 @@ def test_isolated_agent_init_preserves_canonical_repo_path(
 
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
 def test_hook_project_sync_preserves_canonical_repo_path_before_session_resolution(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
+    variant: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     canonical_path = tmp_path / "canonical"
@@ -133,13 +148,14 @@ def test_hook_project_sync_preserves_canonical_repo_path_before_session_resoluti
         isolated_path=isolated_path,
         isolation=isolation,
     )
+    project_path = _isolation_path_variant(tmp_path, isolated_path, variant)
     monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
 
-    ProjectIdResolver(session_manager=sessions).ensure_project_in_db(
+    ProjectIdResolver(session_manager=cast(HookSessionManager, sessions)).ensure_project_in_db(
         {
             "id": project.id,
             "name": project.name,
-            "project_path": str(isolated_path),
+            "project_path": project_path,
         }
     )
 
@@ -149,10 +165,12 @@ def test_hook_project_sync_preserves_canonical_repo_path_before_session_resoluti
 
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
-def test_isolated_agent_cannot_explicitly_update_repo_path(
+@pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
+def test_registered_isolation_path_cannot_explicitly_update_repo_path(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
+    variant: str,
 ) -> None:
     canonical_path = tmp_path / "canonical"
     isolated_path = tmp_path / isolation
@@ -160,18 +178,16 @@ def test_isolated_agent_cannot_explicitly_update_repo_path(
     isolated_path.mkdir()
     projects = LocalProjectManager(temp_db)
     project = projects.create("shared-project", repo_path=str(canonical_path))
-    child_session_id = _register_isolated_agent(
+    _register_isolated_agent(
         temp_db,
         project=project,
         isolated_path=isolated_path,
         isolation=isolation,
     )
+    repo_path = _isolation_path_variant(tmp_path, isolated_path, variant)
 
-    with (
-        session_context_for_test(child_session_id),
-        pytest.raises(ValueError, match="isolated agent session"),
-    ):
-        projects.update(project.id, repo_path=str(isolated_path))
+    with pytest.raises(IsolatedAgentProjectPathError, match="isolated agent session"):
+        projects.update(project.id, repo_path=repo_path)
 
     refreshed = projects.get(project.id)
     assert refreshed is not None

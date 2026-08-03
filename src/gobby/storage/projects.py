@@ -233,7 +233,31 @@ class LocalProjectManager:
             """,
             (repo_path, repo_path),
         )
-        return row is not None
+        if row is not None:
+            return True
+
+        try:
+            canonical_path = Path(repo_path).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return False
+
+        rows = self.db.fetchall(
+            """
+            SELECT worktree_path AS isolation_path FROM worktrees
+            UNION ALL
+            SELECT clone_path AS isolation_path FROM clones
+            """
+        )
+        for registered in rows:
+            try:
+                registered_path = (
+                    Path(registered["isolation_path"]).expanduser().resolve(strict=False)
+                )
+            except (OSError, RuntimeError):
+                continue
+            if registered_path == canonical_path:
+                return True
+        return False
 
     def _repo_path_write_is_blocked(self, repo_path: str | None) -> bool:
         return self._is_isolated_agent_session() or self._is_registered_isolation_path(repo_path)
