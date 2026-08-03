@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from gobby.utils.datetime import normalize_datetime_model
 
-DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review", "promote"]
+DreamActionName = Literal["keep", "delete", "refresh", "review", "promote"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,22 +129,6 @@ class DreamCandidate:
         if self.related:
             prompt["related_newer_memories"] = [item.to_prompt_dict() for item in self.related]
         return prompt
-
-
-@dataclass(frozen=True)
-class DuplicateGroup:
-    """A deterministic exact-duplicate memory group."""
-
-    memory_ids: list[str]
-    canonical_content: str
-    reason: str
-
-    def to_prompt_dict(self) -> dict[str, Any]:
-        return {
-            "memory_ids": self.memory_ids,
-            "canonical_content": self.canonical_content,
-            "reason": self.reason,
-        }
 
 
 @dataclass(frozen=True)

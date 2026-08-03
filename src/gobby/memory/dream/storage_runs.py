@@ -24,7 +24,15 @@ PLATFORM_TRUTH_SCOPE = "__gobby_platform__"
 # of subordinate per-target rows created under an admitted aggregate run;
 # they never compete for admission.
 RUN_TERMINAL_STATUSES = frozenset(
-    {"completed", "failed", "reverted", "revert_failed", "interrupted", "partial"}
+    {
+        "completed",
+        "failed",
+        "reverted",
+        "revert_failed",
+        "revert_forfeited",
+        "interrupted",
+        "partial",
+    }
 )
 
 _ADMISSION_ATTEMPTS = 3
@@ -273,10 +281,15 @@ class _DreamRunMixin:
         if older_than_days <= 0:
             raise ValueError("older_than_days must be positive")
         cutoff = older_than_now_expr(self.db, "created_at", "%s", "day")
+        terminal_statuses = tuple(sorted(RUN_TERMINAL_STATUSES))
+        status_placeholders = ", ".join("%s" for _ in terminal_statuses)
         with self.db.transaction() as conn:
             rows = conn.execute(
-                f"DELETE FROM memory_dream_runs WHERE {cutoff} RETURNING id",  # nosec B608
-                (older_than_days,),
+                f"""DELETE FROM memory_dream_runs
+                     WHERE status IN ({status_placeholders})
+                       AND {cutoff}
+                 RETURNING id""",  # nosec B608
+                (*terminal_statuses, older_than_days),
             ).fetchall()
         return len(rows)
 

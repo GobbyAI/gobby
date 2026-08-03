@@ -17,7 +17,7 @@ def ensure_dream_schema(db: HubDatabase) -> None:
                 CHECK (
                     status IN (
                         'started', 'running', 'completed', 'failed', 'reverted',
-                        'revert_failed', 'interrupted', 'partial'
+                        'revert_failed', 'revert_forfeited', 'interrupted', 'partial'
                     )
                 ),
             dry_run BOOLEAN NOT NULL DEFAULT FALSE,
@@ -70,8 +70,7 @@ def ensure_dream_schema(db: HubDatabase) -> None:
                 CONSTRAINT memory_dream_snapshots_action_check
                 CHECK (
                     action IN (
-                        'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
-                        'promote'
+                        'keep', 'delete', 'refresh', 'review', 'promote'
                     )
                 ),
             before_data JSONB,
@@ -122,8 +121,7 @@ def ensure_dream_schema(db: HubDatabase) -> None:
                     ADD CONSTRAINT memory_dream_snapshots_action_check
                     CHECK (
                         action IN (
-                            'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
-                            'promote'
+                            'keep', 'delete', 'refresh', 'review', 'promote'
                         )
                     );
             ELSIF EXISTS (
@@ -139,8 +137,7 @@ def ensure_dream_schema(db: HubDatabase) -> None:
                     ADD CONSTRAINT memory_dream_snapshots_action_check
                     CHECK (
                         action IN (
-                            'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
-                            'promote'
+                            'keep', 'delete', 'refresh', 'review', 'promote'
                         )
                     );
             END IF;
