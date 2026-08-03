@@ -330,6 +330,51 @@
       "json_output_keys": []
     },
     {
+      "name": "drop-namespace",
+      "summary": "Delete one exact manifest-authorized Qdrant namespace.",
+      "daemon_consumed": false,
+      "positionals": [
+        {
+          "name": "NAMESPACE",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--manifest",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--manifest-sha256",
+          "takes_value": true,
+          "value_name": "SHA256",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "namespace",
+        "deleted"
+      ]
+    },
+    {
       "name": "search",
       "summary": "Hybrid symbol and content search over the code index.",
       "daemon_consumed": true,

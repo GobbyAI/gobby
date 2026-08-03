@@ -123,6 +123,10 @@ def _install_lifecycle_fakes(
     )
 
     class FakeExecutor:
+        def prepare_intent(self) -> dict[str, object]:
+            events.append("manifest")
+            return {"campaign": epoch.campaign, "candidate_manifest_sha256": "c" * 64}
+
         def apply(self, _epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
             events.append("apply")
 
@@ -168,6 +172,7 @@ def test_run_owns_open_backup_apply_verify_release_and_restart(
 
     assert result.exit_code == 0, result.output
     assert events == [
+        "manifest",
         "stop-daemon",
         "open",
         "batch",
@@ -237,7 +242,7 @@ def test_run_aborts_before_fence_when_daemon_stop_fails(
 
     assert result.exit_code != 0
     assert "refusing to open a maintenance epoch" in result.output
-    assert events == ["stop-daemon"]
+    assert events == ["manifest", "stop-daemon"]
 
 
 def test_interrupted_run_keeps_epoch_open_and_daemon_stopped(
