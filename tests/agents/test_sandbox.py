@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.agents.constants import GOBBY_SESSION_ID, get_agent_session_cache_dir
 from gobby.agents.sandbox import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
@@ -26,6 +27,11 @@ from gobby.agents.sandbox import (
     materialize_claude_settings_async,
 )
 from gobby.agents.sandbox_policy import default_write_paths
+from gobby.agents.spawn_cache_policy import (
+    SANDBOX_CACHE_ENV_VARS,
+    build_spawn_cache_env,
+    sandbox_config_for_spawn,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1315,3 +1321,36 @@ class TestToolchainGrants:
         assert "registry.npmjs.org" not in offline.allowed_domains
         assert "registry.npmjs.org" in networked.allowed_domains
         assert set(offline.write_paths) == set(networked.write_paths)
+
+
+class TestSandboxCacheProvisioning:
+    """Sandboxed spawns get per-run caches for every env-redirectable toolchain."""
+
+    def test_sandbox_spawn_provisions_per_run_toolchain_caches(self) -> None:
+        env_vars = {GOBBY_SESSION_ID: "provision-test-session", "PATH": ""}
+
+        config = sandbox_config_for_spawn(SandboxConfig(enabled=True, backend="srt"), env_vars)
+
+        assert config is not None
+        session_root = get_agent_session_cache_dir("provision-test-session", "gobby")
+        for env_var in SANDBOX_CACHE_ENV_VARS:
+            cache_path = Path(env_vars[env_var])
+            assert cache_path.is_dir(), env_var
+            assert cache_path.is_relative_to(session_root.parent), env_var
+            assert str(cache_path) in config.extra_write_paths, env_var
+
+    def test_disabled_sandbox_skips_toolchain_cache_redirects(self) -> None:
+        env_vars = {GOBBY_SESSION_ID: "provision-test-session", "PATH": ""}
+
+        config = sandbox_config_for_spawn(SandboxConfig(enabled=False), env_vars)
+
+        assert config is not None
+        assert config.extra_write_paths == []
+        for env_var in SANDBOX_CACHE_ENV_VARS:
+            assert env_var not in env_vars
+
+    def test_non_sandbox_spawn_env_keeps_shared_toolchain_caches(self) -> None:
+        env = build_spawn_cache_env("provision-test-session")
+
+        for env_var in SANDBOX_CACHE_ENV_VARS:
+            assert env_var not in env
