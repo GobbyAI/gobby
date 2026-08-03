@@ -27,9 +27,7 @@ def legacy_identity_db(postgres_database_url: str) -> Iterator[str]:
     database_name = f"gobby_test_identity_{uuid.uuid4().hex}"
     scoped_dsn = make_conninfo(postgres_database_url, dbname=database_name)
     with psycopg.connect(postgres_database_url, autocommit=True) as admin:
-        admin.execute(
-            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
-        )
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     try:
         with psycopg.connect(scoped_dsn, autocommit=True) as connection:
             connection.execute(
@@ -167,6 +165,14 @@ def test_cutover_retires_inventory_rewrites_file_and_converts_schema(
     # cutover wrote NULLs, and 365 deliberately leaves the TEXT column intact.
     assert session_column == {"data_type": "text", "is_nullable": "YES"}
 
+    # Campaign verify runs after migration 366 converts sessions.machine_id to
+    # UUID; the zero-unmapped gate must survive both column types.
+    with psycopg.connect(legacy_identity_db, autocommit=True) as connection:
+        connection.execute(
+            "ALTER TABLE sessions ALTER COLUMN machine_id TYPE UUID USING machine_id::UUID"
+        )
+    verify_identity_cutover(legacy_identity_db, identity_file)
+
 
 @pytest.mark.parametrize(
     "fault_point",
@@ -188,9 +194,7 @@ def test_cutover_resumes_per_identity_and_phase(
 
     with psycopg.connect(legacy_identity_db) as connection:
         phases: dict[str, str] = dict(
-            connection.execute(
-                "SELECT old_id, phase FROM identity_cutover_journal"
-            ).fetchall()
+            connection.execute("SELECT old_id, phase FROM identity_cutover_journal").fetchall()
         )
         new_id_row = connection.execute(
             "SELECT new_id FROM identity_cutover_journal WHERE old_id = 'local-legacy'"

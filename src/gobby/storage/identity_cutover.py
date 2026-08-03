@@ -328,7 +328,7 @@ def _assert_zero_unmapped(connection: psycopg.Connection[Any]) -> None:
         SELECT COUNT(*) AS count
         FROM sessions AS session
         LEFT JOIN machines AS machine
-          ON machine.{machine_column}::TEXT = session.machine_id
+          ON machine.{machine_column}::TEXT = session.machine_id::TEXT
         WHERE session.machine_id IS NOT NULL
           AND machine.{machine_column} IS NULL
         """  # nosec B608 - catalog-selected identifier

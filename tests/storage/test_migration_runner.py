@@ -275,6 +275,9 @@ class _BatchState:
         self.epoch_id = str(uuid.uuid4())
         self.batch_id = str(uuid.uuid4())
         self.manifest_sha256 = "b" * 64
+        self.campaign = "schema-apply"
+        self.epoch_campaign: str | None = None
+        self.opened_by: str | None = None
 
 
 class _BatchTransaction:
@@ -304,13 +307,15 @@ class _BatchTransaction:
                     {
                         "id": self._state.batch_id,
                         "maintenance_epoch_id": self._state.epoch_id,
-                        "campaign": "schema-apply",
+                        "campaign": self._state.campaign,
                         "status": "pending",
                         "backup_manifest_sha256": self._state.manifest_sha256,
                         "migration_plan": self._migration_plan,
                         "intent": self._intent,
                         "released_at": None if self._state.epoch_open else "released",
-                        "opened_by": "hub-maintenance:schema-apply",
+                        "opened_by": self._state.opened_by
+                        or f"hub-maintenance:{self._state.campaign}",
+                        "epoch_campaign": self._state.epoch_campaign or self._state.campaign,
                     }
                 ]
             )
@@ -501,6 +506,34 @@ def test_destructive_batch_rejects_different_bytes_for_same_version(
     state.intent["backup_starting_head"] = 354
 
     with pytest.raises(MigrationUnsupportedError, match="different local migration bytes"):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+
+def test_destructive_batch_applies_under_identity_cutover_campaign(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.campaign = "identity-cutover"
+
+    _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+    assert sorted(state.applied) == [354, 355, 356]
+    assert state.mutations == [355, 356]
+
+
+def test_destructive_batch_rejects_epoch_batch_campaign_mismatch(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.campaign = "identity-cutover"
+    state.epoch_campaign = "schema-apply"
+
+    with pytest.raises(MigrationUnsupportedError, match="campaigns do not match"):
+        _new_destructive_runner(module, state, migrations).apply_destructive(context)
+
+
+def test_destructive_batch_rejects_foreign_epoch_owner(tmp_path: Path) -> None:
+    module, state, migrations, context = _destructive_runner_fixture(tmp_path)
+    state.campaign = "identity-cutover"
+    state.opened_by = "hub-maintenance:schema-apply"
+
+    with pytest.raises(MigrationUnsupportedError, match="is not owned by"):
         _new_destructive_runner(module, state, migrations).apply_destructive(context)
 
 

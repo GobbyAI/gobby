@@ -15,7 +15,7 @@ from gobby.cli.hub_backup._manifest import (
     VerificationState,
 )
 from gobby.cli.schema import SchemaGateError, validate_destructive_manifest
-from gobby.storage.maintenance_epoch import DestructiveBatch, MaintenanceEpoch
+from gobby.storage.maintenance_epoch import Campaign, DestructiveBatch, MaintenanceEpoch
 
 pytestmark = pytest.mark.unit
 
@@ -55,27 +55,29 @@ def _manifest(epoch_id: uuid.UUID) -> HubBackupManifest:
     )
 
 
-def _epoch(epoch_id: uuid.UUID) -> MaintenanceEpoch:
+def _epoch(epoch_id: uuid.UUID, campaign: Campaign = "schema-apply") -> MaintenanceEpoch:
     return MaintenanceEpoch(
         id=epoch_id,
-        campaign="schema-apply",
+        campaign=campaign,
         opened_at=NOW,
-        opened_by="hub-maintenance:schema-apply",
+        opened_by=f"hub-maintenance:{campaign}",
         scope_note="schema apply",
         released_at=None,
         released_by_command=None,
     )
 
 
-def _batch(epoch_id: uuid.UUID, digest: str) -> DestructiveBatch:
+def _batch(
+    epoch_id: uuid.UUID, digest: str, campaign: Campaign = "schema-apply"
+) -> DestructiveBatch:
     return DestructiveBatch(
         id=uuid.uuid4(),
         maintenance_epoch_id=epoch_id,
-        campaign="schema-apply",
+        campaign=campaign,
         status="pending",
         backup_manifest_path="/tmp/manifest.json",
         backup_manifest_sha256=digest,
-        intent={"campaign": "schema-apply"},
+        intent={"campaign": campaign},
         migration_plan=[],
         target_receipts={},
         created_at=NOW,
@@ -104,6 +106,65 @@ def test_destructive_manifest_gate_accepts_all_bound_evidence(tmp_path: Path) ->
     assert context.epoch_id == str(epoch_id)
     assert context.manifest_sha256 == digest
     assert context.backup_starting_head == 354
+
+
+def test_destructive_manifest_gate_accepts_identity_cutover_campaign(tmp_path: Path) -> None:
+    epoch_id = uuid.uuid4()
+    digest = "a" * 64
+
+    context = validate_destructive_manifest(
+        _manifest(epoch_id),
+        backup_root=tmp_path,
+        manifest_sha256=digest,
+        current_identity=IDENTITY,
+        epoch=_epoch(epoch_id, campaign="identity-cutover"),
+        batch=_batch(epoch_id, digest, campaign="identity-cutover"),
+        now=NOW,
+        max_age_hours=24,
+    )
+
+    assert context.epoch_id == str(epoch_id)
+    assert context.manifest_sha256 == digest
+
+
+def test_destructive_manifest_gate_refuses_epoch_batch_campaign_mismatch(
+    tmp_path: Path,
+) -> None:
+    epoch_id = uuid.uuid4()
+    digest = "a" * 64
+
+    with pytest.raises(SchemaGateError, match="campaigns do not match"):
+        validate_destructive_manifest(
+            _manifest(epoch_id),
+            backup_root=tmp_path,
+            manifest_sha256=digest,
+            current_identity=IDENTITY,
+            epoch=_epoch(epoch_id, campaign="identity-cutover"),
+            batch=_batch(epoch_id, digest),
+            now=NOW,
+            max_age_hours=24,
+        )
+
+
+def test_destructive_manifest_gate_refuses_foreign_epoch_owner(tmp_path: Path) -> None:
+    epoch_id = uuid.uuid4()
+    digest = "a" * 64
+    epoch = replace(
+        _epoch(epoch_id, campaign="identity-cutover"),
+        opened_by="hub-maintenance:schema-apply",
+    )
+
+    with pytest.raises(SchemaGateError, match="not owned by hub-maintenance:identity-cutover"):
+        validate_destructive_manifest(
+            _manifest(epoch_id),
+            backup_root=tmp_path,
+            manifest_sha256=digest,
+            current_identity=IDENTITY,
+            epoch=epoch,
+            batch=_batch(epoch_id, digest, campaign="identity-cutover"),
+            now=NOW,
+            max_age_hours=24,
+        )
 
 
 @pytest.mark.parametrize(

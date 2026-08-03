@@ -226,7 +226,8 @@ class MigrationRunner:
                     batch.migration_plan,
                     batch.intent,
                     epoch.released_at,
-                    epoch.opened_by
+                    epoch.opened_by,
+                    epoch.campaign AS epoch_campaign
                 FROM destructive_batches AS batch
                 JOIN maintenance_epochs AS epoch
                   ON epoch.id = batch.maintenance_epoch_id
@@ -281,12 +282,15 @@ class MigrationRunner:
             )
         if _row_value(row, "released_at", 7) is not None:
             raise MigrationUnsupportedError("The maintenance epoch is not open.")
-        if _row_value(row, "opened_by", 8) != "hub-maintenance:schema-apply":
+        campaign = _row_value(row, "campaign", 2)
+        if _row_value(row, "epoch_campaign", 9) != campaign:
             raise MigrationUnsupportedError(
-                "The maintenance epoch is not owned by `hub-maintenance:schema-apply`."
+                "The maintenance epoch and destructive batch campaigns do not match."
             )
-        if _row_value(row, "campaign", 2) != "schema-apply":
-            raise MigrationUnsupportedError("The destructive batch campaign is not schema-apply.")
+        if _row_value(row, "opened_by", 8) != f"hub-maintenance:{campaign}":
+            raise MigrationUnsupportedError(
+                f"The maintenance epoch is not owned by `hub-maintenance:{campaign}`."
+            )
         if _row_value(row, "status", 3) != "pending":
             raise MigrationUnsupportedError("The destructive batch is not pending.")
         if _row_value(row, "backup_manifest_sha256", 4) != context.manifest_sha256:

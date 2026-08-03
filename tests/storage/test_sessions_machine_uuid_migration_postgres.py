@@ -22,6 +22,8 @@ MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 SURVIVOR_ID = "30000000-0000-4000-8000-000000000001"
 LOSER_ID = "30000000-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "30000000-0000-4000-8000-000000000003"
+SURVIVOR_REVISION_ID = "50000000-0000-4000-8000-000000000001"
+LOSER_REVISION_ID = "50000000-0000-4000-8000-000000000002"
 
 
 def _create_pre_migration_schema(conn: psycopg.Connection[tuple[object, ...]]) -> None:
@@ -53,6 +55,27 @@ def _create_pre_migration_schema(conn: psycopg.Connection[tuple[object, ...]]) -
             payload TEXT NOT NULL,
             CONSTRAINT session_events_session_key_unique UNIQUE (session_id, event_key)
         );
+        CREATE TABLE session_summary_revisions (
+            id UUID PRIMARY KEY,
+            session_id UUID NOT NULL
+                REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+            UNIQUE (id, session_id)
+        );
+        CREATE TABLE session_interactions (
+            id UUID PRIMARY KEY,
+            session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_session_interactions_active
+            ON session_interactions(session_id, kind) WHERE status = 'pending';
+        ALTER TABLE sessions
+            ADD COLUMN summary_revision_id UUID,
+            ADD CONSTRAINT sessions_summary_revision_fk
+            FOREIGN KEY (summary_revision_id, id)
+            REFERENCES session_summary_revisions(id, session_id)
+            ON DELETE SET NULL (summary_revision_id)
+            DEFERRABLE INITIALLY IMMEDIATE;
         """
     )
 
@@ -111,6 +134,38 @@ def test_migration_merges_duplicate_sessions_and_child_rows(
                 """,
                 (SURVIVOR_ID, LOSER_ID, LOSER_ID),
             )
+            conn.execute(
+                """
+                ALTER TABLE session_events
+                    ADD CONSTRAINT session_events_payload_not_loser
+                    CHECK (payload <> 'loser') NOT VALID
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO session_summary_revisions(id, session_id) VALUES
+                    (%s, %s),
+                    (%s, %s)
+                """,
+                (SURVIVOR_REVISION_ID, SURVIVOR_ID, LOSER_REVISION_ID, LOSER_ID),
+            )
+            conn.execute(
+                "UPDATE sessions SET summary_revision_id = %s WHERE id = %s",
+                (SURVIVOR_REVISION_ID, SURVIVOR_ID),
+            )
+            conn.execute(
+                "UPDATE sessions SET summary_revision_id = %s WHERE id = %s",
+                (LOSER_REVISION_ID, LOSER_ID),
+            )
+            conn.execute(
+                """
+                INSERT INTO session_interactions(id, session_id, kind, status) VALUES
+                    ('60000000-0000-4000-8000-000000000001', %s, 'approve', 'pending'),
+                    ('60000000-0000-4000-8000-000000000002', %s, 'approve', 'pending'),
+                    ('60000000-0000-4000-8000-000000000003', %s, 'approve', 'done')
+                """,
+                (SURVIVOR_ID, LOSER_ID, LOSER_ID),
+            )
 
             conn.execute(MIGRATION_PATH.read_text(encoding="utf-8"))
 
@@ -162,18 +217,42 @@ def test_migration_merges_duplicate_sessions_and_child_rows(
                 "SELECT machine_id FROM sessions WHERE id = %s",
                 (CHILD_SESSION_ID,),
             ).fetchone() == (UUID(MACHINE_ID),)
+            assert conn.execute(
+                "SELECT summary_revision_id FROM sessions WHERE id = %s",
+                (SURVIVOR_ID,),
+            ).fetchone() == (UUID(SURVIVOR_REVISION_ID),)
+            assert conn.execute(
+                "SELECT id, session_id FROM session_summary_revisions ORDER BY id"
+            ).fetchall() == [
+                (UUID(SURVIVOR_REVISION_ID), UUID(SURVIVOR_ID)),
+                (UUID(LOSER_REVISION_ID), UUID(SURVIVOR_ID)),
+            ]
+            assert conn.execute(
+                """
+                SELECT convalidated
+                FROM pg_constraint
+                WHERE conname = 'session_events_payload_not_loser'
+                """
+            ).fetchone() == (False,)
+            assert conn.execute(
+                "SELECT session_id, kind, status FROM session_interactions ORDER BY id"
+            ).fetchall() == [
+                (UUID(SURVIVOR_ID), "approve", "pending"),
+                (UUID(SURVIVOR_ID), "approve", "done"),
+            ]
 
     inventory_notice = next(message for message in notices if "FK inventory" in message)
     assert "session_variables" in inventory_notice
     assert "session_events" in inventory_notice
     assert "session_events_session_key_unique" in inventory_notice
+    assert "session_summary_revisions" in inventory_notice
     collision_notice = next(
         message for message in notices if "collision preflight ledger" in message
     )
     assert "parent_groups=1" in collision_notice
     assert "parent_losers=1" in collision_notice
-    assert "child_delete=2" in collision_notice
-    assert "child_repoint=1" in collision_notice
+    assert "child_delete=3" in collision_notice
+    assert "child_repoint=3" in collision_notice
     print(f"migration-inventory: {inventory_notice}")
     print(f"collision-ledger: {collision_notice}")
 

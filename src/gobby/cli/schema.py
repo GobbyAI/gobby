@@ -69,10 +69,10 @@ def validate_destructive_manifest(
         reasons.append("backup manifest digest does not match destructive batch")
     if epoch.released_at is not None:
         reasons.append("maintenance epoch is not open")
-    if epoch.campaign != "schema-apply" or batch.campaign != "schema-apply":
-        reasons.append("maintenance epoch and batch must use the schema-apply campaign")
-    if epoch.opened_by != "hub-maintenance:schema-apply":
-        reasons.append("maintenance epoch is not owned by hub-maintenance:schema-apply")
+    if epoch.campaign != batch.campaign:
+        reasons.append("maintenance epoch and destructive batch campaigns do not match")
+    if epoch.opened_by != f"hub-maintenance:{epoch.campaign}":
+        reasons.append(f"maintenance epoch is not owned by hub-maintenance:{epoch.campaign}")
     if reasons:
         raise SchemaGateError("; ".join(reasons))
     return DestructiveMigrationContext(

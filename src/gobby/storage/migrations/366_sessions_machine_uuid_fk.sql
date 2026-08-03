@@ -138,6 +138,34 @@ BEGIN
             composite_fk_count;
     END IF;
 
+    -- Outbound composite FKs from sessions (e.g. sessions_summary_revision_fk ->
+    -- session_summary_revisions(id, session_id)) break when loser-owned child rows
+    -- are repointed to the survivor while the loser session row still holds the
+    -- back-reference. Only sessions_summary_revision_fk is a known shape; its
+    -- loser back-references are cleared before repoint, and any other outbound
+    -- composite FK fails loudly here instead of mid-merge.
+    SELECT COUNT(*)
+    INTO composite_fk_count
+    FROM pg_constraint
+    WHERE contype = 'f'
+      AND conrelid = 'sessions'::REGCLASS
+      AND conname <> 'sessions_summary_revision_fk'
+      AND (
+          COALESCE(ARRAY_LENGTH(conkey, 1), 0) <> 1
+          OR COALESCE(ARRAY_LENGTH(confkey, 1), 0) <> 1
+      );
+    IF composite_fk_count > 0 THEN
+        RAISE EXCEPTION
+            'sessions outbound FK inventory found % unsupported composite constraints',
+            composite_fk_count;
+    END IF;
+
+    UPDATE sessions
+    SET summary_revision_id = NULL
+    FROM _gobby_session_merge AS merge
+    WHERE sessions.id = merge.loser_id
+      AND sessions.summary_revision_id IS NOT NULL;
+
     CREATE TEMP TABLE _gobby_session_fk_inventory (
         constraint_oid OID NOT NULL,
         constraint_name NAME NOT NULL,
@@ -184,22 +212,24 @@ BEGIN
     FROM _gobby_session_fk_inventory AS inventory
     LEFT JOIN LATERAL (
         SELECT STRING_AGG(
-            FORMAT('%I(%s)', unique_constraint.conname, unique_columns.columns),
-            ',' ORDER BY unique_constraint.conname
+            FORMAT('%I(%s)', index_class.relname, unique_columns.columns),
+            ',' ORDER BY index_class.relname
         ) AS constraints
-        FROM pg_constraint AS unique_constraint
+        FROM pg_index AS unique_index
+        JOIN pg_class AS index_class ON index_class.oid = unique_index.indexrelid
         JOIN LATERAL (
             SELECT STRING_AGG(attribute.attname, ',' ORDER BY key_column.ordinality) AS columns
-            FROM UNNEST(unique_constraint.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+            FROM UNNEST(unique_index.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
             JOIN pg_attribute AS attribute
-              ON attribute.attrelid = unique_constraint.conrelid
+              ON attribute.attrelid = unique_index.indrelid
              AND attribute.attnum = key_column.attnum
+            WHERE key_column.ordinality <= unique_index.indnkeyatts
         ) AS unique_columns ON TRUE
-        WHERE unique_constraint.conrelid = inventory.child_table
-          AND unique_constraint.contype IN ('p', 'u')
+        WHERE unique_index.indrelid = inventory.child_table
+          AND unique_index.indisunique
     ) AS unique_inventory ON TRUE;
 
-    RAISE NOTICE 'sessions FK inventory with PK/unique constraints: %',
+    RAISE NOTICE 'sessions FK inventory with unique indexes: %',
         COALESCE(inventory_text, 'none');
 
     CREATE TEMP TABLE _gobby_child_actions (
@@ -232,24 +262,45 @@ BEGIN
         );
     END LOOP;
 
+    -- Collision inventory is driven by pg_index, not pg_constraint: plain
+    -- CREATE UNIQUE INDEX uniqueness (e.g. idx_token_events_dedup) never gets a
+    -- pg_constraint row but rejects merges just the same. Constraint-backed
+    -- indexes appear here too, so nothing is lost. Partial indexes only rank
+    -- rows satisfying their predicate; repoint never changes predicate inputs
+    -- (session FK columns keep their NULL-ness and other columns are
+    -- untouched), so evaluating the predicate pre-merge is faithful.
     FOR constraint_row IN
         SELECT
-            unique_constraint.oid,
-            unique_constraint.conname,
-            unique_constraint.conrelid::REGCLASS AS child_table,
-            unique_constraint.conkey,
-            index_shape.indnullsnotdistinct
-        FROM pg_constraint AS unique_constraint
-        JOIN pg_index AS index_shape ON index_shape.indexrelid = unique_constraint.conindid
-        WHERE unique_constraint.contype IN ('p', 'u')
+            index_class.relname AS index_name,
+            unique_index.indrelid::REGCLASS AS child_table,
+            key_columns.attnums AS conkey,
+            key_columns.has_expression_key,
+            unique_index.indnullsnotdistinct,
+            PG_GET_EXPR(unique_index.indpred, unique_index.indrelid) AS predicate
+        FROM pg_index AS unique_index
+        JOIN pg_class AS index_class ON index_class.oid = unique_index.indexrelid
+        JOIN LATERAL (
+            SELECT
+                ARRAY_AGG(key_column.attnum ORDER BY key_column.ordinality) AS attnums,
+                BOOL_OR(key_column.attnum = 0) AS has_expression_key
+            FROM UNNEST(unique_index.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+            WHERE key_column.ordinality <= unique_index.indnkeyatts
+        ) AS key_columns ON TRUE
+        WHERE unique_index.indisunique
           AND EXISTS (
               SELECT 1
               FROM _gobby_session_fk_inventory AS inventory
-              WHERE inventory.child_table = unique_constraint.conrelid
-                AND inventory.child_attnum = ANY(unique_constraint.conkey)
+              WHERE inventory.child_table = unique_index.indrelid
+                AND inventory.child_attnum = ANY(key_columns.attnums)
                 AND inventory.child_table <> 'sessions'::REGCLASS
           )
     LOOP
+        IF constraint_row.has_expression_key THEN
+            RAISE EXCEPTION
+                'unique index % on % mixes expression keys with session FK columns; merge cannot rank its collisions',
+                constraint_row.index_name,
+                constraint_row.child_table;
+        END IF;
         SELECT
             STRING_AGG(
                 CASE
@@ -320,7 +371,8 @@ BEGIN
             'PARTITION BY %2$s '
             'ORDER BY CASE WHEN (%1$s) THEN 1 ELSE 0 END, child.ctid'
             ') AS collision_rank '
-            'FROM %3$s AS child'
+            'FROM %3$s AS child '
+            'WHERE %6$s'
             ') '
             'UPDATE _gobby_child_actions AS action '
             'SET action = ''delete'', reason = %4$L '
@@ -332,8 +384,9 @@ BEGIN
             affected_expression,
             partition_expressions,
             constraint_row.child_table,
-            FORMAT('unique constraint %I', constraint_row.conname),
-            constraint_row.child_table::TEXT
+            FORMAT('unique index %I', constraint_row.index_name),
+            constraint_row.child_table::TEXT,
+            COALESCE('(' || constraint_row.predicate || ')', 'TRUE')
         );
     END LOOP;
 
@@ -356,6 +409,46 @@ BEGIN
         parent_loser_count,
         child_delete_count,
         child_repoint_count;
+
+    -- Migration 342 added tasks_require_validation_criteria as NOT VALID because
+    -- grandfathered rows violate it, and any UPDATE re-checks unvalidated CHECK
+    -- constraints for the touched row (the migration 361 precedent). Repointing
+    -- loser-owned child rows must not be rejected by grandfathered data, so every
+    -- unvalidated CHECK constraint on an affected table is dropped here and
+    -- re-added verbatim (still NOT VALID) after the merge. DDL holds ACCESS
+    -- EXCLUSIVE on these tables for the rest of the transaction, so no
+    -- concurrent write can slip through the gap.
+    CREATE TEMP TABLE _gobby_invalid_checks (
+        check_table REGCLASS NOT NULL,
+        constraint_name NAME NOT NULL,
+        constraint_def TEXT NOT NULL
+    ) ON COMMIT DROP;
+
+    INSERT INTO _gobby_invalid_checks(check_table, constraint_name, constraint_def)
+    SELECT
+        invalid_check.conrelid::REGCLASS,
+        invalid_check.conname,
+        PG_GET_CONSTRAINTDEF(invalid_check.oid)
+    FROM pg_constraint AS invalid_check
+    WHERE invalid_check.contype = 'c'
+      AND NOT invalid_check.convalidated
+      AND invalid_check.conrelid IN (
+          SELECT DISTINCT child_table::OID FROM _gobby_session_fk_inventory
+          UNION
+          SELECT 'sessions'::REGCLASS::OID
+      );
+
+    FOR constraint_row IN
+        SELECT check_table, constraint_name
+        FROM _gobby_invalid_checks
+        ORDER BY check_table::TEXT, constraint_name
+    LOOP
+        EXECUTE FORMAT(
+            'ALTER TABLE %1$s DROP CONSTRAINT %2$I',
+            constraint_row.check_table,
+            constraint_row.constraint_name
+        );
+    END LOOP;
 
     FOR table_row IN
         SELECT child_table
@@ -455,5 +548,18 @@ BEGIN
     CREATE UNIQUE INDEX idx_sessions_unique
         ON sessions(external_id, machine_id, source, project_id, session_type)
         NULLS NOT DISTINCT;
+
+    FOR constraint_row IN
+        SELECT check_table, constraint_name, constraint_def
+        FROM _gobby_invalid_checks
+        ORDER BY check_table::TEXT, constraint_name
+    LOOP
+        EXECUTE FORMAT(
+            'ALTER TABLE %1$s ADD CONSTRAINT %2$I %3$s',
+            constraint_row.check_table,
+            constraint_row.constraint_name,
+            constraint_row.constraint_def
+        );
+    END LOOP;
 END
 $migration$;
