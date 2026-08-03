@@ -182,7 +182,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                             manager.restore(existing.id)
                             if existing.source != "installed":
                                 manager.move_to_global(existing.id)
-                            manager.update(
+                            manager.update_from_sync(
                                 existing.id,
                                 **_build_agent_update_fields(
                                     existing,
@@ -212,7 +212,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     with db.transaction():
                         if existing.source != "installed":
                             manager.move_to_global(existing.id)
-                        manager.update(existing.id, **update_fields)
+                        manager.update_from_sync(existing.id, **update_fields)
                     _refresh_step_workflow(body, db)
                     result["updated"] += 1
                     logger.debug(

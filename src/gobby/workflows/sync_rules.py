@@ -319,7 +319,8 @@ def _sync_single_rule(
     """Sync a single rule to workflow_definitions.
 
     Creates an installed row if none exists. Existing sync-managed rows are
-    refreshed when the YAML changes, preserving the user's enabled toggle.
+    refreshed when the YAML changes, applying enabled defaults until the user
+    edits them.
     Soft-deleted sync-managed rows are restored; user/custom rows stay protected.
     """
     # Build the RuleDefinitionBody dict
@@ -374,12 +375,13 @@ def _sync_single_rule(
                     existing=existing,
                     definition_json=definition_json,
                     description=description,
+                    enabled=enabled,
                     priority=priority,
                     sources=file_sources,
                     tags=tags,
                 )
                 if update_fields:
-                    manager.update(existing.id, **update_fields)
+                    manager.update_from_sync(existing.id, **update_fields)
                 result["updated"] += 1
                 return
             result["skipped"] += 1
@@ -390,12 +392,13 @@ def _sync_single_rule(
                 existing=existing,
                 definition_json=definition_json,
                 description=description,
+                enabled=enabled,
                 priority=priority,
                 sources=file_sources,
                 tags=tags,
             )
             if update_fields:
-                manager.update(existing.id, **update_fields)
+                manager.update_from_sync(existing.id, **update_fields)
                 result["updated"] += 1
                 return
 
@@ -432,6 +435,7 @@ def _build_rule_update_fields(
     existing: Any,
     definition_json: str,
     description: str | None,
+    enabled: bool,
     priority: int,
     sources: list[str] | None,
     tags: list[str] | None,
@@ -443,6 +447,8 @@ def _build_rule_update_fields(
         update_fields["definition_json"] = definition_json
     if existing.description != description:
         update_fields["description"] = description
+    if not existing.enabled_user_modified and existing.enabled != enabled:
+        update_fields["enabled"] = enabled
     if existing.priority != priority:
         update_fields["priority"] = priority
     if existing.sources != sources:

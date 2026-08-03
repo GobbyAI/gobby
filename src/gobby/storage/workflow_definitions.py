@@ -76,6 +76,7 @@ class WorkflowDefinitionRow:
     source: DefinitionSource
     created_at: datetime
     updated_at: datetime
+    enabled_user_modified: bool = False
     project_id: str | None = None
     description: str | None = None
     version: str = "1.0"
@@ -103,6 +104,7 @@ class WorkflowDefinitionRow:
             workflow_type=row["workflow_type"],
             version=row["version"] if row["version"] is not None else "1.0",
             enabled=bool(row["enabled"]),
+            enabled_user_modified=bool(row["enabled_user_modified"]),
             priority=int(row["priority"]) if row["priority"] is not None else 100,
             sources=_parse_json_list(row["sources"]),
             definition_json=row["definition_json"],
@@ -123,6 +125,7 @@ class WorkflowDefinitionRow:
             "workflow_type": self.workflow_type,
             "version": self.version,
             "enabled": self.enabled,
+            "enabled_user_modified": self.enabled_user_modified,
             "priority": self.priority,
             "sources": self.sources,
             "definition_json": self.definition_json,
@@ -232,12 +235,19 @@ class LocalWorkflowDefinitionManager:
 
     def update(self, definition_id: str, **fields: Any) -> WorkflowDefinitionRow:
         """Partial update of a workflow definition."""
+        if "enabled" in fields:
+            fields["enabled_user_modified"] = True
+        return self.update_from_sync(definition_id, **fields)
+
+    def update_from_sync(self, definition_id: str, **fields: Any) -> WorkflowDefinitionRow:
+        """Partial update that preserves whether enabled was explicitly edited."""
         allowed_fields = {
             "name",
             "description",
             "workflow_type",
             "version",
             "enabled",
+            "enabled_user_modified",
             "priority",
             "sources",
             "definition_json",
@@ -276,7 +286,7 @@ class LocalWorkflowDefinitionManager:
         row = self.db.fetchone(
             """
             UPDATE workflow_definitions
-            SET enabled = NOT enabled, updated_at = %s
+            SET enabled = NOT enabled, enabled_user_modified = TRUE, updated_at = %s
             WHERE id = %s AND deleted_at IS NULL
             RETURNING *
             """,
