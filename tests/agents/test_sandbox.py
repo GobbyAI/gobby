@@ -6,7 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -25,6 +25,7 @@ from gobby.agents.sandbox import (
     materialize_claude_settings,
     materialize_claude_settings_async,
 )
+from gobby.agents.sandbox_policy import default_write_paths
 
 pytestmark = pytest.mark.unit
 
@@ -328,7 +329,7 @@ class TestSandboxResolver:
     def test_cannot_instantiate_directly(self) -> None:
         """Test that SandboxResolver cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            SandboxResolver()
+            cast(Any, SandboxResolver)()
 
     def test_subclass_must_implement_cli_name(self) -> None:
         """Test that subclass must implement cli_name property."""
@@ -340,7 +341,7 @@ class TestSandboxResolver:
                 return ([], {})
 
         with pytest.raises(TypeError):
-            IncompleteResolver()
+            cast(Any, IncompleteResolver)()
 
     def test_subclass_must_implement_resolve(self) -> None:
         """Test that subclass must implement resolve method."""
@@ -351,7 +352,7 @@ class TestSandboxResolver:
                 return "test"
 
         with pytest.raises(TypeError):
-            IncompleteResolver()
+            cast(Any, IncompleteResolver)()
 
     def test_complete_subclass_can_be_instantiated(self) -> None:
         """Test that a complete subclass can be instantiated."""
@@ -546,7 +547,7 @@ class TestClaudeSandboxResolver:
         args, env = resolver.resolve(config, paths)
         assert env == {}
 
-    def test_materialize_claude_settings_merges_base_hooks(self, tmp_path) -> None:
+    def test_materialize_claude_settings_merges_base_hooks(self, tmp_path: Path) -> None:
         """Generated runtime settings should preserve base settings and add sandbox config."""
         base_settings = tmp_path / "headless.json"
         base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
@@ -564,7 +565,9 @@ class TestClaudeSandboxResolver:
         assert payload["sandbox"]["enabled"] is True
 
     @pytest.mark.asyncio
-    async def test_materialize_claude_settings_async_matches_sync_output(self, tmp_path) -> None:
+    async def test_materialize_claude_settings_async_matches_sync_output(
+        self, tmp_path: Path
+    ) -> None:
         """Async wrapper should preserve sync helper behavior while moving work off-loop."""
         base_settings = tmp_path / "headless.json"
         base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
@@ -582,7 +585,7 @@ class TestClaudeSandboxResolver:
         assert payload["sandbox"]["enabled"] is True
 
     def test_materialize_claude_settings_logs_invalid_base_settings(
-        self, tmp_path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Invalid base settings should warn and still fall back to an empty payload."""
         base_settings = tmp_path / "headless.json"
@@ -1054,7 +1057,7 @@ class TestSharedTempRootsAreNotGranted:
 
 
 class TestToolchainGrants:
-    """Every language gcode indexes needs its $HOME-rooted toolchain reachable."""
+    """Toolchains stay reachable without mutable shared installation state."""
 
     @staticmethod
     def _fake_home(
@@ -1069,20 +1072,110 @@ class TestToolchainGrants:
         monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
         return home
 
-    def test_installed_toolchain_roots_are_readable(
+    @staticmethod
+    def _srt_can_read(path: Path, paths: ResolvedSandboxPaths) -> bool:
+        """Model SRT v0.0.66: an allowRead ancestor wins over denyRead."""
+        resolved = path.resolve()
+        if any(resolved.is_relative_to(Path(root)) for root in paths.read_paths):
+            return True
+        return not any(resolved.is_relative_to(Path(root)) for root in paths.deny_read_paths)
+
+    @staticmethod
+    def _srt_can_write(path: Path, paths: ResolvedSandboxPaths) -> bool:
+        """Model SRT write access, where denyWrite takes precedence."""
+        resolved = path.resolve()
+        if any(resolved.is_relative_to(Path(root)) for root in paths.deny_write_paths):
+            return False
+        return any(resolved.is_relative_to(Path(root)) for root in paths.write_paths)
+
+    def test_default_write_paths_exclude_toolchain_executables_and_auto_config(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Rust, Go, JVM, Ruby, .NET and friends are denied without an explicit grant."""
+        unsafe_locations = (
+            ".cargo/bin",
+            ".cargo/config.toml",
+            ".gradle/init.d",
+            "go/bin",
+            ".npm/_npx",
+            ".bundle/plugin",
+            ".nuget/plugins",
+            ".pub-cache/bin",
+            ".mix/escripts",
+            ".local/bin",
+        )
+        home = self._fake_home(
+            monkeypatch,
+            tmp_path,
+            tuple(str(Path(relative).parent) for relative in unsafe_locations),
+        )
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        write_paths = default_write_paths(SandboxConfig(enabled=True, backend="srt"), workspace)
+
+        for write_path in map(Path, write_paths):
+            for relative in unsafe_locations:
+                unsafe_path = (home / relative).resolve()
+                assert not unsafe_path.is_relative_to(write_path), (
+                    f"{write_path} grants write access to {unsafe_path}"
+                )
+
+    def test_toolchain_credentials_are_effectively_denied(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        credentials = (
+            ".cargo/credentials",
+            ".cargo/credentials.toml",
+            ".npm/_auth",
+            ".gradle/gradle.properties",
+            ".m2/settings.xml",
+            ".m2/settings-security.xml",
+            ".gem/credentials",
+            ".bundle/config",
+            ".sbt/.credentials",
+            ".ivy2/.credentials",
+            ".nuget/NuGet/NuGet.Config",
+            ".composer/auth.json",
+            ".config/composer/auth.json",
+            ".pub-cache/credentials.json",
+            ".hex/hex.config",
+        )
+        home = self._fake_home(
+            monkeypatch,
+            tmp_path,
+            tuple(str(Path(relative).parent) for relative in credentials),
+        )
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        for relative in credentials:
+            credential = home / relative
+            resolved = str(credential.resolve())
+            assert resolved in paths.deny_read_paths, relative
+            assert resolved in paths.deny_write_paths, relative
+            assert not self._srt_can_read(credential, paths), relative
+            assert not self._srt_can_write(credential, paths), relative
+
+    def test_installed_toolchains_and_shared_caches_are_read_only(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Executables, SDKs, installed packages, and shared caches remain usable."""
         installed = (
             ".rustup",
-            ".cargo",
+            ".cargo/bin",
             "go",
-            ".gradle",
-            ".m2",
+            ".gradle/caches",
+            ".m2/repository",
             ".nvm",
             ".rbenv",
-            ".nuget",
-            ".pub-cache",
+            ".nuget/packages",
+            ".pub-cache/hosted",
             ".sdkman",
         )
         home = self._fake_home(monkeypatch, tmp_path, installed)
@@ -1098,12 +1191,13 @@ class TestToolchainGrants:
 
         for relative in installed:
             assert str((home / relative).resolve()) in paths.read_paths, relative
+            assert str((home / relative).resolve()) not in paths.write_paths, relative
 
     def test_absent_toolchain_roots_are_not_emitted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Existence filtering keeps the emitted policy tight per machine."""
-        home = self._fake_home(monkeypatch, tmp_path, (".cargo",))
+        home = self._fake_home(monkeypatch, tmp_path, (".cargo/bin",))
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -1114,19 +1208,61 @@ class TestToolchainGrants:
             env={"PATH": ""},
         )
 
-        assert str((home / ".cargo").resolve()) in paths.read_paths
+        assert str((home / ".cargo/bin").resolve()) in paths.read_paths
         for absent in (".rustup", "go", ".gradle", ".m2", ".pub-cache"):
             assert str((home / absent).resolve()) not in paths.read_paths, absent
             assert str((home / absent).resolve()) not in paths.write_paths, absent
 
-    def test_build_caches_are_writable_without_registry_network(
+    def test_package_installs_use_explicit_per_run_cache_paths(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """cargo and go cannot build at all without writing these, network or not."""
-        caches = (".cargo", ".cache/go-build", ".gradle", ".m2", ".npm", "go")
-        home = self._fake_home(monkeypatch, tmp_path, caches)
+        shared_caches = (
+            ".cargo/registry",
+            ".cache/uv",
+            ".cache/pip",
+            ".npm/_cacache",
+            "go/pkg/mod",
+            ".cache/go-build",
+            ".gradle/caches",
+            ".m2/repository",
+            ".ivy2/cache",
+            ".sbt/boot",
+            ".gem/cache",
+            ".bundle/cache",
+            ".nuget/packages",
+            ".composer/cache",
+            ".pub-cache/hosted",
+            ".hex/packages",
+            ".luarocks",
+            ".swiftpm",
+        )
+        home = self._fake_home(monkeypatch, tmp_path, shared_caches)
         workspace = tmp_path / "workspace"
         workspace.mkdir()
+        per_run_caches = tuple(
+            tmp_path / "run" / "tool-cache" / name
+            for name in (
+                "cargo",
+                "uv",
+                "pip",
+                "npm",
+                "go-build",
+                "go-mod",
+                "gradle",
+                "maven",
+                "ivy",
+                "sbt",
+                "gem",
+                "bundle",
+                "nuget",
+                "composer",
+                "pub",
+                "hex",
+                "mix",
+                "luarocks",
+                "swiftpm",
+            )
+        )
 
         paths = compute_sandbox_paths(
             config=SandboxConfig(
@@ -1134,19 +1270,26 @@ class TestToolchainGrants:
                 backend="srt",
                 allow_network=False,
                 allow_package_registries=False,
+                extra_write_paths=[str(path) for path in per_run_caches],
             ),
             workspace_path=str(workspace),
             provider="codex",
             env={"PATH": ""},
         )
 
-        for relative in caches:
-            assert str((home / relative).resolve()) in paths.write_paths, relative
+        for relative in shared_caches:
+            shared_cache = home / relative
+            assert self._srt_can_read(shared_cache, paths), relative
+            assert not self._srt_can_write(shared_cache, paths), relative
+        for per_run_cache in per_run_caches:
+            resolved = str(per_run_cache.resolve())
+            assert resolved in paths.read_paths, resolved
+            assert resolved in paths.write_paths, resolved
 
     def test_registry_flag_gates_network_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """allow_package_registries controls egress; local caches never depend on it."""
+        """allow_package_registries controls egress; filesystem grants stay fixed."""
         self._fake_home(monkeypatch, tmp_path, (".cargo", ".npm"))
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -1172,29 +1315,3 @@ class TestToolchainGrants:
         assert "registry.npmjs.org" not in offline.allowed_domains
         assert "registry.npmjs.org" in networked.allowed_domains
         assert set(offline.write_paths) == set(networked.write_paths)
-
-    def test_toolchain_credentials_stay_denied_inside_granted_roots(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """A writable ~/.cargo must not hand the agent the crates.io publish token."""
-        home = self._fake_home(monkeypatch, tmp_path, (".cargo", ".gradle", ".m2", ".ssh"))
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-
-        paths = compute_sandbox_paths(
-            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
-            workspace_path=str(workspace),
-            provider="codex",
-            env={"PATH": ""},
-        )
-
-        for secret in (
-            home / ".cargo" / "credentials.toml",
-            home / ".gradle" / "gradle.properties",
-            home / ".m2" / "settings.xml",
-        ):
-            resolved = str(secret.resolve())
-            assert resolved in paths.deny_read_paths, resolved
-            assert resolved in paths.deny_write_paths, resolved
-        assert str((home / ".ssh").resolve()) in paths.deny_write_paths
-        assert str((home / ".ssh").resolve()) not in paths.read_paths
