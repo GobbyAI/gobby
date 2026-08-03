@@ -1222,6 +1222,25 @@ def test_dream_check_tighten_migration_forfeits_legacy_snapshot_runs() -> None:
     )
 
 
+def test_bm25_disposition_slot_is_a_contiguous_no_op_verdict_record() -> None:
+    """Slot 368 ships the all-stay BM25 verdict and keeps the chain contiguous."""
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+    disposition = migrations_dir / "368_bm25_disposition.sql"
+    assert disposition.is_file(), "reserved slot 368 must ship the BM25 disposition"
+    sql = disposition.read_text(encoding="utf-8")
+    assert not _has_destructive_directive(sql), "all-stay verdict must not be destructive"
+    assert not _contains_destructive_sql(sql), "all-stay verdict must not drop anything"
+    assert "docs/evidence/bm25-verification.md" in sql
+    assert "bm25_disposition_all_stay" in sql
+    versions = sorted(
+        int(path.name.split("_", 1)[0])
+        for path in migrations_dir.glob("*.sql")
+        if int(path.name.split("_", 1)[0]) >= 367
+    )
+    expected = list(range(367, 367 + len(versions)))
+    assert versions == expected, f"migration chain must stay contiguous, got {versions}"
+
+
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
     baseline = _baseline_text()
     migration = _reconcile_drift_migration_text()
