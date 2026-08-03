@@ -46,7 +46,6 @@ MEMORY_RULES = {
     "guard-plan-memory-writes",
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
-    "clear-memory-review-on-create",
 }
 
 REMOVED_HELPER_RULES = {
@@ -379,39 +378,6 @@ class TestMemoryCaptureNudge:
 # ═══════════════════════════════════════════════════════════════════════
 # clear-memory-review-on-create
 # ═══════════════════════════════════════════════════════════════════════
-
-
-class TestClearMemoryReviewOnCreate:
-    """Set memory_review_completed flag when create_memory is called."""
-
-    def test_event_and_effect(
-        self,
-        db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("clear-memory-review-on-create")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.effects is not None
-        assert body.event.value == "before_tool"
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "memory_review_completed"
-        assert body.effects[0].value is True
-
-    def test_has_when_condition(
-        self,
-        db: HubDatabase,
-        manager: LocalWorkflowDefinitionManager,
-    ) -> None:
-        """Must match create_memory on gobby-memory server."""
-        _sync_bundled(db)
-        row = manager.get_by_name("clear-memory-review-on-create")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "create_memory" in body.when
-        assert "gobby-memory" in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

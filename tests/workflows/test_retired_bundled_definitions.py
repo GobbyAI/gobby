@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,8 +24,10 @@ WORKFLOWS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows"
 PIPELINES_DIR = WORKFLOWS_DIR / "pipelines"
 AGENTS_DIR = WORKFLOWS_DIR / "agents"
 RULES_DIR = WORKFLOWS_DIR / "rules"
+VARIABLES_PATH = WORKFLOWS_DIR / "variables/gobby-default-variables.yaml"
 PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
 SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
+DOCS_DIR = REPO_ROOT / "docs/guides"
 
 RETIRED_PIPELINES = (
     "orchestrator",
@@ -45,7 +48,6 @@ RETIRED_SKILLS = ("dev", "qa")
 RETIRED_RULES = {
     "block-and-teach-context7",
     "block-writes-outside-plan-artifact",
-    "no-destructive-git-interactive",
     "no-npx",
     "require-memory-review-before-status",
 }
@@ -107,6 +109,67 @@ def test_retired_rules_are_absent_from_bundled_templates() -> None:
             bundled_rule_names.update(data["rules"])
 
     assert RETIRED_RULES.isdisjoint(bundled_rule_names)
+
+
+def test_interactive_destructive_git_guard_is_restored() -> None:
+    path = RULES_DIR / "worker-safety/no-destructive-git-interactive.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    rule = data["rules"]["no-destructive-git-interactive"]
+
+    assert rule["enabled"] is True
+    assert rule["when"] == "not variables.get('is_spawned_agent')"
+    pattern = rule["effects"][0]["command_pattern"]
+    for command in (
+        "git reset --hard",
+        "git clean -fdx",
+        "git checkout .",
+        "git restore .",
+        "git branch -D obsolete",
+    ):
+        assert re.search(pattern, command), command
+    assert re.search(pattern, "git reset HEAD~1") is None
+
+
+def test_planner_enables_surviving_plan_mode_write_guard() -> None:
+    planner = yaml.safe_load((AGENTS_DIR / "planner.yaml").read_text(encoding="utf-8"))
+    reset = yaml.safe_load(
+        (RULES_DIR / "plan-mode/reset-plan-mode-on-session-start.yaml").read_text(encoding="utf-8")
+    )["rules"]["reset-plan-mode-on-session-start"]
+    guard = yaml.safe_load(
+        (RULES_DIR / "plan-mode/block-edits-plan-mode.yaml").read_text(encoding="utf-8")
+    )["rules"]["block-edits-plan-mode"]
+
+    assert planner["workflows"]["variables"]["plan_mode"] is True
+    assert "variables.get('_agent_type') != 'planner'" in reset["when"]
+    assert "variables.get('plan_mode')" in guard["when"]
+    assert guard["effects"][0]["tools"] == ["Edit", "Write", "NotebookEdit"]
+
+
+def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:
+    current_surfaces = [
+        *WORKFLOWS_DIR.rglob("*.yaml"),
+        SKILLS_DIR / "live-session/SKILL.md",
+        SKILLS_DIR / "tasks/SKILL.md",
+        DOCS_DIR / "memory.md",
+    ]
+
+    for path in current_surfaces:
+        assert "memory_review_completed" not in path.read_text(encoding="utf-8"), path
+
+
+def test_retired_context7_rule_has_no_orphaned_session_state() -> None:
+    variables = yaml.safe_load(VARIABLES_PATH.read_text(encoding="utf-8"))["variables"]
+    reset = yaml.safe_load(
+        (RULES_DIR / "skill-discovery/reset-skill-injection.yaml").read_text(encoding="utf-8")
+    )["rules"]["reset-skill-injection"]
+    reset_variables = {
+        effect.get("variable") for effect in reset["effects"] if effect["type"] == "set_variable"
+    }
+
+    assert "context7_nudge_fired" not in variables
+    assert "context7_available" not in variables
+    assert "context7_nudge_fired" not in reset_variables
+    assert "context7_available" not in (DOCS_DIR / "variables.md").read_text(encoding="utf-8")
 
 
 def test_monolith_rule_templates_match_enabled_db_authority() -> None:

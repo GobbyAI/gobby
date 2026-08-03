@@ -87,6 +87,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-dd",
         "no-dd-interactive",
         "no-destructive-git",
+        "no-destructive-git-interactive",
         "no-force-kill",
         "no-force-kill-interactive",
         "no-force-push",

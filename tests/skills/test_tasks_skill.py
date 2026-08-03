@@ -55,7 +55,7 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     assert content.index("4. Stage specific files and commit") < content.index(
         "5. Review session memories"
     )
-    assert content.index("5. Review session memories") < content.index("7. Call `close_task`")
+    assert content.index("5. Review session memories") < content.index("6. Call `close_task`")
     assert "Call `close_task` once with" in content
     assert "A ready call links the commit and closes atomically." in content
     assert "Repeat the same `close_task` call without `preview`" not in content

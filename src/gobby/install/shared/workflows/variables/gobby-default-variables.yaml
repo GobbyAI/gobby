@@ -92,9 +92,6 @@ variables:
   plan_memory_write_nudge_fired:
     value: false
     description: "True after the planning-context memory-write guard has fired once this epoch"
-  context7_nudge_fired:
-    value: false
-    description: "True after block-and-teach-context7 has fired once this session"
   skill_discovery_instructions_shown:
     value: false
     description: "True after skill hub discovery instructions have been shown once this session"
@@ -134,6 +131,3 @@ variables:
   edit_write_stop_blocks:
     value: 0
     description: "Circuit breaker counter for edit-write stop gate"
-  context7_available:
-    value: true
-    description: "True when context7 MCP server is configured and available"

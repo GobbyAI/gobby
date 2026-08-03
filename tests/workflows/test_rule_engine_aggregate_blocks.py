@@ -204,11 +204,11 @@ class TestAggregateBlocks:
                 RuleEffect(
                     type="block",
                     reason="Optional context7 nudge",
-                    acknowledge_variable="context7_nudge_fired",
+                    acknowledge_variable="nudge_fired",
                 )
             ],
             priority=20,
-            when="not variables.get('context7_nudge_fired')",
+            when="not variables.get('nudge_fired')",
         )
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
@@ -223,7 +223,7 @@ class TestAggregateBlocks:
             "1. [mandatory-gate] Load mandatory skill\n"
             "2. [context7-gate] Optional context7 nudge"
         )
-        assert variables["context7_nudge_fired"] is True
+        assert variables["nudge_fired"] is True
         assert second.decision == "allow"
 
     @pytest.mark.asyncio
@@ -237,11 +237,11 @@ class TestAggregateBlocks:
                 RuleEffect(
                     type="block",
                     reason="Optional context7 nudge",
-                    acknowledge_variable="context7_nudge_fired",
+                    acknowledge_variable="nudge_fired",
                 )
             ],
             priority=10,
-            when="not variables.get('context7_nudge_fired')",
+            when="not variables.get('nudge_fired')",
         )
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
@@ -250,7 +250,7 @@ class TestAggregateBlocks:
         second = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert first.reason == "Rule enforced by Gobby: [context7-gate]\nOptional context7 nudge"
-        assert variables["context7_nudge_fired"] is True
+        assert variables["nudge_fired"] is True
         assert second.decision == "allow"
 
     @pytest.mark.asyncio

@@ -71,7 +71,7 @@ automated, and web-chat sessions cannot add or remove the authorization label.
      commit. Use the final checkpoint commit when earlier checkpoints already
      contain all work.
    - No changes: skip commit creation. Never manufacture an empty commit.
-5. Review durable memories and set `memory_review_completed=true`.
+5. Review durable memories and create, update, or delete only valuable durable facts.
 6. Call `close_task` once with the task ref, `changes_summary`, `preview=true`,
    and the commit SHA when one exists. Repair any returned gate failure before
    retrying.

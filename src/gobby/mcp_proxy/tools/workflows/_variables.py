@@ -40,7 +40,7 @@ def _coerce_value(
 
     MCP schema collapses union types (str|int|float|bool|None) to "string",
     so agents send "true"/"false" as strings. Without coercion, "false" is
-    truthy and breaks workflow gate conditions like memory_review_completed.
+    truthy and breaks workflow gate conditions like require_task_before_edit.
     """
     # Lists and dicts pass through without coercion
     if isinstance(value, (list, dict)):

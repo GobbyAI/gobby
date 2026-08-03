@@ -174,7 +174,6 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
             "active_task_id": foreign_task.id,
             "task_edited_files": {foreign_task.id: ["foreign.txt"]},
             "task_has_commits": True,
-            "memory_review_completed": True,
         },
     )
 

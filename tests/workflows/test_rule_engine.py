@@ -325,11 +325,11 @@ class TestBlockEffect:
         effect = RuleEffect(
             type="block",
             reason="blocked",
-            acknowledge_variable="context7_nudge_fired",
+            acknowledge_variable="nudge_fired",
         )
 
-        assert effect.acknowledge_variable == "context7_nudge_fired"
-        assert effect.model_dump()["acknowledge_variable"] == "context7_nudge_fired"
+        assert effect.acknowledge_variable == "nudge_fired"
+        assert effect.model_dump()["acknowledge_variable"] == "nudge_fired"
 
     def test_acknowledge_variable_warns_on_non_block_effect(self) -> None:
         with pytest.warns(UserWarning, match="acknowledge_variable"):

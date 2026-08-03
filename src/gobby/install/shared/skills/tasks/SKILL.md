@@ -114,10 +114,8 @@ Follow this order exactly:
 3. Fix every encountered error, warning, and failure; rerun validation to success.
 4. Stage specific files and commit with
    `[<project_name>-#<task_number>] <type>: <description>`.
-5. Review session memories; create, update, or delete valuable durable facts, or
-   explicitly clear the memory gate.
-6. Set `memory_review_completed=true`.
-7. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
+5. Review session memories; create, update, or delete valuable durable facts.
+6. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. A ready call links the commit and closes atomically.
 
 Stage and commit only the files for this task:
@@ -156,8 +154,5 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 ## Memory Rule
 
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
-memory cleanup. Bugs and errors belong in tasks. When nothing is worth changing:
-
-```python
-set_variable(name="memory_review_completed", value=true, session_id="#2333")
-```
+memory cleanup. Bugs and errors belong in tasks. Memory maintenance is independent
+of task transitions.

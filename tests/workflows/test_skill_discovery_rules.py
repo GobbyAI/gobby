@@ -157,7 +157,7 @@ class TestSkillDiscoverySync:
                 assert body.event is not None
                 assert body.effects
 
-    def test_reset_skill_injection_clears_context7_nudge(self, db, manager) -> None:
+    def test_reset_skill_injection_clears_loaded_skills_and_memory_nudge(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-skill-injection")
         assert row is not None
@@ -171,7 +171,6 @@ class TestSkillDiscoverySync:
         }
         assert set_variables["loaded_skills"] == []
         assert set_variables["memory_nudge_fired"] is False
-        assert set_variables["context7_nudge_fired"] is False
 
 
 # --- discover-skill-hubs-on-turn-start ---
@@ -331,7 +330,6 @@ class TestBrevityRules:
         assert variables["brevity_last_violation"]["value"] == ""
         assert variables["brevity_last_violation_rule"]["value"] == ""
         assert variables["code_index_navigation_used_this_turn"]["value"] is False
-        assert variables["context7_nudge_fired"]["value"] is False
 
     @pytest.mark.asyncio
     async def test_reinforcer_repeats_after_brevity_is_loaded(self, db) -> None:
@@ -3869,66 +3867,3 @@ class TestCodeIndexNavigationRules:
 
         assert blocked.decision == "block"
         assert allowed.decision == "allow"
-
-
-class TestContext7RuleCondition:
-    """Test the context7 onboarding rule against canonical write metadata."""
-
-    CONDITION = (
-        "variables.get('context7_available', true) "
-        "and not variables.get('context7_nudge_fired') "
-        "and not skill_loaded('context7') "
-        "and event.data.get('canonical_tool_kind') == 'write' "
-        "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
-        "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
-        "'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')"
-    )
-
-    def _eval(
-        self,
-        canonical_file_path: str,
-        *,
-        canonical_tool_kind: str = "write",
-        loaded_skills: list[str] | None = None,
-        injected_skills: list[str] | None = None,
-        context7_available: bool = True,
-        context7_nudge_fired: bool = False,
-    ) -> bool:
-        variables: dict[str, object] = {
-            "loaded_skills": loaded_skills or [],
-            "context7_available": context7_available,
-            "context7_nudge_fired": context7_nudge_fired,
-        }
-        if injected_skills is not None:
-            variables["injected_skills"] = injected_skills
-        context = {
-            "variables": variables,
-            "event": SimpleNamespace(
-                data={
-                    "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": canonical_file_path,
-                }
-            ),
-            "tool_input": {},
-        }
-        allowed_funcs = build_condition_helpers(context=context)
-        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
-        return evaluator.evaluate(self.CONDITION)
-
-    def test_matches_supported_write(self) -> None:
-        assert self._eval("/project/src/main.ts") is True
-
-    def test_skips_non_write(self) -> None:
-        assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False
-
-    def test_skips_when_already_loaded(self) -> None:
-        assert self._eval("/project/src/main.ts", loaded_skills=["context7"]) is False
-
-    def test_skips_when_nudge_already_fired(self) -> None:
-        assert self._eval("/project/src/main.ts", context7_nudge_fired=True) is False
-
-    def test_does_not_skip_when_legacy_injected(self) -> None:
-        assert self._eval("/project/src/main.ts", injected_skills=["context7"]) is True
-
-    def test_skips_when_context7_unavailable(self) -> None:
-        assert self._eval("/project/src/main.ts", context7_available=False) is False
