@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import platform
 import re
-import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -66,14 +64,16 @@ def _get_daemon_machine_id() -> str | None:
 
 
 def _get_machine_id() -> str:
-    """Generate a machine identifier.
+    """Read through the centralized durable machine ID utility.
 
-    Used by Codex adapters when no machine_id is provided.
+    Used by Codex adapters when the initial daemon lookup returned no ID.
     """
-    node = platform.node()
-    if node:
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, node))
-    return str(uuid.uuid4())
+    from gobby.utils.machine_id import get_machine_id
+
+    machine_id = get_machine_id()
+    if not machine_id:
+        raise RuntimeError("Durable machine ID is unavailable")
+    return machine_id
 
 
 # =============================================================================
