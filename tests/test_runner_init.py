@@ -6,7 +6,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -432,7 +432,7 @@ class TestInitHubDatabase:
             helpers.init_hub_database(config)
 
     def test_uses_postgres_backend_when_selected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PostgreSQL backend opens the configured DSN and applies migrations."""
+        """PostgreSQL startup separates migration and served runtime pools."""
         from gobby.runner_init import helpers
 
         with (
@@ -442,8 +442,10 @@ class TestInitHubDatabase:
             ),
             patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database,
         ):
-            db = MagicMock()
-            postgres_database.return_value = db
+            migration_db = MagicMock()
+            runtime_db = MagicMock()
+            runtime_db.assert_runtime_identity = MagicMock()
+            postgres_database.side_effect = [migration_db, runtime_db]
             config = SimpleNamespace(
                 hub_backend="postgres",
                 database_url="postgresql://gobby:secret@localhost:60891/gobby",
@@ -452,12 +454,21 @@ class TestInitHubDatabase:
 
             result = helpers.init_hub_database(config)
 
-        assert result is db
-        postgres_database.assert_called_once_with(
-            "postgresql://gobby:secret@localhost:60891/gobby",
-            pool_config=config.postgres_pool,
-        )
-        db.apply_migrations.assert_called_once_with()
+        assert result is runtime_db
+        assert postgres_database.call_args_list == [
+            call(
+                "postgresql://gobby:secret@localhost:60891/gobby",
+                pool_config=config.postgres_pool,
+            ),
+            call(
+                "postgresql://gobby:secret@localhost:60891/gobby",
+                pool_config=config.postgres_pool,
+                runtime_role="gobby_daemon_runtime",
+            ),
+        ]
+        migration_db.apply_migrations.assert_called_once_with()
+        migration_db.close.assert_called_once_with()
+        runtime_db.assert_runtime_identity.assert_called_once_with()
 
     def test_postgres_startup_retries_transient_connection_failure(
         self,
@@ -474,8 +485,15 @@ class TestInitHubDatabase:
             attempts = 0
             instances: list["FakePostgresDatabase"] = []
 
-            def __init__(self, _dsn: str, *, pool_config: object) -> None:
+            def __init__(
+                self,
+                _dsn: str,
+                *,
+                pool_config: object,
+                runtime_role: str | None = None,
+            ) -> None:
                 self.closed = False
+                self.runtime_role = runtime_role
                 self.instances.append(self)
 
             def apply_migrations(self) -> None:
@@ -485,6 +503,9 @@ class TestInitHubDatabase:
 
             def close(self) -> None:
                 self.closed = True
+
+            def assert_runtime_identity(self) -> None:
+                assert self.runtime_role == "gobby_daemon_runtime"
 
         monkeypatch.setattr(
             "gobby.storage.hub.postgres.PostgresHubDatabase",
@@ -504,8 +525,9 @@ class TestInitHubDatabase:
         result = helpers.init_hub_database(config)
 
         assert isinstance(result, FakePostgresDatabase)
-        assert result is FakePostgresDatabase.instances[2]
+        assert result is FakePostgresDatabase.instances[3]
         assert [instance.closed for instance in FakePostgresDatabase.instances] == [
+            True,
             True,
             True,
             False,

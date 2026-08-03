@@ -15,6 +15,7 @@ from datetime import date, datetime
 from typing import Any, Protocol, cast
 
 import psycopg
+from psycopg import sql as psycopg_sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -63,6 +64,10 @@ _POOL_UNAVAILABLE_MESSAGE_MARKERS = (
     "connection is closed",
     "connection not open",
 )
+
+
+class RuntimeRoleMismatchError(RuntimeError):
+    """Raised when a served pool connection is not using its fixed runtime role."""
 
 
 def is_pool_unavailable(exc: BaseException) -> bool:
@@ -416,6 +421,36 @@ def conninfo_with_utc_session_timezone(conninfo: str) -> str:
     if "-ctimezone=" not in lower_options and "-c timezone=" not in lower_options:
         parsed["options"] = " ".join(part for part in (options, "-ctimezone=UTC") if part)
     return make_conninfo("", **parsed)
+
+
+def configure_runtime_role(
+    connection: psycopg.Connection[Any],
+    runtime_role: str,
+) -> None:
+    """Assume the fixed daemon runtime role on a newly opened pool connection."""
+    validate_identifier(runtime_role)
+    statement = psycopg_sql.SQL("SET ROLE {}").format(psycopg_sql.Identifier(runtime_role))
+    connection.execute(statement)
+    connection.commit()
+
+
+def assert_runtime_role(
+    connection: psycopg.Connection[Any],
+    runtime_role: str,
+) -> None:
+    """Reject a checked-out connection whose effective identity changed."""
+    validate_identifier(runtime_role)
+    row = connection.execute("SELECT current_user").fetchone()
+    if isinstance(row, Mapping):
+        observed = row.get("current_user")
+    else:
+        observed = None if row is None else row[0]
+    if observed != runtime_role:
+        connection.close()
+        raise RuntimeRoleMismatchError(
+            f"PostgreSQL runtime role mismatch: expected {runtime_role!r}, observed {observed!r}"
+        )
+    connection.commit()
 
 
 def validate_identifier(identifier: str) -> None:

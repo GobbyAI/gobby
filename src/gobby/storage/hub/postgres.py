@@ -10,6 +10,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from functools import partial
 from typing import Any, Literal, cast
 
 import psycopg
@@ -182,10 +183,25 @@ class PostgresHubDatabase:
         dsn: str,
         *,
         pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
+        runtime_role: str | None = None,
     ) -> None:
+        if runtime_role is not None:
+            _postgres_pool.validate_identifier(runtime_role)
         self._conninfo = _postgres_pool.conninfo_with_utc_session_timezone(dsn)
+        self._runtime_role = runtime_role
         self._deployment_token = deployment_token()
         self._application_name = f"gobby-hub-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
+        runtime_configure = None
+        runtime_check = None
+        if runtime_role is not None:
+            runtime_configure = partial(
+                _postgres_pool.configure_runtime_role,
+                runtime_role=runtime_role,
+            )
+            runtime_check = partial(
+                _postgres_pool.assert_runtime_role,
+                runtime_role=runtime_role,
+            )
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
@@ -203,6 +219,8 @@ class PostgresHubDatabase:
                 "prepare_threshold": None,
                 "row_factory": dict_row,
             },
+            configure=runtime_configure,
+            check=runtime_check,
         )
         self._open_lock = threading.Lock()
         self._pool_opened = False
@@ -253,6 +271,14 @@ class PostgresHubDatabase:
             return dict(get_stats())
         except Exception as exc:
             return {"pool_stats_error": f"{type(exc).__name__}: {exc}"}
+
+    def assert_runtime_identity(self) -> None:
+        """Acquire and verify one connection from a served runtime-role pool."""
+        if self._runtime_role is None:
+            raise RuntimeError("PostgreSQL database is not configured with a runtime role")
+        self.open()
+        with _postgres_pool.pool_connection(self._pool, self.pool_stats) as conn:
+            _postgres_pool.assert_runtime_role(conn, self._runtime_role)
 
     @contextmanager
     def _pool_connection(self) -> Iterator[psycopg.Connection[Any]]:

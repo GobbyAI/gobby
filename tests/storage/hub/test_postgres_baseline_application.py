@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import importlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,13 +21,13 @@ def _postgres_module() -> ModuleType:
 
 
 class _Result:
-    def __init__(self, rows=()) -> None:
+    def __init__(self, rows: Iterable[Any] = ()) -> None:
         self._rows = list(rows)
 
-    def fetchall(self):
+    def fetchall(self) -> list[Any]:
         return list(self._rows)
 
-    def fetchone(self):
+    def fetchone(self) -> Any | None:
         return self._rows[0] if self._rows else None
 
 
@@ -36,7 +36,7 @@ class _ClassifyConnection:
         self.tables = tables
         self.baseline_versions = baseline_versions or set()
 
-    def execute(self, sql: str, params=()):
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         if "pg_tables" in sql:
             return _Result([(table,) for table in sorted(self.tables)])
         if "MAX(version)" in sql:
@@ -109,9 +109,9 @@ class _ClassifyConnection:
     ],
 )
 def test_classify_baseline_state_distinguishes_fresh_infra_and_corruption(
-    tables,
-    versions,
-    expected,
+    tables: set[str],
+    versions: set[int],
+    expected: str,
 ) -> None:
     module = _postgres_module()
 
@@ -119,13 +119,13 @@ def test_classify_baseline_state_distinguishes_fresh_infra_and_corruption(
 
 
 class _ConnectionContext:
-    def __init__(self, conn) -> None:
+    def __init__(self, conn: Any) -> None:
         self.conn = conn
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         return self.conn
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         return None
 
 
@@ -157,14 +157,14 @@ class _ApplyConnection:
         self.transaction_exited = False
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Iterator[_ApplyConnection]:
         self.transaction_entered = True
         try:
             yield self
         finally:
             self.transaction_exited = True
 
-    def execute(self, sql: str, params=()):
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         rendered = f"{sql} {params!r}" if params else sql
         self.statements.append(rendered)
         extension = params[0] if params else None
@@ -192,7 +192,7 @@ class _Pool:
     def __init__(self, *connections: _ApplyConnection) -> None:
         self._connections = list(connections)
 
-    def connection(self):
+    def connection(self) -> _ConnectionContext:
         return _ConnectionContext(self._connections.pop(0))
 
 
@@ -200,11 +200,11 @@ class _Resources:
     def __init__(self) -> None:
         self.read_count = 0
 
-    def files(self, package: str):
+    def files(self, package: str) -> _Resources:
         assert package == "gobby.storage"
         return self
 
-    def joinpath(self, name: str):
+    def joinpath(self, name: str) -> _Resources:
         assert name == "postgres_baseline_schema.sql"
         return self
 
@@ -242,7 +242,7 @@ CREATE TABLE tasks(id INTEGER);
 """
 
 
-def _new_db(module, pool: _Pool):
+def _new_db(module: ModuleType, pool: _Pool) -> Any:
     db = object.__new__(module.PostgresHubDatabase)
     db._pool = pool
     return db
@@ -251,7 +251,7 @@ def _new_db(module, pool: _Pool):
 def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     """Construction sets open=False and only explicit open() opens the pool once."""
     module = _postgres_module()
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
     monkeypatch.delenv("PGAPPNAME", raising=False)
     monkeypatch.setenv("PGPOOL_MIN", "99")
     monkeypatch.setenv("PGPOOL_MAX", "100")
@@ -260,7 +260,7 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PGCONNECT_TIMEOUT", "99")
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             calls["constructor_open"] = kwargs["open"]
             calls["constructor_min_size"] = kwargs["min_size"]
             calls["constructor_max_size"] = kwargs["max_size"]
@@ -270,7 +270,7 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
         def open(self, *, wait: bool, timeout: float) -> None:
             calls["opened"] = (wait, timeout)
 
-        def close(self) -> None:
+        def close(self, *, timeout: float | None = None) -> None:
             calls["closed"] = True
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
@@ -291,11 +291,12 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     db.open(timeout=9.0)
 
     assert calls["opened"] == (True, 1.5)
+    db.close()
 
 
 def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _postgres_module()
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
     monkeypatch.setenv("PGAPPNAME", "gobby-tests")
     monkeypatch.setenv("PGPOOL_MIN", "99")
     monkeypatch.setenv("PGPOOL_MAX", "100")
@@ -303,7 +304,7 @@ def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("PGPOOL_OPEN_TIMEOUT", "102")
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             calls["constructor_open"] = kwargs["open"]
             calls["constructor_min_size"] = kwargs["min_size"]
             calls["constructor_max_size"] = kwargs["max_size"]
@@ -313,7 +314,7 @@ def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> 
         def open(self, *, wait: bool, timeout: float) -> None:
             calls["opened"] = (wait, timeout)
 
-        def close(self) -> None:
+        def close(self, *, timeout: float | None = None) -> None:
             calls["closed"] = True
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
@@ -340,6 +341,7 @@ def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["pool_kwargs"]["keepalives_interval"] == 10
     assert calls["pool_kwargs"]["keepalives_count"] == 3
     assert calls["opened"] == (True, 12.5)
+    db.close()
 
 
 def test_transaction_pool_timeout_checks_pool_before_retry(
@@ -350,32 +352,32 @@ def test_transaction_pool_timeout_checks_pool_before_retry(
     pool_holder: dict[str, object] = {}
 
     class TransactionContext:
-        def __enter__(self):
+        def __enter__(self) -> TransactionContext:
             return self
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
             return None
 
     class Connection:
-        def transaction(self):
+        def transaction(self) -> TransactionContext:
             return TransactionContext()
 
     class TimeoutConnectionContext:
-        def __enter__(self):
+        def __enter__(self) -> Any:
             raise module._postgres_pool.PoolTimeout("couldn't get a connection after 5.00 sec")
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
             return None
 
     class ConnectionContext:
-        def __enter__(self):
+        def __enter__(self) -> Connection:
             return Connection()
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
             return None
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.connection_calls = 0
             self.check_calls = 0
             pool_holder["pool"] = self
@@ -383,7 +385,7 @@ def test_transaction_pool_timeout_checks_pool_before_retry(
         def open(self, *, wait: bool, timeout: float) -> None:
             return None
 
-        def connection(self):
+        def connection(self) -> TimeoutConnectionContext | ConnectionContext:
             self.connection_calls += 1
             if self.connection_calls == 1:
                 return TimeoutConnectionContext()
@@ -395,7 +397,7 @@ def test_transaction_pool_timeout_checks_pool_before_retry(
         def get_stats(self) -> dict[str, int]:
             return {"pool_size": 20, "pool_available": 0}
 
-        def close(self) -> None:
+        def close(self, *, timeout: float | None = None) -> None:
             return None
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
@@ -405,11 +407,12 @@ def test_transaction_pool_timeout_checks_pool_before_retry(
         with db.transaction():
             pass
 
-    pool = pool_holder["pool"]
+    pool = cast(FakePool, pool_holder["pool"])
     assert pool.connection_calls == 2
     assert pool.check_calls == 1
     assert "timed out (attempt 1/" in caplog.text
     assert "pool_size" in caplog.text
+    db.close()
 
 
 def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
@@ -420,14 +423,14 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
     pool_holder: dict[str, object] = {}
 
     class TimeoutConnectionContext:
-        def __enter__(self):
+        def __enter__(self) -> Any:
             raise module._postgres_pool.PoolTimeout("couldn't get a connection after 5.00 sec")
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
             return None
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.connection_calls = 0
             self.check_calls = 0
             pool_holder["pool"] = self
@@ -435,7 +438,7 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
         def open(self, *, wait: bool, timeout: float) -> None:
             return None
 
-        def connection(self):
+        def connection(self) -> TimeoutConnectionContext:
             self.connection_calls += 1
             return TimeoutConnectionContext()
 
@@ -445,7 +448,7 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
         def get_stats(self) -> dict[str, int]:
             return {"pool_size": 20, "pool_available": 0}
 
-        def close(self) -> None:
+        def close(self, *, timeout: float | None = None) -> None:
             return None
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
@@ -456,11 +459,12 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
             with db.transaction():
                 pass
 
-    pool = pool_holder["pool"]
+    pool = cast(FakePool, pool_holder["pool"])
     assert pool.connection_calls == 4
     assert pool.check_calls == 3
     assert "failed after 3 retries" in caplog.text
     assert "pool_size" in caplog.text
+    db.close()
 
 
 def test_bounded_transaction_sets_local_bounds_before_body(
@@ -489,7 +493,7 @@ def test_bounded_transaction_sets_local_bounds_before_body(
     transaction = Transaction()
 
     @contextmanager
-    def fake_transaction(_self):
+    def fake_transaction(_self: Any) -> Iterator[Transaction]:
         yield transaction
 
     monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
@@ -557,7 +561,7 @@ def test_bounded_transaction_restores_outer_bounds_after_body_error(
             return Cursor()
 
     @contextmanager
-    def fake_transaction(_self):
+    def fake_transaction(_self: Any) -> Iterator[Transaction]:
         yield Transaction()
 
     monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
@@ -599,7 +603,7 @@ def test_bounded_transaction_restores_nested_transaction_bounds(
             return Cursor()
 
     @contextmanager
-    def fake_transaction(_self):
+    def fake_transaction(_self: Any) -> Iterator[Transaction]:
         yield Transaction()
 
     monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
@@ -631,7 +635,7 @@ def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     close_timeouts: list[float] = []
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
         def open(self, *, wait: bool, timeout: float) -> None:
@@ -659,7 +663,7 @@ def test_postgres_open_after_close_raises_without_reopening(
     close_timeouts: list[float] = []
 
     class FakePool:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
         def open(self, *, wait: bool, timeout: float) -> None:
@@ -684,7 +688,9 @@ def test_postgres_open_after_close_raises_without_reopening(
     assert close_timeouts == [module._POOL_CLOSE_TIMEOUT_SECONDS]
 
 
-def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypatch) -> None:
+def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
     locked = _ApplyConnection("fresh")
@@ -709,7 +715,7 @@ def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypat
 
 
 def test_apply_postgres_baseline_reclassifies_under_lock_and_skips_racing_apply(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
@@ -729,7 +735,9 @@ def test_apply_postgres_baseline_reclassifies_under_lock_and_skips_racing_apply(
     assert not any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
 
 
-def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> None:
+def test_apply_postgres_baseline_rejects_partial_baseline_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("corrupt_partial")
     locked = _ApplyConnection("corrupt_partial")
@@ -745,7 +753,7 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
 
 
 def test_apply_postgres_baseline_rejects_pre_baseline_lineage_with_observed_state(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("corrupt_partial")
@@ -768,7 +776,9 @@ def test_apply_postgres_baseline_rejects_pre_baseline_lineage_with_observed_stat
     assert "Post-baseline repair migrations do not run for this lineage" in message
 
 
-def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> None:
+def test_apply_postgres_baseline_adopts_gcore_code_index_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("gcore_code_index")
     locked = _ApplyConnection("gcore_code_index")
@@ -799,7 +809,9 @@ def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> N
     assert resources.read_count == 1
 
 
-def test_apply_postgres_baseline_adopts_gwiki_standalone_state(monkeypatch) -> None:
+def test_apply_postgres_baseline_adopts_gwiki_standalone_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("gwiki_standalone")
     locked = _ApplyConnection("gwiki_standalone")
@@ -825,7 +837,7 @@ def test_apply_postgres_baseline_adopts_gwiki_standalone_state(monkeypatch) -> N
 
 
 def test_apply_postgres_baseline_rejects_adopted_schema_with_missing_columns(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("gcore_code_index")
@@ -848,7 +860,7 @@ def test_apply_postgres_baseline_rejects_adopted_schema_with_missing_columns(
 
 
 def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
@@ -873,7 +885,7 @@ def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl
 
 
 def test_apply_postgres_baseline_does_not_require_pgcrypto_extension(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
@@ -893,7 +905,9 @@ def test_apply_postgres_baseline_does_not_require_pgcrypto_extension(
     assert resources.read_count == 1
 
 
-def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
+def test_apply_migrations_proceeds_when_pg_search_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     calls: list[str] = []
     initial = _ApplyConnection("fresh")
@@ -930,7 +944,7 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
 
 
 def test_apply_postgres_baseline_probe_only_when_required_extensions_preinstalled(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
@@ -949,7 +963,9 @@ def test_apply_postgres_baseline_probe_only_when_required_extensions_preinstalle
     assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 
 
-def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypatch) -> None:
+def test_apply_migrations_runs_postgres_baseline_before_file_migrations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     calls: list[str] = []
 
@@ -979,7 +995,9 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypa
     assert calls == ["postgres_baseline", "file_migrations:True"]
 
 
-def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypatch) -> None:
+def test_apply_migrations_skips_postgres_baseline_when_already_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _postgres_module()
     calls: list[str] = []
 
