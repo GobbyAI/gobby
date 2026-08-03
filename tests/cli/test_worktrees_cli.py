@@ -164,7 +164,7 @@ def test_delete_worktree_failure_reports_service_reason(
     assert "Deleted worktree" not in result.output
 
 
-def test_show_worktree(mock_worktree_manager) -> None:
+def test_show_worktree(mock_worktree_manager: MagicMock) -> None:
     """Test 'worktrees show'."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
     mock_worktree_manager.get.return_value = MOCK_WORKTREE

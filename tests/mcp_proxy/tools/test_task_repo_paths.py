@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -15,6 +15,10 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_project_repo_path,
     resolve_task_repo_path,
 )
+
+if TYPE_CHECKING:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -195,9 +199,9 @@ def test_resolve_task_repo_path_accepts_active_external_project_clone(
     monkeypatch.setattr(task_repo_paths, "LocalCloneManager", lambda _db: clone_manager)
 
     result = resolve_task_repo_path(
-        task_manager=_task_manager(),
-        project_manager=_project_manager(task_repo),
-        task=task,
+        task_manager=cast("LocalTaskManager", _task_manager()),
+        project_manager=cast("LocalProjectManager", _project_manager(task_repo)),
+        task=cast("Task", task),
         project_path=str(external_clone),
     )
 
@@ -224,9 +228,9 @@ def test_resolve_task_repo_path_rejects_unregistered_external_path(
 
     with pytest.raises(RepoPathValidationError, match="outside the task project repo"):
         resolve_task_repo_path(
-            task_manager=_task_manager(),
-            project_manager=_project_manager(task_repo),
-            task=task,
+            task_manager=cast("LocalTaskManager", _task_manager()),
+            project_manager=cast("LocalProjectManager", _project_manager(task_repo)),
+            task=cast("Task", task),
             project_path=str(arbitrary_repo),
         )
 

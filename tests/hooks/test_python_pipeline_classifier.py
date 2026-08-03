@@ -1,5 +1,7 @@
 """Tests for read-only inline Python pipeline classification."""
 
+from typing import Any
+
 import pytest
 
 from gobby.hooks._python_pipeline_classifier import _is_read_only_python_pipeline
@@ -69,7 +71,7 @@ def test_python_pipeline_normalization_keeps_legitimate_read_only_scripts_safe(
 def test_python_pipeline_normalization_drops_callback_escape_read_only_classification(
     script: str,
 ) -> None:
-    data = {
+    data: dict[str, Any] = {
         "tool_name": "exec_command",
         "tool_input": {"command": f"gcode outline src/app.py | python3 -c '{script}'"},
     }
@@ -91,7 +93,7 @@ def test_python_pipeline_normalization_drops_callback_escape_read_only_classific
 def test_python_pipeline_normalization_preserves_safe_read_only_classification(
     script: str,
 ) -> None:
-    data = {
+    data: dict[str, Any] = {
         "tool_name": "exec_command",
         "tool_input": {"command": f"gcode outline src/app.py | python3 -c '{script}'"},
     }

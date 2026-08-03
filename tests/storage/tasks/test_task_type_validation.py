@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase5_contract_helpers import NEW_TASK_TYPES
 
@@ -11,7 +14,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("task_type", NEW_TASK_TYPES)
-def test_new_types_accepted(temp_db, sample_project, task_type: str) -> None:
+def test_new_types_accepted(
+    temp_db: HubDatabase, sample_project: dict[str, Any], task_type: str
+) -> None:
     manager = LocalTaskManager(temp_db)
 
     task = manager.create_task(
@@ -24,7 +29,7 @@ def test_new_types_accepted(temp_db, sample_project, task_type: str) -> None:
     assert task.task_type == task_type
 
 
-def test_review_anchor_rejected(temp_db, sample_project) -> None:
+def test_review_anchor_rejected(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     manager = LocalTaskManager(temp_db)
 
     with pytest.raises(ValueError, match="Invalid task_type 'review_anchor'"):
@@ -36,7 +41,9 @@ def test_review_anchor_rejected(temp_db, sample_project) -> None:
         )
 
 
-def test_review_anchor_rejected_on_update(temp_db, sample_project) -> None:
+def test_review_anchor_rejected_on_update(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],

@@ -1688,7 +1688,12 @@ class TestStripUnknownParameters:
         mock_mcp_manager.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_strip_unknown_false_rejects_unknown_params(self, tool_proxy, mock_mcp_manager):
+    async def test_strip_unknown_false_rejects_unknown_params(
+        self,
+        tool_proxy: ToolProxyService,
+        mock_mcp_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Verify strip_unknown=False (default) still rejects unknown parameters."""
 
         async def mock_get_schema(server: str, tool: str) -> dict[str, object]:
@@ -1706,7 +1711,7 @@ class TestStripUnknownParameters:
                 },
             }
 
-        tool_proxy.get_tool_schema = mock_get_schema
+        monkeypatch.setattr(tool_proxy, "get_tool_schema", mock_get_schema)
 
         result = await tool_proxy.call_tool(
             server_name="test-server",

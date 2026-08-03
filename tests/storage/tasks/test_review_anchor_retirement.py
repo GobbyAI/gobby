@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import psycopg
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.migrations import _execute_sql_script
 from gobby.storage.tasks import LocalTaskManager, StageRegistryManager
 from tests.phase5_contract_helpers import repo_path
@@ -12,7 +15,9 @@ from tests.phase5_contract_helpers import repo_path
 HISTORICAL_REVIEW_ANCHOR_REFS = (13984, 14853, 14928, 14931, 14933)
 
 
-def test_migration_keeps_historical_review_anchor_tasks_readable(temp_db, sample_project) -> None:
+def test_migration_keeps_historical_review_anchor_tasks_readable(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = LocalTaskManager(temp_db)
     titles: dict[int, str] = {}
 
@@ -51,7 +56,9 @@ def test_migration_keeps_historical_review_anchor_tasks_readable(temp_db, sample
     assert registry.list_default_stages("review_anchor") == []
 
 
-def test_migration_retypes_anchors_predating_validation_criteria(temp_db, sample_project) -> None:
+def test_migration_retypes_anchors_predating_validation_criteria(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     """Anchors older than migration 342 carry NULL criteria and must still retype.
 
     `tasks_require_validation_criteria` is NOT VALID, so those rows were never
