@@ -96,8 +96,8 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | daemon_health_check_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | test_mode | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | cors_origins | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
-| hub_backend | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | bootstrap-selected and currently fixed to postgres |
-| database_url | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | bootstrap-selected DSN; should stay out of the overlay and secret-backed storage |
+| hub_backend | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | retired operator setting; runtime is fixed to postgres |
+| database_url | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | sole PostgreSQL selector; should stay out of the overlay and secret-backed storage |
 | websocket.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | websocket.port | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | websocket.ping_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
@@ -527,8 +527,8 @@ These rows should not be rebuilt as settings overlay controls:
 | Option | Reason |
 | --- | --- |
 | client.chatMode | Keep per-conversation control in chat, not the global settings overlay. |
-| hub_backend | bootstrap-selected and currently fixed to postgres |
-| database_url | bootstrap-selected DSN; should stay out of the overlay and secret-backed storage |
+| hub_backend | retired operator setting; runtime is fixed to postgres |
+| database_url | sole PostgreSQL selector; should stay out of the overlay and secret-backed storage |
 | auth.session_secret | auto-generated session cookie signing secret; schema marks it ui_hidden |
 
 ## Sign-off

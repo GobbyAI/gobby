@@ -86,8 +86,8 @@ back to full `gcore.yaml` or standalone resolution.
 
 Standalone mode checks `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN`, then
 `$GOBBY_HOME/bootstrap.yaml` `database_url`, then full
-`$GOBBY_HOME/gcore.yaml` `databases.postgres.dsn`. Bootstrap requires
-`hub_backend: postgres` when used.
+`$GOBBY_HOME/gcore.yaml` `databases.postgres.dsn`. Bootstrap fallback requires
+an inline `database_url`.
 `connect_readwrite()` and `connect_readonly()` both return a synchronous
 `postgres::Client`; PostgreSQL permissions decide actual access.
 

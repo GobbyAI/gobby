@@ -1,4 +1,3 @@
-hub_backend: postgres
 database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby
 bind_host: localhost
 daemon_port: 60887
