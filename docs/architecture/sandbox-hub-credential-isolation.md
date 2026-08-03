@@ -63,6 +63,12 @@ file disclosure into operator-level hub access.
    caller-supplied run, project, role name, or session setting selects scope.
 9. Hub backup and restore cannot preserve or resurrect an ephemeral agent
    login.
+10. Every connection authenticated through a Gobby-issued credential presents
+    an `application_name` under the reserved `gobby` prefix, so
+    maintenance-epoch termination, quiescence proof, and backup drain observe
+    it; run-scoped connections also identify their managed execution.
+    Authorization never derives from `application_name` — revocation and RLS
+    target the authenticated role.
 
 ## Current exposure at HEAD
 
@@ -308,6 +314,18 @@ privileges without being able to become or re-grant the capability role. The
 capability role owns no SQL objects, as required for safe inherited-only
 membership.
 
+Connections made with an ephemeral login present
+`application_name = gobby-agent-<managed-execution-id>`. The maintenance-epoch
+fence terminates and counts only `gobby%`-named client backends
+(`src/gobby/storage/maintenance_epoch.py`, task #19519), so this convention is
+what makes run-scoped sessions visible to epoch open, quiescence proof, and
+backup drain. gcode currently forces `application_name = gobby-cli`
+(`crates/gcore/src/postgres.rs`), which satisfies the reserved-prefix
+invariant; WP3 extends the managed runtime path to carry the execution
+identity instead. The name is observability and drain surface only — targeted
+revocation matches the authenticated role from the registry, never the
+application name.
+
 After privileged startup migrations, every served daemon pool connection
 assumes the daemon runtime role and verifies `current_user` on checkout. That
 role can execute the lifecycle functions but cannot become the issuer, reset
@@ -488,6 +506,19 @@ bootstrap; a timeout leaves durable retry state instead of reporting success.
 5. PostgreSQL `VALID UNTIL` bounds authentication during daemon failure, and a
    server-side reaper terminates connections that outlive the recorded expiry.
 
+Multi-daemon reconciliation:
+
+1. Registry rows record the issuing daemon's machine identity (machines are
+   UUID-keyed). A daemon reconciles freely only roles it issued.
+2. A daemon may reconcile another machine's orphaned roles only when that
+   machine's daemon is provably absent — its lease or heartbeat expired — and
+   the run's terminal state is recorded or its expiry has passed.
+3. The issuer-owned reconcile function is idempotent and serializes on an
+   advisory lock, so concurrent daemons cannot double-drop a role or interleave
+   with issuance for the same managed execution.
+4. `VALID UNTIL` and the server-side reaper remain the machine-neutral
+   backstops; no cross-daemon coordination is required for authority to lapse.
+
 Backup and restore:
 
 1. Hub backup enters maintenance, stops new issuance, terminates managed runs,
@@ -500,6 +531,10 @@ Backup and restore:
 3. Restore reconciliation drops any reserved-prefix login and clears stale
    bindings before the daemon accepts agent work, including restores of a
    legacy artifact that predates the backup exclusion.
+4. Drain is hub-wide, not daemon-local: the maintenance-epoch fence terminates
+   and counts `gobby%`-named client backends across every attached daemon and
+   machine, so invariant 10's naming convention is what makes multi-daemon
+   drain observable before the backup proceeds.
 
 ### Failure behavior
 
@@ -596,6 +631,9 @@ Scope:
   fallback in managed mode.
 - Preserve the direct connection path in `crates/gcode/src/db/mod.rs` and
   `crates/gcore/src/postgres.rs`.
+- In managed mode, set `application_name = gobby-agent-<managed-execution-id>`
+  on the forced connection config (standalone keeps `gobby-cli`), satisfying
+  invariant 10 for run-scoped connections.
 
 Exit evidence:
 
