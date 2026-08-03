@@ -59,8 +59,11 @@ def sync_bundled_detection_manifests(
         result["errors"].append(f"Detection manifest directory does not exist: {root}")
         return result
 
+    manifest_paths = sorted(root.glob("*.toml"))
+    bundled_provider_ids = {path.stem for path in manifest_paths}
+
     with db.transaction():
-        for path in sorted(root.glob("*.toml")):
+        for path in manifest_paths:
             try:
                 content = path.read_text(encoding="utf-8")
                 manifest = load_manifest(content)
@@ -116,6 +119,21 @@ def sync_bundled_detection_manifests(
                 (manifest.version, manifest.engine, content, manifest.id),
             )
             result["updated"] += 1
+
+        bundled_rows = db.fetchall(
+            "SELECT provider_id FROM detection_manifests WHERE source = 'bundled'"
+        )
+        for row in bundled_rows:
+            provider_id = row["provider_id"]
+            if provider_id not in bundled_provider_ids:
+                db.execute(
+                    "DELETE FROM detection_manifests WHERE provider_id = %s AND source = 'bundled'",
+                    (provider_id,),
+                )
+                logger.debug(
+                    "Removed orphaned bundled detection manifest",
+                    extra={"provider_id": provider_id},
+                )
 
     return result
 
