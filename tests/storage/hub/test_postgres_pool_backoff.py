@@ -148,16 +148,17 @@ def test_hub_pool_uses_max_lifetime_from_config(monkeypatch: pytest.MonkeyPatch)
         def open(self, *, wait: bool, timeout: float) -> None:
             return None
 
-        def close(self) -> None:
+        def close(self, *, timeout: float | None = None) -> None:
             return None
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
-    module.PostgresHubDatabase(
+    database = module.PostgresHubDatabase(
         "postgresql://gobby:secret@localhost/gobby",
         pool_config=PostgresPoolConfig(max_lifetime_seconds=120.0),
     )
 
     assert calls["max_lifetime"] == 120.0
+    database.close()
 
 
 def test_postgres_pool_config_defaults_max_lifetime() -> None:

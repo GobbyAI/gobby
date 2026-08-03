@@ -3,6 +3,55 @@ CREATE TABLE schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Cluster-scoped managed-principal registry. Migration 369 assigns the fixed
+-- issuer owner and installs hardened lifecycle functions and grants.
+SELECT pg_advisory_xact_lock(hashtextextended('gobby:agent-authorization:v1', 0));
+
+CREATE SCHEMA IF NOT EXISTS gobby_agent_auth;
+
+CREATE TABLE IF NOT EXISTS gobby_agent_auth.principal_bindings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_name NAME NOT NULL UNIQUE,
+    owner_kind TEXT NOT NULL CHECK (owner_kind IN ('agent_run', 'tool_chat')),
+    managed_execution_id UUID NOT NULL,
+    agent_run_id UUID,
+    session_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    issuing_machine_id UUID NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    credential_generation INTEGER NOT NULL CHECK (credential_generation > 0),
+    CONSTRAINT principal_bindings_execution_generation
+        UNIQUE (managed_execution_id, credential_generation),
+    CONSTRAINT principal_bindings_expiry_after_issue CHECK (expires_at > issued_at),
+    CONSTRAINT principal_bindings_revoke_after_issue
+        CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_principal_bindings_active_role
+ON gobby_agent_auth.principal_bindings(role_name)
+WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_principal_bindings_execution
+ON gobby_agent_auth.principal_bindings(managed_execution_id, credential_generation DESC);
+
+CREATE INDEX IF NOT EXISTS idx_principal_bindings_expiry
+ON gobby_agent_auth.principal_bindings(expires_at)
+WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS gobby_agent_auth.principal_audit_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    binding_id UUID REFERENCES gobby_agent_auth.principal_bindings(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('issue', 'rotate', 'revoke', 'reconcile')),
+    managed_execution_id UUID NOT NULL,
+    role_name NAME NOT NULL,
+    credential_generation INTEGER NOT NULL,
+    project_id UUID NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    details JSONB NOT NULL DEFAULT '{}'::JSONB
+);
+
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,

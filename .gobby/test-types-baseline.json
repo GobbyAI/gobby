@@ -12291,46 +12291,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/hub/test_postgres_baseline_application.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 407,
-      "message": "\"object\" has no attribute \"connection_calls\"",
-      "occurrences": 4,
-      "path": "tests/storage/hub/test_postgres_baseline_application.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/hub/test_postgres_baseline_application.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 334,
-      "message": "Value of type \"object\" is not indexable",
-      "occurrences": 6,
-      "path": "tests/storage/hub/test_postgres_baseline_application.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/hub/test_postgres_baseline_application.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 114,
-      "message": "Call to untyped function \"_postgres_module\" in typed context",
-      "occurrences": 22,
-      "path": "tests/storage/hub/test_postgres_baseline_application.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/hub/test_postgres_baseline_application.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 15,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 52,
-      "path": "tests/storage/hub/test_postgres_baseline_application.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/hub/test_postgres_placeholder_remap.py::::mypy:no-untyped-call",
       "issue_code": "mypy:no-untyped-call",
       "line": 34,

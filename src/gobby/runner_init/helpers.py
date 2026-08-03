@@ -90,9 +90,20 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
     admitted_url = admitted_database_url(database_url)
-    postgres_db = _initialize_postgres_with_startup_retry(
+    migration_db = _initialize_postgres_with_startup_retry(
         lambda: PostgresHubDatabase(admitted_url, pool_config=config.postgres_pool)
     )
+    migration_db.close()
+    postgres_db = PostgresHubDatabase(
+        admitted_url,
+        pool_config=config.postgres_pool,
+        runtime_role="gobby_daemon_runtime",
+    )
+    try:
+        postgres_db.assert_runtime_identity()
+    except Exception:
+        postgres_db.close()
+        raise
     logger.info("Database: PostgreSQL hub")
     return postgres_db
 
