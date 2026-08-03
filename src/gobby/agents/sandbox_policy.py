@@ -115,16 +115,23 @@ _TOOLCHAIN_READ_ROOTS: tuple[str, ...] = (
     ".local/bin",  # shared bin dir the above symlink into
 )
 
-# Package and build caches. These must be WRITABLE even with no network at
-# all: cargo takes a lock on $CARGO_HOME/.package-cache before it will do
-# anything, and `go build` cannot run without its build cache.
-_TOOLCHAIN_CACHE_ROOTS: tuple[str, ...] = (
-    ".cargo",  # rust
+# Installed packages, package metadata, and shared build caches are read-only.
+# Credential-bearing parents are split into safe children because SRT v0.0.66
+# lets an allowRead ancestor override a nested denyRead entry.
+_TOOLCHAIN_SHARED_READ_ROOTS: tuple[str, ...] = (
+    ".cargo/bin",  # rust
+    ".cargo/registry",
+    ".cargo/git",
+    ".cargo/.package-cache",
+    ".cargo/config",
+    ".cargo/config.toml",
     ".cache/uv",  # python
     "Library/Caches/uv",
     ".cache/pip",
     "Library/Caches/pip",
-    ".npm",  # javascript, typescript
+    ".npm/_cacache",  # javascript, typescript
+    ".npm/_npx",
+    ".npm/_logs",
     ".cache/npm",
     ".pnpm-store",
     "Library/pnpm",
@@ -134,21 +141,50 @@ _TOOLCHAIN_CACHE_ROOTS: tuple[str, ...] = (
     "go",  # go: GOPATH module cache
     ".cache/go-build",
     "Library/Caches/go-build",
-    ".gradle",  # java, kotlin, scala
-    ".m2",
-    ".ivy2",
-    ".sbt",
+    ".gradle/caches",  # java, kotlin, scala
+    ".gradle/wrapper",
+    ".gradle/jdks",
+    ".gradle/daemon",
+    ".gradle/native",
+    ".gradle/init.d",
+    ".gradle/init.gradle",
+    ".gradle/init.gradle.kts",
+    ".m2/repository",
+    ".m2/wrapper",
+    ".m2/toolchains.xml",
+    ".ivy2/cache",
+    ".ivy2/jars",
+    ".ivy2/local",
+    ".sbt/boot",
+    ".sbt/1.0",
+    ".sbt/preloaded",
+    ".sbt/repositories",
     ".cache/coursier",
     "Library/Caches/Coursier",
-    ".gem",  # ruby
-    ".bundle",
-    ".nuget",  # csharp
+    ".gem/ruby",  # ruby
+    ".gem/specs",
+    ".gem/cache",
+    ".gem/extensions",
+    ".bundle/cache",
+    ".bundle/plugin",
+    ".nuget/packages",  # csharp
+    ".nuget/plugins",
+    ".nuget/fallbackpackages",
     ".local/share/NuGet",
-    ".composer",  # php
-    ".config/composer",
+    ".composer/cache",  # php
+    ".composer/vendor",
+    ".composer/config.json",
+    ".composer/composer.json",
+    ".config/composer/cache",
+    ".config/composer/vendor",
+    ".config/composer/config.json",
+    ".config/composer/composer.json",
     ".cache/composer",
-    ".pub-cache",  # dart
-    ".hex",  # elixir
+    ".pub-cache/hosted",  # dart
+    ".pub-cache/git",
+    ".pub-cache/bin",
+    ".hex/packages",  # elixir
+    ".hex/cache.ets",
     ".mix",
     ".luarocks",  # lua
     ".cache/luarocks",
@@ -159,10 +195,9 @@ _TOOLCHAIN_CACHE_ROOTS: tuple[str, ...] = (
     "Library/Caches/org.swift.swiftpm",
 )
 
-# Registry credentials that live INSIDE the granted roots above. Denied for
-# both read and write so a writable ~/.cargo never hands an agent the
-# crates.io publish token. These are deliberately not existence-filtered: the
-# file may be created after the policy is generated.
+# Registry credentials colocated with toolchain state. Their parents are
+# excluded from the granular read grants above, and exact read/write denies
+# preserve that boundary for files created after policy generation.
 _TOOLCHAIN_CREDENTIAL_PATHS: tuple[str, ...] = (
     ".cargo/credentials",
     ".cargo/credentials.toml",
@@ -171,6 +206,9 @@ _TOOLCHAIN_CREDENTIAL_PATHS: tuple[str, ...] = (
     ".m2/settings.xml",
     ".m2/settings-security.xml",
     ".gem/credentials",
+    ".bundle/config",
+    ".sbt/.credentials",
+    ".ivy2/.credentials",
     ".nuget/NuGet/NuGet.Config",
     ".composer/auth.json",
     ".config/composer/auth.json",
@@ -235,17 +273,7 @@ def gobby_write_exceptions() -> list[str]:
     snapshots the spawned `gobby mcp-server` writes, and leaves that
     subprocess writing outside its own sandbox tmp.
     """
-    home = Path.home()
-    return canonical_paths(
-        [
-            str(get_gobby_home()),
-            # uv's default cache: MCP-server subprocesses run `uv run` with a
-            # provider-scrubbed env, so the per-session UV_CACHE_DIR redirect
-            # never reaches them and uv falls back to these roots.
-            str(home / ".cache" / "uv"),
-            str(home / "Library" / "Caches" / "uv"),
-        ]
-    )
+    return canonical_paths([str(get_gobby_home())])
 
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
@@ -255,7 +283,15 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     # it per invocation), and agents need machine_id, logs, binaries, the local
     # operator credential, hook config, and personal project state from here.
     # The credential remains write-denied by sensitive_write_roots().
-    paths = [get_gobby_home()]
+    home = Path.home()
+    paths = [
+        get_gobby_home(),
+        # Codex scrubs the MCP subprocess environment, so uv falls back to its
+        # default cache roots. Shared cache contents remain readable while
+        # writable cache state is routed through a per-run extra_write_path.
+        home / ".cache" / "uv",
+        home / "Library" / "Caches" / "uv",
+    ]
     runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
     if runtime_home:
         paths.append(Path(runtime_home))
@@ -379,13 +415,8 @@ def _existing_home_roots(relative_roots: tuple[str, ...]) -> list[str]:
 
 
 def toolchain_read_roots() -> list[str]:
-    """Return installed compiler, interpreter, and SDK roots under $HOME."""
-    return _existing_home_roots(_TOOLCHAIN_READ_ROOTS)
-
-
-def toolchain_cache_roots() -> list[str]:
-    """Return installed package and build caches that toolchains must write."""
-    return _existing_home_roots(_TOOLCHAIN_CACHE_ROOTS)
+    """Return read-only compiler, SDK, installed-package, and shared-cache roots."""
+    return _existing_home_roots((*_TOOLCHAIN_READ_ROOTS, *_TOOLCHAIN_SHARED_READ_ROOTS))
 
 
 def toolchain_credential_paths() -> list[str]:
@@ -431,15 +462,12 @@ def credential_env_vars(provider: str, api_base: str | None) -> list[SandboxCred
 
 
 def default_write_paths(config: SandboxConfig, workspace: Path) -> list[str]:
-    """Resolve writable workspace, operator, and toolchain-cache roots.
+    """Resolve the workspace and explicit per-run writable roots.
 
-    Package and build caches are unconditional. ``allow_package_registries``
-    grants registry *network egress* in ``allowed_domains()``; it never gated
-    local cache writes correctly, because an offline `cargo build` still has
-    to take the $CARGO_HOME/.package-cache lock and `go build` still has to
-    write its build cache (#19443).
+    Toolchain caches that require mutation are provisioned per run and arrive
+    through ``extra_write_paths``. Shared caches stay read-only.
     """
-    paths = [str(workspace), *config.extra_write_paths, *toolchain_cache_roots()]
+    paths = [str(workspace), *config.extra_write_paths]
     return canonical_paths(paths, base=workspace)
 
 
