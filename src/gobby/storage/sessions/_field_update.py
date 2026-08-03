@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import SessionLineageMutation
@@ -23,6 +23,7 @@ from ._constants import (
     validate_session_status_transition,
 )
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
+from ._session_metadata_update import _SessionMetadataUpdateMixin
 from ._summary_update import _SummaryUpdateMixin
 from ._title_fields import _TitleFieldMixin
 
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 
 class _ManagerState(Protocol):
     db: HubDatabase
-    _VALID_CHAT_MODES: ClassVar[set[str]]
 
     def get(self, session_id: str) -> Session | None: ...
 
@@ -41,7 +41,7 @@ class _ManagerState(Protocol):
     def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
 
-class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
+class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _TitleFieldMixin):
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:
         """Persist a session status change and return the reloaded row.
 
@@ -344,63 +344,6 @@ class _FieldUpdateMixin(_SummaryUpdateMixin, _TitleFieldMixin):
                 )
 
         return self.get(session_id)
-
-    def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
-        """Mark session as having edits."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET had_edits = TRUE, updated_at = %s WHERE id = %s",
-                (now, session_id),
-            )
-        return self.get(session_id)
-
-    def clear_had_edits(self: _ManagerState, session_id: str) -> None:
-        """Reset had_edits after a task is closed with a linked commit."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET had_edits = FALSE, updated_at = %s WHERE id = %s",
-                (now, session_id),
-            )
-
-    def update_chat_mode(self: _ManagerState, session_id: str, chat_mode: str) -> None:
-        """Persist the chat mode (plan, accept_edits, normal, bypass) for a session."""
-        if chat_mode not in self._VALID_CHAT_MODES:
-            raise ValueError(
-                f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
-            )
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET chat_mode = %s, updated_at = %s WHERE id = %s",
-                (chat_mode, now, session_id),
-            )
-
-    def update_approved_tools(self: _ManagerState, session_id: str, tools: set[str]) -> None:
-        """Persist the set of user-approved tools as JSON."""
-        import json as _json
-
-        tools_json = _json.dumps(sorted(tools)) if tools else None
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET approved_tools_json = %s, updated_at = %s WHERE id = %s",
-                (tools_json, now, session_id),
-            )
-
-    def update_model(self: _ManagerState, session_id: str, model: str) -> Session | None:
-        """Update session model (LLM model used)."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                "UPDATE sessions SET model = %s, updated_at = %s WHERE id = %s",
-                (model, now, session_id),
-            )
-        updated = self.get(session_id)
-        if updated is not None:
-            self._notify_session_change("session_updated", session_id)
-        return updated
 
     def update_parent_session_id(
         self: _ManagerState, session_id: str, parent_session_id: str | None
