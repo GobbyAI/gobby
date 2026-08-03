@@ -222,11 +222,25 @@ class HookManager:
             return
 
         data = event.data if isinstance(event.data, dict) else {}
-        machine_id = normalize_machine_id(event.machine_id) or _hook_text_field(
-            data,
-            "machine_id",
-            "machineId",
-        )
+        machine_id = None
+        for candidate in (
+            event.machine_id,
+            _hook_text_field(data, "machine_id", "machineId"),
+        ):
+            try:
+                machine_id = normalize_machine_id(candidate)
+            except ValueError:
+                # Hook payloads are untrusted input; a non-UUID identity is
+                # unattributable, never fatal to hook processing.
+                self.logger.debug(
+                    "Ignoring non-UUID machine id from hook ingress",
+                    extra={"machine_id": candidate},
+                )
+                continue
+            if machine_id is not None:
+                break
+        if machine_id is None:
+            return
         try:
             LocalMachineManager(db).upsert_seen(
                 machine_id,

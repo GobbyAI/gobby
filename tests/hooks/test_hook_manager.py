@@ -13,6 +13,8 @@ import pytest
 from gobby.hooks.dispatchers.mcp import run_coro_blocking
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
@@ -86,13 +88,39 @@ def test_record_machine_ingress_upserts_payload_metadata(
 
     manager_with_mocks._record_machine_ingress(payload_event)
 
-    payload_machine = LocalMachineManager(temp_db).get(
-        "e44191db-6853-4999-be63-af0c91fac8ba"
-    )
+    payload_machine = LocalMachineManager(temp_db).get("e44191db-6853-4999-be63-af0c91fac8ba")
     assert payload_machine is not None
     assert payload_machine.hostname == "laptop"
     assert payload_machine.os == "Linux"
     assert payload_machine.label == "travel"
+
+
+def test_record_machine_ingress_ignores_malformed_machine_ids(
+    manager_with_mocks: HookManager,
+    make_event: Callable[..., HookEvent],
+    temp_db: HubDatabase,
+) -> None:
+    manager_with_mocks._database = temp_db
+    manager_with_mocks._session_manager = SessionManager(temp_db)
+
+    fallback_event = make_event(
+        data={"machineId": "7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410", "hostname": "laptop"}
+    )
+    fallback_event.machine_id = "not-a-uuid"
+
+    manager_with_mocks._record_machine_ingress(fallback_event)
+
+    fallback_machine = LocalMachineManager(temp_db).get("7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410")
+    assert fallback_machine is not None
+    assert fallback_machine.hostname == "laptop"
+
+    unattributable_event = make_event(data={"machineId": "also-not-a-uuid"})
+    unattributable_event.machine_id = "testmachine"
+
+    manager_with_mocks._record_machine_ingress(unattributable_event)
+
+    rows = temp_db.fetchall("SELECT id FROM machines")
+    assert [str(row["id"]) for row in rows] == ["7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"]
 
 
 class TestHandleInternalDaemonNotReady:
@@ -1204,7 +1232,7 @@ class TestEnsureProjectInDb:
     ) -> None:
         """_ensure_project_in_db does nothing when session_manager is None."""
         manager = manager_with_mocks
-        manager._session_manager = None
+        manager._session_manager = cast(HookSessionManager, None)
 
         manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
         assert manager._session_manager is None
