@@ -51,6 +51,7 @@ def _patch_common(
         lambda _home: database_url,
     )
     monkeypatch.setattr(module.psycopg, "connect", lambda *_args, **_kwargs: _FakeConnection())
+    monkeypatch.setattr(module, "release_restored_maintenance_epoch", lambda _url: None)
 
 
 def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
@@ -154,7 +155,11 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup)
+    _patch_common(
+        monkeypatch,
+        backup,
+        database_url="postgresql://origin:secret@origin.invalid:5432/origin",
+    )
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
     dump_path = backup_dir / backup.POSTGRES_DUMP_NAME
@@ -169,6 +174,7 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
         encoding="utf-8",
     )
     commands: list[list[str]] = []
+    released_targets: list[str] = []
 
     def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         commands.append(args)
@@ -176,14 +182,28 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(backup.subprocess, "run", _run)
+    monkeypatch.setattr(
+        backup,
+        "release_restored_maintenance_epoch",
+        lambda database_url: released_targets.append(database_url),
+    )
 
-    result = backup.restore_postgres_backup(backup_dir, clean=True, gobby_home=tmp_path)
+    target_database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    result = backup.restore_postgres_backup(
+        backup_dir,
+        clean=True,
+        gobby_home=tmp_path,
+        database_url=target_database_url,
+    )
 
     assert result["verified"] is True
     assert result["dump_sha256"] == digest
     assert result["sha256_verified"] is True
+    assert released_targets == [target_database_url]
+    assert result["database_url"] == "postgresql://gobby:****@localhost:60891/gobby"
     assert commands[0][-2:] == ["pg_restore", "--list"]
-    assert commands[1][4:8] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
+    assert commands[1][3:6] == ["-e", "PGOPTIONS=-c event_triggers=off", "gobby-postgres"]
+    assert commands[1][6:10] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
     assert "--if-exists" in commands[1]
     assert result["probes"]["pg_search_present"] is True
     assert result["probes"]["pgcrypto_present"] is True
@@ -235,7 +255,7 @@ def test_restore_allows_explicit_unverified_dump_override(
     assert result["sha256_verified"] is False
     assert result["expected_dump_sha256"] is None
     assert commands[0][-2:] == ["pg_restore", "--list"]
-    assert commands[1][4:7] == ["pg_restore", "--no-owner", "--no-privileges"]
+    assert commands[1][6:9] == ["pg_restore", "--no-owner", "--no-privileges"]
 
 
 def test_restore_rejects_unmanaged_dsn(

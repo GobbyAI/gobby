@@ -636,6 +636,30 @@ gobby linear create TASK
 
 ```
 
+## Hub Backup Disaster Recovery
+
+Restore the verified PostgreSQL artifact from a hub backup into an explicit
+target database:
+
+```bash
+gobby stop
+gobby hub-backup restore BACKUP_ROOT \
+  --database-url postgresql://USER:PASSWORD@HOST:PORT/DATABASE \
+  --clean \
+  --yes
+```
+
+The target must be the Gobby-managed PostgreSQL service. The command verifies
+the hub manifest and every recorded artifact before restoring PostgreSQL. When
+the backup contains an armed maintenance login fence, restore discovers the
+epoch from the restored target, binds that epoch for its release connection,
+and records `released_by_command = 'restore'`. Normal connections need no
+maintenance GUC after the command completes. The required `--database-url`
+keeps the configured origin database outside the restore mutation path.
+
+Qdrant, FalkorDB, and volume artifacts remain separate from this PostgreSQL
+restore command.
+
 ## Admin And Diagnostics
 
 ```bash

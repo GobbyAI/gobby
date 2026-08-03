@@ -13,6 +13,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg_pool.errors import PoolTimeout
@@ -32,6 +33,7 @@ from gobby.storage.maintenance_epoch import (
     open_maintenance_epoch,
     probe_maintenance_admission,
     release_maintenance_epoch,
+    release_restored_maintenance_epoch,
     run_receipted_component,
 )
 
@@ -228,6 +230,56 @@ def test_logins_are_unaffected_without_an_open_epoch(
 
     with psycopg.connect(scoped_dsn) as connection:
         assert connection.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_restored_epoch_fence_is_released_without_touching_origin_state(
+    epoch_admin: tuple[psycopg.Connection[Any], str],
+    postgres_schema: str,
+) -> None:
+    connection, restored_dsn = epoch_admin
+    restored_epoch_id = _insert_epoch(connection, campaign="identity-cutover")
+    origin_epoch_id = uuid.uuid4()
+    origin_schema = f"{postgres_schema}_restore_origin"
+    connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(origin_schema)))
+    try:
+        connection.execute(
+            sql.SQL(
+                "CREATE TABLE {}.maintenance_epochs (LIKE maintenance_epochs INCLUDING ALL)"
+            ).format(sql.Identifier(origin_schema))
+        )
+        connection.execute(
+            sql.SQL(
+                "INSERT INTO {}.maintenance_epochs"
+                "(id, campaign, opened_by, scope_note) VALUES (%s, %s, %s, %s)"
+            ).format(sql.Identifier(origin_schema)),
+            (
+                origin_epoch_id,
+                "identity-cutover",
+                "hub-maintenance:identity-cutover",
+                "origin sentinel",
+            ),
+        )
+
+        with pytest.raises(psycopg.Error):
+            psycopg.connect(restored_dsn)
+
+        released = release_restored_maintenance_epoch(restored_dsn)
+
+        assert released is not None
+        assert released.id == restored_epoch_id
+        assert released.released_at is not None
+        assert released.released_by_command == "restore"
+        with psycopg.connect(restored_dsn) as admitted:
+            assert admitted.execute("SELECT 1").fetchone() == (1,)
+        origin_row = connection.execute(
+            sql.SQL(
+                "SELECT released_at, released_by_command FROM {}.maintenance_epochs WHERE id = %s"
+            ).format(sql.Identifier(origin_schema)),
+            (origin_epoch_id,),
+        ).fetchone()
+        assert origin_row == {"released_at": None, "released_by_command": None}
+    finally:
+        connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(origin_schema)))
 
 
 def test_python_admission_probe_surfaces_actionable_epoch_error(
