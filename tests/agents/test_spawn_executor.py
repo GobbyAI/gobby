@@ -1704,6 +1704,40 @@ def test_codex_mcp_overrides_omit_tmpdir_without_sandbox() -> None:
     assert not any(entry.startswith("mcp_servers.gobby.env.TMPDIR") for entry in overrides)
 
 
+def test_codex_mcp_overrides_forward_spawn_cache_redirects() -> None:
+    """Codex's env scrub drops the per-run toolchain caches, so the `uv run`
+    bootstrap needs UV_CACHE_DIR as a literal override — the sandbox policy
+    only grants writes to the redirected roots, not ~/.cache/uv."""
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+
+    managed_env = {
+        "GOBBY_SESSION_ID": "child-session-uuid",
+        UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-uuid",
+        CARGO_HOME: "/tmp/gobby/cargo-home/child-session-uuid",
+    }
+
+    overrides = _codex_mcp_config_overrides("/repo", None, managed_identity_env=managed_env)
+
+    assert (
+        'mcp_servers.gobby.env.UV_CACHE_DIR="/tmp/gobby/uv-cache/child-session-uuid"' in overrides
+    )
+    assert (
+        'mcp_servers.gobby.env.CARGO_HOME="/tmp/gobby/cargo-home/child-session-uuid"' in overrides
+    )
+
+
+def test_codex_mcp_overrides_omit_absent_spawn_cache_redirects() -> None:
+    """No cache redirect in the managed env means no literal override."""
+    from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+
+    overrides = _codex_mcp_config_overrides(
+        "/repo", None, managed_identity_env={"GOBBY_SESSION_ID": "child-session-uuid"}
+    )
+
+    assert not any("UV_CACHE_DIR" in entry for entry in overrides)
+    assert not any("CARGO_HOME" in entry for entry in overrides)
+
+
 def test_capability_token_never_in_argv_or_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

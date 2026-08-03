@@ -284,6 +284,13 @@ def _codex_mcp_config_overrides(
         for variable_name in _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS:
             if value := managed_identity_env.get(variable_name):
                 overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
+        # The same scrub drops the session-scoped toolchain cache redirects,
+        # and the sandbox policy only grants writes to those redirected roots.
+        # Without UV_CACHE_DIR the `uv run` bootstrap aborts against the
+        # read-only ~/.cache/uv and the server never starts.
+        for variable_name in SPAWN_CACHE_ENV_VARS:
+            if value := managed_identity_env.get(variable_name):
+                overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
         forwarded_secrets = [
             variable_name
             for variable_name in _CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS
