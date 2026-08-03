@@ -35,6 +35,7 @@ from gobby.cli.hub_backup._manifest import (
     HubBackupManifest,
     StoreRecord,
     VerificationState,
+    load_manifest,
     write_manifest,
 )
 from gobby.cli.hub_backup._stores import (
@@ -75,6 +76,7 @@ from gobby.cli.postgres_backup import (
     _process_output,
     _require_managed_docker_postgres,
     _resolve_database_url,
+    restore_postgres_backup,
 )
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
@@ -113,7 +115,7 @@ FALKORDB_ARCHIVE_METHOD = "bgsave-rdb-copy+sha256"
 VOLUMES_ARCHIVE_METHOD = "tar-archive+sha256"
 
 
-@click.command("hub-backup")
+@click.group("hub-backup", invoke_without_command=True)
 @click.option(
     "--output",
     "output",
@@ -142,6 +144,9 @@ def hub_backup(
     json_output: bool,
 ) -> None:
     """Back up every hub datastore and prove each artifact restores."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     if epoch is not None:
         child_epoch = os.environ.get(MAINTENANCE_EPOCH_ENV)
         if child_epoch != epoch:
@@ -187,6 +192,62 @@ def hub_backup(
                 _start_daemon()
 
     _emit_result(manifest, manifest_path, json_output=json_output)
+
+
+@hub_backup.command("restore")
+@click.argument(
+    "backup_root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--database-url",
+    required=True,
+    metavar="DSN",
+    help="Explicit PostgreSQL DSN for the restored target.",
+)
+@click.option(
+    "--clean",
+    is_flag=True,
+    help="Drop database objects before restoring the PostgreSQL artifact.",
+)
+@click.option("--yes", is_flag=True, help="Skip the destructive restore confirmation.")
+def restore_hub_backup(
+    backup_root: Path,
+    database_url: str,
+    clean: bool,
+    yes: bool,
+) -> None:
+    """Restore PostgreSQL from a verified hub backup into an explicit target."""
+    if _daemon_is_running():
+        raise click.ClickException("Stop the daemon first: gobby stop")
+    try:
+        manifest = load_manifest(backup_root / MANIFEST_NAME)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"Invalid hub backup manifest: {exc}") from exc
+    verify_artifacts(backup_root, manifest.artifacts)
+    postgres_store = manifest.stores.get("postgres")
+    if (
+        postgres_store is None
+        or not postgres_store.archive_verified.verified
+        or not postgres_store.restore_verified.verified
+    ):
+        raise click.ClickException("Hub backup has no verified PostgreSQL restore artifact")
+    if not yes and not click.confirm("Restore hub PostgreSQL data into the explicit target?"):
+        click.echo("Aborted.")
+        return
+
+    result = restore_postgres_backup(
+        backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
+        clean=clean,
+        allow_unverified=True,
+        gobby_home=get_gobby_home(),
+        database_url=database_url,
+    )
+    click.echo("Hub PostgreSQL restore completed.")
+    if target := result.get("database_url"):
+        click.echo(f"  Target: {target}")
+    if epoch_id := result.get("released_epoch_id"):
+        click.echo(f"  Maintenance epoch released by restore: {epoch_id}")
 
 
 # ---------------------------------------------------------------------------

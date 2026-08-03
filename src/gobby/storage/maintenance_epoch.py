@@ -531,6 +531,32 @@ def release_maintenance_epoch(
     return _epoch_from_row(released_row)
 
 
+def release_restored_maintenance_epoch(database_url: str) -> MaintenanceEpoch | None:
+    """Release an open epoch copied into a disaster-recovery target."""
+    epoch = discover_active_maintenance_epoch(database_url)
+    if epoch is None:
+        return None
+
+    with _connect(
+        bind_maintenance_epoch(database_url, epoch.id),
+        autocommit=False,
+        application_name="gobby-hub-backup-restore",
+    ) as connection:
+        released_row = connection.execute(
+            """
+            UPDATE maintenance_epochs
+            SET released_at = NOW(),
+                released_by_command = 'restore'
+            WHERE id = %s
+              AND released_at IS NULL
+            RETURNING *
+            """,
+            (epoch.id,),
+        ).fetchone()
+        connection.commit()
+    return _epoch_from_row(released_row) if released_row is not None else None
+
+
 def abort_maintenance_epoch(
     database_url: str,
     epoch_id: uuid.UUID | str,

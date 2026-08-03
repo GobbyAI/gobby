@@ -25,6 +25,7 @@ from gobby.cli.installers.postgres import (
 )
 from gobby.cli.utils import _redact_dsn, get_gobby_home
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.storage.maintenance_epoch import release_restored_maintenance_epoch
 
 POSTGRES_DUMP_NAME = "gobby.dump"
 POSTGRES_METADATA_NAME = "metadata.json"
@@ -34,6 +35,7 @@ POSTGRES_BACKUP_ARCHIVE_PREFIX = "gobby/postgres"
 _POSTGRES_CONTAINER = "gobby-postgres"
 _SUBPROCESS_TIMEOUT_SECONDS = 600
 _DOCKER_PG_DUMP_TIMEOUT_ENV = "GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS"
+_RESTORE_REPAIR_PGOPTIONS = "-c event_triggers=off"
 
 
 def postgres_backup_configured(*, gobby_home: Path | None = None) -> bool:
@@ -95,11 +97,12 @@ def restore_postgres_backup(
     clean: bool = False,
     allow_unverified: bool = False,
     gobby_home: Path | None = None,
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Verify and restore a PostgreSQL backup file or backup directory."""
     home = gobby_home or get_gobby_home()
-    database_url = _resolve_database_url(home)
-    _require_managed_docker_postgres(database_url=database_url)
+    target_database_url = database_url or _resolve_database_url(home)
+    _require_managed_docker_postgres(database_url=target_database_url)
     dump_path = _resolve_dump_path(source.expanduser())
 
     metadata = _read_metadata_for_dump(dump_path)
@@ -118,21 +121,23 @@ def restore_postgres_backup(
             "or rerun with --allow-unverified to restore without SHA256 verification."
         )
     _verify_dump_with_pg_restore(dump_path=dump_path)
-    _run_pg_restore(database_url=database_url, dump_path=dump_path, clean=clean)
+    _run_pg_restore(database_url=target_database_url, dump_path=dump_path, clean=clean)
+    released_epoch = release_restored_maintenance_epoch(target_database_url)
     probes = _run_post_restore_probes(
-        database_url=database_url,
+        database_url=target_database_url,
         gobby_home=home,
     )
 
     return {
         "source": str(source),
         "dump_path": str(dump_path),
-        "database_url": _redact_dsn(database_url),
+        "database_url": _redact_dsn(target_database_url),
         "clean": clean,
         "verified": True,
         "dump_sha256": actual_sha256,
         "expected_dump_sha256": expected_sha256,
         "sha256_verified": bool(expected_sha256 and actual_sha256 == expected_sha256),
+        "released_epoch_id": str(released_epoch.id) if released_epoch is not None else None,
         "probes": probes,
     }
 
@@ -222,6 +227,8 @@ def _run_pg_restore(
         "docker",
         "exec",
         "-i",
+        "-e",
+        f"PGOPTIONS={_RESTORE_REPAIR_PGOPTIONS}",
         _POSTGRES_CONTAINER,
         "pg_restore",
         *options,

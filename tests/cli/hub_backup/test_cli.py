@@ -444,6 +444,57 @@ class TestRegistration:
         assert root_cli.commands["hub-backup"] is hub_cli.hub_backup
 
 
+class TestRestore:
+    def test_restore_uses_explicit_target_and_verified_hub_artifact(
+        self,
+        harness: _Harness,
+        runtime: CliRuntime,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        backup_root = tmp_path / "backup"
+        _run_ok(runtime, backup_root)
+        calls: list[tuple[Path, dict[str, object]]] = []
+
+        def restore_postgres(source: Path, **kwargs: object) -> dict[str, object]:
+            calls.append((source, kwargs))
+            return {
+                "database_url": "postgresql://gobby:****@target:5432/gobby",
+                "released_epoch_id": "11111111-1111-1111-1111-111111111111",
+            }
+
+        monkeypatch.setattr(hub_cli, "restore_postgres_backup", restore_postgres)
+        monkeypatch.setattr(hub_cli, "_daemon_is_running", lambda: False)
+        monkeypatch.setattr(
+            hub_cli,
+            "_resolve_database_url",
+            lambda _home: pytest.fail("restore must not resolve the origin database"),
+        )
+
+        result = _invoke(
+            runtime,
+            "restore",
+            str(backup_root),
+            "--database-url",
+            "postgresql://gobby:secret@target:5432/gobby",
+            "--yes",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert calls == [
+            (
+                backup_root / "postgres",
+                {
+                    "clean": False,
+                    "allow_unverified": True,
+                    "gobby_home": harness.gobby_home,
+                    "database_url": "postgresql://gobby:secret@target:5432/gobby",
+                },
+            )
+        ]
+        assert "Maintenance epoch released by restore" in result.output
+
+
 class TestOrchestration:
     def test_full_success_follows_the_contract_order(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
