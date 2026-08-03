@@ -61,6 +61,7 @@ from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.memory.services.search import SearchDebugSnapshot, SearchService
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.memories import Memory
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from tests.memory._recall_corpus import _Stub, _StubExtractor
 from tests.memory.recall_benchmark_cleanup import drop_recall_benchmark_graph
 
@@ -249,7 +250,13 @@ class _MemoryStorage:
             tags=[],
         )
 
-    def get_memories(self, memory_ids: list[str], project_id: str | None = None) -> list[Memory]:
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        scope: object = None,
+        *,
+        visibility: str = "active",
+    ) -> list[Memory]:
         out: list[Memory] = []
         for memory_id in memory_ids:
             mem = self._by_stable_id.get(memory_id)
@@ -257,7 +264,13 @@ class _MemoryStorage:
                 out.append(self._memory(memory_id))
         return out
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory:
+    def get_memory(
+        self,
+        memory_id: str,
+        scope: object = None,
+        *,
+        visibility: str = "active",
+    ) -> Memory:
         return self._memory(memory_id)
 
     def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
@@ -309,12 +322,12 @@ async def _build_service(
         result = await service.add_to_graph(
             content=mem.memory_id,
             memory_id=id_map[mem.memory_id],
-            project_id=None,
+            project_id=PERSONAL_PROJECT_ID,
         )
         assert result.status.value in {"success", "partial_failure"}, result
 
     if arm.recluster_entities:
-        await service.recluster_entities(project_id=None)
+        await service.recluster_entities(project_id=PERSONAL_PROJECT_ID)
 
     vector_store = VectorStore(
         path=str(tmp_path / f"qdrant_{arm.name}"),
@@ -387,7 +400,9 @@ async def _run_arm(
             assert query_embedding[_cluster_axis(cluster)] == max(query_embedding)
             assert query_embedding[_cluster_axis(cluster)] == 1.0
 
-            results = await search_service.search(query=query, limit=K)
+            results = await search_service.search(
+                query=query, project_id=PERSONAL_PROJECT_ID, limit=K
+            )
             assert len(snapshots) == before + 1
             snapshot = snapshots[-1]
             assert snapshot.returned_ids == [result.id for result in results]

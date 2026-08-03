@@ -74,6 +74,7 @@ from gobby.memory.recall_refit import (
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.recall_signals import RecallSignalStore
 from tests.memory._recall_corpus import (
     DIM,
@@ -122,7 +123,7 @@ async def _evaluate(service: KnowledgeGraphService, corpus: list[MemoryDef]) -> 
         if not expected:
             continue
         result = await service.find_related_memory_ids(
-            _seed_keys(mem), max_hops=2, limit=K, project_id=None
+            _seed_keys(mem), max_hops=2, limit=K, project_id=PERSONAL_PROJECT_ID
         )
         ranked = [mid for mid in result.memory_ids if mid != mem.memory_id]
         topk = set(ranked[:K])
@@ -178,14 +179,14 @@ async def _run_arm(
 
     for mem in corpus:
         result = await service.add_to_graph(
-            content=mem.memory_id, memory_id=mem.memory_id, project_id=None
+            content=mem.memory_id, memory_id=mem.memory_id, project_id=PERSONAL_PROJECT_ID
         )
         assert result.status.value in {"success", "partial_failure"}, result
 
     cluster_count = 0
     clustered_entities = 0
     if recluster_entities:
-        cluster_result = await service.recluster_entities(project_id=None)
+        cluster_result = await service.recluster_entities(project_id=PERSONAL_PROJECT_ID)
         cluster_count = cluster_result.cluster_count
         clustered_entities = cluster_result.clustered_entity_count
 
