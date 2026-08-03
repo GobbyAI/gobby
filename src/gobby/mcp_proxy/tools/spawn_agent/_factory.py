@@ -17,7 +17,11 @@ from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
-from ._provider_resolution import resolve_spawn_provider, spawning_session_provider
+from ._provider_resolution import (
+    concrete_provider,
+    resolve_spawn_provider,
+    spawning_session_provider,
+)
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
@@ -371,20 +375,18 @@ def create_spawn_agent_registry(
         # The spawning session, which may differ from the declared parent when an
         # agent points parent_session_id at the coordinator it reports to.
         caller_session_id = get_current_session_id()
-        parent_provider = resolve_spawn_provider(
-            explicit_provider=None,
-            agent_provider="inherit",
-            parent_provider=spawning_session_provider(
+        default_provider = concrete_provider(
+            spawning_session_provider(
                 session_manager,
                 caller_session_id=caller_session_id,
                 parent_session_id=resolved_parent_session_id,
-            ),
+            )
         )
         agent_body = _load_agent_body(
             agent,
             db,
             project_id=project_id,
-            cli_source=parent_provider,
+            cli_source=default_provider,
         )
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
@@ -455,7 +457,7 @@ def create_spawn_agent_registry(
                 agent_provider = resolve_spawn_provider(
                     explicit_provider=None,
                     agent_provider=agent_body.provider,
-                    parent_provider=parent_provider,
+                    default_provider=default_provider,
                 )
 
                 if agent_provider in failed_providers:
@@ -480,7 +482,7 @@ def create_spawn_agent_registry(
                             candidate_name,
                             db,
                             project_id=project_id,
-                            cli_source=parent_provider,
+                            cli_source=default_provider,
                         )
                         if not candidate:
                             skip_reason = "definition_missing"
@@ -488,7 +490,7 @@ def create_spawn_agent_registry(
                         candidate_provider = resolve_spawn_provider(
                             explicit_provider=None,
                             agent_provider=candidate.provider,
-                            parent_provider=parent_provider,
+                            default_provider=default_provider,
                         )
                         if candidate_provider not in failed_providers:
                             fallback_body = candidate

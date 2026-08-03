@@ -95,6 +95,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -114,6 +115,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -133,6 +135,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
             )
             assert result["success"] is False
             assert "parent_session_id" in result["error"]
@@ -151,6 +154,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -174,6 +178,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
                 worktree_id="wt-missing",
                 worktree_storage=worktree_storage,
@@ -204,6 +209,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
@@ -230,6 +236,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
                 clone_id="clone-missing",
                 clone_storage=clone_storage,
@@ -260,6 +267,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
                 clone_id="clone-1",
                 clone_storage=clone_storage,
@@ -296,6 +304,7 @@ class TestSpawnAgentImplErrorBranches:
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -1189,6 +1198,7 @@ test"""
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
+                provider="claude",
                 parent_session_id="sess-1",
                 timeout=0,
             )
