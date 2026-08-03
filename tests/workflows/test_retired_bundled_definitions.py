@@ -28,6 +28,8 @@ VARIABLES_PATH = WORKFLOWS_DIR / "variables/gobby-default-variables.yaml"
 PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
 SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
 DOCS_DIR = REPO_ROOT / "docs/guides"
+RESEARCH_CONTRACT = REPO_ROOT / "docs/contracts/gwiki-research.md"
+RETIRED_RESEARCH_GUIDE = REPO_ROOT / "docs/guides/wiki-research.md"
 
 RETIRED_PIPELINES = (
     "orchestrator",
@@ -43,8 +45,14 @@ RETIRED_PIPELINES = (
     "spawn-qa",
     "wiki-research",
 )
-RETIRED_AGENTS = ("developer", "pipeline-worker", "nightly-linter", "nightly-test-fixer")
-RETIRED_SKILLS = ("dev", "qa")
+RETIRED_AGENTS = (
+    "developer",
+    "pipeline-worker",
+    "nightly-linter",
+    "nightly-test-fixer",
+    "wiki-researcher",
+)
+RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
     "block-and-teach-context7",
     "block-writes-outside-plan-artifact",
@@ -99,6 +107,15 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
 @pytest.mark.parametrize("name", RETIRED_SKILLS)
 def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
     assert not (SKILLS_DIR / name).exists(), f"retired skill remains bundled: {name}"
+
+
+def test_retired_wiki_research_dispatch_is_not_advertised() -> None:
+    contract = RESEARCH_CONTRACT.read_text(encoding="utf-8")
+
+    assert "does not bundle a\n`wiki-research` pipeline" in contract
+    assert "gobby pipelines run wiki-research" not in contract
+    assert "pipeline:wiki-research" not in contract
+    assert not RETIRED_RESEARCH_GUIDE.exists()
 
 
 def test_retired_rules_are_absent_from_bundled_templates() -> None:

@@ -440,11 +440,11 @@ class TestSyncBundledSkills:
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (
                     stale_id,
-                    "wiki-research",
+                    "loading-skills",
                     "Stale worktree copy",
                     "# Stale template content",
                     "/repo/.claude/worktrees/task-17495/src/gobby/install/shared/"
-                    "skills/wiki-research/SKILL.md",
+                    "skills/loading-skills/SKILL.md",
                     "local",
                     project_id,
                     "project",
@@ -473,7 +473,7 @@ class TestSyncBundledSkills:
         assert result["success"] is True
         assert result["purged_project_overrides"] == 1
         stale = skill_manager.get_by_name(
-            "wiki-research", project_id=project_id, include_deleted=True
+            "loading-skills", project_id=project_id, include_deleted=True
         )
         assert stale is not None
         assert stale.deleted_at is not None
@@ -481,7 +481,7 @@ class TestSyncBundledSkills:
         assert legit is not None
         assert legit.deleted_at is None
         # Resolution now lands on the freshly synced installed row
-        resolved = skill_manager.get_by_name("wiki-research", project_id=project_id)
+        resolved = skill_manager.get_by_name("loading-skills", project_id=project_id)
         assert resolved is not None
         assert resolved.source == "installed"
 

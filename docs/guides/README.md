@@ -52,7 +52,6 @@ links to the guide that owns that topic.
 | [codewiki.md](codewiki.md) | Generated codebase docs, degraded graph output, and `gwiki` ingest |
 | [gwiki-user-guide.md](gwiki-user-guide.md) | `gwiki` vault setup, multimodal ingest, hybrid search, research, and maintenance |
 | [ghook-user-guide.md](ghook-user-guide.md) | `ghook` hook dispatch, inbox replay, diagnostics, and troubleshooting |
-| [wiki-research.md](wiki-research.md) | Ad-hoc and scheduled wiki research pipeline operation |
 
 ## Interfaces & Reference
 

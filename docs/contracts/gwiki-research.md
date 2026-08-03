@@ -5,18 +5,14 @@ reintroduced; `gwiki` owns the deterministic mechanics that research passes
 consume — guarded URL ingest, SourceManifest content-hash dedup, accepted-note
 collection, grounded `compile`, and `audit`.
 
-The research loop lives daemon-side:
-
-- One research pass = one execution of the bundled `wiki-research` pipeline
-  (`src/gobby/install/shared/workflows/pipelines/wiki-research.yaml`): create
-  a research task, spawn the `wiki-researcher` agent, wait for a cited topic
-  page. See `docs/guides/wiki-research.md` for submit/list/pause/edit flows.
-- Standing queries are ordinary cron jobs with `action_type: pipeline`
-  pointing at `wiki-research`. Cron owns the name, schedule, enablement, and
-  history; there is no separate research registry.
-- The researcher agent discovers sources with its native web search and hands
-  URLs/notes to `gwiki` through the daemon's wiki tools (`wiki_ingest`,
-  `wiki_compile`); it never shells into wiki mutation paths of its own.
+The daemon exposes the deterministic wiki tools; it does not bundle a
+`wiki-research` pipeline, launcher skill, or `wiki-researcher` agent. There is
+no reserved research dispatcher or cron job. A caller that needs a research
+pass owns its orchestration: it may create an ordinary task, discover sources
+with its available web tools, then hand URLs and notes to `gwiki` through the
+daemon's wiki tools (`wiki_ingest`, `wiki_compile`, and related operations).
+Scheduled research likewise requires an explicitly installed caller-owned
+workflow and cron action.
 
 gwiki must not call back into Gobby as an agent-spawn dependency. The old
 shape where `gwiki research` posted to `/api/agents/spawn` with `--task-id`,
