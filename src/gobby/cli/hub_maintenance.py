@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess  # nosec B404 - fixed Python module invocation, never shell=True
 import sys
 from collections.abc import Callable
@@ -242,6 +243,11 @@ def _finish_or_report(
     executor: CampaignExecutor,
     released_by_command: str,
 ) -> None:
+    # The armed fence admits only epoch-bound logins. Exporting the epoch
+    # token here covers every in-process libpq connection the campaign makes
+    # after arming (admission probes, CliRuntime reconnects) and is inherited
+    # by owner-CLI subprocesses.
+    os.environ.update(maintenance_child_environment(epoch.id))
     try:
         batch = _continue_campaign(
             ctx,

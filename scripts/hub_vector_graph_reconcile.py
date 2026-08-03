@@ -31,6 +31,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.maintenance_epoch import (
     DestructiveBatch,
     MaintenanceEpoch,
+    bind_maintenance_epoch,
     get_destructive_batch,
     run_receipted_component,
 )
@@ -530,6 +531,7 @@ class _ReconcileExecutor:
         entries = [_ledger_entry(item) for item in _ledger_objects(sealed["deletions"])]
         original = _inventory_from_object(sealed["original_inventory"])
         database_url = _resolve_database_url()
+        owner_env = _owner_environment(epoch, database_url)
 
         for entry in entries:
             current_batch = get_destructive_batch(database_url, epoch.id, batch.id)
@@ -542,7 +544,7 @@ class _ReconcileExecutor:
             command = owner_command(entry, manifest=sealed_path, manifest_sha256=sealed_sha256)
 
             def apply_owner(command: list[str] = command) -> None:
-                _run_owner(command)
+                _run_owner(command, env=owner_env)
 
             def target_absent(entry: LedgerEntry = entry) -> bool:
                 return not _target_exists(entry)
@@ -631,13 +633,41 @@ def _inventory_contains(inventory: Inventory, entry: LedgerEntry) -> bool:
     return entry.namespace in getattr(inventory, entry.store)
 
 
-def _run_owner(command: list[str]) -> None:
+def _owner_environment(epoch: MaintenanceEpoch, database_url: str) -> dict[str, str]:
+    """Build a child env letting owner CLIs run daemon-down inside the fence.
+
+    The daemon is stopped for the whole campaign, so owner CLIs must resolve
+    their service config without it (standalone runtime mode + explicit
+    service env), and their direct PostgreSQL logins must carry the epoch
+    token or the armed fence refuses them.
+    """
+    with _runtime_resources() as (config, _database):
+        qdrant = config.databases.qdrant
+        falkor = config.databases.falkordb
+    bound_dsn = bind_maintenance_epoch(database_url, epoch.id)
+    env = dict(os.environ)
+    env["GOBBY_RUNTIME_MODE"] = "standalone"
+    env["GCODE_DATABASE_URL"] = bound_dsn
+    env["GOBBY_POSTGRES_DSN"] = bound_dsn
+    if qdrant.url:
+        env["GOBBY_QDRANT_URL"] = qdrant.url
+    if qdrant.api_key:
+        env["GOBBY_QDRANT_API_KEY"] = qdrant.api_key
+    env["GOBBY_FALKORDB_HOST"] = falkor.host
+    env["GOBBY_FALKORDB_PORT"] = str(falkor.port)
+    if falkor.password:
+        env["GOBBY_FALKORDB_PASSWORD"] = falkor.password
+    return env
+
+
+def _run_owner(command: list[str], *, env: Mapping[str, str] | None = None) -> None:
     result = subprocess.run(  # nosec B603 - argv comes from sealed typed ledger fields
         command,
         capture_output=True,
         text=True,
         timeout=3600,
         check=False,
+        env=None if env is None else dict(env),
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no output"
