@@ -61,7 +61,7 @@ def test_dm_resolution_links_sender_scoped_session() -> None:
     assert resolution.identity.session_id == "dm-session"
     session_store.register.assert_called_once_with(
         external_id="comms:channel-1:user-1",
-        machine_id="comms",
+        machine_id=None,
         source="comms",
         project_id=None,
         title="Comms: alice",
@@ -236,7 +236,7 @@ async def test_inbound_metadata_selects_conversation_scoped_session(
     assert handled[0].identity_id == "identity-1"
     session_store.register.assert_called_once_with(
         external_id=external_id,
-        machine_id="comms",
+        machine_id=None,
         source="comms",
         project_id=None,
         title=title,

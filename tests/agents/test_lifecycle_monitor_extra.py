@@ -942,7 +942,7 @@ class TestPeriodicAgentTerminalEnter:
 
         child = session_manager.register(
             external_id="child-step-workflow",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=str(sample_project["id"]),
         )
@@ -1301,13 +1301,13 @@ class TestTerminalizeCancelledRun:
         session_manager = SessionManager(temp_db)
         parent = session_manager.register(
             external_id="parent-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         child = session_manager.register(
             external_id="child-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1385,19 +1385,19 @@ class TestTerminalizeCancelledRun:
         session_manager = SessionManager(temp_db)
         parent = session_manager.register(
             external_id="parent-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         old_child = session_manager.register(
             external_id="old-child-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         replacement = session_manager.register(
             external_id="replacement-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )

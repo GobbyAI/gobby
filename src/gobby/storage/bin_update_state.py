@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.machines import normalize_machine_id
 from gobby.utils.datetime import normalize_datetime_model
 
 BinUpdateStatus = Literal[
@@ -115,10 +115,7 @@ class BinUpdateStateStore:
 
     def __init__(self, db: HubDatabase, *, machine_id: str) -> None:
         self.db = db
-        normalized = normalize_machine_id(machine_id)
-        if normalized is None:
-            raise ValueError("machine_id is required for bin update state")
-        self.machine_id = normalized
+        self.machine_id = str(UUID(machine_id.strip()))
 
     def upsert(
         self,

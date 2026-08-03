@@ -343,13 +343,13 @@ def test_session_parent_cycle_check_and_update_are_serialized(
     session_manager = SessionManager(postgres_db)
     first = session_manager.register(
         external_id=f"first-{uuid.uuid4()}",
-        machine_id="session-lineage-race",
+        machine_id="21000000-0000-4000-8000-000000000010",
         source="codex",
         project_id=project.id,
     )
     second = session_manager.register(
         external_id=f"second-{uuid.uuid4()}",
-        machine_id="session-lineage-race",
+        machine_id="21000000-0000-4000-8000-000000000010",
         source="codex",
         project_id=project.id,
     )

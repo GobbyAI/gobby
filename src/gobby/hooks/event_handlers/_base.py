@@ -48,7 +48,7 @@ class EventHandlersBase:
     _skills_config: SkillsConfig | None
     _memory_recall_config: MemoryRecallConfig | None
     _call_tool: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None
-    _get_machine_id: Callable[[], str]
+    _get_machine_id: Callable[[], str | None]
     _resolve_project_id: Callable[[str | None, str | None], str]
     _code_index_trigger: Any | None
     _dispatch_session_summaries_fn: DispatchSessionSummariesFn | None

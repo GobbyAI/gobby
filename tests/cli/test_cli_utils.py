@@ -174,7 +174,7 @@ class TestGetActiveSessionId:
         session = session_manager.register(
             source="test",
             external_id="ext-123",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=project.id,
         )
 
@@ -217,7 +217,7 @@ class TestResolveSessionId:
         session = session_manager.register(
             source="test",
             external_id="ext-1",
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
             project_id=project.id,
         )
 
@@ -246,7 +246,7 @@ class TestResolveSessionId:
         session = session_manager.register(
             source="test",
             external_id="ext-1",
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
             project_id=project.id,
         )
 
@@ -267,7 +267,7 @@ class TestResolveSessionId:
         session = session_manager.register(
             source="test",
             external_id="ext-1",
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
             project_id=project.id,
         )
 
@@ -291,10 +291,10 @@ class TestResolveSessionId:
 
         session_manager = SessionManager(hub_db)
         session1 = session_manager.register(
-            source="test", external_id="ext-1", machine_id="m-1", project_id=project1.id
+            source="test", external_id="ext-1", machine_id="21000000-0000-4000-8000-000000000006", project_id=project1.id
         )
         session2 = session_manager.register(
-            source="test", external_id="ext-2", machine_id="m-1", project_id=project2.id
+            source="test", external_id="ext-2", machine_id="21000000-0000-4000-8000-000000000006", project_id=project2.id
         )
 
         # Both sessions are #1 in their respective projects

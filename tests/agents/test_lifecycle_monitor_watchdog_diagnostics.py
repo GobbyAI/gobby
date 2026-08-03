@@ -147,7 +147,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
 
     parent = session_manager.register(
         external_id="parent-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -155,7 +155,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
     _write_codex_transcript(transcript_path)
     child = session_manager.register(
         external_id="codex-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         transcript_path=str(transcript_path),
@@ -230,7 +230,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
 
     parent = session_manager.register(
         external_id="parent-session-reasoning",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -238,7 +238,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
     _write_codex_reasoning_transcript(transcript_path)
     child = session_manager.register(
         external_id="codex-child-reasoning",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         transcript_path=str(transcript_path),
@@ -361,7 +361,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
 
     parent = session_manager.register(
         external_id="parent-session-fail",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -369,7 +369,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
     _write_codex_transcript(transcript_path)
     child = session_manager.register(
         external_id="codex-child-fail",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         transcript_path=str(transcript_path),

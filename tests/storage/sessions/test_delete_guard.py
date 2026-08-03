@@ -29,7 +29,7 @@ def _register_session(
 ) -> str:
     return manager.register_session(
         external_id=external_id,
-        machine_id="machine-delete-guard-test",
+        machine_id="20000000-0000-4000-8000-00000000000d",
         source="claude",
         project_id=project_id,
         terminal_context=terminal_context,

@@ -182,7 +182,7 @@ def _claim_task(task_manager: LocalTaskManager, project_id: str, task_id: str) -
     session_manager = SessionManager(task_manager.db)
     session = session_manager.register(
         external_id="readiness-ext",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )

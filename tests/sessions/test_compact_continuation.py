@@ -53,7 +53,7 @@ def session_db(hub_db: HubDatabase) -> HubDatabase:
     hub_db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
         "VALUES (%s, %s, %s, %s, %s)",
-        (SESSION_ID, "compact-session", "test-machine", "codex", PROJECT_ID),
+        (SESSION_ID, "compact-session", None, "codex", PROJECT_ID),
     )
     return hub_db
 

@@ -59,7 +59,7 @@ def _make_row(
     row = MagicMock()
     row.id = session_id
     row.external_id = "ext-123"
-    row.machine_id = "machine-1"
+    row.machine_id = "21000000-0000-4000-8000-000000000001"
     row.source = "claude"
     row.status = status
     row.project_id = "project-1"
@@ -98,7 +98,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "compact",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -121,7 +121,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "compact",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -148,7 +148,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "startup",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="codex",
         )
@@ -172,7 +172,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "startup",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -193,7 +193,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "startup",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -215,7 +215,7 @@ class TestResolveSessionStartIdentity:
             {"terminal_context": TERMINAL_CONTEXT},
             "startup",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -239,7 +239,7 @@ class TestResolveSessionStartIdentity:
                 {"terminal_context": TERMINAL_CONTEXT},
                 "startup",
                 external_id="ext-1",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 project_id="project-1",
                 cli_source="claude",
             )
@@ -263,7 +263,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "compact",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -286,7 +286,7 @@ class TestResolveSessionStartIdentity:
             input_data,
             "compact",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -310,7 +310,7 @@ class TestResolveSessionStartIdentity:
             {"source": "compact", "terminal_context": TERMINAL_CONTEXT},
             "compact",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -327,7 +327,7 @@ class TestResolveSessionStartIdentity:
             {"source": "clear"},
             "clear",
             external_id="ext-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
         )
@@ -547,7 +547,7 @@ class TestPrepareCompactContinuationVariables:
         )
         return SessionManager(db).register(
             external_id=kwargs.pop("external_id", COMPACT_EXTERNAL_ID),
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source=kwargs.pop("source", "claude"),
             project_id=project.id,
             terminal_context=dict(TERMINAL_CONTEXT),
@@ -679,7 +679,7 @@ class TestCompactSelfContinuation:
         )
         return SessionManager(db).register(
             external_id=external_id,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source=source,
             project_id=project.id,
             terminal_context=dict(TERMINAL_CONTEXT),

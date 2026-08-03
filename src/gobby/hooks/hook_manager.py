@@ -10,6 +10,7 @@ import copy
 import logging
 import threading
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 import psycopg
 
@@ -33,7 +34,7 @@ from gobby.hooks.session_ref_resolution import (
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.activity import record_session_activity
-from gobby.storage.machines import LocalMachineManager, normalize_machine_id
+from gobby.storage.machines import LocalMachineManager
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
 
@@ -228,8 +229,8 @@ class HookManager:
             _hook_text_field(data, "machine_id", "machineId"),
         ):
             try:
-                machine_id = normalize_machine_id(candidate)
-            except ValueError:
+                machine_id = str(UUID(candidate.strip())) if candidate else None
+            except (AttributeError, ValueError):
                 # Hook payloads are untrusted input; a non-UUID identity is
                 # unattributable, never fatal to hook processing.
                 self.logger.debug(
@@ -821,12 +822,11 @@ class HookManager:
 
     # ==================== HELPER METHODS ====================
 
-    def get_machine_id(self) -> str:
+    def get_machine_id(self) -> str | None:
         """Get unique machine identifier."""
         from gobby.utils.machine_id import get_machine_id as _get_machine_id
 
-        result = _get_machine_id()
-        return result or "unknown-machine"
+        return _get_machine_id()
 
     def _resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """Resolve project_id from explicit input, cwd, or personal fallback."""

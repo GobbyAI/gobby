@@ -37,7 +37,7 @@ def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
 def session(temp_db: HubDatabase, project_id: str) -> Session:
     return SessionManager(temp_db).register(
         external_id="owner-ref-session",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
         title="Owner session",

@@ -52,7 +52,7 @@ def _event(event_type: HookEventType = HookEventType.BEFORE_TOOL) -> HookEvent:
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={},
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
     )
 
 

@@ -763,7 +763,7 @@ class TestMemoryDreamCommand:
                 plan={
                     "skip_consolidation": True,
                     "candidate_count": 3,
-                    "candidate_ids": ["m1", "m2", "m3"],
+                    "candidate_ids": ["21000000-0000-4000-8000-000000000005", "m2", "m3"],
                     "candidate_ids_truncated": False,
                 },
             ),

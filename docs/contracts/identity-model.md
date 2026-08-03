@@ -8,12 +8,12 @@ Gobby's current identity hierarchy is:
 
 The user seam lives only on `machines.owner_user_id`. Session, task, agent, memory,
 and workflow tables should derive user ownership by joining `session.machine_id` to
-`machines.machine_id`, then reading `machines.owner_user_id`. Do not add parallel
+`machines.id`, then reading `machines.owner_user_id`. Do not add parallel
 `user_id` columns to those tables unless the identity contract changes.
 
 ## Machines
 
-`machines.machine_id` is the primary key. The registry stores optional descriptive
+`machines.id` is an install-generated UUID primary key. The registry stores optional descriptive
 metadata (`hostname`, `os`, `label`, `tailscale_name`) plus `first_seen`,
 `last_seen`, and nullable `owner_user_id`.
 
@@ -21,9 +21,8 @@ metadata (`hostname`, `os`, `label`, `tailscale_name`) plus `first_seen`,
 seam for future auth and fleet ownership without forcing a user table or auth
 provider into the local-first stack today.
 
-Missing and placeholder machine ids are not registry rows. Blank values and legacy
-fallbacks such as `unknown` and `unknown-machine` mean the client did not provide a
-real machine identity.
+Missing machine attribution is represented by an absent value. Sentinel strings are
+retired and never become registry rows.
 
 ## Daemon Access Credentials
 
@@ -34,22 +33,23 @@ WebSocket clients. Web credentials in `auth.username` and the scrypt
 
 These credentials represent daemon access capabilities. They do not populate
 `machines.owner_user_id`, identify the calling machine, or add row-level user
-ownership to tasks, sessions, memory, agents, or workflows. Machine identity
-continues to come from the client-supplied `machine_id` contract.
+ownership to tasks, sessions, memory, agents, or workflows. The daemon stamps its
+install-generated machine UUID on session registration and web-chat creation.
 
 See [Secrets Contract](./secrets.md#daemon-api-token) for token storage, header,
 and rotation semantics.
 
 ## Sessions
 
-`sessions.machine_id` remains the client-supplied machine identity used in the
-session natural key. Session APIs may filter by `machine_id` for multi-machine
+`sessions.machine_id` is a nullable UUID foreign key to `machines.id` and remains
+part of the session natural key. `NULLS NOT DISTINCT` keeps unattributed session
+registration idempotent. Session APIs may filter by `machine_id` for multi-machine
 views and shared Postgres hubs.
 
 The daemon should not infer a remote client's user by writing user ownership onto
 the session. The derivation is:
 
-`session -> sessions.machine_id -> machines.machine_id -> machines.owner_user_id`
+`session -> sessions.machine_id -> machines.id -> machines.owner_user_id`
 
 ## Future Fleets
 

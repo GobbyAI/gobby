@@ -39,7 +39,7 @@ def test_session(session_manager, test_project):
         project_id=test_project,
         source="test",
         external_id="test-external",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
     )
     return session.id
 

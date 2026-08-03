@@ -298,7 +298,7 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
         # Mock prepare_terminal_spawn
@@ -348,7 +348,7 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
         mock_spawn_context = MagicMock()
@@ -395,7 +395,7 @@ class TestExecuteSpawn:
             project_id="proj",
             workflow="auto-task",
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
         mock_spawn_context = MagicMock()
@@ -1021,7 +1021,7 @@ class TestExecuteSpawnSandbox:
             project_id="proj",
             sandbox_config=sandbox_config,
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
         mock_spawn_context = MagicMock()
@@ -1123,7 +1123,7 @@ class TestExecuteSpawnSandbox:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             # No sandbox_config specified
         )
 
@@ -1176,7 +1176,7 @@ class TestExecuteSpawnSandbox:
             project_id="proj",
             sandbox_config=sandbox_config,
             session_manager=mock_session_manager,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
         mock_spawn_context = MagicMock()
@@ -1452,7 +1452,7 @@ class TestExecuteSpawnErrorPaths:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
-            machine_id="machine-xyz",
+            machine_id="21000000-0000-4000-8000-00000000000e",
         )
 
         mock_spawn_context = MagicMock()
@@ -1482,7 +1482,7 @@ class TestExecuteSpawnErrorPaths:
 
         assert result.success is True
         call_kwargs = mock_spawner.spawn.call_args.kwargs
-        assert call_kwargs["env"]["GOBBY_MACHINE_ID"] == "machine-xyz"
+        assert call_kwargs["env"]["GOBBY_MACHINE_ID"] == "21000000-0000-4000-8000-00000000000e"
 
     @pytest.mark.asyncio
     async def test_claude_terminal_uses_workspace_mcp_config(self, tmp_path: Path) -> None:
@@ -1499,7 +1499,7 @@ class TestExecuteSpawnErrorPaths:
             parent_session_id="parent",
             project_id="proj",
             session_manager=MagicMock(),
-            machine_id="m",
+            machine_id="21000000-0000-4000-8000-000000000022",
         )
 
         mock_spawn_context = MagicMock()
@@ -1547,7 +1547,7 @@ class TestExecuteSpawnErrorPaths:
             parent_session_id="parent",
             project_id="proj",
             session_manager=MagicMock(),
-            machine_id="m",
+            machine_id="21000000-0000-4000-8000-000000000022",
         )
 
         mock_spawn_context = MagicMock()
@@ -1596,7 +1596,7 @@ class TestExecuteSpawnErrorPaths:
             parent_session_id="parent",
             project_id="proj",
             session_manager=mock_session_manager,
-            machine_id="m",
+            machine_id="21000000-0000-4000-8000-000000000022",
         )
 
         mock_spawn_context = MagicMock()

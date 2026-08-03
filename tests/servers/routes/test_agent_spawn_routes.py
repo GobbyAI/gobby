@@ -221,7 +221,7 @@ class TestSpawnAgent:
         """Web chat spawn should not overwrite a non-open task already owned elsewhere."""
         existing_owner = session_manager.register(
             external_id="claimed-review-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=test_project.id,
         )

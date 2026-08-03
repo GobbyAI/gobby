@@ -340,7 +340,7 @@ class TestRebuildCrossrefs:
     async def test_success(self, mock_memory_manager: MagicMock) -> None:
         """Successful crossref rebuild."""
         mock_memory_manager.list_memories.return_value = [
-            MockMemory(id="m1"),
+            MockMemory(id="21000000-0000-4000-8000-000000000005"),
             MockMemory(id="m2"),
         ]
         mock_memory_manager.rebuild_crossrefs_for_memory.return_value = 1
@@ -356,7 +356,7 @@ class TestRebuildCrossrefs:
     async def test_partial_failure(self, mock_memory_manager: MagicMock) -> None:
         """Handles individual crossref failures."""
         mock_memory_manager.list_memories.return_value = [
-            MockMemory(id="m1"),
+            MockMemory(id="21000000-0000-4000-8000-000000000005"),
             MockMemory(id="m2"),
         ]
         mock_memory_manager.rebuild_crossrefs_for_memory.side_effect = [

@@ -49,7 +49,7 @@ def _session_for(
 ) -> Session:
     session = manager.find_by_external_id(
         external_id,
-        "test-machine",
+        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         cli_source,
     )
@@ -147,13 +147,13 @@ def test_session_start_accepts_distinct_cli_and_lifecycle_sources(
     manager = SessionManager(postgres_db)
     session_a = manager.find_by_external_id(
         external_a,
-        "test-machine",
+        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         "codex",
     )
     session_b = manager.find_by_external_id(
         external_b,
-        "test-machine",
+        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         "codex",
     )
@@ -311,14 +311,14 @@ async def test_daemon_binds_schema_lease_to_child_identity_env(
     session_manager = SessionManager(postgres_db)
     parent = session_manager.register(
         external_id=f"managed-parent-{uuid.uuid4()}",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=PROJECT_ID,
     )
     child_external_id = f"managed-child-{uuid.uuid4()}"
     child = session_manager.register(
         external_id=child_external_id,
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=PROJECT_ID,
         parent_session_id=parent.id,

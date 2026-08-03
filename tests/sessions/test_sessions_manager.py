@@ -51,7 +51,7 @@ class TestSessionManagerRegistration:
         """Test registering a new session."""
         session_id = session_mgr.register_session(
             external_id="test-cli-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
             project_id=test_project["id"],
         )
@@ -67,7 +67,7 @@ class TestSessionManagerRegistration:
         """Test registering session with all optional fields."""
         session_id = session_mgr.register_session(
             external_id="full-cli-123",
-            machine_id="machine-xyz",
+            machine_id="21000000-0000-4000-8000-00000000000e",
             source="qwen",
             project_id=test_project["id"],
             parent_session_id=None,  # Use None instead of invalid UUID
@@ -91,7 +91,7 @@ class TestSessionManagerRegistration:
         """Test that registration caches external_id -> session_id mapping."""
         session_id = session_mgr.register_session(
             external_id="cached-cli",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -108,7 +108,7 @@ class TestSessionManagerRegistration:
         """Test git branch is set when provided."""
         session_id = session_mgr.register_session(
             external_id="git-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
             git_branch="main",
@@ -130,7 +130,7 @@ class TestSessionManagerLookup:
         """Test getting cached session_id."""
         session_id = session_mgr.register_session(
             external_id="lookup-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -151,7 +151,7 @@ class TestSessionManagerLookup:
         """Test looking up session_id from database."""
         session_id = session_mgr.register_session(
             external_id="db-lookup",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
         )
@@ -163,7 +163,7 @@ class TestSessionManagerLookup:
         result = session_mgr.lookup_session_id(
             external_id="db-lookup",
             source="codex",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
         assert result == session_id
@@ -176,7 +176,7 @@ class TestSessionManagerLookup:
         """Test that lookup caches the result."""
         session_id = session_mgr.register_session(
             external_id="cache-lookup",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -188,7 +188,7 @@ class TestSessionManagerLookup:
         session_mgr.lookup_session_id(
             external_id="cache-lookup",
             source="claude",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             project_id=test_project["id"],
         )
 
@@ -203,7 +203,7 @@ class TestSessionManagerLookup:
         """Test getting full session data."""
         session_id = session_mgr.register_session(
             external_id="full-data",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="qwen",
             project_id=test_project["id"],
             title="Full Data Session",
@@ -230,7 +230,7 @@ class TestSessionManagerLookup:
         """Cross-source recovery should prefer the candidate with transcript metadata."""
         preferred = session_storage.register(
             external_id="shared-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
             title="Canonical Session",
@@ -239,7 +239,7 @@ class TestSessionManagerLookup:
         )
         session_storage.register(
             external_id="shared-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=test_project["id"],
             title=None,
@@ -249,7 +249,7 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="shared-external-id",
             source="qwen",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
 
@@ -266,13 +266,13 @@ class TestSessionManagerLookup:
         """Recovery should reject same-quality rows even when rank differs."""
         session_storage.register(
             external_id="ranked-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="ranked-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=test_project["id"],
         )
@@ -280,7 +280,7 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="ranked-external-id",
             source="qwen",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
 
@@ -295,7 +295,7 @@ class TestSessionManagerLookup:
     ) -> None:
         real_project = session_storage.register(
             external_id="real-project-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
         )
@@ -303,7 +303,7 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="real-project-external-id",
             source="qwen",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=None,
         )
 
@@ -321,13 +321,13 @@ class TestSessionManagerLookup:
         other_project = project_storage.create(name="other-project", repo_path="/tmp/other")
         session_storage.register(
             external_id="colliding-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="colliding-external-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=other_project.id,
         )
@@ -335,7 +335,7 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="colliding-external-id",
             source="qwen",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=None,
         )
 
@@ -353,7 +353,7 @@ class TestSessionManagerStatus:
         """Test updating session status."""
         session_id = session_mgr.register_session(
             external_id="status-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -372,7 +372,7 @@ class TestSessionManagerStatus:
     ) -> None:
         session_id = session_mgr.register_session(
             external_id="activity-status-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -404,7 +404,7 @@ class TestSessionManagerStatus:
         """Test marking session as expired."""
         session_id = session_mgr.register_session(
             external_id="expire-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -446,26 +446,26 @@ class TestSessionManagerCaching:
             "shared-cli",
             "claude",
             "session-a",
-            machine_id="machine-a",
+            machine_id="21000000-0000-4000-8000-00000000000c",
             project_id="project-a",
         )
         session_mgr.cache_session_mapping(
             "shared-cli",
             "claude",
             "session-b",
-            machine_id="machine-b",
+            machine_id="21000000-0000-4000-8000-00000000000d",
             project_id="project-b",
         )
 
         assert (
             session_mgr.get_session_id(
-                "shared-cli", "claude", machine_id="machine-a", project_id="project-a"
+                "shared-cli", "claude", machine_id="21000000-0000-4000-8000-00000000000c", project_id="project-a"
             )
             == "session-a"
         )
         assert (
             session_mgr.get_session_id(
-                "shared-cli", "claude", machine_id="machine-b", project_id="project-b"
+                "shared-cli", "claude", machine_id="21000000-0000-4000-8000-00000000000d", project_id="project-b"
             )
             == "session-b"
         )
@@ -480,12 +480,12 @@ class TestSessionManagerCaching:
                 "expiring-cli",
                 "claude",
                 "session-id",
-                machine_id="machine",
+                machine_id="21000000-0000-4000-8000-000000000003",
                 project_id="project",
             )
             assert (
                 session_mgr.get_session_id(
-                    "expiring-cli", "claude", machine_id="machine", project_id="project"
+                    "expiring-cli", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
                 )
                 is None
             )
@@ -503,19 +503,19 @@ class TestSessionManagerCaching:
                     f"cli-{suffix}",
                     "claude",
                     f"session-{suffix}",
-                    machine_id="machine",
+                    machine_id="21000000-0000-4000-8000-000000000003",
                     project_id="project",
                 )
 
             assert (
                 session_mgr.get_session_id(
-                    "cli-a", "claude", machine_id="machine", project_id="project"
+                    "cli-a", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
                 )
                 is None
             )
             assert (
                 session_mgr.get_session_id(
-                    "cli-c", "claude", machine_id="machine", project_id="project"
+                    "cli-c", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
                 )
                 == "session-c"
             )

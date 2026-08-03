@@ -191,7 +191,7 @@ async def test_resume_session_sends_exact_method_and_params(
         "sess-9",
         cwd="/repo",
         additional_directories=["/repo/extra"],
-        model="m1",
+        model="21000000-0000-4000-8000-000000000005",
         reasoning_effort="high",
     )
 
@@ -202,7 +202,7 @@ async def test_resume_session_sends_exact_method_and_params(
         "mcpServers": [],
         "sessionId": "sess-9",
         "additionalDirectories": ["/repo/extra"],
-        "model": "m1",
+        "model": "21000000-0000-4000-8000-000000000005",
         "reasoningEffort": "high",
     }
     # Granted directories are tracked as session roots (set_roots path).
@@ -430,7 +430,7 @@ def _fake_session(*, sdk_session_id: str | None) -> SimpleNamespace:
     Only the attributes attach_session reads/writes are provided.
     """
     return SimpleNamespace(
-        _model="m1",
+        _model="21000000-0000-4000-8000-000000000005",
         sdk_session_id=sdk_session_id,
         resume_session_id=None,
         project_path="/repo",

@@ -102,7 +102,7 @@ def sample_session(
     """Create a sample session for agent run testing."""
     session = session_manager.register(
         external_id="agent-test-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -250,7 +250,7 @@ class TestLocalAgentRunManager:
     ) -> tuple[AgentRun, str]:
         child_session = session_manager.register(
             external_id=external_id,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -316,7 +316,7 @@ class TestLocalAgentRunManager:
         # Create a child session first
         child_session = session_manager.register(
             external_id="child-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -499,7 +499,7 @@ class TestLocalAgentRunManager:
         )
         child_session = session_manager.register(
             external_id="agent-child-complete",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -538,7 +538,7 @@ class TestLocalAgentRunManager:
         )
         child_session = session_manager.register(
             external_id="agent-child-daemon-stop",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -667,7 +667,7 @@ class TestLocalAgentRunManager:
         """Timing out an agent run expires its child session."""
         child_session = session_manager.register(
             external_id="agent-child-timeout",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -702,13 +702,13 @@ class TestLocalAgentRunManager:
         """Terminal-run sweep keeps pending/running child sessions live."""
         pending_session = session_manager.register(
             external_id="agent-child-pending",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
         running_session = session_manager.register(
             external_id="agent-child-running",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -748,7 +748,7 @@ class TestLocalAgentRunManager:
         """Park a daemon-stop run that still owns its bound child session."""
         child_session = session_manager.register(
             external_id=external_id,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -856,7 +856,7 @@ class TestLocalAgentRunManager:
         """A terminal run without terminal_reason still expires its session."""
         child_session = session_manager.register(
             external_id="agent-child-plain-terminal",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -1310,7 +1310,7 @@ class TestLocalAgentRunManager:
         # Create a child session
         child_session = session_manager.register(
             external_id="new-child",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1493,7 +1493,7 @@ class TestLocalAgentRunManager:
         )
         session2 = session_manager.register(
             external_id="session-2",
-            machine_id="machine-2",
+            machine_id="21000000-0000-4000-8000-000000000015",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -1639,7 +1639,7 @@ class TestLocalAgentRunManager:
         """Test cleaning up stale running agent runs."""
         child_session = session_manager.register(
             external_id="stale-run-child",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )
@@ -1733,7 +1733,7 @@ class TestLocalAgentRunManager:
         """Active child session heartbeat prevents default stale timeout."""
         child_session = session_manager.register(
             external_id="fresh-run-child",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )

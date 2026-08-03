@@ -49,7 +49,7 @@ async def test_live_processor_excludes_metadata_and_persists_observation(
     tx = tmp_path / "live.jsonl"
     session = session_manager.register(
         external_id="proc-17418",
-        machine_id="m1",
+        machine_id="21000000-0000-4000-8000-000000000005",
         source="claude",
         project_id=None,
         transcript_path=str(tx),

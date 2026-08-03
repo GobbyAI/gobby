@@ -406,13 +406,13 @@ def _seed_parked_daemon_stop_run(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id=f"{prefix}-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=project_id,
     )
     child = sessions.register(
         external_id=f"{prefix}-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project_id,
         parent_session_id=parent.id,

@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 def _register_parent_session(temp_db, sample_project: dict[str, object], external_id: str) -> str:
     return SessionManager(temp_db).register_session(
         external_id=external_id,
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=str(sample_project["id"]),
         title="Parent",
@@ -32,7 +32,7 @@ def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> Asy
     async def execute_spawn(request):
         child_session_id = SessionManager(run_storage.db).register_session(
             external_id=request.session_id,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="test-agent",
             project_id=request.project_id,
             parent_session_id=request.parent_session_id,
@@ -696,7 +696,7 @@ class TestSpawnAgentPreRegistration:
         async def execute_spawn(request) -> None:
             child_session_id = session_manager.register_session(
                 external_id=request.session_id,
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 source="test-agent",
                 project_id=request.project_id,
                 parent_session_id=request.parent_session_id,
@@ -798,7 +798,7 @@ class TestSpawnAgentPreRegistration:
         async def execute_spawn(request) -> SimpleNamespace:
             child_session_id = session_manager.register_session(
                 external_id=request.session_id,
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 source="test-agent",
                 project_id=request.project_id,
                 parent_session_id=request.parent_session_id,

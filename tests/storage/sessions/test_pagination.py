@@ -18,7 +18,7 @@ def _register(
 ) -> str:
     session = session_manager.register(
         external_id=external_id,
-        machine_id="machine-abc",
+        machine_id="20000000-0000-4000-8000-000000000005",
         source="claude",
         project_id=sample_project["id"],
     )

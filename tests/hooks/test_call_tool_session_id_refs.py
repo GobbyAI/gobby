@@ -24,7 +24,7 @@ def make_before_tool_event() -> Callable[[dict], HookEvent]:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input},
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
         event.project_id = "proj-1"
         return event
@@ -109,7 +109,7 @@ def test_top_level_list_tools_session_ref_does_not_create_modified_input(
                 "session_id": "#3",
             },
         },
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
     )
     event.project_id = "proj-1"
 
@@ -181,7 +181,7 @@ def test_top_level_set_variable_preserves_session_ref(
                 "session_id": "#3",
             },
         },
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
     )
     event.project_id = "proj-1"
 

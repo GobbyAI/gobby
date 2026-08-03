@@ -68,7 +68,7 @@ class HookSessionManager(Protocol):
     def register_session(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         project_id: str | None,
         parent_session_id: str | None | UnsetType = UNSET,
@@ -94,7 +94,7 @@ class HookSessionManager(Protocol):
         self,
         external_id: str,
         source: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
     ) -> str | None: ...
 
@@ -102,7 +102,7 @@ class HookSessionManager(Protocol):
         self,
         external_id: str,
         source: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         session_type: str | None = None,
     ) -> Session | None: ...

@@ -20,7 +20,7 @@ class _SessionWebChatCRUDHost(Protocol):
         self,
         *,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         project_id: str,
         title: str | None = None,
@@ -38,7 +38,7 @@ class _SessionWebChatCRUDMixin:
     def create_web_chat_session(
         self: _SessionWebChatCRUDHost,
         *,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str,
         source: str,
         title: str | None = None,

@@ -57,7 +57,7 @@ class TestGetMessagesRendered:
         """Test that format=rendered is the default."""
         session = session_storage.register(
             external_id="rendered-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -111,7 +111,7 @@ class TestGetMessagesRendered:
         """Test that Codex tool_search pairs reach the messages API as a tool card."""
         session = session_storage.register(
             external_id="codex-tool-search",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
         )
@@ -211,7 +211,7 @@ class TestGetMessagesRendered:
         )
         session = session_storage.register(
             external_id="codex-unknown-block",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             transcript_path=str(transcript_path),
@@ -244,7 +244,7 @@ class TestGetMessagesRendered:
         """order=tail is forwarded to the windowed reader."""
         session = session_storage.register(
             external_id="tail-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -293,7 +293,7 @@ class TestGetMessagesRendered:
         """Test 503 if transcript_reader is None but format=rendered requested."""
         session = session_storage.register(
             external_id="unavailable-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -319,7 +319,7 @@ class TestGetMessagesRendered:
         """Transcript status should delegate to TranscriptReader when available."""
         session = session_storage.register(
             external_id="status-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )

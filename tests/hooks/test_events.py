@@ -78,7 +78,7 @@ class TestHookEvent:
             source=SessionSource.UNKNOWN,
             timestamp=now,
             data={"tool": "ls"},
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             cwd="/tmp",
             user_id="user-1",
             project_id="proj-1",
@@ -87,7 +87,7 @@ class TestHookEvent:
             metadata={"extra": "info"},
         )
 
-        assert event.machine_id == "machine-1"
+        assert event.machine_id == "21000000-0000-4000-8000-000000000001"
         assert event.cwd == "/tmp"
         assert event.user_id == "user-1"
         assert event.metadata == {"extra": "info"}

@@ -58,7 +58,7 @@ class _TestHandler(AgentEventHandlerMixin):
         self._skills_config = None
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = MagicMock()
-        self._get_machine_id = MagicMock(return_value="machine-1")
+        self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
 

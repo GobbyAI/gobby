@@ -127,7 +127,7 @@ async def test_non_plan_approval_unaffected(
     )
     session = SessionManager(temp_db).register(
         external_id="non-plan-review-parent",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )

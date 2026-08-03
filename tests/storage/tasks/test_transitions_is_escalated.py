@@ -42,7 +42,7 @@ def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manag
     manager = LocalTaskManager(temp_db)
     session = session_manager.register(
         external_id="de-escalate-owner-ext",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )

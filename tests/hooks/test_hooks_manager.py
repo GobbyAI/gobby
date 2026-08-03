@@ -97,7 +97,7 @@ def sample_session_start_event(temp_dir: Path) -> HookEvent:
             "cwd": str(temp_dir),
             "transcript_path": str(temp_dir / "transcript.jsonl"),
         },
-        machine_id="test-machine-id",
+        machine_id="21000000-0000-4000-8000-000000000004",
     )
 
 
@@ -251,7 +251,7 @@ class TestHookManagerHandle:
         project_id = manager._resolve_project_id(None, str(temp_dir))
         session = manager.session_manager.register(
             external_id="codex-ext-1",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="codex",
             project_id=project_id,
             transcript_path=str(temp_dir / "codex.jsonl"),
@@ -265,7 +265,7 @@ class TestHookManagerHandle:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir), "tool_name": "shell", "tool_input": {}},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             cwd=str(temp_dir),
         )
 
@@ -302,7 +302,7 @@ class TestHookManagerHandle:
         }
         older = manager.session_manager.register(
             external_id="claude-stale-external",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="claude",
             project_id=project_id,
             transcript_path=str(temp_dir / "stale.jsonl"),
@@ -311,7 +311,7 @@ class TestHookManagerHandle:
         manager.session_manager.update_status(older.id, "expired")
         newer = manager.session_manager.register(
             external_id="claude-live-external",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="claude",
             project_id=project_id,
             transcript_path=str(temp_dir / "live.jsonl"),
@@ -328,7 +328,7 @@ class TestHookManagerHandle:
                 "tool_input": {},
                 "tool_output": {},
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             cwd=str(temp_dir),
         )
 
@@ -395,7 +395,7 @@ class TestHookManagerSessionStart:
                 "cwd": str(temp_dir),
                 "transcript_path": str(temp_dir / "transcript.jsonl"),
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = hook_manager_with_mocks.handle(resume_event)
@@ -434,7 +434,7 @@ class TestHookManagerSessionEnd:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"transcript_path": str(transcript_path)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = hook_manager_with_mocks.handle(end_event)
@@ -458,7 +458,7 @@ class TestHookManagerSessionEnd:
         mock_session = Session(
             id="test-session-id",
             external_id="test-external-id-123",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="claude",
             project_id="test-project-id",
             title="Test Session",
@@ -502,7 +502,7 @@ class TestHookManagerSessionEnd:
                 source=SessionSource.CLAUDE,
                 timestamp=datetime.now(UTC),
                 data={"transcript_path": str(transcript_path), "cwd": str(temp_dir)},
-                machine_id="test-machine-id",
+                machine_id="21000000-0000-4000-8000-000000000004",
                 metadata={"_platform_session_id": "test-session-id"},
             )
 
@@ -539,7 +539,7 @@ class TestHookManagerBeforeAgent:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": "Help me write a function"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = hook_manager_with_mocks.handle(event)
@@ -563,7 +563,7 @@ class TestHookManagerToolEvents:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash", "tool_input": {"command": "ls"}},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = hook_manager_with_mocks.handle(event)
@@ -583,7 +583,7 @@ class TestHookManagerToolEvents:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "Read", "tool_output": "file1.txt\nfile2.txt"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = hook_manager_with_mocks.handle(event)
@@ -728,7 +728,7 @@ class TestHookManagerWorkflowBlocking:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Mock workflow handler to return block decision
@@ -754,7 +754,7 @@ class TestHookManagerWorkflowBlocking:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Mock workflow handler to return ask decision
@@ -815,7 +815,7 @@ class TestHookManagerWebhookBlocking:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Mock webhook dispatcher to return block decision
@@ -862,7 +862,7 @@ class TestHookManagerBlockedObservability:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         blocked = HookResponse(decision="block", reason="Rule denied", metadata={"origin": "rule"})
         order: list[str] = []
@@ -912,7 +912,7 @@ class TestHookManagerBlockedObservability:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         blocked = HookResponse(decision="block", reason="Blocking webhook denied")
         order: list[str] = []
@@ -970,7 +970,7 @@ class TestHookManagerBlockedObservability:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         blocked = HookResponse(
             decision="block", reason="Original denial", metadata={"origin": "rule"}
@@ -1020,7 +1020,7 @@ class TestHookManagerHandlerErrors:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Mock handler to raise exception
@@ -1175,7 +1175,7 @@ class TestHookManagerSessionLookup:
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
         precreated = manager.session_manager.create_web_chat_session(
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             project_id=project_id,
             source="codex",
             model="gpt-5.4",
@@ -1189,7 +1189,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir), "source": "startup"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         with patch.object(
@@ -1223,7 +1223,7 @@ class TestHookManagerSessionLookup:
                 "source": "startup",
                 "transcript_path": str(temp_dir / "resumed-codex.jsonl"),
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         response = manager.handle(start_event)
 
@@ -1248,7 +1248,7 @@ class TestHookManagerSessionLookup:
                 },
                 "cwd": str(temp_dir),
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             metadata={"_platform_session_id": stale_wrapper_id},
         )
         response = manager.handle(resumed_event)
@@ -1288,7 +1288,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash", "cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Session not in cache, should query database
@@ -1314,7 +1314,7 @@ class TestHookManagerSessionLookup:
                 "cwd": str(temp_dir),
                 "transcript_path": str(temp_dir / "transcript.jsonl"),
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Session not in cache or database
@@ -1349,7 +1349,7 @@ class TestHookManagerSessionLookup:
                 source=SessionSource.CLAUDE,
                 timestamp=datetime.now(UTC),
                 data={"tool_name": "bash", "cwd": str(temp_dir)},
-                machine_id="test-machine-id",
+                machine_id="21000000-0000-4000-8000-000000000004",
             )
 
         def register_session(*, external_id: str, **_kwargs: object) -> str:
@@ -1404,7 +1404,7 @@ class TestHookManagerSessionLookup:
                 "tool_name": "Read",
                 "terminal_context": {"gobby_acp_child": "1"},
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             project_id="project-id",
         )
 
@@ -1441,7 +1441,7 @@ class TestHookManagerSessionLookup:
         project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
         web_chat_parent = manager._session_manager.register(
             external_id="acp-parent-session",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=project_id,
             session_type="web_chat",
@@ -1456,7 +1456,7 @@ class TestHookManagerSessionLookup:
                 "tool_name": "Read",
                 "terminal_context": {"gobby_acp_child": "1"},
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             project_id=project_id,
         )
 
@@ -1495,7 +1495,7 @@ class TestHookManagerSessionLookup:
                 "cwd": str(temp_dir),
                 "transcript_path": str(temp_dir / "missing-transcript.jsonl"),
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         with (
@@ -1523,7 +1523,7 @@ class TestHookManagerSessionLookup:
         project_id = json.loads(project_meta)["id"]
         existing = manager.session_manager.register(
             external_id="shared-session-id",
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
             source="codex",
             project_id=project_id,
             transcript_path=str(temp_dir / "rollout-shared-session-id.jsonl"),
@@ -1537,7 +1537,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash", "cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         response = manager.handle(wrong_source_event)
@@ -1565,7 +1565,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         manager.handle(start_event)
 
@@ -1590,7 +1590,7 @@ class TestHookManagerSessionLookup:
                 "cwd": str(temp_dir),
                 "terminal_context": {"tmux_pane": "%5", "parent_pid": 999},
             },
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         with patch("gobby.hooks.session_lookup.schedule_tmux_window_rename") as mock_schedule:
@@ -1617,7 +1617,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         manager.handle(start_event)
 
@@ -1628,7 +1628,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         mock_task = MagicMock()
@@ -1660,7 +1660,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"cwd": str(temp_dir)},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
         manager.handle(start_event)
 
@@ -1670,7 +1670,7 @@ class TestHookManagerSessionLookup:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "bash"},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         with patch.object(
@@ -1699,7 +1699,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Disable webhooks
@@ -1720,7 +1720,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Enable webhooks but have no endpoints
@@ -1744,7 +1744,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Create a blocking endpoint
@@ -1810,7 +1810,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         post_count = 0
@@ -1894,7 +1894,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         endpoint = WebhookEndpointConfig(
@@ -1934,7 +1934,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Enable webhooks but have no non-blocking endpoints
@@ -1972,7 +1972,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Create a non-blocking endpoint
@@ -2050,7 +2050,7 @@ class TestHookManagerWebhookDispatch:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={},
-            machine_id="test-machine-id",
+            machine_id="21000000-0000-4000-8000-000000000004",
         )
 
         # Create a non-blocking endpoint

@@ -18,7 +18,7 @@ def _mock_spawn_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep spawn tests isolated from the user's machine-ID file."""
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-        lambda: "test-machine-id",
+        lambda: "21000000-0000-4000-8000-000000000004",
     )
 
 

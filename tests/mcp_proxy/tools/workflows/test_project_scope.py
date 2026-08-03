@@ -52,7 +52,7 @@ def _create_project(db: HubDatabase) -> None:
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, status, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        (SESSION_ID, "scoped-session", "machine-1", "codex", PROJECT_ID, "active"),
+        (SESSION_ID, "scoped-session", "21000000-0000-4000-8000-000000000001", "codex", PROJECT_ID, "active"),
     )
 
 

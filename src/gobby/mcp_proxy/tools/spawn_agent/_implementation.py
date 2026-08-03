@@ -627,7 +627,7 @@ async def spawn_agent_impl(
         agent_name=agent_display_name,
         session_manager=runner.child_session_manager,
         run_manager=runner.run_storage,
-        machine_id=get_machine_id() or "unknown",
+        machine_id=get_machine_id(),
         model=effective_model,
         is_local=is_local_run,
         codex_oss_provider=endpoint_resolution.codex_oss_provider,

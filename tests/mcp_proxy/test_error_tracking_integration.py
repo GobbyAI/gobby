@@ -71,7 +71,7 @@ def _persisting_proxy(
     session_manager = SessionManager(temp_db)
     session_id = session_manager.register_session(
         external_id="error-tracking-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project_id,
         project_path="/tmp/error-tracking",

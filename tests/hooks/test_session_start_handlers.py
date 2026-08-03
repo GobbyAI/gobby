@@ -62,7 +62,7 @@ def _register_context_claim_session(db: HubDatabase, *, external_id: str) -> str
     )
     session = SessionManager(db).register(
         external_id=external_id,
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project.id,
     )
@@ -869,7 +869,7 @@ class TestSessionStartNewSession:
             },
             metadata={},
         )
-        event.machine_id = "machine-123"
+        event.machine_id = "21000000-0000-4000-8000-000000000008"
 
         with patch.object(handlers, "_activate_default_agent", return_value=None):
             response = handlers.handle_session_start(event)

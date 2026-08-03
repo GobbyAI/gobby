@@ -758,7 +758,7 @@ class TestStreamChatResponse:
         session_manager = SessionManager(temp_db)
         stored_session = session_manager.register(
             external_id="stream-cancellation",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source=SessionSource.CLAUDE.value,
             project_id=None,
         )

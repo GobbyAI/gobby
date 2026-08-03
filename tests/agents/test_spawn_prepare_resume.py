@@ -28,13 +28,13 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="resume-prep-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="resume-prep-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,
@@ -106,13 +106,13 @@ def test_prepare_terminal_resume_refuses_foreign_owner(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="resume-prep-parent-2",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="resume-prep-child-2",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,

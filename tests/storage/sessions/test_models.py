@@ -22,7 +22,7 @@ class TestSession:
         """Test creating Session from database row."""
         session = session_manager.register(
             external_id="test-cli-key",
-            machine_id="test-machine",
+            machine_id="20000000-0000-4000-8000-00000000000c",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -63,7 +63,7 @@ class TestSession:
         """Test converting Session to dictionary."""
         session = session_manager.register(
             external_id="dict-test",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="qwen",
             project_id=sample_project["id"],
             title="Test Session",
@@ -72,7 +72,7 @@ class TestSession:
         d = session.to_dict()
         assert d["id"] == session.id
         assert d["external_id"] == "dict-test"
-        assert d["machine_id"] == "machine-1"
+        assert d["machine_id"] == "20000000-0000-4000-8000-000000000002"
         assert d["source"] == "qwen"
         assert d["title"] == "Test Session"
         assert d["title_source"] == "manual"
@@ -82,7 +82,7 @@ class TestSession:
         session = Session(
             id="sess-title-source",
             external_id="ext-title-source",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="qwen",
             project_id="proj-1",
             title="Titled Session",
@@ -106,7 +106,7 @@ class TestSession:
         session = Session(
             id="sess-live-tmux",
             external_id="ext-live-tmux",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="qwen",
             project_id="proj-1",
             title="Live tmux session",
@@ -130,7 +130,7 @@ class TestSession:
         session = Session(
             id="sess-stale-tmux",
             external_id="ext-stale-tmux",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="qwen",
             project_id="proj-1",
             title="Historical tmux session",
@@ -154,7 +154,7 @@ class TestSession:
         session = Session(
             id="sess-parent-pid-only",
             external_id="ext-parent-pid-only",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="qwen",
             project_id="proj-1",
             title="Stale pid session",
@@ -185,7 +185,7 @@ class TestSessionManagerModelFields:
         """Test that to_dict includes all session fields."""
         session = session_manager.register(
             external_id="dict-complete",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=sample_project["id"],
             title="Test",

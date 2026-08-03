@@ -33,13 +33,13 @@ async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribut
     sessions = SessionManager(temp_db)
     owner = sessions.register(
         external_id="release-owner",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )
     foreign = sessions.register(
         external_id="release-foreign",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project.id,
     )

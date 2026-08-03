@@ -105,7 +105,6 @@ export function SessionsFilterDropdown({
   }, [onClose]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowCustomDate(filters.datePreset === "custom");
   }, [filters.datePreset]);
 

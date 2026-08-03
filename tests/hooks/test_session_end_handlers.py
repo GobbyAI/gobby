@@ -36,7 +36,7 @@ class TestSessionEndHandling:
             session_id="ext-123",
             metadata={},  # No _platform_session_id
         )
-        event.machine_id = "machine-123"
+        event.machine_id = "21000000-0000-4000-8000-000000000008"
 
         response = handlers.handle_session_end(event)
 

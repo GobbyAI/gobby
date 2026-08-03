@@ -30,7 +30,7 @@ def _seed_parents(temp_db: HubDatabase) -> None:
         )
         conn.execute(
             "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
-            "VALUES (%s, 'ext-1', 'machine-1', 'test', %s)",
+            "VALUES (%s, 'ext-1', '21000000-0000-4000-8000-000000000001', 'test', %s)",
             (SESSION_ID, PROJECT_ID),
         )
         conn.execute(

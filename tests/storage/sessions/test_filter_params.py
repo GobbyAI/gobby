@@ -25,7 +25,7 @@ def _register(
     *,
     external_id: str,
     source: str = "claude",
-    machine_id: str = "machine-abc",
+    machine_id: str = "20000000-0000-4000-8000-000000000005",
     model: str | None = None,
     seq_num: int | None = None,
     agent_depth: int = 0,
@@ -64,16 +64,16 @@ class TestMachineIdFilter:
             session_manager,
             sample_project,
             external_id="machine-a-session",
-            machine_id="machine-a",
+            machine_id="20000000-0000-4000-8000-000000000007",
         )
         _register(
             session_manager,
             sample_project,
             external_id="machine-b-session",
-            machine_id="machine-b",
+            machine_id="20000000-0000-4000-8000-000000000009",
         )
 
-        results = session_manager.list(project_id=sample_project["id"], machine_id="machine-a")
+        results = session_manager.list(project_id=sample_project["id"], machine_id="20000000-0000-4000-8000-000000000007")
 
         assert [session.external_id for session in results] == ["machine-a-session"]
 
@@ -84,19 +84,19 @@ class TestMachineIdFilter:
             session_manager,
             sample_project,
             external_id="machine-a-count",
-            machine_id="machine-a",
+            machine_id="20000000-0000-4000-8000-000000000007",
         )
         _register(
             session_manager,
             sample_project,
             external_id="machine-b-count",
-            machine_id="machine-b",
+            machine_id="20000000-0000-4000-8000-000000000009",
         )
 
         assert (
             session_manager.count(
                 project_id=sample_project["id"],
-                machine_id="machine-b",
+                machine_id="20000000-0000-4000-8000-000000000009",
             )
             == 1
         )

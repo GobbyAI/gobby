@@ -48,7 +48,7 @@ def sample_session(
     """Create a real session in the database and return it."""
     session = real_session_manager.register(
         external_id="ext-001",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
         title="Test session",

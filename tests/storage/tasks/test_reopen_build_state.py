@@ -103,7 +103,7 @@ def test_reopen_blocks_active_agent_run(temp_db, sample_project) -> None:
     set_stage_state(temp_db, task.id, "development", "in_progress")
     parent = SessionManager(temp_db).register(
         external_id="reopen-parent",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )

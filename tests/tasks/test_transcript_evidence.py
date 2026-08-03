@@ -29,7 +29,7 @@ def _session(source: str, transcript_path: Path | None, *, suffix: str = "1") ->
     return Session(
         id=f"00000000-0000-0000-0000-00000000000{suffix}",
         external_id=f"transcript-evidence-{source}-{suffix}",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source=source,
         project_id="project",
         title=None,

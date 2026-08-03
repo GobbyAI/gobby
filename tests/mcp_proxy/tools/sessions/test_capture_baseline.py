@@ -49,7 +49,7 @@ class TestCaptureBaselineDirtyFiles:
             SessionManager(db)
             .register(
                 external_id="capture-baseline-ext",
-                machine_id="test-machine",
+                machine_id="21000000-0000-4000-8000-000000000002",
                 source="claude",
                 project_id=None,
             )

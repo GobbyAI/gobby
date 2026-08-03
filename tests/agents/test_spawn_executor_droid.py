@@ -108,7 +108,7 @@ class TestExecuteSpawnDroid:
             prompt="Fix it",
             agent_run_id="run-droid",
             session_manager=mock_session_manager,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             model="claude-opus-4-7",
             effective_reasoning_effort="high",
             api_base="https://factory.example/v1",
@@ -170,7 +170,7 @@ class TestExecuteSpawnDroid:
         assert "--worktree" not in spawn_kwargs["command"]
         assert "--session-id" not in spawn_kwargs["command"]
         assert spawn_kwargs["env"]["GOBBY_SESSION_ID"] == "gobby-sess-123"
-        assert spawn_kwargs["env"]["GOBBY_MACHINE_ID"] == "machine-1"
+        assert spawn_kwargs["env"]["GOBBY_MACHINE_ID"] == "21000000-0000-4000-8000-000000000001"
         assert spawn_kwargs["env"]["FACTORY_API_KEY"] == "factory-token"
         assert spawn_kwargs["env"]["FACTORY_API_BASE_URL"] == "https://factory.example/v1"
 

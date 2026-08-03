@@ -18,13 +18,13 @@ class TestChildSessionConfig:
         config = ChildSessionConfig(
             parent_session_id="sess-parent",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
         )
 
         assert config.parent_session_id == "sess-parent"
         assert config.project_id == "proj-123"
-        assert config.machine_id == "machine-abc"
+        assert config.machine_id == "21000000-0000-4000-8000-000000000007"
         assert config.source == "claude"
         assert config.agent_id is None
         assert config.workflow_name is None
@@ -35,7 +35,7 @@ class TestChildSessionConfig:
         config = ChildSessionConfig(
             parent_session_id="sess-parent",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
             agent_id="agent-456",
             workflow_name="plan-execute",
@@ -217,7 +217,7 @@ class TestChildSessionManagerCreate:
         config = ChildSessionConfig(
             parent_session_id="sess-parent",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
             agent_id="agent-456",
             workflow_name="plan-execute",
@@ -229,7 +229,7 @@ class TestChildSessionManagerCreate:
         mock_storage.register.assert_called_once()
         call_kwargs = mock_storage.register.call_args.kwargs
 
-        assert call_kwargs["machine_id"] == "machine-abc"
+        assert call_kwargs["machine_id"] == "21000000-0000-4000-8000-000000000007"
         assert call_kwargs["source"] == "claude"
         assert call_kwargs["project_id"] == "proj-123"
         assert call_kwargs["parent_session_id"] == "sess-parent"
@@ -248,7 +248,7 @@ class TestChildSessionManagerCreate:
         config = ChildSessionConfig(
             parent_session_id="sess-parent",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
             git_branch="feature/test",
         )
@@ -268,7 +268,7 @@ class TestChildSessionManagerCreate:
         config = ChildSessionConfig(
             parent_session_id="sess-grandchild",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
         )
 
@@ -282,7 +282,7 @@ class TestChildSessionManagerCreate:
         config = ChildSessionConfig(
             parent_session_id="missing-parent",
             project_id="proj-123",
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             source="claude",
         )
 

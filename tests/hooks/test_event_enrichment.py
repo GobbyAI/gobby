@@ -182,7 +182,7 @@ class TestMessageGrouping:
 
     def test_mixed_message_types_grouped(self) -> None:
         """Messages of different types should be grouped under separate headers."""
-        p2p_msg = _make_msg(content="P2P hello", msg_id="m1", message_type="message")
+        p2p_msg = _make_msg(content="P2P hello", msg_id="21000000-0000-4000-8000-000000000005", message_type="message")
         chat_msg = _make_msg(content="Chat hello", msg_id="m2", message_type="web_chat")
         enricher = _make_enricher(msgs=[p2p_msg, chat_msg])
         event = _make_event(HookEventType.BEFORE_AGENT)

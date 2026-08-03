@@ -104,7 +104,7 @@ def test_patch_stage_attributes_every_mutation_to_request_session(
     task, _manager = make_task_with_manifest(temp_db, sample_project, [spec("development", 0)])
     actor = SessionManager(temp_db).register(
         external_id=f"stage-actor-{action}-{session_ref_kind}",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -186,7 +186,7 @@ def test_patch_move_to_stage_rejects_claimed_task_without_force(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -215,13 +215,13 @@ def test_patch_move_to_stage_force_overrides_claim(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )
     operator = SessionManager(temp_db).register(
         external_id="operator-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )

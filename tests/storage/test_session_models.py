@@ -16,7 +16,7 @@ def _make_session(**overrides: Any) -> Session:
     defaults = {
         "id": "sess-abc123",
         "external_id": "ext-123",
-        "machine_id": "machine-1",
+        "machine_id": "21000000-0000-4000-8000-000000000001",
         "source": "claude",
         "project_id": "proj-xyz",
         "title": "Test session",

@@ -127,7 +127,7 @@ class HookManagerFactory:
         message_processor: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,
-        get_machine_id: Callable[[], str],
+        get_machine_id: Callable[[], str | None],
         resolve_project_id: Callable[[str | None, str | None], str],
         database: HubDatabase | None = None,
         session_manager: SessionManager | None = None,

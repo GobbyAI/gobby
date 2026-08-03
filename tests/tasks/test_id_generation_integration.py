@@ -35,7 +35,7 @@ class TestCompleteIDGenerationFlow:
         """Test complete lifecycle: create -> verify ID/seq/path -> update -> close."""
         session = SessionManager(temp_db).register(
             external_id="id-flow-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )

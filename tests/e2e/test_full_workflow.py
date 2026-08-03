@@ -100,7 +100,7 @@ class TestFullWorkflowIntegration:
 
                 result = cli_events.session_start(
                     session_id=session_id,
-                    machine_id="test-machine",
+                    machine_id="21000000-0000-4000-8000-000000000002",
                     cli_source="claude",
                 )
                 assert "continue" in result or "decision" in result, (
@@ -236,7 +236,7 @@ class TestFullWorkflowIntegration:
                     new_session_id = f"post-restart-{uuid.uuid4().hex[:8]}"
                     result = cli_events2.session_start(
                         session_id=new_session_id,
-                        machine_id="test-machine",
+                        machine_id="21000000-0000-4000-8000-000000000002",
                         cli_source="claude",
                     )
                     assert "continue" in result or "decision" in result, (
@@ -280,7 +280,7 @@ class TestFullWorkflowIntegration:
         session_id = f"concurrent-test-{uuid.uuid4().hex[:8]}"
         result = cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
         assert "continue" in result or "decision" in result
@@ -316,7 +316,7 @@ class TestFullWorkflowIntegration:
         # End session
         end_result = cli_events.session_end(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
         )
         assert end_result is not None
@@ -341,7 +341,7 @@ class TestFullWorkflowIntegration:
         session_id = f"error-test-{uuid.uuid4().hex[:8]}"
         cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
 

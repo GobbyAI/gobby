@@ -111,7 +111,7 @@ class TestUsageReporting:
         session_external_id = f"usage-report-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -162,7 +162,7 @@ class TestUsageReporting:
             session_external_id = f"multi-session-{i}-{uuid.uuid4().hex[:8]}"
             session_result = cli_events.register_session(
                 external_id=session_external_id,
-                machine_id="test-machine",
+                machine_id="21000000-0000-4000-8000-000000000002",
                 source="Claude Code",
                 cwd=str(daemon_instance.project_dir),
             )

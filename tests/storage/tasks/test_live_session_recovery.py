@@ -40,7 +40,7 @@ def _session(
     manager = SessionManager(temp_db)
     session = manager.register(
         external_id=f"ext-{uuid.uuid4()}",
-        machine_id="machine-test",
+        machine_id="21000000-0000-4000-8000-00000000000f",
         source="codex",
         project_id=project_id,
         terminal_context={"cwd": str(repo_path)},

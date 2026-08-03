@@ -21,7 +21,7 @@ class TestChatModePersistence:
         """New sessions should default to chat_mode='plan'."""
         session = sm.register(
             external_id="ext-mode-default",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -31,7 +31,7 @@ class TestChatModePersistence:
         """update_chat_mode should persist the value."""
         session = sm.register(
             external_id="ext-mode-update",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -45,7 +45,7 @@ class TestChatModePersistence:
         """chat_mode should survive a register() reconnect (daemon restart)."""
         session = sm.register(
             external_id="ext-mode-reconnect",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -54,7 +54,7 @@ class TestChatModePersistence:
         # Simulate daemon restart — register() with same external_id
         reconnected = sm.register(
             external_id="ext-mode-reconnect",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -65,7 +65,7 @@ class TestChatModePersistence:
         """to_dict() should include chat_mode."""
         session = sm.register(
             external_id="ext-mode-dict",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -80,7 +80,7 @@ class TestChatModePersistence:
         """Invalid chat_mode values should raise ValueError."""
         session = sm.register(
             external_id="ext-mode-invalid",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )
@@ -91,7 +91,7 @@ class TestChatModePersistence:
         """All valid modes should round-trip through the DB."""
         session = sm.register(
             external_id="ext-mode-all",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="test",
             project_id=PROJECT_ID,
         )

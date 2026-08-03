@@ -113,12 +113,12 @@ class TestDroidTranslateToHookEvent:
             {
                 "hook_type": "SessionStart",
                 "sessionId": "top-level-session",
-                "machineId": "machine-1",
+                "machineId": "21000000-0000-4000-8000-000000000001",
                 "input_data": {"cwd": "/repo"},
             }
         )
         assert event.session_id == "top-level-session"
-        assert event.machine_id == "machine-1"
+        assert event.machine_id == "21000000-0000-4000-8000-000000000001"
         assert event.data["session_id"] == "top-level-session"
 
     def test_blank_input_data_session_id_falls_back_to_top_level_id(self) -> None:

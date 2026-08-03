@@ -533,7 +533,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("ac25647a-384a-5232-8d09-117e2043e20b", "ext-active", "machine-1", "codex", project.id),
+        ("ac25647a-384a-5232-8d09-117e2043e20b", "ext-active", "21000000-0000-4000-8000-000000000001", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
@@ -610,7 +610,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
         (
             "ac25647a-384a-5232-8d09-117e2043e20b",
             "ext-active-invalid",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "codex",
             project.id,
         ),
@@ -1204,7 +1204,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("565acf01-045f-5737-ad46-c4a57a113dee", "ext-promote", "machine-1", "codex", project.id),
+        ("565acf01-045f-5737-ad46-c4a57a113dee", "ext-promote", "21000000-0000-4000-8000-000000000001", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
@@ -1283,7 +1283,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("958625ad-2cad-5175-bd8d-ac97ced1d681", "ext-clone", "machine-1", "codex", project.id),
+        ("958625ad-2cad-5175-bd8d-ac97ced1d681", "ext-clone", "21000000-0000-4000-8000-000000000001", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(

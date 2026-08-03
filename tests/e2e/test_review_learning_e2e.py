@@ -137,7 +137,7 @@ def _set_project_context(
     assert project_result["status"] in {"success", "already_exists"}
     session_result = cli_events.register_session(
         external_id="review-learning-e2e-session",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="Codex",
         cwd=str(daemon_instance.project_dir),
     )

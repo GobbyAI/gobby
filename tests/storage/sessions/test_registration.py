@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -95,7 +96,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
 ) -> None:
     session = session_manager.register(
         external_id="local-flag",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         is_local=True,
@@ -163,7 +164,7 @@ def _session_stub() -> Session:
     return Session(
         id="session-1",
         external_id="external-1",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id="project-1",
         title=None,
@@ -292,6 +293,31 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
 class TestSessionManagerRegistration:
     """Tests split from the SessionManager storage monolith."""
 
+    @pytest.mark.parametrize(
+        "machine_id",
+        ["20000000-0000-4000-8000-000000000001", None],
+    )
+    def test_register_is_idempotent_for_uuid_and_null_machine(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        machine_id: str | None,
+    ) -> None:
+        first = session_manager.register(
+            external_id="uuid-null-idempotency",
+            machine_id=machine_id,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        second = session_manager.register(
+            external_id="uuid-null-idempotency",
+            machine_id=machine_id,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert second.id == first.id
+
     def test_register_session(
         self,
         session_manager: SessionManager,
@@ -300,7 +326,7 @@ class TestSessionManagerRegistration:
         """Test registering a new session."""
         session = session_manager.register(
             external_id="session-123",
-            machine_id="machine-abc",
+            machine_id="20000000-0000-4000-8000-000000000005",
             source="claude",
             project_id=sample_project["id"],
             title="My Session",
@@ -310,7 +336,7 @@ class TestSessionManagerRegistration:
 
         assert session.id is not None
         assert session.external_id == "session-123"
-        assert session.machine_id == "machine-abc"
+        assert session.machine_id == "20000000-0000-4000-8000-000000000005"
         assert session.source == "claude"
         assert session.project_id == sample_project["id"]
         assert session.title == "My Session"
@@ -346,7 +372,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id=f"provisional-{provider_label}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source=source,
             project_id=sample_project["id"],
         )
@@ -361,7 +387,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="explicit-title",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             title="Caller Supplied Title",
@@ -378,7 +404,7 @@ class TestSessionManagerRegistration:
         with pytest.raises(ValueError, match="Invalid title_source"):
             session_manager.register(
                 external_id="explicit-native-title",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="codex",
                 project_id=sample_project["id"],
                 title="Caller Supplied Title",
@@ -393,7 +419,7 @@ class TestSessionManagerRegistration:
         with pytest.raises(ValueError, match="Invalid title_source"):
             session_manager.register(
                 external_id="invalid-title-source",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="codex",
                 project_id=sample_project["id"],
                 title="Caller Supplied Title",
@@ -407,7 +433,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="provisional-ignores-caller-source",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             title_source="llm",
@@ -423,7 +449,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="blank-title",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             title="",
@@ -431,7 +457,7 @@ class TestSessionManagerRegistration:
 
         updated = session_manager.register(
             external_id="blank-title",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -448,7 +474,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="stale-registration-title",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -468,7 +494,7 @@ class TestSessionManagerRegistration:
 
         updated = session_manager.register(
             external_id="stale-registration-title",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -482,7 +508,7 @@ class TestSessionManagerRegistration:
         sample_project: dict,
     ) -> None:
         session = session_manager.create_web_chat_session(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="droid",
             model="gemini-3.5-flash",
@@ -500,7 +526,7 @@ class TestSessionManagerRegistration:
         sample_project: dict,
     ) -> None:
         session = session_manager.create_web_chat_session(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="codex",
             title="My Investigation",
@@ -527,7 +553,7 @@ class TestSessionManagerRegistration:
 
         session = session_manager.register(
             external_id="pipeline-child",
-            machine_id="machine-abc",
+            machine_id="20000000-0000-4000-8000-000000000005",
             source="pipeline",
             project_id=sample_project["id"],
             parent_session_id=SYSTEM_SESSION_ID,
@@ -550,7 +576,7 @@ class TestSessionManagerRegistration:
         """Test that a newly registered session has the stats columns."""
         session = session_manager.register(
             external_id="stats-check",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -580,7 +606,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="sandboxed-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             sandbox_enabled=True,
@@ -602,7 +628,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="unknown-sandbox-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             sandbox_enabled=None,
@@ -631,7 +657,7 @@ class TestSessionManagerRegistration:
         # First registration
         session1 = session_manager.register(
             external_id="unique-key",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=sample_project["id"],
             title="Original",
@@ -640,7 +666,7 @@ class TestSessionManagerRegistration:
         # Second registration with same key combo
         session2 = session_manager.register(
             external_id="unique-key",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=sample_project["id"],
             title="Updated",
@@ -657,7 +683,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="expired-registration",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/expired-registration.jsonl",
@@ -667,7 +693,7 @@ class TestSessionManagerRegistration:
 
         registered = session_manager.register(
             external_id="expired-registration",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -688,7 +714,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="deleted-registration",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -696,7 +722,7 @@ class TestSessionManagerRegistration:
 
         registered = session_manager.register(
             external_id="deleted-registration",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -713,7 +739,7 @@ class TestSessionManagerRegistration:
         """Existing session re-registration must not persist itself as parent."""
         session = session_manager.register(
             external_id="self-parent-update",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -721,7 +747,7 @@ class TestSessionManagerRegistration:
         caplog.set_level(logging.WARNING)
         updated = session_manager.register(
             external_id="self-parent-update",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=session.id,
@@ -744,7 +770,7 @@ class TestSessionManagerRegistration:
         """Legacy corrupt self-parent rows are repaired during registration."""
         session = session_manager.register(
             external_id="corrupt-self-parent",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -759,7 +785,7 @@ class TestSessionManagerRegistration:
 
             repaired = session_manager.register(
                 external_id="corrupt-self-parent",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="codex",
                 project_id=sample_project["id"],
             )
@@ -788,20 +814,20 @@ class TestSessionManagerRegistration:
         """Valid parent updates still persist on existing sessions."""
         child = session_manager.register(
             external_id="valid-parent-child",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
         parent = session_manager.register(
             external_id="valid-parent",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
 
         updated = session_manager.register(
             external_id="valid-parent-child",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=parent.id,
@@ -818,20 +844,20 @@ class TestSessionManagerRegistration:
         """A rejected cyclic parent must clear stale parent attribution."""
         ancestor = session_manager.register(
             external_id="cycle-ancestor",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
         root = session_manager.register(
             external_id="cycle-root",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=ancestor.id,
         )
         child = session_manager.register(
             external_id="cycle-child",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=root.id,
@@ -839,7 +865,7 @@ class TestSessionManagerRegistration:
 
         updated = session_manager.register(
             external_id="cycle-root",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=child.id,
@@ -856,7 +882,7 @@ class TestSessionManagerRegistration:
         """Older DBs had uniqueness without session_type; reuse that row on conflict."""
         created = session_manager.register(
             external_id="runtime-key",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
             title="Web chat",
@@ -873,7 +899,7 @@ class TestSessionManagerRegistration:
 
             recovered = session_manager.register(
                 external_id="runtime-key",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="codex",
                 project_id=sample_project["id"],
                 title="Recovered",
@@ -897,21 +923,21 @@ class TestSessionManagerRegistration:
         )
         original = session_manager.register(
             external_id="cross-project-recovery",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=sample_project["id"],
         )
         for index in range(2):
             session_manager.register(
                 external_id=f"destination-session-{index}",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="codex",
                 project_id=destination.id,
             )
 
         recovered = session_manager.register(
             external_id="cross-project-recovery",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=destination.id,
         )
@@ -928,7 +954,7 @@ class TestSessionManagerRegistration:
         """Test getting a session by ID."""
         created = session_manager.register(
             external_id="get-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -951,14 +977,14 @@ class TestSessionManagerRegistration:
         """Test finding session by external_id, machine_id, project_id, source."""
         session = session_manager.register(
             external_id="findable",
-            machine_id="my-machine",
+            machine_id="20000000-0000-4000-8000-00000000000a",
             source="claude",
             project_id=sample_project["id"],
         )
 
         found = session_manager.find_by_external_id(
             external_id="findable",
-            machine_id="my-machine",
+            machine_id="20000000-0000-4000-8000-00000000000a",
             project_id=sample_project["id"],
             source="claude",
         )
@@ -970,7 +996,7 @@ class TestSessionManagerRegistration:
         """Test find_by_external_id returns None when not found."""
         result = session_manager.find_by_external_id(
             external_id="nonexistent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=str(uuid.uuid4()),
             source="claude",
         )
@@ -983,7 +1009,7 @@ class TestSessionManagerRegistration:
         sample_project: dict,
     ) -> None:
         session = session_manager.create_web_chat_session(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
             title="Web Chat",
@@ -1013,7 +1039,7 @@ class TestSessionManagerRegistration:
         """Test registering session with agent depth and spawned_by_agent_id."""
         session = session_manager.register(
             external_id="agent-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             agent_depth=2,
@@ -1032,7 +1058,7 @@ class TestSessionManagerRegistration:
         # Create a parent session first for the foreign key
         parent = session_manager.register(
             external_id="parent-meta",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1040,7 +1066,7 @@ class TestSessionManagerRegistration:
         # First registration without transcript_path or git_branch
         session1 = session_manager.register(
             external_id="update-meta",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title=None,
@@ -1052,7 +1078,7 @@ class TestSessionManagerRegistration:
         # Second registration with additional metadata
         session2 = session_manager.register(
             external_id="update-meta",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Updated Title",
@@ -1071,7 +1097,7 @@ class TestSessionManagerRegistration:
 
         preserved = session_manager.register(
             external_id="update-meta",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1082,7 +1108,7 @@ class TestSessionManagerRegistration:
 
         cleared = session_manager.register(
             external_id="update-meta",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title=None,

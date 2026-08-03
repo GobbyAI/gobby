@@ -191,7 +191,7 @@ def _session(
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
         VALUES (%s, %s, %s, %s, %s)
         """,
-        (session_id, session_id, "machine-1", "test", sample_project["id"]),
+        (session_id, session_id, "21000000-0000-4000-8000-000000000001", "test", sample_project["id"]),
     )
     return session_id
 
@@ -1339,13 +1339,13 @@ def test_count_active_agents_scopes_by_parent_session_project(
     other_project = LocalProjectManager(temp_db).create(name="other-project")
     parent_a = sessions.register(
         external_id="parent-a",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
     parent_b = sessions.register(
         external_id="parent-b",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=other_project.id,
     )
@@ -1442,13 +1442,13 @@ async def test_concurrent_project_heartbeats_share_global_agent_cap(
     sessions = SessionManager(temp_db)
     first_parent_session = sessions.register(
         external_id="dispatcher-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
     second_parent_session = sessions.register(
         external_id="other-dispatcher-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=other_project.id,
     )
@@ -1535,13 +1535,13 @@ async def test_global_agent_cap_admission_releases_after_interrupted_spawn(
     parent_sessions = {
         sample_project["id"]: sessions.register(
             external_id=f"cap-first-{first_outcome}",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="test",
             project_id=sample_project["id"],
         ).id,
         other_project.id: sessions.register(
             external_id=f"cap-second-{first_outcome}",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="test",
             project_id=other_project.id,
         ).id,
@@ -2474,7 +2474,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         title="Coordinator",
@@ -2551,7 +2551,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=other_project.id,
         title="Coordinator",
@@ -2600,7 +2600,7 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext-explicit",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=other_project.id,
         title="Coordinator",
@@ -4912,7 +4912,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     sessions = SessionManager(temp_db)
     coordinator = sessions.register(
         external_id="coordinator-subscribe-failure",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

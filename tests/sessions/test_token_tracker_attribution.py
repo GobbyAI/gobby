@@ -56,7 +56,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
     codex_path.write_text("{}\n")
     codex_session = session_manager.register(
         external_id="codex-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project.id,
         transcript_path=str(codex_path),
@@ -82,7 +82,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
     qwen_path.write_text('{"type":"user","message":{"role":"user","parts":[{"text":"hi"}]}}\n')
     qwen_session = session_manager.register(
         external_id="qwen-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="qwen",
         project_id=project.id,
         transcript_path=str(qwen_path),

@@ -69,7 +69,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -119,7 +119,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -151,6 +151,8 @@ class TestProviderResolution:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
+        session_manager = MagicMock()
+        session_manager.get.return_value.source = "claude"
 
         with (
             patch(
@@ -164,7 +166,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -184,6 +186,7 @@ class TestProviderResolution:
                 agent_body=None,
                 provider="inherit",
                 parent_session_id="parent-session-xyz",
+                session_manager=session_manager,
             )
 
         assert result["success"] is True
@@ -196,6 +199,8 @@ class TestProviderResolution:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
+        session_manager = MagicMock()
+        session_manager.get.return_value.source = "claude"
 
         with (
             patch(
@@ -209,7 +214,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -229,6 +234,7 @@ class TestProviderResolution:
                 agent_body=None,
                 provider=None,
                 parent_session_id="parent-session-xyz",
+                session_manager=session_manager,
             )
 
         assert result["success"] is True
@@ -254,7 +260,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -310,7 +316,7 @@ class TestProviderResolution:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
         ):
             mock_ctx.return_value = {
@@ -376,7 +382,7 @@ class TestSpawnAutoClaimOwner:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
@@ -394,7 +400,7 @@ class TestSpawnAutoClaimOwner:
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
-                provider=None,
+                provider="claude",
                 parent_session_id="parent-session-xyz",
                 task_id="#42",
                 task_manager=task_manager,
@@ -433,7 +439,7 @@ class TestSpawnAutoClaimOwner:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
@@ -451,7 +457,7 @@ class TestSpawnAutoClaimOwner:
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
-                provider=None,
+                provider="claude",
                 parent_session_id="parent-session-xyz",
                 task_id="#99",
                 task_manager=task_manager,
@@ -492,7 +498,7 @@ class TestSpawnAutoClaimOwner:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
@@ -510,7 +516,7 @@ class TestSpawnAutoClaimOwner:
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
-                provider=None,
+                provider="claude",
                 parent_session_id="parent-session-xyz",
                 task_id="#200",
                 task_manager=task_manager,
@@ -549,7 +555,7 @@ class TestSpawnAutoClaimOwner:
             ) as mock_execute,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
@@ -567,7 +573,7 @@ class TestSpawnAutoClaimOwner:
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
-                provider=None,
+                provider="claude",
                 parent_session_id="parent-session-xyz",
                 task_id="#201",
                 task_manager=task_manager,

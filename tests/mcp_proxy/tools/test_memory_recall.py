@@ -52,7 +52,7 @@ def _create_sessions(db: HubDatabase) -> None:
             (
                 session_id,
                 f"external-{session_id}",
-                "machine-1",
+                "21000000-0000-4000-8000-000000000001",
                 "codex",
                 PROJECT_ID,
             ),

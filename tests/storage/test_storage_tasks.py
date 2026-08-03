@@ -244,7 +244,7 @@ class TestLocalTaskManager:
     ) -> None:
         session = session_manager.register(
             external_id="reconcile-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1278,7 +1278,7 @@ class TestLocalTaskManager:
         """Reopening an open claimed task should release the claim."""
         session = session_manager.register(
             external_id="reopen-claimed-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1320,7 +1320,7 @@ class TestLocalTaskManager:
         """Claiming should dual-write canonical ownership and legacy claimed_by_session_id."""
         session = session_manager.register(
             external_id="claim-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1340,7 +1340,7 @@ class TestLocalTaskManager:
         """Review ownership should be explicit without regressing lifecycle state."""
         session = session_manager.register(
             external_id="review-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1362,7 +1362,7 @@ class TestLocalTaskManager:
         """Ownership release should clear both canonical and legacy fields."""
         session = session_manager.register(
             external_id="release-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1383,7 +1383,7 @@ class TestLocalTaskManager:
         """Submitting work for review should release the active claim."""
         session = session_manager.register(
             external_id="needs-review-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1405,7 +1405,7 @@ class TestLocalTaskManager:
         """Approving work should release the active claim."""
         session = session_manager.register(
             external_id="approved-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1431,7 +1431,7 @@ class TestLocalTaskManager:
         """Rejecting review should reopen work and release the active claim."""
         session = session_manager.register(
             external_id="rejected-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1461,7 +1461,7 @@ class TestLocalTaskManager:
         """Rejecting outside the review state raises and preserves ownership."""
         session = session_manager.register(
             external_id="rejected-in-progress-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1493,7 +1493,7 @@ class TestLocalTaskManager:
         """
         session = session_manager.register(
             external_id="rejected-dedup-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1534,7 +1534,7 @@ class TestLocalTaskManager:
         """A suggestions round returns planning to ready WITHOUT bumping review rounds."""
         session = session_manager.register(
             external_id="enhance-suggestions-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1580,7 +1580,7 @@ class TestLocalTaskManager:
         """A late task-write failure rolls back both enhancement transaction paths."""
         session = session_manager.register(
             external_id="enhance-rollback-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1636,7 +1636,7 @@ class TestLocalTaskManager:
         """A converged round leaves needs_review so the adversary gate proceeds."""
         session = session_manager.register(
             external_id="enhance-converged-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1665,7 +1665,7 @@ class TestLocalTaskManager:
         """Re-running the same round replaces its section and never bumps review rounds."""
         session = session_manager.register(
             external_id="enhance-dedup-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1705,7 +1705,7 @@ class TestLocalTaskManager:
         """Recording outside needs_review raises and preserves ownership."""
         session = session_manager.register(
             external_id="enhance-wrong-state-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1741,7 +1741,7 @@ class TestLocalTaskManager:
         """Recording against a non-planning needs_review stage raises."""
         session = session_manager.register(
             external_id="enhance-wrong-stage-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1774,7 +1774,7 @@ class TestLocalTaskManager:
         """Dedup is per-round: re-running round 7 must not touch round 6's section."""
         session = session_manager.register(
             external_id="rejected-other-rounds-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1813,7 +1813,7 @@ class TestLocalTaskManager:
         """Escalation should release the active claim."""
         session = session_manager.register(
             external_id="escalate-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -1860,7 +1860,7 @@ class TestLocalTaskManager:
         # Create a session first (foreign key constraint)
         session = session_manager.register(
             external_id="test-ext-id",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -1992,7 +1992,7 @@ class TestLocalTaskManager:
         """Test filtering tasks by multiple current-stage states."""
         session = session_manager.register(
             external_id="filter-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -2024,7 +2024,7 @@ class TestLocalTaskManager:
         """Current-stage filters should ignore closed tasks unless closed is explicit."""
         session = session_manager.register(
             external_id="stage-filter-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -2057,7 +2057,7 @@ class TestLocalTaskManager:
         """The closed=True filter should still allow closed tasks with stale stage rows."""
         session = session_manager.register(
             external_id="stage-filter-closed-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -2357,7 +2357,7 @@ class TestLocalTaskManager:
         """Aggregate current-stage filters should use the same open-only default."""
         session = session_manager.register(
             external_id="count-stage-filter-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -2465,7 +2465,7 @@ class TestLocalTaskManager:
         """Test Task.to_brief returns minimal fields."""
         session = session_manager.register(
             external_id="brief-owner-ext",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
         )
@@ -2562,7 +2562,7 @@ class TestLocalTaskManager:
         # Create a session first (foreign key constraint)
         session = session_manager.register(
             external_id="test-ext-id",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )

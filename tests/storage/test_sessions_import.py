@@ -38,7 +38,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
-    "create_web_chat_session": "(self, *, machine_id: 'str', project_id: 'str', "
+    "create_web_chat_session": "(self, *, machine_id: 'str | None', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
     "is_local: 'bool' = False, chat_mode: 'str | None' = None, sandbox_enabled: 'bool', "
     "sandbox_policy_hash: 'str') -> 'Session'",
@@ -56,12 +56,12 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "find_by_terminal_identity": "(self, identity: 'TerminalIdentity') -> 'list[Session]'",
     "resolve_current_terminal_session": "(self, project_id: 'str | None', parent_pid: 'Any', "
     "terminal_context: 'dict[str, Any] | str | None') -> 'Session | None'",
-    "find_by_external_id": "(self, external_id: 'str', machine_id: 'str', "
+    "find_by_external_id": "(self, external_id: 'str', machine_id: 'str | None', "
     "project_id: 'str | None', source: 'str', session_type: 'str | None' = None) "
     "-> 'Session | None'",
-    "find_by_external_id_all_sources": "(self, external_id: 'str', machine_id: 'str', "
+    "find_by_external_id_all_sources": "(self, external_id: 'str', machine_id: 'str | None', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'list[Session]'",
-    "find_by_external_id_any_project": "(self, external_id: 'str', machine_id: 'str', "
+    "find_by_external_id_any_project": "(self, external_id: 'str', machine_id: 'str | None', "
     "source: 'str', session_type: 'str | None' = None) -> 'Session | None'",
     "find_children": "(self, parent_session_id: 'str') -> 'list[Session]'",
     "find_parent": "(self, machine_id: 'str', project_id: 'str', "
@@ -87,7 +87,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
     "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
     "'list[Session]'",
-    "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
+    "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str | None', "
     "project_id: 'str | None') -> 'str | None'",
     "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
     "'list[dict[str, Any]]'",
@@ -109,7 +109,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "summary_path: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
-    "register": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
+    "register": "(self, external_id: 'str', machine_id: 'str | None', source: 'str', "
     "project_id: 'str | None', title: 'str | None | UnsetType' = UNSET, "
     "transcript_path: 'str | None | UnsetType' = UNSET, "
     "git_branch: 'str | None | UnsetType' = UNSET, "
@@ -120,7 +120,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None, "
     "title_source: 'str | None | UnsetType' = UNSET) -> 'Session'",
-    "register_session": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
+    "register_session": "(self, external_id: 'str', machine_id: 'str | None', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None | UnsetType' = UNSET, "
     "transcript_path: 'str | None' = None, title: 'str | None' = None, "
     "git_branch: 'str | None' = None, project_path: 'str | None' = None, "
@@ -134,7 +134,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "renumber_project_sessions": "(self, project_id: 'str', *, dry_run: 'bool' = True) -> "
     "'list[SessionRenumberMapping]'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
-    "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
+    "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str | None', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
     "activate_web_chat_session": "(self, session_id: 'str') -> 'Session | None'",
     "revive_expired_terminal_session": "(self, session_id: 'str') -> 'Session | None'",
@@ -172,6 +172,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "last_assistant_content: 'str | None' = None) -> 'Session | None'",
     "update_status": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
     "update_status_from_activity": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
+    "update_status_if_non_terminal": "(self, session_id: 'str', status: 'str') -> 'Session | None'",
     "update_summary": "(self, session_id: 'str', "
     "summary_path: 'str | None | UnsetType' = UNSET, "
     "summary_markdown: 'str | None | UnsetType' = UNSET) -> 'Session | None'",

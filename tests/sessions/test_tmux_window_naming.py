@@ -184,7 +184,7 @@ class TestRenameTmuxWindow:
         )
         container = _ReloadingAppContext(persisted_session)
         ownership = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
             requested_session_id="session-id",
             owner=persisted_session,
             reason="validated_foreground_process",
@@ -238,7 +238,7 @@ class TestRenameTmuxWindow:
 
         container = SimpleNamespace(session_manager=session_manager, run_db=run_db)
         ownership = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_path:/tmp/tmux-501/gobby", "%226"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_path:/tmp/tmux-501/gobby", "%226"),
             requested_session_id="grok-child",
             owner=parent,
             reason="nested_outermost_process",
@@ -786,7 +786,7 @@ class TestReleaseWindowNameIfUnowned:
             },
         )
         ownership = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_path:/tmp/tmux-501/default", "%42"),
             requested_session_id="stale-session",
             owner=None,
             reason="ownerless",
@@ -820,7 +820,7 @@ class TestReleaseWindowNameIfUnowned:
         )
         active = SimpleNamespace(id="active-session", status="active")
         ownership = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%42"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%42"),
             requested_session_id="stale-session",
             owner=active,
             reason="validated_foreground_process",

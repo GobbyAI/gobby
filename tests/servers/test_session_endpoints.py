@@ -33,7 +33,7 @@ class TestSessionEndpoints:
         # Register a session first
         session = session_storage.register(
             external_id="get-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -60,14 +60,14 @@ class TestSessionEndpoints:
         for index in range(2):
             session_storage.register(
                 external_id=f"destination-{index}",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 source="codex",
                 project_id=destination.id,
             )
         moved_sessions = [
             session_storage.register(
                 external_id=f"source-{index}",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 source="codex",
                 project_id=test_project["id"],
             )
@@ -156,7 +156,7 @@ class TestSessionEndpoints:
         """Test updating session status."""
         session = session_storage.register(
             external_id="status-update",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -194,7 +194,7 @@ class TestSessionEndpoints:
         """Test updating session summary."""
         session = session_storage.register(
             external_id="summary-update",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -233,13 +233,13 @@ class TestSessionEndpoints:
         # Create a few sessions
         session_storage.register(
             external_id="list-test-1",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="list-test-2",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="qwen",
             project_id=test_project["id"],
         )
@@ -262,13 +262,13 @@ class TestSessionEndpoints:
         """Test listing sessions with query filters."""
         session_storage.register(
             external_id="filter-test-1",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="filter-test-2",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="qwen",
             project_id=test_project["id"],
         )
@@ -328,7 +328,7 @@ class TestSessionEndpoints:
         client = TestClient(server.app)
         response = client.post(
             "/api/sessions/register",
-            json={"external_id": "test", "machine_id": "test-machine", "source": "claude"},
+            json={"external_id": "test", "machine_id": "21000000-0000-4000-8000-000000000002", "source": "claude"},
         )
         assert response.status_code == 503
 
@@ -341,7 +341,7 @@ class TestSessionEndpoints:
         """Find the one active session matching project and parent PID."""
         session = session_storage.register(
             external_id="terminal-match",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 4242},
@@ -365,7 +365,7 @@ class TestSessionEndpoints:
         for external_id in ("terminal-ambiguous-1", "terminal-ambiguous-2"):
             session_storage.register(
                 external_id=external_id,
-                machine_id="machine",
+                machine_id="21000000-0000-4000-8000-000000000003",
                 source="codex",
                 project_id=test_project["id"],
                 terminal_context={"parent_pid": 4242},
@@ -388,14 +388,14 @@ class TestSessionEndpoints:
         """Optional terminal context narrows sessions sharing one parent PID."""
         session_storage.register(
             external_id="terminal-context-miss",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 4242, "tmux_pane": "%1"},
         )
         matched_session = session_storage.register(
             external_id="terminal-context-match",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 4242, "tmux_pane": "%2"},
@@ -428,14 +428,14 @@ class TestSessionEndpoints:
         )
         session_storage.register(
             external_id="terminal-other-project",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=other_project.id,
             terminal_context={"parent_pid": 4242},
         )
         inactive_session = session_storage.register(
             external_id="terminal-inactive",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 4242},
@@ -481,7 +481,7 @@ class TestSessionEndpoints:
         """
         session = session_storage.register(
             external_id="grok-pid-mismatch",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
@@ -508,7 +508,7 @@ class TestSessionEndpoints:
         """No session is returned when parent_pid differs and no context overlaps."""
         session_storage.register(
             external_id="grok-no-overlap",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
@@ -535,14 +535,14 @@ class TestSessionEndpoints:
         """A pid+pane match wins over a pane-only match."""
         pid_match_session = session_storage.register(
             external_id="grok-pid-match",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 4242, "tmux_pane": "%10"},
         )
         session_storage.register(
             external_id="grok-pane-only",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
             terminal_context={"parent_pid": 55555, "tmux_pane": "%10"},
@@ -609,7 +609,7 @@ class TestSessionEndpoints:
         """Test update_status with missing required fields."""
         response = client.post(
             "/api/sessions/update_status",
-            json={"session_id": "test-id"},  # missing status
+            json={"session_id": "21000000-0000-4000-8000-00000000001c"},  # missing status
         )
         assert response.status_code == 400
 
@@ -617,7 +617,7 @@ class TestSessionEndpoints:
         """Test update_summary with missing required fields."""
         response = client.post(
             "/api/sessions/update_summary",
-            json={"session_id": "test-id"},  # missing summary_path
+            json={"session_id": "21000000-0000-4000-8000-00000000001c"},  # missing summary_path
         )
         assert response.status_code == 400
 

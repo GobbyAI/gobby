@@ -53,7 +53,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_manager=sm,
             parent_session_id="parent-1",
             project_id="proj-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             workflow_name="plan-execute",
         )
 
@@ -72,7 +72,7 @@ class TestPrepareTerminalSpawnMetadata:
                 session_manager=sm,
                 parent_session_id="parent-1",
                 project_id="proj-1",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 workflow_name="plan-execute",
             )
 
@@ -92,7 +92,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_manager=sm,
             parent_session_id="parent-1",
             project_id="proj-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
 
         sm.update_terminal_pickup_metadata.assert_called_once_with(
@@ -111,7 +111,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_manager=sm,
             parent_session_id="parent-1",
             project_id="proj-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
 
         assert str(uuid.UUID(result.agent_run_id)) == result.agent_run_id
@@ -127,7 +127,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_manager=sm,
             parent_session_id="parent-1",
             project_id="proj-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
 
         uv_cache = Path(result.env_vars[UV_CACHE_DIR])
@@ -147,7 +147,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_manager=sm,
             parent_session_id="parent-1",
             project_id="proj-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
 
         assert result.env_vars[PATH_ENV_VAR].split(os.pathsep) == [

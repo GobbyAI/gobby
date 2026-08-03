@@ -100,7 +100,7 @@ async def test_derives_canonical_deduped_pairs_across_memories() -> None:
     # b/a shared by two memories -> one canonical (a, b) pair; c only with a.
     falkor = RecordingFalkor(
         _graph_responder(
-            {"m1": ["b", "a"], "m2": ["a", "b", "c"]},
+            {"21000000-0000-4000-8000-000000000005": ["b", "a"], "m2": ["a", "b", "c"]},
             {"a": [1.0, 0.0], "b": [1.0, 0.0], "c": [0.0, 1.0]},
         )
     )
@@ -118,7 +118,7 @@ async def test_caps_entities_per_memory_on_sorted_keys() -> None:
     # 4 entities with a cap of 2: only the first two sorted keys pair up.
     falkor = RecordingFalkor(
         _graph_responder(
-            {"m1": ["d", "c", "b", "a"]},
+            {"21000000-0000-4000-8000-000000000005": ["d", "c", "b", "a"]},
             {k: [1.0] for k in "abcd"},
         )
     )
@@ -132,7 +132,7 @@ async def test_caps_entities_per_memory_on_sorted_keys() -> None:
 async def test_support_and_weight_flow_through_write_path() -> None:
     # cosine=1.0, support=2 -> weight 0.5*1.0 + 0.5*(2/5) = 0.7 (write-path math).
     falkor = RecordingFalkor(
-        _graph_responder({"m1": ["a", "b"]}, {"a": [1.0, 0.0], "b": [1.0, 0.0]}, support=2)
+        _graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b"]}, {"a": [1.0, 0.0], "b": [1.0, 0.0]}, support=2)
     )
 
     await _densify(falkor)
@@ -149,7 +149,7 @@ async def test_idempotent_rerun_produces_identical_set_writes() -> None:
     rows_per_run: list[list[dict[str, Any]]] = []
     for _ in range(2):
         falkor = RecordingFalkor(
-            _graph_responder({"m1": ["a", "b"]}, {"a": [1.0], "b": [1.0]}, support=3)
+            _graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b"]}, {"a": [1.0], "b": [1.0]}, support=3)
         )
         await _densify(falkor)
         _, params = falkor.find("MERGE (a)-[r:CO_OCCURS]->(b)")[0]
@@ -163,7 +163,7 @@ async def test_idempotent_rerun_produces_identical_set_writes() -> None:
 
 async def test_weighted_skips_pairs_missing_stored_embeddings() -> None:
     # c has no stored embedding -> (a, c) and (b, c) are skipped, (a, b) merges.
-    falkor = RecordingFalkor(_graph_responder({"m1": ["a", "b", "c"]}, {"a": [1.0], "b": [1.0]}))
+    falkor = RecordingFalkor(_graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b", "c"]}, {"a": [1.0], "b": [1.0]}))
 
     result = await _densify(falkor)
 
@@ -175,7 +175,7 @@ async def test_weighted_skips_pairs_missing_stored_embeddings() -> None:
 
 
 async def test_unweighted_merges_all_pairs_without_embeddings() -> None:
-    falkor = RecordingFalkor(_graph_responder({"m1": ["a", "b", "c"]}, {}))
+    falkor = RecordingFalkor(_graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b", "c"]}, {}))
 
     result = await _densify(falkor, weighted=False)
 
@@ -189,7 +189,7 @@ async def test_unweighted_merges_all_pairs_without_embeddings() -> None:
 
 
 async def test_batches_are_bounded_and_counted() -> None:
-    falkor = RecordingFalkor(_graph_responder({"m1": ["a", "b", "c"]}, {k: [1.0] for k in "abc"}))
+    falkor = RecordingFalkor(_graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b", "c"]}, {k: [1.0] for k in "abc"}))
 
     result = await _densify(falkor, batch_size=1)
 
@@ -211,7 +211,7 @@ async def test_empty_graph_is_a_no_op() -> None:
 async def test_reports_edge_counts_before_and_after() -> None:
     falkor = RecordingFalkor(
         _graph_responder(
-            {"m1": ["a", "b"]},
+            {"21000000-0000-4000-8000-000000000005": ["a", "b"]},
             {"a": [1.0], "b": [1.0]},
             edge_counts=[0, 1],
         )
@@ -224,7 +224,7 @@ async def test_reports_edge_counts_before_and_after() -> None:
 
 
 async def test_queries_are_project_scoped() -> None:
-    falkor = RecordingFalkor(_graph_responder({"m1": ["a", "b"]}, {"a": [1.0], "b": [1.0]}))
+    falkor = RecordingFalkor(_graph_responder({"21000000-0000-4000-8000-000000000005": ["a", "b"]}, {"a": [1.0], "b": [1.0]}))
 
     await _densify(falkor, project_id="proj-1")
 

@@ -129,7 +129,7 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
         (
             "ac25647a-384a-5232-8d09-117e2043e20b",
             "ext-active-resume",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "codex",
             project.id,
         ),

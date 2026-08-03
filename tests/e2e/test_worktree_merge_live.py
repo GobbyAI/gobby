@@ -427,7 +427,7 @@ class TestWorktreeMergeIntegration:
         session_external_id = f"wt-task-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )

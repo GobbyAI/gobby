@@ -30,7 +30,7 @@ def canonical_task_session(
     """Register a real session whose project is authoritative for task tools."""
     return SessionManager(temp_db).register(
         external_id="task-tool-test-session",
-        machine_id="task-tool-test-machine",
+        machine_id="21000000-0000-4000-8000-00000000000b",
         source="codex",
         project_id=sample_project["id"],
         title="Task tool test session",
@@ -42,7 +42,7 @@ def personal_task_session(temp_db: HubDatabase) -> Session:
     """Register a real task-tool session in the personal project."""
     return SessionManager(temp_db).register(
         external_id="personal-task-tool-test-session",
-        machine_id="task-tool-test-machine",
+        machine_id="21000000-0000-4000-8000-00000000000b",
         source="codex",
         project_id=None,
         title="Personal task tool test session",

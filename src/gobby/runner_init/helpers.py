@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from uuid import UUID
 
 import psycopg
 from psycopg_pool import PoolTimeout
@@ -18,7 +19,7 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
-from gobby.storage.machines import LocalMachineManager, normalize_machine_id
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.maintenance_epoch import admitted_database_url
 from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
 from gobby.utils.machine_id import MACHINE_ID_FILE, _generate_machine_id, clear_cache
@@ -109,7 +110,7 @@ def ensure_machine_identity(
         (machine_id,),
     )
     try:
-        canonical_id = normalize_machine_id(machine_id)
+        canonical_id = str(UUID(machine_id.strip()))
     except ValueError:
         canonical_id = None
     if tombstone is not None or canonical_id is None:

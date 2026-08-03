@@ -226,7 +226,7 @@ class TestGetSkillTool:
         session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -270,7 +270,7 @@ class TestGetSkillTool:
         session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -353,7 +353,7 @@ class TestGetSkillLevels:
         session_mgr = SessionManager(db)
         return session_mgr.register(
             external_id="level-ext-id",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )

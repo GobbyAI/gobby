@@ -24,7 +24,7 @@ pytestmark = pytest.mark.unit
 class _FakeSession:
     id: str = "sess-1"
     external_id: str = "acp-session-xyz"
-    machine_id: str = "machine-1"
+    machine_id: str = "21000000-0000-4000-8000-000000000001"
     source: str = "qwen"
     project_id: str = "proj-1"
     title: str | None = "Work"

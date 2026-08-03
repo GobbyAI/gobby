@@ -133,7 +133,7 @@ class IdentityManager:
         if not session_id and self._config.auto_create_sessions:
             session = self._session_store.register(
                 external_id=session_external_id,
-                machine_id="comms",
+                machine_id=None,
                 source="comms",
                 project_id=project_id,
                 title=session_title,

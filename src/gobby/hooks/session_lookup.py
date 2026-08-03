@@ -56,7 +56,7 @@ class SessionLookupService:
         session_manager: HookSessionManager,
         session_coordinator: SessionCoordinator,
         session_task_manager: SessionTaskManager,
-        get_machine_id: Callable[[], str],
+        get_machine_id: Callable[[], str | None],
         resolve_project_id: Callable[[str | None, str | None], str],
         logger: logging.Logger,
     ):
@@ -288,7 +288,7 @@ class SessionLookupService:
         external_id: str,
         event: HookEvent,
         *,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
     ) -> str | None:
         """Resolve a session after cache lookup has failed under the lookup lock."""
@@ -379,7 +379,7 @@ class SessionLookupService:
         external_id: str,
         event: HookEvent,
         *,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
     ) -> tuple[bool, str | None]:
         """Recover compact identity, returning whether resolution is terminal."""

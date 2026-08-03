@@ -770,7 +770,7 @@ class TestLocalCloneManagerClaimAtomicity:
         sessions = [
             session_manager.register(
                 external_id=f"atomic-clone-claim-{index}",
-                machine_id="atomic-clone-claim-machine",
+                machine_id="21000000-0000-4000-8000-00000000001f",
                 source="codex",
                 project_id=str(sample_project["id"]),
             )
@@ -835,7 +835,7 @@ class TestLocalCloneManagerCleanupSafety:
 
         session = session_manager.register(
             external_id="expired-claimed-clone",
-            machine_id="expired-claimed-clone-machine",
+            machine_id="21000000-0000-4000-8000-00000000001b",
             source="codex",
             project_id=project_id,
         )
@@ -891,7 +891,7 @@ class TestLocalCloneManagerCleanupSafety:
         project_id = str(sample_project["id"])
         session = session_manager.register(
             external_id="claim-clears-cleanup",
-            machine_id="claim-clears-cleanup-machine",
+            machine_id="21000000-0000-4000-8000-00000000001d",
             source="codex",
             project_id=project_id,
         )

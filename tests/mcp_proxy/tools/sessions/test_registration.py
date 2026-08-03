@@ -61,7 +61,7 @@ class TestRegisterSession:
         result = register(
             external_id="ext-abc",
             source="agent-sdk",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             project_id="11111111-1111-4111-8111-111111110001",
         )
 
@@ -73,7 +73,7 @@ class TestRegisterSession:
 
         session_manager.register.assert_called_once_with(
             external_id="ext-abc",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="agent-sdk",
             project_id="11111111-1111-4111-8111-111111110001",
             title=None,
@@ -103,20 +103,20 @@ class TestRegisterSession:
         r1 = register(
             external_id="ext-1",
             source="claude",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
         )
         r2 = register(
             external_id="ext-1",
             source="claude",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
         )
 
         assert r1["session_id"] == r2["session_id"]
         assert session_manager.register.call_count == 2
 
-    @patch("gobby.utils.machine_id.get_machine_id", return_value="auto-machine")
+    @patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000013")
     @patch(
         "gobby.utils.project_context.get_project_context",
         return_value={"id": "auto-proj"},
@@ -144,7 +144,7 @@ class TestRegisterSession:
         assert result["session_id"] == "uuid-auto"
         session_manager.register.assert_called_once_with(
             external_id="ext-auto",
-            machine_id="auto-machine",
+            machine_id="21000000-0000-4000-8000-000000000013",
             source="agent-sdk",
             project_id="auto-proj",
             title=None,
@@ -167,7 +167,7 @@ class TestRegisterSession:
         assert "error" in result
         assert "machine_id" in result["error"]
 
-    @patch("gobby.utils.machine_id.get_machine_id", return_value="m1")
+    @patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000005")
     @patch("gobby.utils.project_context.get_project_context", return_value=None)
     def test_error_when_project_id_unresolvable(
         self, mock_project_ctx: MagicMock, mock_machine_id: MagicMock
@@ -201,7 +201,7 @@ class TestRegisterSession:
         register(
             external_id="ext-opt",
             source="qwen",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
             git_branch="feature/foo",
@@ -211,7 +211,7 @@ class TestRegisterSession:
 
         session_manager.register.assert_called_once_with(
             external_id="ext-opt",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="qwen",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
@@ -241,7 +241,7 @@ class TestRegisterSession:
         result = register(
             external_id="ext-1",
             source="claude",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
         )
 
@@ -254,7 +254,7 @@ class TestRegisterSession:
             id="uuid-ambient",
             ref="#42",
             external_id="provider-stable-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id="11111111-1111-4111-8111-111111110001",
         )
@@ -276,7 +276,7 @@ class TestRegisterSession:
             result = register(
                 external_id="provider-stable-id",
                 source="codex",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 project_id="11111111-1111-4111-8111-111111110001",
             )
 
@@ -295,7 +295,7 @@ class TestRegisterSession:
             id="uuid-ambient",
             ref="#42",
             external_id="provider-stable-id",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id="11111111-1111-4111-8111-111111110001",
         )
@@ -308,7 +308,7 @@ class TestRegisterSession:
             result = register(
                 external_id="conflicting-observed-id",
                 source="codex",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 project_id="11111111-1111-4111-8111-111111110001",
             )
 
@@ -328,7 +328,7 @@ class TestRegisterSession:
             result = register(
                 external_id="provider-id",
                 source="codex",
-                machine_id="machine-1",
+                machine_id="21000000-0000-4000-8000-000000000001",
                 project_id="11111111-1111-4111-8111-111111110001",
             )
 

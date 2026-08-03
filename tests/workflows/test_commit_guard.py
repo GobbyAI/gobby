@@ -124,13 +124,13 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
     session_manager = SessionManager(temp_db)
     current_session = session_manager.register(
         external_id="current-external",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )
     foreign_session = session_manager.register(
         external_id="foreign-external",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project.id,
     )

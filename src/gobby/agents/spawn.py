@@ -81,7 +81,7 @@ def prepare_terminal_spawn(
     session_manager: ChildSessionManager,
     parent_session_id: str,
     project_id: str,
-    machine_id: str,
+    machine_id: str | None,
     source: str = "claude",
     agent_id: str | None = None,
     workflow_name: str | None = None,

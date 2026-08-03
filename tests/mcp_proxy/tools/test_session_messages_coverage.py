@@ -689,7 +689,7 @@ class TestGetHandoffContext:
     @patch("gobby.utils.machine_id.get_machine_id")
     def test_get_by_project_id(self, mock_get_machine_id) -> None:
         """Test finding session by project_id."""
-        mock_get_machine_id.return_value = "machine-123"
+        mock_get_machine_id.return_value = "21000000-0000-4000-8000-000000000008"
 
         session_manager = MagicMock()
         mock_session = MagicMock()
@@ -706,7 +706,7 @@ class TestGetHandoffContext:
 
         assert result["found"] is True
         session_manager.find_parent.assert_called_once_with(
-            machine_id="machine-123",
+            machine_id="21000000-0000-4000-8000-000000000008",
             project_id="project-123",
             source=None,
             status="handoff_ready",
@@ -879,21 +879,21 @@ class TestListSessions:
         registry = create_test_registry(session_manager=session_manager)
         list_sessions = registry.get_tool("list_sessions")
 
-        result = list_sessions(machine_id="machine-filter")
+        result = list_sessions(machine_id="21000000-0000-4000-8000-00000000000a")
 
-        assert result["filters"]["machine_id"] == "machine-filter"
+        assert result["filters"]["machine_id"] == "21000000-0000-4000-8000-00000000000a"
         session_manager.list.assert_called_once_with(
             project_id=None,
             status=None,
             source=None,
-            machine_id="machine-filter",
+            machine_id="21000000-0000-4000-8000-00000000000a",
             limit=20,
         )
         session_manager.count.assert_called_once_with(
             project_id=None,
             status=None,
             source=None,
-            machine_id="machine-filter",
+            machine_id="21000000-0000-4000-8000-00000000000a",
         )
 
     def test_list_sessions_with_filters(self) -> None:

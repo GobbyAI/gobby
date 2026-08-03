@@ -36,7 +36,7 @@ class _ManagerState(_SessionMappingState, Protocol):
     def find_by_external_id(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         source: str,
         session_type: str | None = None,
@@ -45,7 +45,7 @@ class _ManagerState(_SessionMappingState, Protocol):
     def find_by_external_id_all_sources(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         session_type: str | None = None,
     ) -> list[Session]: ...
@@ -203,7 +203,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         self: _ManagerState,
         external_id: str,
         source: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
     ) -> str | None:
         """

@@ -32,11 +32,11 @@ class TestGetMachineId:
         import gobby.utils.machine_id as machine_id_module
 
         # Set cached value directly
-        machine_id_module._cached_machine_id = "cached-machine-id"
+        machine_id_module._cached_machine_id = "21000000-0000-4000-8000-000000000018"
 
         result = get_machine_id()
 
-        assert result == "cached-machine-id"
+        assert result == "21000000-0000-4000-8000-000000000018"
 
         # Cleanup
         machine_id_module._cached_machine_id = None
@@ -251,7 +251,7 @@ class TestClearCache:
         import gobby.utils.machine_id as machine_id_module
 
         # Set a cached value
-        machine_id_module._cached_machine_id = "test-id"
+        machine_id_module._cached_machine_id = "21000000-0000-4000-8000-00000000001c"
 
         clear_cache()
 

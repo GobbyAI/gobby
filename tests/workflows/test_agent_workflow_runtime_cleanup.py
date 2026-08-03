@@ -51,7 +51,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         (
             CHILD_SESSION_ID,
             "ext-child-session",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "codex",
             sample_project["id"],
         ),
@@ -114,7 +114,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
         (
             CHILD_SESSION_ID,
             "ext-child-session",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "codex",
             sample_project["id"],
         ),
@@ -170,13 +170,13 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     session_manager = SessionManager(temp_db)
     parent = session_manager.register(
         external_id="parent-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id="child-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

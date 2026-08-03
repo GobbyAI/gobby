@@ -27,13 +27,13 @@ def _seed_parked_run(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="parent-resume",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="child-resume",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,
@@ -311,7 +311,7 @@ def test_waiter_registered_with_pending_successor_rides_finalization(
     sessions, runs, parent, child, original = _seed_parked_run(temp_db, sample_project)
     waiter = sessions.register(
         external_id="waiter-resume",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )

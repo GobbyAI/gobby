@@ -139,7 +139,7 @@ class TestProjectRoutes:
         session_manager.register(
             external_id="ext-100",
             source="claude",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             project_id=real_project["id"],
         )
         response = client.get("/api/projects")
@@ -166,7 +166,7 @@ class TestProjectRoutes:
             session_manager.register(
                 external_id=f"batch-session-{index}",
                 source="codex",
-                machine_id="test-machine",
+                machine_id="21000000-0000-4000-8000-000000000002",
                 project_id=project.id,
             )
             task_manager.create_task(

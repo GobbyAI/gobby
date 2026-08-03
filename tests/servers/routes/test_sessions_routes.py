@@ -41,7 +41,7 @@ def _make_session(**overrides) -> MagicMock:
     defaults = {
         "id": "sess-abc123",
         "external_id": "ext-123",
-        "machine_id": "machine-1",
+        "machine_id": "21000000-0000-4000-8000-000000000001",
         "source": "Claude Code",
         "project_id": "proj-123",
         "title": "Test Session",
@@ -197,7 +197,7 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
     with TestClient(server.app):
         session = session_storage.register(
             external_id="app-session-change-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -248,7 +248,7 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
     with TestClient(server.app):
         session_storage.register(
             external_id="app-session-shutdown-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -521,38 +521,33 @@ class TestRegisterSession:
         session = _make_session()
         mock_server.session_manager.register.return_value = session
 
-        response = client.post(
-            "/api/sessions/register",
-            json={
-                "external_id": "ext-123",
-                "machine_id": "machine-1",
-                "source": "Claude Code",
-                "project_id": "proj-123",
-                "title": "User Title",
-            },
-        )
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="20000000-0000-4000-8000-000000000001",
+        ) as get_id:
+            response = client.post(
+                "/api/sessions/register",
+                json={
+                    "external_id": "ext-123",
+                    "source": "Claude Code",
+                    "project_id": "proj-123",
+                    "title": "User Title",
+                },
+            )
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "registered"
         assert data["external_id"] == "ext-123"
         assert data["id"] == "sess-abc123"
-        assert data["machine_id"] == "machine-1"
+        assert data["machine_id"] == "20000000-0000-4000-8000-000000000001"
+        get_id.assert_called_once_with()
+        assert (
+            mock_server.session_manager.register.call_args.kwargs["machine_id"]
+            == "20000000-0000-4000-8000-000000000001"
+        )
         assert mock_server.session_manager.register.call_args.kwargs["title"] == "User Title"
         assert mock_server.session_manager.register.call_args.kwargs["title_source"] == "manual"
-
-    @pytest.mark.parametrize("machine_id", [None, "", "   "])
-    def test_register_rejects_missing_or_blank_machine_id(
-        self, client, mock_server, machine_id: str | None
-    ) -> None:
-        payload = {"external_id": "ext-123", "source": "Claude Code"}
-        if machine_id is not None:
-            payload["machine_id"] = machine_id
-
-        response = client.post("/api/sessions/register", json=payload)
-
-        assert response.status_code == 422
-        mock_server.session_manager.register.assert_not_called()
 
     def test_register_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""
@@ -560,7 +555,7 @@ class TestRegisterSession:
 
         response = client.post(
             "/api/sessions/register",
-            json={"external_id": "ext-123", "machine_id": "machine-1"},
+            json={"external_id": "ext-123", "machine_id": "21000000-0000-4000-8000-000000000001"},
         )
 
         assert response.status_code == 503
@@ -579,7 +574,7 @@ class TestRegisterSession:
                 "/api/sessions/register",
                 json={
                     "external_id": "ext-123",
-                    "machine_id": "machine-1",
+                    "machine_id": "21000000-0000-4000-8000-000000000001",
                     "project_path": "/tmp/project",
                 },
             )
@@ -597,7 +592,7 @@ class TestRegisterSession:
             "/api/sessions/register",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
             },
         )
 
@@ -621,13 +616,15 @@ class TestCreateWebChatSession:
         mock_server.services.web_chat_runtime_manager.sandbox_config.enabled = True
         mock_server.services.web_chat_runtime_manager.sandbox_policy_hash = "hash-123"
 
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123") as get_id:
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="20000000-0000-4000-8000-000000000001",
+        ) as get_id:
             response = client.post(
                 "/api/sessions/web-chat",
                 json={
                     "provider": "claude",
                     "project_id": "proj-123",
-                    "machine_id": "client-machine",
                     "cwd": "/repo",
                     "title": "Web Chat",
                     "model": "sonnet",
@@ -639,9 +636,9 @@ class TestCreateWebChatSession:
         data = response.json()
         assert data["status"] == "created"
         mock_server.resolve_project_id.assert_called_once_with("proj-123", "/repo")
-        get_id.assert_not_called()
+        get_id.assert_called_once_with()
         mock_server.session_manager.create_web_chat_session.assert_called_once_with(
-            machine_id="client-machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id="proj-123",
             source="claude",
             title="Web Chat",
@@ -654,23 +651,10 @@ class TestCreateWebChatSession:
         mock_server.session_manager.update_model.assert_not_called()
         mock_server.session_manager.update_chat_mode.assert_not_called()
 
-    @pytest.mark.parametrize("machine_id", [None, "", "   "])
-    def test_create_web_chat_session_rejects_missing_or_blank_machine_id(
-        self, client, mock_server, machine_id: str | None
-    ) -> None:
-        payload = {"provider": "claude", "project_id": "proj-123"}
-        if machine_id is not None:
-            payload["machine_id"] = machine_id
-
-        response = client.post("/api/sessions/web-chat", json=payload)
-
-        assert response.status_code == 422
-        mock_server.session_manager.create_web_chat_session.assert_not_called()
-
     def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
         response = client.post(
             "/api/sessions/web-chat",
-            json={"provider": "invalid-provider", "machine_id": "machine-1"},
+            json={"provider": "invalid-provider"},
         )
 
         assert response.status_code == 400
@@ -688,7 +672,7 @@ class TestCreateWebChatSession:
             "/api/sessions/register",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
             },
         )
 
@@ -836,7 +820,7 @@ class TestListSessions:
                 ("task_ref_role", "created"),
                 ("created_after", "2026-04-01T00:00:00+00:00"),
                 ("created_before", "2026-04-30T00:00:00+00:00"),
-                ("machine_id", "machine-filter"),
+                ("machine_id", "21000000-0000-4000-8000-00000000000a"),
             ],
         )
 
@@ -853,7 +837,7 @@ class TestListSessions:
         assert kwargs["task_ref_roles"] == ["claimed", "created"]
         assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
         assert kwargs["created_before"] == "2026-04-30T00:00:00+00:00"
-        assert kwargs["machine_id"] == "machine-filter"
+        assert kwargs["machine_id"] == "21000000-0000-4000-8000-00000000000a"
 
     def test_list_status_in_alone_reaches_storage(self, client, mock_server) -> None:
         """status_in is wired through even when no other filter params are sent."""
@@ -1125,7 +1109,7 @@ class TestFindCurrentSession:
             "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
                 "project_id": "proj-123",
             },
@@ -1143,7 +1127,7 @@ class TestFindCurrentSession:
             "/api/sessions/find_current",
             json={
                 "external_id": "ext-999",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
                 "project_id": "proj-123",
             },
@@ -1167,7 +1151,7 @@ class TestFindCurrentSession:
         response = client.post(
             "/api/sessions/find_current",
             json={
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
                 "project_id": "proj-123",
             },
@@ -1185,7 +1169,7 @@ class TestFindCurrentSession:
             "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
                 "cwd": "/tmp/project",
             },
@@ -1200,7 +1184,7 @@ class TestFindCurrentSession:
             "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
             },
         )
@@ -1216,7 +1200,7 @@ class TestFindCurrentSession:
             "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "source": "Claude Code",
                 "project_id": "proj-123",
             },

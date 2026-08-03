@@ -176,7 +176,7 @@ class TestTranslateToHookEvent:
             "hook_type": "session-start",
             "input_data": {
                 "session_id": "ext-123",
-                "machine_id": "machine-abc",
+                "machine_id": "21000000-0000-4000-8000-000000000007",
                 "cwd": "/projects/test",
             },
         }
@@ -184,7 +184,7 @@ class TestTranslateToHookEvent:
         assert event.event_type == HookEventType.SESSION_START
         assert event.session_id == "ext-123"
         assert event.source == SessionSource.CLAUDE
-        assert event.machine_id == "machine-abc"
+        assert event.machine_id == "21000000-0000-4000-8000-000000000007"
         assert event.cwd == "/projects/test"
         assert event.timestamp is not None
         assert event.metadata == {"_native_hook_type": "session-start"}
@@ -946,7 +946,7 @@ class TestResponseMetadata:
                 "external_id": "ext-id-456",
                 "_first_hook_for_session": True,
                 "parent_session_id": "parent-uuid",
-                "machine_id": "machine-abc",
+                "machine_id": "21000000-0000-4000-8000-000000000007",
                 "project_id": "proj-xyz",
                 "terminal_term_program": "iTerm2",
                 "terminal_tty": "/dev/ttys005",
@@ -959,7 +959,7 @@ class TestResponseMetadata:
         assert "Gobby Session ID: #100 (uuid-123)" in ctx
         assert "ext-id-456" in ctx
         assert "parent-uuid" in ctx
-        assert "machine-abc" in ctx
+        assert "21000000-0000-4000-8000-000000000007" in ctx
         assert "proj-xyz" in ctx
         assert "iTerm2" in ctx
         assert "/dev/ttys005" in ctx
@@ -1080,7 +1080,7 @@ class TestHandleNative:
             "hook_type": "session-start",
             "input_data": {
                 "session_id": "ext-123",
-                "machine_id": "machine-1",
+                "machine_id": "21000000-0000-4000-8000-000000000001",
                 "cwd": "/project",
             },
         }

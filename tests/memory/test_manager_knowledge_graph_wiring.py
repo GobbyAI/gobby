@@ -627,7 +627,7 @@ class TestGraphBackgroundTask:
         from gobby.memory.protocol import MemoryRecord
 
         mock_record = MagicMock(spec=MemoryRecord)
-        mock_record.id = "test-id"
+        mock_record.id = "21000000-0000-4000-8000-00000000001c"
         mock_record.memory_type = "fact"
         mock_record.content = "Josh uses Python"
         mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -652,7 +652,7 @@ class TestGraphBackgroundTask:
         created = await manager.create_memory(content="Josh uses Python")
 
         # Graph queuing now happens inside the active-row reconciliation fence.
-        assert created.id == "test-id"
+        assert created.id == "21000000-0000-4000-8000-00000000001c"
         assert created.content == "Josh uses Python"
         assert created.memory_type.value == "fact"
         manager._lifecycle_service._reconcile_active_snapshot.assert_awaited_once()
@@ -667,7 +667,7 @@ class TestGraphBackgroundTask:
         from gobby.memory.protocol import MemoryRecord
 
         mock_record = MagicMock(spec=MemoryRecord)
-        mock_record.id = "test-id"
+        mock_record.id = "21000000-0000-4000-8000-00000000001c"
         mock_record.memory_type = "fact"
         mock_record.content = "test"
         mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -706,7 +706,7 @@ class TestGraphBackgroundTask:
         from gobby.memory.protocol import MemoryRecord
 
         mock_record = MagicMock(spec=MemoryRecord)
-        mock_record.id = "test-id"
+        mock_record.id = "21000000-0000-4000-8000-00000000001c"
         mock_record.memory_type = "fact"
         mock_record.content = "test"
         mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -734,7 +734,7 @@ class TestGraphBackgroundTask:
             interval=BACKGROUND_TASK_CLEANUP_INTERVAL,
         )
 
-        assert memory.id == "test-id"
+        assert memory.id == "21000000-0000-4000-8000-00000000001c"
         assert manager._kg_service is not None
         assert len(manager._background_tasks) == 0
 

@@ -238,7 +238,13 @@ async def resume_agent_run(
         env[_RESUME_API_BASE_ENV_KEYS[provider]] = endpoint_api_base
     if endpoint_api_token:
         env[_RESUME_API_TOKEN_ENV_KEYS[provider]] = endpoint_api_token
-    env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
+    resume_machine_id = _metadata_str(resume_metadata, "machine_id")
+    try:
+        env["GOBBY_MACHINE_ID"] = str(uuid.UUID(resume_machine_id)) if resume_machine_id else ""
+    except ValueError:
+        env["GOBBY_MACHINE_ID"] = ""
+    if not env["GOBBY_MACHINE_ID"]:
+        env.pop("GOBBY_MACHINE_ID")
     sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
     launch = SandboxLaunch(backend="provider-native", enforced=False)
     if sandbox_config is not None:

@@ -29,7 +29,7 @@ def _event(
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data=data or {},
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
     )
     event.project_id = "proj-1"
     return event
@@ -101,7 +101,7 @@ class TestHookProjectContext:
             source=SessionSource.GROK,
             timestamp=datetime.now(UTC),
             data={"cwd": "/private/tmp/gobby-contract-probe-15038"},
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
         resolve_project_id = MagicMock(side_effect=AssertionError("should not resolve cwd"))
 
@@ -126,7 +126,7 @@ class TestHookProjectContext:
             source=SessionSource.GROK,
             timestamp=datetime.now(UTC),
             data={"cwd": "/tmp/gobby-contract-probe-15038"},
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
 
         with patch(
@@ -149,7 +149,7 @@ class TestHookProjectContext:
             source=SessionSource.GROK,
             timestamp=datetime.now(UTC),
             data={"cwd": "/private/tmp/not-a-probe"},
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
         )
         resolve_project_id = MagicMock(return_value="resolved-project")
 

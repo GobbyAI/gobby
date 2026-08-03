@@ -4337,7 +4337,7 @@ class TestCodexAdapterContextStringBuilding:
                 "session_id": "plat-uuid-456",
                 "session_ref": "#99",
                 "external_id": "thr-codex-xyz",
-                "machine_id": "machine-abc",
+                "machine_id": "21000000-0000-4000-8000-000000000007",
                 "project_id": "proj-def",
                 "_first_hook_for_session": True,
             },
@@ -4348,7 +4348,7 @@ class TestCodexAdapterContextStringBuilding:
         assert "#99" in context
         assert "plat-uuid-456" in context
         assert "thr-codex-xyz" in context
-        assert "machine-abc" in context
+        assert "21000000-0000-4000-8000-000000000007" in context
         assert "proj-def" in context
 
     def test_translate_response_combines_context_and_metadata(self) -> None:
@@ -4391,7 +4391,7 @@ class TestCodexAdapterContextOneTimeInjection:
                 "session_id": "plat-1",
                 "session_ref": "#50",
                 "external_id": "thr-ext-1",
-                "machine_id": "m-1",
+                "machine_id": "21000000-0000-4000-8000-000000000006",
                 "_first_hook_for_session": True,
             },
         )
@@ -4404,7 +4404,7 @@ class TestCodexAdapterContextOneTimeInjection:
                 "session_id": "plat-1",
                 "session_ref": "#50",
                 "external_id": "thr-ext-1",
-                "machine_id": "m-1",
+                "machine_id": "21000000-0000-4000-8000-000000000006",
                 "_first_hook_for_session": False,
             },
         )

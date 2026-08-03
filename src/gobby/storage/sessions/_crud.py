@@ -39,7 +39,7 @@ class _SessionCRUDHost(Protocol):
     def find_by_external_id(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         source: str,
         session_type: str | None = None,
@@ -48,7 +48,7 @@ class _SessionCRUDHost(Protocol):
     def find_by_external_id_any_project(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         session_type: str | None = None,
     ) -> Session | None: ...
@@ -62,7 +62,7 @@ class _SessionCRUDHost(Protocol):
     def register(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         project_id: str | None,
         title: str | None | UnsetType = UNSET,
@@ -85,7 +85,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
     def register(
         self: _SessionCRUDHost,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         project_id: str | None,
         title: str | None | UnsetType = UNSET,

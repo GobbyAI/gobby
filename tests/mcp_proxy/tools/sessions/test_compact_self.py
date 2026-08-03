@@ -471,13 +471,13 @@ class TestCompactSelfTerminalPath:
         current = _make_terminal_session("claude", tmux_pane=None)
         current.id = "s1"
         current.external_id = "shared-external"
-        current.machine_id = "machine-1"
+        current.machine_id = "21000000-0000-4000-8000-000000000001"
         current.project_id = "project-1"
         current.terminal_context = {"cwd": "/work/repos/gobby"}
         sibling = _make_terminal_session("claude", tmux_pane="%44")
         sibling.id = "sibling-session"
         sibling.external_id = "shared-external"
-        sibling.machine_id = "machine-1"
+        sibling.machine_id = "21000000-0000-4000-8000-000000000001"
         sibling.project_id = "project-1"
         sessions_by_id = {"s1": current}
 
@@ -898,7 +898,7 @@ class TestCompactSelfTerminalPath:
         session_manager = SessionManager(temp_db)
         session_id = session_manager.register_session(
             external_id="compact-claim-regression",
-            machine_id="machine-test",
+            machine_id="21000000-0000-4000-8000-00000000000f",
             source="codex",
             project_id=sample_project["id"],
             title="Compact claim regression",

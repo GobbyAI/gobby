@@ -450,7 +450,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
     file.write_bytes(b"pdf content")
 
     msg = CommsMessage(
-        id="m1",
+        id="21000000-0000-4000-8000-000000000005",
         channel_id="ch1",
         direction="outbound",
         content="Here is the file",
@@ -459,7 +459,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
     )
     att = CommsAttachment(
         id="a1",
-        message_id="m1",
+        message_id="21000000-0000-4000-8000-000000000005",
         filename="doc.pdf",
         content_type="application/pdf",
         size_bytes=11,

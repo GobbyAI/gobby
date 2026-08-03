@@ -74,7 +74,7 @@ def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
 ) -> None:
     session = session_mgr.register(
         external_id="old-untracked-terminal",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -102,7 +102,7 @@ def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
 ) -> None:
     session = session_mgr.register(
         external_id="tracked-terminal",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context={"tmux_pane": "%1"},
@@ -132,7 +132,7 @@ def test_expire_stale_sessions_keeps_web_chat_session_with_recent_activity(
 ) -> None:
     session = session_mgr.register(
         external_id="old-web-chat",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
         session_type="web_chat",

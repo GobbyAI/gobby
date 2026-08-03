@@ -217,11 +217,11 @@ class TestSessionStartInput:
             external_id="key",
             transcript_path="/path",
             source=SessionStartSource.RESUME,
-            machine_id="machine-123",
+            machine_id="21000000-0000-4000-8000-000000000008",
             cwd="/home/user/project",
         )
         assert input_data.source == SessionStartSource.RESUME
-        assert input_data.machine_id == "machine-123"
+        assert input_data.machine_id == "21000000-0000-4000-8000-000000000008"
         assert input_data.cwd == "/home/user/project"
 
     def test_empty_external_id_rejected(self) -> None:

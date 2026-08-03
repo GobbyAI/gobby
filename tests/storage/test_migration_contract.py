@@ -737,6 +737,7 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
         "projects": ("id",),
         "sessions": (
             "id",
+            "machine_id",
             "project_id",
             "parent_session_id",
             "summary_revision_id",

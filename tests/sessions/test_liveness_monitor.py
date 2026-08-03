@@ -43,7 +43,7 @@ def _record(
         tmux_socket_name="gobby",
         tmux_window_id=window,
         status=status,
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         terminal_context=context,
     )
 
@@ -101,7 +101,7 @@ class TestPaneOwnershipLifecycle:
         first = _record("first")
         second = _record("second", pid=20)
         decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="first",
             owner=None,
             reason="ownerless",
@@ -140,7 +140,7 @@ class TestPaneOwnershipLifecycle:
         owner = _record("owner")
         background = _record("background", pid=20)
         decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="owner",
             owner=owner,
             reason="validated_foreground_process",
@@ -186,7 +186,7 @@ class TestPaneOwnershipLifecycle:
         outer = _record("outer")
         inner = _record("inner", pid=20)
         decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="outer",
             owner=outer,
             reason="nested_outermost_process",
@@ -225,7 +225,7 @@ class TestPaneOwnershipLifecycle:
     ) -> None:
         handoff = _record("handoff", status="handoff_ready")
         decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="handoff",
             owner=None,
             reason="ownerless",
@@ -308,7 +308,7 @@ class TestPaneOwnershipLifecycle:
     ) -> None:
         record = _record("session")
         decision = PaneOwnershipDecision(
-            identity=("machine", "tmux_socket_name:gobby", "%1"),
+            identity=("21000000-0000-4000-8000-000000000003", "tmux_socket_name:gobby", "%1"),
             requested_session_id="session",
             owner=None,
             reason=reason,
@@ -532,7 +532,7 @@ class TestGetActiveTerminalSessions:
                 "id": "session",
                 "source": "codex",
                 "status": "handoff_ready",
-                "machine_id": "machine",
+                "machine_id": "21000000-0000-4000-8000-000000000003",
                 "terminal_context": json.dumps(
                     {
                         "parent_pid": "42",

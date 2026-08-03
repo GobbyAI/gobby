@@ -71,7 +71,7 @@ def project(project_manager: LocalProjectManager) -> Project:
 def session(session_manager: SessionManager, project: Project) -> Session:
     """Create a test session."""
     return session_manager.register(
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project.id,
         external_id="ext-test-session",
@@ -357,7 +357,7 @@ class TestWorktreeStatusTransitions:
             repo_path="/tmp/claim-test",
         )
         sess = session_manager.register(
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=proj.id,
             external_id="ext-claim-session",
@@ -464,7 +464,7 @@ class TestWorktreeStatusTransitions:
             repo_path="/tmp/lifecycle",
         )
         sess = session_manager.register(
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=proj.id,
             external_id="ext-lifecycle-session",

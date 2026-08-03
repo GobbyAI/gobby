@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 def _register_session(session_manager: SessionManager, project_id: str) -> str:
     session = session_manager.register(
         external_id="usage-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
     )
@@ -84,7 +84,7 @@ def test_ensure_system_session_logs_recreation_at_warning(
 ) -> None:
     session_manager.register(
         external_id="other-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=sample_project["id"],
     )

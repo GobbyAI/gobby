@@ -1,7 +1,6 @@
 """Tests for HTTP request and response models."""
 
 import pytest
-from pydantic import ValidationError
 
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 
@@ -12,10 +11,9 @@ class TestSessionRegisterRequest:
     """Tests for SessionRegisterRequest model."""
 
     def test_required_fields(self) -> None:
-        """Test that external_id and machine_id are required."""
+        """Only the external session identity is client supplied."""
         request = SessionRegisterRequest(
             external_id="test-key",
-            machine_id="machine-123",
             transcript_path=None,
             title=None,
             source=None,
@@ -27,27 +25,13 @@ class TestSessionRegisterRequest:
             cwd=None,
         )
         assert request.external_id == "test-key"
-        assert request.machine_id == "machine-123"
-
-    @pytest.mark.parametrize("machine_id", [None, "", "   "])
-    def test_rejects_missing_or_blank_machine_id(self, machine_id: str | None) -> None:
-        payload = {"external_id": "test-key"}
-        if machine_id is not None:
-            payload["machine_id"] = machine_id
-
-        with pytest.raises(ValidationError):
-            SessionRegisterRequest.model_validate(payload)
-
-    def test_strips_machine_id(self) -> None:
-        request = SessionRegisterRequest(external_id="test-key", machine_id=" machine-123 ")
-
-        assert request.machine_id == "machine-123"
+        assert "machine_id" not in request.model_fields_set
+        assert "machine_id" not in type(request).model_fields
 
     def test_optional_fields(self) -> None:
         """Test all optional fields."""
         request = SessionRegisterRequest(
             external_id="test-key",
-            machine_id="machine-123",
             transcript_path="/path/to/transcript.jsonl",
             title="Test Session",
             source="Claude Code",
@@ -59,7 +43,6 @@ class TestSessionRegisterRequest:
             cwd="/current/working/dir",
         )
 
-        assert request.machine_id == "machine-123"
         assert request.title == "Test Session"
         assert request.git_branch == "main"
 
@@ -68,11 +51,11 @@ class TestWebChatSessionRequest:
     """Tests for WebChatSessionRequest model."""
 
     def test_defaults(self) -> None:
-        request = WebChatSessionRequest(machine_id="client-machine")
+        request = WebChatSessionRequest()
 
         assert request.provider == "claude"
         assert request.project_id is None
-        assert request.machine_id == "client-machine"
+        assert "machine_id" not in type(request).model_fields
         assert request.cwd is None
         assert request.title is None
         assert request.model is None
@@ -82,7 +65,6 @@ class TestWebChatSessionRequest:
         request = WebChatSessionRequest(
             provider="codex",
             project_id="project-uuid",
-            machine_id="client-machine",
             cwd="/repo",
             title="Web Chat",
             model="gpt-5.4",
@@ -91,22 +73,7 @@ class TestWebChatSessionRequest:
 
         assert request.provider == "codex"
         assert request.project_id == "project-uuid"
-        assert request.machine_id == "client-machine"
         assert request.cwd == "/repo"
         assert request.title == "Web Chat"
         assert request.model == "gpt-5.4"
         assert request.chat_mode == "plan"
-
-    @pytest.mark.parametrize("machine_id", [None, "", "   "])
-    def test_rejects_missing_or_blank_machine_id(self, machine_id: str | None) -> None:
-        payload: dict[str, str] = {}
-        if machine_id is not None:
-            payload["machine_id"] = machine_id
-
-        with pytest.raises(ValidationError):
-            WebChatSessionRequest.model_validate(payload)
-
-    def test_strips_machine_id(self) -> None:
-        request = WebChatSessionRequest(machine_id=" client-machine ")
-
-        assert request.machine_id == "client-machine"

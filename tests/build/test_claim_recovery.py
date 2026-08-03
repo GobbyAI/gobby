@@ -41,7 +41,7 @@ def _claimed_review_task(
 
     owner = SessionManager(temp_db).register(
         external_id=f"claim-owner-{stage_state}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -335,7 +335,7 @@ def test_recovery_preserves_active_agent_owned_claim(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="claim-recovery-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -382,7 +382,7 @@ def test_recovery_releases_terminal_reviewer_owned_claim(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="claim-recovery-terminal-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

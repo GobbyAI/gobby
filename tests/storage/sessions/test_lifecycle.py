@@ -58,7 +58,7 @@ class TestSessionManagerLifecycle:
         """A compact restart reuses the same row: same id, state untouched."""
         session = session_manager.register(
             external_id="compact-in-place",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -86,7 +86,7 @@ class TestSessionManagerLifecycle:
 
         reactivated = session_manager.register(
             external_id="compact-in-place",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -108,13 +108,13 @@ class TestSessionManagerLifecycle:
         """Re-registering without a parent argument must not clear stored linkage."""
         parent = session_manager.register(
             external_id="spawn-parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         child = session_manager.register(
             external_id="spawn-child",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             parent_session_id=parent.id,
@@ -123,7 +123,7 @@ class TestSessionManagerLifecycle:
 
         reregistered = session_manager.register(
             external_id="spawn-child",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -139,7 +139,7 @@ class TestSessionManagerLifecycle:
         """Test updating session status."""
         session = session_manager.register(
             external_id="status-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -156,7 +156,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="semantic-status-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Semantic session",
@@ -190,7 +190,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="same-status-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -211,7 +211,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="conditional-expiry-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -229,7 +229,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="active-expiry-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -249,7 +249,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"invalid-status-{bulk}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -274,7 +274,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"terminal-transition-{terminal_status}-{bulk}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -295,7 +295,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"activity-revival-{activity_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -334,7 +334,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"deleted-activity-{activity_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -359,7 +359,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="old-terminal-activity",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -412,7 +412,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"idempotent-activity-{activity_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -451,13 +451,13 @@ class TestSessionManagerLifecycle:
         """Test listing sessions."""
         session_manager.register(
             external_id="list-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="list-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -473,13 +473,13 @@ class TestSessionManagerLifecycle:
         """Test listing sessions with filters."""
         s1 = session_manager.register(
             external_id="filter-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="filter-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -504,7 +504,7 @@ class TestSessionManagerLifecycle:
         for i in range(5):
             session_manager.register(
                 external_id=f"limit-{i}",
-                machine_id=f"m{i}",
+                machine_id=f"20000000-0000-4000-8000-{i:012d}",
                 source="claude",
                 project_id=sample_project["id"],
             )
@@ -520,7 +520,7 @@ class TestSessionManagerLifecycle:
         """Test deleting a session."""
         session = session_manager.register(
             external_id="delete-me",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -536,7 +536,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="delete-memory-source",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -567,7 +567,7 @@ class TestSessionManagerLifecycle:
         # Create expired session with transcript_path
         session = session_manager.register(
             external_id="transcript-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -602,7 +602,7 @@ class TestSessionManagerLifecycle:
         """Fresh activity revives expired terminal sessions and reopens transcript processing."""
         session = session_manager.register(
             external_id="revive-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -630,7 +630,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="past-revival-horizon",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -666,7 +666,7 @@ class TestSessionManagerLifecycle:
         }
         older = session_manager.register(
             external_id="stale-hook-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -675,7 +675,7 @@ class TestSessionManagerLifecycle:
         session_manager.mark_transcript_processed(older.id)
         newer = session_manager.register(
             external_id="live-hook-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -712,7 +712,7 @@ class TestSessionManagerLifecycle:
         }
         older = session_manager.register(
             external_id="reactivated-old-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             agent_depth=1,
@@ -720,7 +720,7 @@ class TestSessionManagerLifecycle:
         )
         newer = session_manager.register(
             external_id="false-expired-new-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             agent_depth=1,
@@ -771,7 +771,7 @@ class TestSessionManagerLifecycle:
         }
         owner = session_manager.register(
             external_id=f"validated-{owner_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -780,7 +780,7 @@ class TestSessionManagerLifecycle:
             session_manager.update_status(owner.id, owner_status)
         requested = session_manager.register(
             external_id=f"false-claim-{owner_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -824,7 +824,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         requested = session_manager.register(
             external_id=f"over-horizon-{reason}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={
@@ -896,7 +896,7 @@ class TestSessionManagerLifecycle:
         }
         requested = session_manager.register(
             external_id=f"inconclusive-requested-{reason}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -905,7 +905,7 @@ class TestSessionManagerLifecycle:
         session_manager.mark_transcript_processed(requested.id)
         claimant = session_manager.register(
             external_id=f"inconclusive-claimant-{reason}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -982,7 +982,7 @@ class TestSessionManagerLifecycle:
         }
         history = session_manager.register(
             external_id="expired-history",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -990,7 +990,7 @@ class TestSessionManagerLifecycle:
         session_manager.update_status(history.id, "expired")
         requested = session_manager.register(
             external_id="requested-interactive-owner",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -999,7 +999,7 @@ class TestSessionManagerLifecycle:
         session_manager.mark_transcript_processed(requested.id)
         spawned = session_manager.register(
             external_id="spawned-false-claim",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             agent_depth=1,
@@ -1078,7 +1078,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         current = session_manager.register(
             external_id="active-after-stale-snapshot",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={
@@ -1117,8 +1117,8 @@ class TestSessionManagerLifecycle:
     @pytest.mark.parametrize(
         ("newer_machine_id", "newer_socket_path"),
         [
-            ("other-machine", "/tmp/tmux-501/default"),
-            ("machine", "/tmp/tmux-501/other"),
+            ("20000000-0000-4000-8000-000000000012", "/tmp/tmux-501/default"),
+            ("20000000-0000-4000-8000-000000000001", "/tmp/tmux-501/other"),
         ],
     )
     def test_terminal_ownership_does_not_cross_machine_or_socket(
@@ -1131,7 +1131,7 @@ class TestSessionManagerLifecycle:
         """Identical pane IDs on distinct machines or sockets remain independent."""
         older = session_manager.register(
             external_id=f"older-{newer_machine_id}-{newer_socket_path}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={
@@ -1173,14 +1173,14 @@ class TestSessionManagerLifecycle:
         }
         codex = session_manager.register(
             external_id="terminal-owner-codex",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
         )
         grok = session_manager.register(
             external_id="terminal-owner-grok",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="grok",
             project_id=other_project.id,
             terminal_context=terminal_context,
@@ -1188,7 +1188,7 @@ class TestSessionManagerLifecycle:
         session_manager.update_status(grok.id, "handoff_ready")
         expired = session_manager.register(
             external_id="terminal-owner-expired",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context=terminal_context,
@@ -1196,7 +1196,7 @@ class TestSessionManagerLifecycle:
         session_manager.update_status(expired.id, "expired")
         session_manager.register(
             external_id="other-terminal-socket",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
             terminal_context={
@@ -1220,7 +1220,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"web-chat-activate-{resumable_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             session_type="web_chat",
@@ -1245,7 +1245,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id=f"web-chat-ineligible-{session_type}-{terminal_status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             session_type=session_type,
@@ -1266,7 +1266,7 @@ class TestSessionManagerLifecycle:
         """A stale finalizer cannot mark a concurrently revived session processed."""
         session = session_manager.register(
             external_id="revival-race-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -1295,7 +1295,7 @@ class TestSessionManagerLifecycle:
         """`/compact` on an expired terminal session revives it to handoff_ready."""
         session = session_manager.register(
             external_id="compact-after-expiry",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             transcript_path="/tmp/test.jsonl",
@@ -1316,7 +1316,7 @@ class TestSessionManagerLifecycle:
         """An expired session past the revival horizon keeps warning-and-False."""
         session = session_manager.register(
             external_id="compact-past-horizon",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1341,7 +1341,7 @@ class TestSessionManagerLifecycle:
         """Deleted sessions never revive, even toward handoff_ready."""
         session = session_manager.register(
             external_id="compact-deleted",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1361,7 +1361,7 @@ class TestSessionManagerLifecycle:
         """Other transitions out of expired remain strictly forbidden."""
         session = session_manager.register(
             external_id="expired-to-paused",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1381,14 +1381,14 @@ class TestSessionManagerLifecycle:
         """Test updating parent session ID."""
         session = session_manager.register(
             external_id="child",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
 
         parent = session_manager.register(
             external_id="parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1409,14 +1409,14 @@ class TestSessionManagerLifecycle:
         """Storage ignores direct updates that would self-parent a session."""
         session = session_manager.register(
             external_id="compact-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.update_status(session.id, "handoff_ready")
 
         parent = session_manager.find_parent(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
             status="handoff_ready",
@@ -1436,7 +1436,7 @@ class TestSessionManagerLifecycle:
         """Test finding child sessions of a parent."""
         parent = session_manager.register(
             external_id="parent-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1444,14 +1444,14 @@ class TestSessionManagerLifecycle:
         # Create child sessions
         child1 = session_manager.register(
             external_id="child-1",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             parent_session_id=parent.id,
         )
         child2 = session_manager.register(
             external_id="child-2",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             parent_session_id=parent.id,
@@ -1472,7 +1472,7 @@ class TestSessionManagerLifecycle:
         """Test find_children returns empty list when no children."""
         session = session_manager.register(
             external_id="no-children",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1488,7 +1488,7 @@ class TestSessionManagerLifecycle:
         """Test updating multiple session fields at once."""
         session = session_manager.register(
             external_id="multi-update",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Original Title",
@@ -1517,7 +1517,7 @@ class TestSessionManagerLifecycle:
     ) -> None:
         session = session_manager.register(
             external_id="clear-metadata",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Temporary title",
@@ -1548,7 +1548,7 @@ class TestSessionManagerLifecycle:
         """Test updating a single field."""
         session = session_manager.register(
             external_id="single-update",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1566,7 +1566,7 @@ class TestSessionManagerLifecycle:
         """Test update with no fields returns session unchanged."""
         session = session_manager.register(
             external_id="no-update",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1584,7 +1584,7 @@ class TestSessionManagerLifecycle:
         """Test updating just external_id."""
         session = session_manager.register(
             external_id="old-ext",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1602,7 +1602,7 @@ class TestSessionManagerLifecycle:
         """Test updating just transcript_path."""
         session = session_manager.register(
             external_id="jsonl-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1620,7 +1620,7 @@ class TestSessionManagerLifecycle:
         """Test updating just git_branch."""
         session = session_manager.register(
             external_id="branch-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1638,13 +1638,13 @@ class TestSessionManagerLifecycle:
         """Test counting sessions."""
         session_manager.register(
             external_id="count-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="count-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -1660,13 +1660,13 @@ class TestSessionManagerLifecycle:
         """Test counting sessions with filters."""
         s1 = session_manager.register(
             external_id="count-filter-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="count-filter-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -1693,19 +1693,19 @@ class TestSessionManagerLifecycle:
         """Test counting sessions grouped by status."""
         s1 = session_manager.register(
             external_id="status-count-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         s2 = session_manager.register(
             external_id="status-count-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="status-count-3",
-            machine_id="m3",
+            machine_id="20000000-0000-4000-8000-00000000000f",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1740,14 +1740,14 @@ class TestSessionManagerLifecycle:
         project = LocalProjectManager(temp_db).create(name="renumber-dry", repo_path="/tmp/dry")
         first = session_manager.register(
             external_id="dry-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
             title="First",
         )
         second = session_manager.register(
             external_id="dry-2",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
             title="Second",
@@ -1787,28 +1787,28 @@ class TestSessionManagerLifecycle:
 
         visible_first = session_manager.register(
             external_id="apply-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
             title="Visible first",
         )
         deleted = session_manager.register(
             external_id="apply-deleted",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
             title="Deleted",
         )
         visible_second = session_manager.register(
             external_id="apply-2",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
             title="Visible second",
         )
         other = session_manager.register(
             external_id="other-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=other_project.id,
             title="Other",
@@ -1864,13 +1864,13 @@ class TestSessionManagerLifecycle:
         """Test listing all sessions without filters."""
         session_manager.register(
             external_id="list-all-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="list-all-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )

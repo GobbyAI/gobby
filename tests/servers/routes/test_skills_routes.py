@@ -83,7 +83,7 @@ def skill_project(temp_db: HubDatabase, tmp_path: Path) -> Project:
 class TestListSkills:
     def test_list_skills(self, client: TestClient, skill_manager: MagicMock) -> None:
         skill_mock = MagicMock()
-        skill_mock.to_dict.return_value = {"id": "test-id", "name": "test-skill"}
+        skill_mock.to_dict.return_value = {"id": "21000000-0000-4000-8000-00000000001c", "name": "test-skill"}
         skill_manager.list_skills.return_value = [skill_mock]
 
         response = client.get("/api/skills")

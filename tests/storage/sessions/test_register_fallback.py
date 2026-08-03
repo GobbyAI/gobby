@@ -33,7 +33,7 @@ def test_register_session_returns_empty_str_on_storage_failure(
     with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
         session_id = session_mgr.register_session(
             external_id="fallback-session",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -48,7 +48,7 @@ def test_register_session_fallback_does_not_persist(
     with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
         session_id = session_mgr.register_session(
             external_id="failed-session",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -64,7 +64,7 @@ def test_register_session_fallback_does_not_populate_caches(
     with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
         session_id = session_mgr.register_session(
             external_id="failed-session",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=project_id,
         )
@@ -74,7 +74,7 @@ def test_register_session_fallback_does_not_populate_caches(
         session_mgr.lookup_session_id(
             external_id="failed-session",
             source="claude",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             project_id=project_id,
         )
         is None
@@ -89,7 +89,7 @@ def test_register_session_failure_returns_existing_canonical_session(
 ) -> None:
     canonical_id = session_mgr.register_session(
         external_id="resumed-codex",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -97,7 +97,7 @@ def test_register_session_failure_returns_existing_canonical_session(
     with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
         session_id = session_mgr.register_session(
             external_id="resumed-codex",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=project_id,
             transcript_path="/tmp/resumed-codex.jsonl",
@@ -117,7 +117,7 @@ def test_register_session_happy_path_populates_caches(
 ) -> None:
     session_id = session_mgr.register_session(
         external_id="storage-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
         transcript_path="/tmp/storage-session.jsonl",
@@ -130,7 +130,7 @@ def test_register_session_happy_path_populates_caches(
         session_mgr.lookup_session_id(
             external_id="storage-session",
             source="claude",
-            machine_id="machine-1",
+            machine_id="20000000-0000-4000-8000-000000000002",
             project_id=project_id,
         )
         == session_id
@@ -144,7 +144,7 @@ def test_register_session_happy_path_caches_persisted_provisional_title(
 ) -> None:
     session_id = session_mgr.register_session(
         external_id="storage-provisional-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         transcript_path="/tmp/storage-provisional-session.jsonl",
@@ -164,7 +164,7 @@ def test_register_existing_session_backfills_terminal_context(
 ) -> None:
     created = session_mgr.register(
         external_id="existing-terminal-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -177,7 +177,7 @@ def test_register_existing_session_backfills_terminal_context(
 
     updated = session_mgr.register(
         external_id="existing-terminal-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context=terminal_context,
@@ -200,7 +200,7 @@ def test_register_existing_session_merges_cwd_without_losing_tmux_context(
     }
     created = session_mgr.register(
         external_id="existing-terminal-session-with-cwd",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context=original_context,
@@ -208,7 +208,7 @@ def test_register_existing_session_merges_cwd_without_losing_tmux_context(
 
     updated = session_mgr.register(
         external_id="existing-terminal-session-with-cwd",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context={"cwd": "/work/repos/gobby"},
@@ -227,7 +227,7 @@ def test_backfill_terminal_context_merges_without_losing_tmux_context(
 ) -> None:
     created = session_mgr.register(
         external_id="backfill-terminal-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context={"tmux_pane": "%7"},
@@ -252,14 +252,14 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
 ) -> None:
     weak = session_mgr.register(
         external_id="recover-terminal-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         terminal_context={"cwd": "/work/repos/gobby"},
     )
     tmux_capable = session_mgr.register(
         external_id="recover-terminal-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
         terminal_context={"tmux_pane": "%8", "tmux_socket_path": "/tmp/tmux-501/gobby"},
@@ -268,7 +268,7 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     recovered = session_mgr.recover_session(
         external_id="recover-terminal-session",
         source="codex",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         project_id=project_id,
     )
 
@@ -283,13 +283,13 @@ def test_recover_session_refuses_equal_score_cross_source_candidates(
 ) -> None:
     first = session_mgr.register(
         external_id="ambiguous-recovery-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
     second = session_mgr.register(
         external_id="ambiguous-recovery-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
     )
@@ -297,7 +297,7 @@ def test_recover_session_refuses_equal_score_cross_source_candidates(
     recovered = session_mgr.recover_session(
         external_id="ambiguous-recovery-session",
         source="agy",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         project_id=project_id,
     )
 
@@ -332,7 +332,7 @@ def test_register_raises_on_storage_failure(
         with pytest.raises(RuntimeError, match="boom"):
             session_mgr.register(
                 external_id="raise-session",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="claude",
                 project_id=project_id,
             )

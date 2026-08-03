@@ -853,7 +853,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         sessions = [
             session_manager.register(
                 external_id=f"atomic-worktree-claim-{index}",
-                machine_id="atomic-worktree-claim-machine",
+                machine_id="21000000-0000-4000-8000-000000000019",
                 source="codex",
                 project_id=str(sample_project["id"]),
             )
@@ -913,13 +913,13 @@ class TestLocalWorktreeManagerStatusTransitions:
     ) -> None:
         session_manager = SessionManager(temp_db)
         current_owner = session_manager.register(
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=str(sample_project["id"]),
             external_id="worktree-current-owner",
         )
         resumed_owner = session_manager.register(
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=str(sample_project["id"]),
             external_id="worktree-resumed-owner",
@@ -958,7 +958,7 @@ class TestLocalWorktreeManagerStatusTransitions:
     ) -> None:
         session_manager = SessionManager(temp_db)
         owner = session_manager.register(
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=str(sample_project["id"]),
             external_id="worktree-live-owner",

@@ -342,7 +342,7 @@ class TestSearchMemories:
         """Test successful memory search."""
         mock_memory_manager.search_memories.return_value = [
             MockMemory(
-                id="m1",
+                id="21000000-0000-4000-8000-000000000005",
                 content="Memory 1",
                 similarity=0.95,
                 search_via="semantic",
@@ -419,7 +419,7 @@ class TestSearchMemories:
         """Manual search should not apply config.min_recall_score implicitly."""
         mock_memory_manager.config.min_recall_score = 0.9
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="m1", content="Memory 1", similarity=0.65),
+            MockMemory(id="21000000-0000-4000-8000-000000000005", content="Memory 1", similarity=0.65),
         ]
 
         with patch(
@@ -431,7 +431,7 @@ class TestSearchMemories:
             )
 
         assert result["success"] is True
-        assert [mem["id"] for mem in result["memories"]] == ["m1"]
+        assert [mem["id"] for mem in result["memories"]] == ["21000000-0000-4000-8000-000000000005"]
         call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
         assert call_kwargs["limit"] == 5
         assert call_kwargs["min_score"] is None
@@ -443,7 +443,7 @@ class TestSearchMemories:
         """Explicit min_score filters by semantic similarity only."""
         mock_memory_manager.search_memories.return_value = [
             MockMemory(
-                id="m1",
+                id="21000000-0000-4000-8000-000000000005",
                 content="Memory 1",
                 similarity=0.65,
                 ranking_score=0.08,
@@ -471,7 +471,7 @@ class TestSearchMemories:
             )
 
         assert result["success"] is True
-        assert [mem["id"] for mem in result["memories"]] == ["m1"]
+        assert [mem["id"] for mem in result["memories"]] == ["21000000-0000-4000-8000-000000000005"]
         call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
         assert call_kwargs["limit"] == 4
         assert call_kwargs["min_score"] is None
@@ -636,7 +636,7 @@ class TestListMemories:
     async def test_list_memories_success(self, memory_registry, mock_memory_manager):
         """Test successful memory listing."""
         mock_memory_manager.list_memories.return_value = [
-            MockMemory(id="m1"),
+            MockMemory(id="21000000-0000-4000-8000-000000000005"),
             MockMemory(id="m2"),
             MockMemory(id="m3"),
         ]

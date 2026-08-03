@@ -24,7 +24,7 @@ class TestSessionManagerPruning:
         """Orphan sweep only expires: the handoff_ready row is the live session."""
         session = session_manager.register(
             external_id="orphaned-compact-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -60,7 +60,7 @@ class TestSessionManagerPruning:
         """Only long-expired sessions with an unconsumed compact marker are reclaimed."""
         session = session_manager.register(
             external_id="unresumed-compact-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -98,13 +98,13 @@ class TestSessionManagerPruning:
 
         unmarked = session_manager.register(
             external_id="expired-daemon-resume-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         fresh = session_manager.register(
             external_id="freshly-expired-compact-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -143,19 +143,19 @@ class TestSessionManagerPruning:
         variable_manager = SessionVariableManager(session_manager.db)
         old_expired = session_manager.register(
             external_id="old-expired-state",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
         old_deleted = session_manager.register(
             external_id="old-deleted-state",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
         recent_expired = session_manager.register(
             external_id="recent-expired-state",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -218,7 +218,7 @@ class TestSessionManagerPruning:
 
         session = session_manager.register(
             external_id="stale-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -248,7 +248,7 @@ class TestSessionManagerPruning:
         """Test pausing inactive active sessions."""
         session = session_manager.register(
             external_id="active-idle",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -278,7 +278,7 @@ class TestSessionManagerPruning:
         """Auto-pausing should not make a stale session look freshly active."""
         session = session_manager.register(
             external_id="active-idle-preserve-time",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -311,7 +311,7 @@ class TestSessionManagerPruning:
         """A very old session should expire in the same cleanup sweep after pause."""
         session = session_manager.register(
             external_id="ancient-active-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -339,7 +339,7 @@ class TestSessionManagerPruning:
     ) -> None:
         session = session_manager.register(
             external_id=f"idle-tmux-{target_field}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={target_field: "%304" if target_field == "tmux_pane" else "@42"},
@@ -372,7 +372,7 @@ class TestSessionManagerPruning:
     ) -> None:
         session = session_manager.register(
             external_id=f"protected-tmux-{target_field}-{status}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={target_field: "%305" if target_field == "tmux_pane" else "@43"},
@@ -400,7 +400,7 @@ class TestSessionManagerPruning:
     ) -> None:
         session = session_manager.register(
             external_id=f"blank-tmux-{target_field}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={target_field: "   "},
@@ -427,13 +427,13 @@ class TestSessionManagerPruning:
         """Zero-message active and paused sessions should fast-expire."""
         active_session = session_manager.register(
             external_id="empty-active",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         paused_session = session_manager.register(
             external_id="empty-paused",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -462,13 +462,13 @@ class TestSessionManagerPruning:
         """Fast-expire should skip sessions that are non-empty or already expired."""
         nonempty_active = session_manager.register(
             external_id="nonempty-active",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         expired_empty = session_manager.register(
             external_id="already-expired-empty",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -499,25 +499,25 @@ class TestSessionManagerPruning:
         """Prune should only hard-delete old expired zero-message sessions."""
         prune_me = session_manager.register(
             external_id="prune-me",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         recent_expired = session_manager.register(
             external_id="recent-expired",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         expired_nonempty = session_manager.register(
             external_id="expired-nonempty",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         paused_empty = session_manager.register(
             external_id="paused-empty",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -590,7 +590,7 @@ class TestSessionManagerPruning:
     ) -> None:
         session = session_manager.register(
             external_id="transcript-backed",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             transcript_path="/tmp/transcript-backed.jsonl",
@@ -615,25 +615,25 @@ class TestSessionManagerPruning:
         """Prune should skip empty expired sessions still referenced by retained history."""
         child_parent = session_manager.register(
             external_id="child-parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         task_ref = session_manager.register(
             external_id="task-ref",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         memory_ref = session_manager.register(
             external_id="memory-ref",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         agent_run_ref = session_manager.register(
             external_id="agent-run-ref",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -652,7 +652,7 @@ class TestSessionManagerPruning:
 
         session_manager.register(
             external_id="child-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             parent_session_id=child_parent.id,
@@ -730,7 +730,7 @@ class TestSessionManagerPruning:
 
         session = session_manager.register(
             external_id="old-audit-ref",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -780,13 +780,13 @@ class TestSessionManagerPruning:
         """Large prune batches should delete stale empties while keeping referenced rows."""
         retained_parent = session_manager.register(
             external_id="retained-parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         retained_memory = session_manager.register(
             external_id="retained-memory",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -794,7 +794,7 @@ class TestSessionManagerPruning:
         stale_sessions = [
             session_manager.register(
                 external_id=f"bulk-prune-{index}",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
             )
@@ -817,7 +817,7 @@ class TestSessionManagerPruning:
 
         session_manager.register(
             external_id="retained-child",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             parent_session_id=retained_parent.id,
@@ -852,7 +852,7 @@ class TestSessionManagerPruning:
         """Test expire_stale_sessions returns 0 when no stale sessions."""
         session_manager.register(
             external_id="fresh-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -868,7 +868,7 @@ class TestSessionManagerPruning:
         """Test pause_inactive_active_sessions returns 0 when no inactive sessions."""
         session_manager.register(
             external_id="active-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -886,7 +886,7 @@ class TestSessionManagerPruning:
         for i in range(5):
             session = session_manager.register(
                 external_id=f"pending-{i}",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
                 transcript_path=f"/tmp/transcript-{i}.jsonl",
@@ -904,7 +904,7 @@ class TestSessionManagerPruning:
         """Test that get_pending_transcript_sessions excludes processed sessions."""
         session = session_manager.register(
             external_id="processed-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             transcript_path="/tmp/transcript.jsonl",
@@ -923,7 +923,7 @@ class TestSessionManagerPruning:
         """Test that get_pending_transcript_sessions excludes sessions without transcript_path."""
         session = session_manager.register(
             external_id="no-jsonl-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             transcript_path=None,  # No transcript path

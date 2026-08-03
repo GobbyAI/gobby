@@ -100,7 +100,7 @@ def make_before_tool_event() -> Callable[[dict], HookEvent]:
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input},
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
         # HookEvent does not accept project_id in __init__; set it as an attribute.
         event.project_id = "proj-1"

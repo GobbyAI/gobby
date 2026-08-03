@@ -99,7 +99,7 @@ def _review_setup(
     project = LocalProjectManager(temp_db).create(name=stem, repo_path=str(root))
     session = SessionManager(temp_db).register(
         external_id=f"{stem}-parent",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )

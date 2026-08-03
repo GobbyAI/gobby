@@ -100,7 +100,7 @@ async def test_token_usage_aggregation(
     # 2. Register a session
     session = session_manager.register(
         external_id="ext-123",
-        machine_id="mac-1",
+        machine_id="21000000-0000-4000-8000-00000000001a",
         source="claude_code",
         project_id=PROJECT_ID,
         title="Test Session",

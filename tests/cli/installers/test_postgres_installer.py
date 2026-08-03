@@ -213,7 +213,7 @@ def test_pg_search_manifest_selects_current_arch_checksum(
             return asset_root / "version.json"
 
     monkeypatch.setattr(installer.resources, "files", lambda _package: _FakeFiles())
-    monkeypatch.setattr(installer.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(installer.platform, "21000000-0000-4000-8000-000000000003", lambda: "arm64")
 
     manifest = installer._read_pgsearch_version_manifest()
 

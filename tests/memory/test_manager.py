@@ -160,7 +160,7 @@ class TestCreateMemory:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
                VALUES (%s, %s, %s, %s, %s, %s)""",
-            (SESSION_ID, "ext-123", "machine-123", "claude", PROJECT_ID, now),
+            (SESSION_ID, "ext-123", "21000000-0000-4000-8000-000000000008", "claude", PROJECT_ID, now),
         )
 
         manager = MemoryManager(db=db, config=memory_config)

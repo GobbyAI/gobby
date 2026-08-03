@@ -32,7 +32,7 @@ def _context(db: HubDatabase, manager: LocalTaskManager) -> SimpleNamespace:
 def _session(session_manager: SessionManager, project_id: str) -> Any:
     return session_manager.register(
         external_id="validation-exit-ramp-session",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
