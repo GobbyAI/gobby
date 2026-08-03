@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,11 +15,36 @@ from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.terminal_ownership import terminal_session_identity
+from gobby.terminal_ownership import (
+    OwnershipReason,
+    PaneOwnershipDecision,
+    terminal_session_identity,
+)
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+
+def _validated_owner(owner_id: str) -> Callable[..., PaneOwnershipDecision]:
+    def resolve(
+        sessions: list[object],
+        *,
+        requested_session_id: str | None = None,
+    ) -> PaneOwnershipDecision:
+        candidates = [session for session in sessions if isinstance(session, Session)]
+        requested = next(session for session in candidates if session.id == requested_session_id)
+        assert requested.status == "active"
+        owner = next(session for session in candidates if session.id == owner_id)
+        return PaneOwnershipDecision(
+            terminal_session_identity(owner),
+            requested_session_id,
+            owner,
+            "validated_foreground_process",
+            frozenset({owner.id}),
+        )
+
+    return resolve
 
 
 class TestSessionManagerLifecycle:
@@ -628,13 +654,12 @@ class TestSessionManagerLifecycle:
         assert transcript_row is not None
         assert transcript_row["transcript_processed"] is True
 
-    def test_revive_superseded_terminal_session_keeps_newest_owner_active(
+    def test_revive_expired_foreground_owner_expires_newer_false_claim(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
-        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Delayed activity stays attributed to the expired historical session."""
         terminal_context = {
             "tmux_pane": "%154",
             "tmux_socket_path": "/tmp/tmux-501/default",
@@ -655,39 +680,32 @@ class TestSessionManagerLifecycle:
             project_id=sample_project["id"],
             terminal_context=terminal_context,
         )
-        caplog.set_level("DEBUG", logger="gobby.storage.sessions")
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            _validated_owner(older.id),
+        )
 
         revived = session_manager.revive_expired_terminal_session(older.id)
 
         assert revived is not None
-        assert revived.status == "expired"
-        live_owner = session_manager.get(newer.id)
-        assert live_owner is not None
-        assert live_owner.status == "active"
+        assert revived.status == "active"
+        false_claim = session_manager.get(newer.id)
+        assert false_claim is not None
+        assert false_claim.status == "expired"
         transcript_row = session_manager.db.fetchone(
             "SELECT transcript_processed FROM sessions WHERE id = %s",
             (older.id,),
         )
         assert transcript_row is not None
-        assert transcript_row["transcript_processed"] is True
-        suppressed = [
-            record
-            for record in caplog.records
-            if getattr(record, "event", None) == "terminal_session_revival_suppressed"
-        ]
-        assert len(suppressed) == 1
-        assert suppressed[0].levelname == "DEBUG"
-        assert getattr(suppressed[0], "session_id", None) == older.id
-        assert getattr(suppressed[0], "terminal_owner_session_id", None) == newer.id
+        assert transcript_row["transcript_processed"] is False
 
-    def test_newest_terminal_activity_demotes_reactivated_older_owner(
+    def test_spawned_only_terminal_activity_keeps_newest_created_owner(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
         caplog: pytest.LogCaptureFixture,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A false-expired newest session reclaims its terminal from an older row."""
         terminal_context = {
             "tmux_pane": "%154",
             "tmux_socket_path": "/tmp/tmux-501/default",
@@ -697,6 +715,7 @@ class TestSessionManagerLifecycle:
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
+            agent_depth=1,
             terminal_context=terminal_context,
         )
         newer = session_manager.register(
@@ -704,6 +723,7 @@ class TestSessionManagerLifecycle:
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
+            agent_depth=1,
             terminal_context=terminal_context,
         )
         session_manager.update_status(newer.id, "expired")
@@ -713,6 +733,10 @@ class TestSessionManagerLifecycle:
             session_manager,
             "_notify_session_change",
             lambda event, session_id: notifications.append((event, session_id)),
+        )
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            lambda *_args, **_kwargs: pytest.fail("spawned claims must not inspect processes"),
         )
 
         revived = session_manager.revive_expired_terminal_session(newer.id)
@@ -732,6 +756,319 @@ class TestSessionManagerLifecycle:
         assert getattr(ownership_changes[0], "session_id", None) == older.id
         assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == newer.id
         assert ("session_expired", older.id) in notifications
+
+    @pytest.mark.parametrize("owner_status", ["active", "paused", "handoff_ready"])
+    def test_validated_existing_interactive_owner_preserves_status(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+        owner_status: str,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%156",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        owner = session_manager.register(
+            external_id=f"validated-{owner_status}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        if owner_status != "active":
+            session_manager.update_status(owner.id, owner_status)
+        requested = session_manager.register(
+            external_id=f"false-claim-{owner_status}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(requested.id, "expired")
+        session_manager.mark_transcript_processed(requested.id)
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            _validated_owner(owner.id),
+        )
+
+        result = session_manager.revive_expired_terminal_session(requested.id)
+
+        assert result is not None
+        assert result.status == "expired"
+        preserved = session_manager.get(owner.id)
+        assert preserved is not None
+        assert preserved.status == owner_status
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (requested.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] is True
+
+    @pytest.mark.parametrize(
+        ("reason", "expected_status", "expected_transcript_processed"),
+        [
+            (None, "active", False),
+            ("ownerless", "expired", True),
+        ],
+    )
+    def test_over_horizon_interactive_revival_requires_validated_foreground_owner(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+        reason: OwnershipReason | None,
+        expected_status: str,
+        expected_transcript_processed: bool,
+    ) -> None:
+        requested = session_manager.register(
+            external_id=f"over-horizon-{reason}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%157",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        )
+        session_manager.update_status(requested.id, "expired")
+        session_manager.mark_transcript_processed(requested.id)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (requested.id,),
+        )
+        if reason is None:
+            monkeypatch.setattr(
+                "gobby.storage.sessions._field_update.resolve_pane_ownership",
+                _validated_owner(requested.id),
+            )
+        else:
+
+            def ownerless_resolver(
+                sessions: list[object],
+                *,
+                requested_session_id: str | None = None,
+            ) -> PaneOwnershipDecision:
+                return PaneOwnershipDecision(
+                    terminal_session_identity(sessions[0]),
+                    requested_session_id,
+                    None,
+                    reason,
+                )
+
+            monkeypatch.setattr(
+                "gobby.storage.sessions._field_update.resolve_pane_ownership",
+                ownerless_resolver,
+            )
+
+        result = session_manager.revive_expired_terminal_session(requested.id)
+
+        assert result is not None
+        assert result.status == expected_status
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (requested.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] is expected_transcript_processed
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "ownerless",
+            "invalid_identity",
+            "process_inspection_error",
+            "ambiguous_foreground_processes",
+        ],
+    )
+    def test_inconclusive_interactive_ownership_performs_zero_writes_or_notifications(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        reason: OwnershipReason,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%158",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        requested = session_manager.register(
+            external_id=f"inconclusive-requested-{reason}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(requested.id, "expired")
+        session_manager.mark_transcript_processed(requested.id)
+        claimant = session_manager.register(
+            external_id=f"inconclusive-claimant-{reason}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        before = session_manager.db.fetchall(
+            """
+            SELECT id, status, transcript_processed, updated_at
+            FROM sessions
+            WHERE id IN (%s, %s)
+            ORDER BY id
+            """,
+            (requested.id, claimant.id),
+        )
+        changes: list[tuple[str, str]] = []
+        transitions: list[SessionStatusTransition] = []
+        monkeypatch.setattr(
+            session_manager,
+            "_notify_session_change",
+            lambda event, session_id: changes.append((event, session_id)),
+        )
+        monkeypatch.setattr(session_manager, "_notify_status_transition", transitions.append)
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            lambda _sessions, requested_session_id=None: PaneOwnershipDecision(
+                terminal_session_identity(requested),
+                requested_session_id,
+                None,
+                reason,
+                frozenset({claimant.id}),
+            ),
+        )
+        caplog.set_level("DEBUG", logger="gobby.storage.sessions")
+
+        result = session_manager.revive_expired_terminal_session(requested.id)
+
+        after = session_manager.db.fetchall(
+            """
+            SELECT id, status, transcript_processed, updated_at
+            FROM sessions
+            WHERE id IN (%s, %s)
+            ORDER BY id
+            """,
+            (requested.id, claimant.id),
+        )
+        assert result is not None
+        assert result.status == "expired"
+        assert after == before
+        assert changes == []
+        assert transitions == []
+        diagnostics = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_ownership_inconclusive"
+        ]
+        assert len(diagnostics) == 1
+        assert diagnostics[0].levelname == "DEBUG"
+        assert getattr(diagnostics[0], "reason", None) == reason
+        assert getattr(diagnostics[0], "requested_session_id", None) == requested.id
+        assert getattr(diagnostics[0], "terminal_claimant_session_ids", None) == [
+            requested.id,
+            claimant.id,
+        ]
+        assert getattr(diagnostics[0], "validated_session_ids", None) == [claimant.id]
+
+    def test_mixed_claims_exclude_expired_history_and_reconcile_idempotently(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        terminal_context = {
+            "tmux_pane": "%159",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        history = session_manager.register(
+            external_id="expired-history",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(history.id, "expired")
+        requested = session_manager.register(
+            external_id="requested-interactive-owner",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(requested.id, "expired")
+        session_manager.mark_transcript_processed(requested.id)
+        spawned = session_manager.register(
+            external_id="spawned-false-claim",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            agent_depth=1,
+            terminal_context=terminal_context,
+        )
+        history_before = session_manager.get(history.id)
+
+        def resolve(
+            sessions: list[object],
+            *,
+            requested_session_id: str | None = None,
+        ) -> PaneOwnershipDecision:
+            candidates = [session for session in sessions if isinstance(session, Session)]
+            assert [candidate.id for candidate in candidates] == [requested.id]
+            assert candidates[0].status == "active"
+            return PaneOwnershipDecision(
+                terminal_session_identity(candidates[0]),
+                requested_session_id,
+                candidates[0],
+                "validated_foreground_process",
+                frozenset({requested.id}),
+            )
+
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            resolve,
+        )
+        changes: list[tuple[str, str]] = []
+        transitions: list[SessionStatusTransition] = []
+        monkeypatch.setattr(
+            session_manager,
+            "_notify_session_change",
+            lambda event, session_id: changes.append((event, session_id)),
+        )
+        monkeypatch.setattr(session_manager, "_notify_status_transition", transitions.append)
+
+        first = session_manager.revive_expired_terminal_session(requested.id)
+
+        assert first is not None
+        assert first.status == "active"
+        assert session_manager.get(spawned.id).status == "expired"
+        history_after = session_manager.get(history.id)
+        assert history_before is not None
+        assert history_after is not None
+        assert history_after.updated_at == history_before.updated_at
+        first_rows = session_manager.db.fetchall(
+            "SELECT id, status, transcript_processed, updated_at FROM sessions "
+            "WHERE id IN (%s, %s, %s) ORDER BY id",
+            (history.id, requested.id, spawned.id),
+        )
+        changes.clear()
+        transitions.clear()
+        monkeypatch.setattr(
+            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            lambda *_args, **_kwargs: pytest.fail("idempotent reconciliation must not resolve"),
+        )
+
+        second = session_manager.revive_expired_terminal_session(requested.id)
+
+        second_rows = session_manager.db.fetchall(
+            "SELECT id, status, transcript_processed, updated_at FROM sessions "
+            "WHERE id IN (%s, %s, %s) ORDER BY id",
+            (history.id, requested.id, spawned.id),
+        )
+        assert second is not None
+        assert second.status == "active"
+        assert second_rows == first_rows
+        assert changes == []
+        assert transitions == []
 
     def test_terminal_revival_uses_locked_status_for_transcript_reset(
         self,

@@ -208,7 +208,7 @@ class TestSessionManagerPruning:
     def test_expire_stale_sessions(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test expiring stale sessions."""
         # Create a stale session (simulated by mocking updated_at in query or just rely on db time)
@@ -243,7 +243,7 @@ class TestSessionManagerPruning:
     def test_pause_inactive_active_sessions(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test pausing inactive active sessions."""
         session = session_manager.register(
@@ -273,7 +273,7 @@ class TestSessionManagerPruning:
     def test_pause_inactive_active_sessions_preserves_last_activity_time(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Auto-pausing should not make a stale session look freshly active."""
         session = session_manager.register(
@@ -327,6 +327,95 @@ class TestSessionManagerPruning:
         assert paused == 1
         assert expired == 1
         stale = session_manager.get(session.id)
+        assert stale is not None
+        assert stale.status == "expired"
+
+    @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
+    def test_tmux_backed_session_pauses_without_refresh_and_survives_stale_expiry(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        target_field: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"idle-tmux-{target_field}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={target_field: "%304" if target_field == "tmux_pane" else "@42"},
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session.id,),
+        )
+        before = session_manager.get(session.id)
+
+        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        expired = session_manager.expire_stale_sessions(timeout_hours=24)
+
+        after = session_manager.get(session.id)
+        assert before is not None
+        assert after is not None
+        assert paused == 1
+        assert expired == 0
+        assert after.status == "paused"
+        assert after.updated_at == before.updated_at
+
+    @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
+    @pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+    def test_stale_expiry_protects_recorded_tmux_owner_status(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        target_field: str,
+        status: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"protected-tmux-{target_field}-{status}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={target_field: "%305" if target_field == "tmux_pane" else "@43"},
+        )
+        if status != "active":
+            session_manager.update_status(session.id, status)
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session.id,),
+        )
+
+        expired = session_manager.expire_stale_sessions(timeout_hours=24)
+
+        protected = session_manager.get(session.id)
+        assert expired == 0
+        assert protected is not None
+        assert protected.status == status
+
+    @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
+    def test_whitespace_tmux_target_uses_ordinary_pause_and_expiry(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        target_field: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"blank-tmux-{target_field}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={target_field: "   "},
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session.id,),
+        )
+
+        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        expired = session_manager.expire_stale_sessions(timeout_hours=24)
+
+        stale = session_manager.get(session.id)
+        assert paused == 1
+        assert expired == 1
         assert stale is not None
         assert stale.status == "expired"
 
