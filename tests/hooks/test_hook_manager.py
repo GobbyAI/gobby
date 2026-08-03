@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
 
@@ -119,7 +120,10 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
 
     manager_with_mocks._record_machine_ingress(unattributable_event)
 
-    rows = temp_db.fetchall("SELECT id FROM machines")
+    rows = temp_db.fetchall(
+        "SELECT id FROM machines WHERE id::TEXT NOT LIKE %s",
+        (f"{TEST_MACHINE_ID_PREFIX}%",),
+    )
     assert [str(row["id"]) for row in rows] == ["7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"]
 
 

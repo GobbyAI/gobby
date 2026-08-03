@@ -12,6 +12,7 @@ from gobby.runner_init.helpers import ensure_machine_identity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
 
@@ -20,7 +21,10 @@ MACHINE_B = "54ba70ce-3ec4-470d-905a-dcb40704abfd"
 
 
 def _count_machines(temp_db: HubDatabase) -> int:
-    row = temp_db.fetchone("SELECT COUNT(*) AS count FROM machines")
+    row = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM machines WHERE id::TEXT NOT LIKE %s",
+        (f"{TEST_MACHINE_ID_PREFIX}%",),
+    )
     return int(row["count"]) if row else 0
 
 

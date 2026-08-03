@@ -40,6 +40,12 @@ from gobby.storage.hub.postgres import (
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
+
+# Reserved machine-id namespace seeded into every worker schema's canonical
+# snapshot; fixtures attribute sessions to these ids to satisfy the
+# sessions.machine_id -> machines(id) FK. Tests asserting machines-table
+# contents must exclude this prefix.
+TEST_MACHINE_ID_PREFIX = "21000000-0000-4000-8000-"
 _LOOPBACK_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
 _TEST_DSN_REQUIRED = (
     "DATABASE_URL must point at an isolated PostgreSQL test database; start one with "
@@ -415,6 +421,14 @@ def postgres_canonical_seed(
         db.close()
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(postgres_schema)))
+        conn.execute(
+            f"""
+            INSERT INTO machines (id)
+            SELECT FORMAT('{TEST_MACHINE_ID_PREFIX}%s', LPAD(n::TEXT, 12, '0'))::UUID
+            FROM GENERATE_SERIES(1, 50) AS n
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
         return _capture_canonical_seed(conn)
 
 

@@ -90,7 +90,7 @@ def multi_project_hub(hub_db):
                     project_id,
                     f"ext-{project_name}-{k}",
                     source,
-                    f"machine-{i}",
+                    f"21000000-0000-4000-8000-{i + 1:012d}",
                     status,
                 ),
             )
