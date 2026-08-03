@@ -8,7 +8,7 @@ from typing import Any
 
 from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.llm.base import LLMProviderCancellation
-from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
+from gobby.memory.dream.models import DreamCandidate
 from gobby.prompts.loader import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -37,7 +37,6 @@ _EXPECTED_PLANNER_ERRORS = (
 async def build_raw_plan(
     *,
     candidates: list[DreamCandidate],
-    duplicate_groups: list[DuplicateGroup],
     dream_config: Any,
     llm_service: Any | None,
     db: HubDatabase,
@@ -45,25 +44,18 @@ async def build_raw_plan(
     skip_consolidation: bool,
     truth_digest: str = "",
 ) -> dict[str, Any]:
-    """Build raw planner JSON from LLM output plus deterministic duplicate actions.
+    """Build raw planner JSON from paged LLM output.
 
     The planner runs over bounded pages of candidates so each LLM call carries a
     small prompt. A single oversized prompt pushed spawn-cold providers past the
     per-candidate timeout and made JSON-mode providers return empty output, which
-    failed the whole run. Duplicate-group members are merged deterministically and
-    excluded from the LLM batches, and a failure on one page is isolated so the
-    remaining pages still contribute actions.
+    failed the whole run. A failure on one page is isolated so the remaining
+    pages still contribute actions.
     """
     planner_errors: list[str] = []
     actions: list[dict[str, Any]] = []
 
-    scoped_duplicate_groups = _same_project_duplicate_groups(candidates, duplicate_groups)
-    duplicate_ids = {
-        memory_id for group in scoped_duplicate_groups for memory_id in group.memory_ids
-    }
-    llm_candidates = [candidate for candidate in candidates if candidate.id not in duplicate_ids]
-
-    if llm_service is not None and llm_candidates and not skip_consolidation:
+    if llm_service is not None and candidates and not skip_consolidation:
         batch_size = _positive_int(
             getattr(dream_config, "planner_batch_size", DEFAULT_PLANNER_BATCH_SIZE),
             DEFAULT_PLANNER_BATCH_SIZE,
@@ -78,7 +70,7 @@ async def build_raw_plan(
         )
         planner_pages = [
             split_page
-            for page in _chunk(llm_candidates, batch_size)
+            for page in _chunk(candidates, batch_size)
             for split_page in _split_oversized_planner_page(page, batch_max_chars)
         ]
         # Pages run serially: Dream may hold at most one of the host-wide
@@ -95,9 +87,6 @@ async def build_raw_plan(
             actions.extend(page_actions)
             if error is not None:
                 planner_errors.append(error)
-
-    if not skip_consolidation:
-        actions.extend(_duplicate_merge_actions(scoped_duplicate_groups, actions))
 
     return {"actions": actions, "planner_errors": planner_errors}
 
@@ -250,54 +239,3 @@ async def _call_llm_planner(
     if not isinstance(response, dict):
         raise TypeError(f"memory.dream expected dict, got {type(response).__name__}")
     return response
-
-
-def _duplicate_merge_actions(
-    duplicate_groups: list[DuplicateGroup],
-    existing_actions: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    referenced = _referenced_ids(existing_actions)
-    actions: list[dict[str, Any]] = []
-    for group in duplicate_groups:
-        if referenced.intersection(group.memory_ids):
-            continue
-        actions.append(
-            {
-                "action": "merge",
-                "memory_ids": group.memory_ids,
-                "canonical_content": group.canonical_content,
-                "confidence": 1.0,
-                "reason": group.reason,
-            }
-        )
-    return actions
-
-
-def _same_project_duplicate_groups(
-    candidates: list[DreamCandidate],
-    duplicate_groups: list[DuplicateGroup],
-) -> list[DuplicateGroup]:
-    """Keep only complete duplicate groups contained in one project scope."""
-    project_by_id = {candidate.id: candidate.project_id for candidate in candidates}
-    scoped: list[DuplicateGroup] = []
-    for group in duplicate_groups:
-        if not group.memory_ids or any(
-            memory_id not in project_by_id for memory_id in group.memory_ids
-        ):
-            continue
-        projects = {project_by_id[memory_id] for memory_id in group.memory_ids}
-        if len(projects) == 1:
-            scoped.append(group)
-    return scoped
-
-
-def _referenced_ids(actions: list[dict[str, Any]]) -> set[str]:
-    ids: set[str] = set()
-    for action in actions:
-        memory_id = action.get("memory_id", action.get("id"))
-        if memory_id:
-            ids.add(str(memory_id))
-        memory_ids = action.get("memory_ids")
-        if isinstance(memory_ids, list):
-            ids.update(str(item) for item in memory_ids if item)
-    return ids

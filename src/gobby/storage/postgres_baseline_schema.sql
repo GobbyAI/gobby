@@ -953,7 +953,7 @@ CREATE TABLE memory_dream_runs (
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
-        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'interrupted', 'partial')),
+        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'revert_forfeited', 'interrupted', 'partial')),
     dry_run BOOLEAN NOT NULL DEFAULT FALSE,
     options JSONB NOT NULL DEFAULT '{}'::jsonb,
     plan JSONB,
@@ -981,7 +981,7 @@ CREATE TABLE memory_dream_snapshots (
         CONSTRAINT memory_dream_snapshots_action_check
         CHECK (
             action IN (
-                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review', 'promote'
+                'keep', 'delete', 'refresh', 'review', 'promote'
             )
         ),
     before_data JSONB,

@@ -430,7 +430,6 @@ class DreamSweepOrchestrator:
         stamp = datetime.now(UTC).isoformat()
         raw_plan = await build_raw_plan(
             candidates=candidates,
-            duplicate_groups=[],
             dream_config=self.dream_config,
             llm_service=self.llm_service,
             db=self.memory_manager.db,

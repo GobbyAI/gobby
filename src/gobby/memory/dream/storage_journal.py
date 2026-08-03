@@ -191,34 +191,6 @@ class _DreamJournalMixin:
                 ),
             )
 
-    def transfer_crossrefs(
-        self: _DreamJournalHost,
-        duplicate_id: str,
-        keeper_id: str,
-    ) -> int:
-        """Copy a duplicate's crossrefs to the keeper before cascade deletion."""
-        transferred = 0
-        for crossref in self._get_crossref_rows(duplicate_id):
-            source_id = (
-                keeper_id if crossref["source_id"] == duplicate_id else crossref["source_id"]
-            )
-            target_id = (
-                keeper_id if crossref["target_id"] == duplicate_id else crossref["target_id"]
-            )
-            if source_id == target_id:
-                continue
-            self.db.execute(
-                """
-                INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT(source_id, target_id) DO UPDATE SET
-                    similarity = GREATEST(memory_crossrefs.similarity, excluded.similarity)
-                """,
-                (source_id, target_id, crossref["similarity"], crossref["created_at"]),
-            )
-            transferred += 1
-        return transferred
-
     def insert_snapshot(
         self: _DreamJournalHost,
         *,
@@ -254,25 +226,6 @@ class _DreamJournalMixin:
              WHERE id = %s
             """,
             (_json(after_data), snapshot_id),
-        )
-
-    def record_applied_snapshot(
-        self: _DreamJournalHost,
-        *,
-        run_id: str,
-        memory_id: str,
-        action: str,
-        before_data: dict[str, Any] | None,
-        after_data: dict[str, Any] | None,
-    ) -> None:
-        self.db.execute(
-            """
-            INSERT INTO memory_dream_snapshots (
-                run_id, memory_id, action, before_data, after_data, applied
-            )
-            VALUES (%s, %s, %s, %s, %s, TRUE)
-            """,
-            (run_id, memory_id, action, _json(before_data), _json(after_data)),
         )
 
     def count_snapshots(self: _DreamJournalHost, run_id: str) -> int:

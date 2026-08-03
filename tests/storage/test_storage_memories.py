@@ -1171,20 +1171,20 @@ def test_prune_runs_drops_aged_runs_and_cascades_snapshots(db) -> None:
     fresh = store.create_run(project_id=None, dry_run=False, options={})
     aged_memory_id = str(uuid.uuid4())
     fresh_memory_id = str(uuid.uuid4())
-    store.record_applied_snapshot(
+    aged_snapshot = store.insert_snapshot(
         run_id=aged,
         memory_id=aged_memory_id,
         action="delete",
         before_data={"id": aged_memory_id},
-        after_data=None,
     )
-    store.record_applied_snapshot(
+    store.complete_snapshot(aged_snapshot, after_data=None)
+    fresh_snapshot = store.insert_snapshot(
         run_id=fresh,
         memory_id=fresh_memory_id,
         action="review",
         before_data={"id": fresh_memory_id},
-        after_data=None,
     )
+    store.complete_snapshot(fresh_snapshot, after_data=None)
 
     # Backdate the aged run beyond the retention window.
     old_stamp = (datetime.now(UTC) - timedelta(days=400)).isoformat()
@@ -1198,6 +1198,26 @@ def test_prune_runs_drops_aged_runs_and_cascades_snapshots(db) -> None:
     # The pruned run's snapshot cascades out; the fresh run keeps its history.
     assert store.list_snapshots(aged) == []
     assert len(store.list_snapshots(fresh)) == 1
+
+
+def test_prune_runs_removes_forfeited_runs_and_preserves_active_runs(db: HubDatabase) -> None:
+    from gobby.memory.dream.storage import MemoryDreamStore
+
+    store = MemoryDreamStore(db)
+    forfeited = store.create_run(project_id=None, dry_run=False, options={})
+    store.update_run(forfeited, status="completed")
+    active = store.create_run(project_id=None, dry_run=False, options={})
+    store.update_run(forfeited, status="revert_forfeited")
+    store.update_run(active, status="running")
+    old_stamp = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+    store.update_run(forfeited, created_at=old_stamp)
+    store.update_run(active, created_at=old_stamp)
+
+    removed = store.prune_runs(older_than_days=30)
+
+    assert removed == 1
+    assert store.get_run(forfeited) is None
+    assert store.get_run(active) is not None
 
 
 def test_list_dream_candidates_active_only_and_cooldown(memory_manager) -> None:
@@ -1401,15 +1421,23 @@ def test_list_dream_candidates_memory_type_scope(memory_manager) -> None:
     assert fact.id not in ids
 
 
-def test_create_memory_restores_hidden_duplicate(memory_manager) -> None:
-    created = memory_manager.create_memory(content="reactivate via recreate")
+def test_create_memory_restores_hidden_duplicate(
+    memory_manager: LocalMemoryManager,
+) -> None:
+    created = memory_manager.create_memory(
+        content="reactivate via recreate",
+        project_id=PERSONAL_PROJECT_ID,
+    )
     memory_manager.mark_dreamed(created.id, hidden_as="delete")
     with pytest.raises(ValueError, match="not found"):
         memory_manager.get_memory(created.id)
 
     # Re-creating identical content collides on the deterministic uuid5 id and
     # must reactivate the hidden row instead of returning an invisible memory.
-    recreated = memory_manager.create_memory(content="  reactivate via recreate  ")
+    recreated = memory_manager.create_memory(
+        content="  reactivate via recreate  ",
+        project_id=PERSONAL_PROJECT_ID,
+    )
     assert recreated.id == created.id
     assert recreated.deleted_at is None
     assert recreated.dream_action is None

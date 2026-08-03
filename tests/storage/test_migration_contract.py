@@ -25,28 +25,20 @@ DROP_PGAUDIT_PROBE_MIGRATION = SRC_ROOT / "storage" / "migrations" / "359_drop_p
 MAINTENANCE_FENCE_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "362_harden_maintenance_login_fence.sql"
 )
+DREAM_CHECK_TIGHTEN_MIGRATION = SRC_ROOT / "storage" / "migrations" / "367_dream_check_tighten.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
-MEMORY_DREAM_STATUS_INVARIANTS = (
-    "'started'",
-    "'running'",
-    "'completed'",
-    "'failed'",
-    "'reverted'",
-    "'revert_failed'",
-    "'partial'",
+MEMORY_DREAM_STATUSES = (
+    "started",
+    "running",
+    "completed",
+    "failed",
+    "reverted",
+    "revert_failed",
+    "revert_forfeited",
+    "interrupted",
+    "partial",
 )
-MEMORY_DREAM_LEGACY_ACTION_INVARIANT = (
-    "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
-)
-MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS = (
-    "'keep'",
-    "'delete'",
-    "'refresh'",
-    "'merge'",
-    "'supersede'",
-    "'review'",
-    "'promote'",
-)
+MEMORY_DREAM_ACTIONS = ("keep", "delete", "refresh", "review", "promote")
 MEMORY_DREAM_PROJECT_FK = "project_id UUID REFERENCES projects(id) ON DELETE CASCADE"
 MEMORY_DREAM_PROJECT_COMMENT = (
     "Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID."
@@ -304,22 +296,18 @@ def _assert_memory_dream_snapshot_run_index(label: str, content: str) -> None:
     _assert_absent_all(label, content, (MEMORY_DREAM_LEGACY_SNAPSHOT_RUN_INDEX,))
 
 
-def _assert_memory_dream_constraints(
-    label: str, content: str, *, promote_supported: bool = False
-) -> None:
-    action_invariants: tuple[str, ...] = MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS
-    if not promote_supported:
-        action_invariants = (MEMORY_DREAM_LEGACY_ACTION_INVARIANT,)
-    _assert_contains_all(
-        label,
-        content,
-        (
-            "memory_dream_runs_status_check",
-            *MEMORY_DREAM_STATUS_INVARIANTS,
-            "memory_dream_snapshots_action_check",
-            *action_invariants,
-        ),
-    )
+def _assert_memory_dream_constraints(label: str, content: str) -> None:
+    def values_for(constraint: str, column: str) -> tuple[str, ...]:
+        match = re.search(
+            rf"{constraint}[\s\S]{{0,500}}?CHECK\s*\(\s*{column}\s+IN\s*\(([^)]*)\)",
+            content,
+            re.IGNORECASE,
+        )
+        assert match is not None, f"{label} missing {constraint} vocabulary"
+        return tuple(re.findall(r"'([^']+)'", match.group(1)))
+
+    assert values_for("memory_dream_runs_status_check", "status") == MEMORY_DREAM_STATUSES
+    assert values_for("memory_dream_snapshots_action_check", "action") == MEMORY_DREAM_ACTIONS
 
 
 def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
@@ -1215,6 +1203,25 @@ def test_epic_qa_schema_and_migration_contract() -> None:
     )
 
 
+def test_dream_check_tighten_migration_forfeits_legacy_snapshot_runs() -> None:
+    migration = DREAM_CHECK_TIGHTEN_MIGRATION.read_text(encoding="utf-8")
+    normalized = _normalize_sql_whitespace(migration)
+
+    assert migration.splitlines()[0] == DESTRUCTIVE_DIRECTIVE
+    _assert_memory_dream_constraints("memory dream check tightening migration", migration)
+    _assert_contains_all(
+        "memory dream whole-run snapshot forfeiture",
+        normalized,
+        (
+            "WITH affected_runs AS MATERIALIZED",
+            "WHERE action IN ('merge', 'supersede')",
+            "SET status = 'revert_forfeited'",
+            "WHERE id IN (SELECT run_id FROM affected_runs)",
+            "DELETE FROM memory_dream_snapshots WHERE run_id IN (SELECT id FROM forfeited_runs)",
+        ),
+    )
+
+
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
     baseline = _baseline_text()
     migration = _reconcile_drift_migration_text()
@@ -1269,10 +1276,8 @@ def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
             "memory_id TEXT NOT NULL",
         ),
     )
-    _assert_memory_dream_constraints("memory dream baseline", baseline, promote_supported=True)
-    _assert_memory_dream_constraints(
-        "memory dream runtime storage", runtime_storage, promote_supported=True
-    )
+    _assert_memory_dream_constraints("memory dream baseline", baseline)
+    _assert_memory_dream_constraints("memory dream runtime storage", runtime_storage)
     _assert_absent_all(
         "memory dream runtime storage",
         runtime_storage,
