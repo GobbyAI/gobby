@@ -1,4 +1,7 @@
+-- gobby:destructive
 -- Scoped PostgreSQL authorization substrate for managed gcode executions.
+-- Policy drops and PUBLIC privilege revocations run under the gated
+-- destructive path on existing hubs; fresh installs apply directly.
 -- Migration slots 367 and 368 are reserved by tasks #19404 and #19421.
 
 SELECT pg_advisory_xact_lock(hashtextextended('gobby:agent-authorization:v1', 0));
