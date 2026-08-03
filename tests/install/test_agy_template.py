@@ -7,35 +7,77 @@ from pathlib import Path
 
 import pytest
 
-from gobby.adapters.agy_contract import AGY_HOOK_NAMES
+from gobby.adapters.agy_contract import (
+    AGY_FLAT_HOOK_NAMES,
+    AGY_GOBBY_HOOK_NAME,
+    AGY_GROUPED_HOOK_NAMES,
+    AGY_HOOK_NAMES,
+    AGY_HOOK_TIMEOUT_SECONDS,
+)
 
 pytestmark = pytest.mark.unit
 
 
-def test_agy_template_uses_current_vendor_hook_file_shape(repo_root: Path) -> None:
+def _template(repo_root: Path) -> dict:
+    return json.loads((repo_root / "src/gobby/install/agy/hooks-template.json").read_text())
+
+
+def test_agy_template_is_keyed_by_hook_name_not_literal_hooks(repo_root: Path) -> None:
+    """AGY reads each top-level key as a hook name.
+
+    A literal "hooks" key made AGY reject the whole file with
+    `invalid hook "hooks": command hook must specify 'command'`.
+    """
+    template = _template(repo_root)
+
+    assert list(template) == [AGY_GOBBY_HOOK_NAME]
+    assert "hooks" not in template
+
+
+def test_agy_template_covers_every_agy_hook_event(repo_root: Path) -> None:
+    gobby_hook = _template(repo_root)[AGY_GOBBY_HOOK_NAME]
+
+    assert set(gobby_hook) == set(AGY_HOOK_NAMES)
+
+
+@pytest.mark.parametrize("hook_type", AGY_FLAT_HOOK_NAMES)
+def test_agy_template_flat_events_are_bare_handler_lists(repo_root: Path, hook_type: str) -> None:
+    """PreInvocation/PostInvocation/Stop take handlers directly, with no wrapper."""
+    entries = _template(repo_root)[AGY_GOBBY_HOOK_NAME][hook_type]
+
+    assert len(entries) == 1
+    handler = entries[0]
+    assert "hooks" not in handler
+    assert "matcher" not in handler
+    assert handler["command"] == "__GOBBY_HOOK_COMMAND__"
+    assert handler["type"] == "command"
+
+
+@pytest.mark.parametrize("hook_type", AGY_GROUPED_HOOK_NAMES)
+def test_agy_template_tool_events_use_matcher_groups(repo_root: Path, hook_type: str) -> None:
+    entries = _template(repo_root)[AGY_GOBBY_HOOK_NAME][hook_type]
+
+    assert len(entries) == 1
+    assert entries[0]["matcher"] == "*"
+    handler = entries[0]["hooks"][0]
+    assert handler["command"] == "__GOBBY_HOOK_COMMAND__"
+    assert handler["type"] == "command"
+
+
+def test_agy_template_timeouts_are_seconds(repo_root: Path) -> None:
+    """AGY documents `timeout` in seconds; 30000 would be 8.3 hours."""
+    gobby_hook = _template(repo_root)[AGY_GOBBY_HOOK_NAME]
+
+    timeouts = []
+    for hook_type in AGY_FLAT_HOOK_NAMES:
+        timeouts.append(gobby_hook[hook_type][0]["timeout"])
+    for hook_type in AGY_GROUPED_HOOK_NAMES:
+        timeouts.append(gobby_hook[hook_type][0]["hooks"][0]["timeout"])
+
+    assert timeouts == [AGY_HOOK_TIMEOUT_SECONDS] * len(AGY_HOOK_NAMES)
+
+
+def test_agy_template_has_no_stale_vendor_directory(repo_root: Path) -> None:
     template_path = repo_root / "src/gobby/install/agy/hooks-template.json"
-    template = json.loads(template_path.read_text())
 
-    assert tuple(template["hooks"]) == AGY_HOOK_NAMES
     assert ".antigravitycli" not in template_path.read_text()
-
-    for hook_type in AGY_HOOK_NAMES:
-        entries = template["hooks"][hook_type]
-        assert len(entries) == 1
-        assert entries[0]["hooks"][0]["command"] == "__GOBBY_HOOK_COMMAND__"
-
-
-def test_agy_template_covers_agy_1_0_11_hook_events(repo_root: Path) -> None:
-    hooks = json.loads((repo_root / "src/gobby/install/agy/hooks-template.json").read_text())[
-        "hooks"
-    ]
-
-    assert set(hooks) == {
-        "PreInvocation",
-        "PostInvocation",
-        "PreToolUse",
-        "PostToolUse",
-        "Stop",
-    }
-    assert hooks["PreToolUse"][0]["matcher"] == "*"
-    assert hooks["PostToolUse"][0]["matcher"] == "*"

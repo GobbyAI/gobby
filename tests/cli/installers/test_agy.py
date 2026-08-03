@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.adapters.agy_contract import AGY_HOOK_NAMES
+from gobby.adapters.agy_contract import (
+    AGY_FLAT_HOOK_NAMES,
+    AGY_GOBBY_HOOK_NAME,
+    AGY_GROUPED_HOOK_NAMES,
+    AGY_HOOK_NAMES,
+)
 from gobby.cli.installers.agy import install_agy, uninstall_agy
 
 pytestmark = pytest.mark.unit
@@ -56,10 +61,17 @@ def test_install_agy_global_writes_vendor_hooks_and_mcp(
     assert not (agy_env / ".antigravitycli").exists()
 
     hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
-    hooks = _load_json(hooks_file)["hooks"]
-    assert tuple(hooks) == AGY_HOOK_NAMES
-    for hook_type in AGY_HOOK_NAMES:
-        command = hooks[hook_type][0]["hooks"][0]["command"]
+    settings = _load_json(hooks_file)
+    assert list(settings) == [AGY_GOBBY_HOOK_NAME]
+
+    gobby_hook = settings[AGY_GOBBY_HOOK_NAME]
+    assert set(gobby_hook) == set(AGY_HOOK_NAMES)
+    for hook_type in AGY_FLAT_HOOK_NAMES:
+        command = gobby_hook[hook_type][0]["command"]
+        expected = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=agy --type={hook_type}"
+        assert command == expected
+    for hook_type in AGY_GROUPED_HOOK_NAMES:
+        command = gobby_hook[hook_type][0]["hooks"][0]["command"]
         expected = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=agy --type={hook_type}"
         assert command == expected
 
@@ -106,20 +118,63 @@ def test_install_agy_preserves_existing_mcp_servers(
     assert mcp_servers["gobby"]["type"] == "stdio"
 
 
-def test_install_agy_preserves_custom_hooks(
+def test_install_agy_preserves_third_party_named_hooks(
     project_path: Path,
     agy_env: Path,
 ) -> None:
+    """Gobby owns one named hook; a neighbour's entry survives byte-identical."""
+    hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
+    hooks_file.parent.mkdir(parents=True)
+    lint_checker = {
+        "PostToolUse": [
+            {
+                "matcher": "run_command",
+                "hooks": [{"type": "command", "command": "./scripts/lint.sh", "timeout": 10}],
+            }
+        ]
+    }
+    safety_gate = {
+        "enabled": False,
+        "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "./safety.sh"}]}],
+    }
+    hooks_file.write_text(json.dumps({"lint-checker": lint_checker, "safety-gate": safety_gate}))
+
+    result = install_agy(project_path, mode="global")
+
+    assert result["success"] is True
+    settings = _load_json(hooks_file)
+    assert settings["lint-checker"] == lint_checker
+    assert settings["safety-gate"] == safety_gate
+    gobby_hook = settings[AGY_GOBBY_HOOK_NAME]
+    assert gobby_hook["PreToolUse"][0]["hooks"][0]["command"].endswith(
+        "--cli=agy --type=PreToolUse"
+    )
+
+
+def test_install_agy_replaces_legacy_literal_hooks_key(
+    project_path: Path,
+    agy_env: Path,
+) -> None:
+    """The pre-fix layout wrote a literal "hooks" key AGY rejected wholesale."""
     hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
     hooks_file.parent.mkdir(parents=True)
     hooks_file.write_text(
         json.dumps(
             {
                 "hooks": {
-                    "PreToolUse": [
-                        {"hooks": [{"type": "command", "command": "custom --hook"}]},
+                    "PreInvocation": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/Users/test/.gobby/bin/ghook --gobby-owned "
+                                        "--cli=agy --type=PreInvocation"
+                                    ),
+                                }
+                            ]
+                        }
                     ],
-                    "Custom": [{"hooks": [{"type": "command", "command": "custom"}]}],
                 }
             }
         )
@@ -128,10 +183,19 @@ def test_install_agy_preserves_custom_hooks(
     result = install_agy(project_path, mode="global")
 
     assert result["success"] is True
-    hooks = _load_json(hooks_file)["hooks"]
-    assert hooks["PreToolUse"][0]["hooks"][0]["command"] == "custom --hook"
-    assert hooks["PreToolUse"][1]["hooks"][0]["command"].endswith("--cli=agy --type=PreToolUse")
-    assert "Custom" in hooks
+    settings = _load_json(hooks_file)
+    assert "hooks" not in settings
+    assert list(settings) == [AGY_GOBBY_HOOK_NAME]
+
+
+def test_install_agy_is_idempotent(project_path: Path, agy_env: Path) -> None:
+    hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
+
+    assert install_agy(project_path, mode="global")["success"] is True
+    first = hooks_file.read_text()
+    assert install_agy(project_path, mode="global")["success"] is True
+
+    assert hooks_file.read_text() == first
 
 
 def test_uninstall_agy_removes_only_gobby_entries(
@@ -140,23 +204,32 @@ def test_uninstall_agy_removes_only_gobby_entries(
 ) -> None:
     hooks_file = agy_env / ".gemini" / "config" / "hooks.json"
     hooks_file.parent.mkdir(parents=True)
+    lint_checker = {
+        "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "custom"}]}]
+    }
     hooks_file.write_text(
         json.dumps(
             {
-                "hooks": {
-                    "PreToolUse": [
-                        {"hooks": [{"type": "command", "command": "custom"}]},
+                "lint-checker": lint_checker,
+                AGY_GOBBY_HOOK_NAME: {
+                    "PreInvocation": [
                         {
+                            "type": "command",
+                            "command": "ghook --gobby-owned --cli=agy --type=PreInvocation",
+                        }
+                    ],
+                    "PreToolUse": [
+                        {
+                            "matcher": "*",
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "ghook --gobby-owned --cli=agy --type=PreToolUse",
+                                    "command": ("ghook --gobby-owned --cli=agy --type=PreToolUse"),
                                 }
-                            ]
-                        },
+                            ],
+                        }
                     ],
-                    "Custom": [{"hooks": [{"type": "command", "command": "custom"}]}],
-                }
+                },
             }
         )
     )
@@ -168,8 +241,8 @@ def test_uninstall_agy_removes_only_gobby_entries(
     result = uninstall_agy(project_path, mode="global")
 
     assert result["success"] is True
-    assert result["hooks_removed"] == ["PreToolUse"]
-    hooks = _load_json(hooks_file)["hooks"]
-    assert hooks["PreToolUse"] == [{"hooks": [{"type": "command", "command": "custom"}]}]
-    assert "Custom" in hooks
+    assert result["hooks_removed"] == ["PreInvocation", "PreToolUse"]
+    settings = _load_json(hooks_file)
+    assert AGY_GOBBY_HOOK_NAME not in settings
+    assert settings["lint-checker"] == lint_checker
     assert set(_load_json(mcp_file)["mcpServers"]) == {"other"}

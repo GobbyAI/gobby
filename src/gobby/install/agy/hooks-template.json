@@ -1,15 +1,11 @@
 {
-  "hooks": {
+  "gobby": {
     "PreInvocation": [
       {
-        "hooks": [
-          {
-            "name": "gobby-pre-invocation",
-            "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__",
-            "timeout": 30000
-          }
-        ]
+        "name": "gobby-pre-invocation",
+        "type": "command",
+        "command": "__GOBBY_HOOK_COMMAND__",
+        "timeout": 30
       }
     ],
     "PreToolUse": [
@@ -20,7 +16,7 @@
             "name": "gobby-pre-tool-use",
             "type": "command",
             "command": "__GOBBY_HOOK_COMMAND__",
-            "timeout": 30000
+            "timeout": 30
           }
         ]
       }
@@ -33,33 +29,25 @@
             "name": "gobby-post-tool-use",
             "type": "command",
             "command": "__GOBBY_HOOK_COMMAND__",
-            "timeout": 30000
+            "timeout": 30
           }
         ]
       }
     ],
     "PostInvocation": [
       {
-        "hooks": [
-          {
-            "name": "gobby-post-invocation",
-            "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__",
-            "timeout": 30000
-          }
-        ]
+        "name": "gobby-post-invocation",
+        "type": "command",
+        "command": "__GOBBY_HOOK_COMMAND__",
+        "timeout": 30
       }
     ],
     "Stop": [
       {
-        "hooks": [
-          {
-            "name": "gobby-stop",
-            "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__",
-            "timeout": 30000
-          }
-        ]
+        "name": "gobby-stop",
+        "type": "command",
+        "command": "__GOBBY_HOOK_COMMAND__",
+        "timeout": 30
       }
     ]
   }

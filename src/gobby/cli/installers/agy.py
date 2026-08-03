@@ -12,7 +12,7 @@ from shutil import Error as ShutilError
 from shutil import copy2
 from typing import Any
 
-from gobby.adapters.agy_contract import AGY_HOOK_NAMES
+from gobby.adapters.agy_contract import AGY_GOBBY_HOOK_NAME, AGY_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
@@ -82,7 +82,13 @@ def _load_agy_hooks_template(hooks_dir: Path) -> dict[str, Any]:
         template = json.load(f)
     if not isinstance(template, dict):
         raise ValueError(f"{template_path} must contain a JSON object")
-    rewrite_hook_template_commands(template, cli_name="agy", hooks_dir=hooks_dir)
+    events = template.get(AGY_GOBBY_HOOK_NAME)
+    if not isinstance(events, dict):
+        raise ValueError(f"{template_path} must contain a {AGY_GOBBY_HOOK_NAME!r} hook object")
+    # The shared rewriter keys off a top-level "hooks" event map. AGY nests its
+    # events one level deeper, under the hook name, so hand it the inner map
+    # (rewriting happens in place).
+    rewrite_hook_template_commands({"hooks": events}, cli_name="agy", hooks_dir=hooks_dir)
     return template
 
 
@@ -90,53 +96,38 @@ def _merge_gobby_hooks(
     existing_settings: dict[str, Any],
     gobby_settings: dict[str, Any],
 ) -> dict[str, Any]:
-    updated = deepcopy(existing_settings)
-    hooks = updated.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        hooks = {}
-        updated["hooks"] = hooks
+    """Install Gobby's named hook, leaving every third-party named hook intact.
 
-    gobby_hooks = gobby_settings.get("hooks", {})
+    AGY keys `hooks.json` by hook name, so Gobby owns exactly one top-level key
+    and never rewrites a neighbour's entry.
+    """
+    gobby_hooks = gobby_settings.get(AGY_GOBBY_HOOK_NAME)
     if not isinstance(gobby_hooks, dict):
-        raise ValueError("AGY hooks template does not contain a hooks object")
-
+        raise ValueError(
+            f"AGY hooks template does not contain a {AGY_GOBBY_HOOK_NAME!r} hook object"
+        )
     for hook_type in AGY_HOOK_NAMES:
         hook_config = gobby_hooks.get(hook_type)
         if not isinstance(hook_config, list) or not hook_config:
             raise ValueError(f"AGY hooks template missing hook type: {hook_type}")
 
-        current_config = hooks.get(hook_type)
-        preserved: list[Any] = []
-        if isinstance(current_config, list):
-            preserved = [
-                deepcopy(entry) for entry in current_config if not config_contains_gobby_hook(entry)
-            ]
-        hooks[hook_type] = preserved + deepcopy(hook_config)
+    updated = deepcopy(existing_settings)
+    # Drop any legacy Gobby-owned entries, including the pre-1.1 nesting that
+    # wrote a literal "hooks" key AGY parsed as a hook name and then rejected.
+    for name in [key for key, value in updated.items() if config_contains_gobby_hook(value)]:
+        del updated[name]
+    updated[AGY_GOBBY_HOOK_NAME] = deepcopy(gobby_hooks)
     return updated
 
 
 def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Remove every Gobby-owned named hook, leaving third-party names untouched."""
     updated = deepcopy(settings)
-    hooks = updated.get("hooks")
-    if not isinstance(hooks, dict):
-        return updated, []
-
     removed: list[str] = []
-    for hook_type in AGY_HOOK_NAMES:
-        hook_config = hooks.get(hook_type)
-        if not isinstance(hook_config, list):
-            continue
-        preserved = [entry for entry in hook_config if not config_contains_gobby_hook(entry)]
-        if len(preserved) == len(hook_config):
-            continue
-        removed.append(hook_type)
-        if preserved:
-            hooks[hook_type] = preserved
-        else:
-            del hooks[hook_type]
-
-    if not hooks:
-        del updated["hooks"]
+    for name in [key for key, value in updated.items() if config_contains_gobby_hook(value)]:
+        entry = updated.pop(name)
+        if isinstance(entry, dict):
+            removed.extend(hook_type for hook_type in AGY_HOOK_NAMES if hook_type in entry)
     return updated, removed
 
 

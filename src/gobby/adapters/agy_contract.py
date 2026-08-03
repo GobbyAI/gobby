@@ -24,6 +24,23 @@ AGY_HOOK_NAMES: tuple[str, ...] = (
     "Stop",
 )
 
+# AGY keys hooks.json by hook *name*, not by the literal "hooks". Everything
+# Gobby owns lives under this one named hook so third-party names survive
+# install and uninstall untouched.
+AGY_GOBBY_HOOK_NAME = "gobby"
+
+# AGY groups tool events behind a matcher/hooks wrapper and takes the remaining
+# lifecycle events as flat handler lists. Writing a flat event in the grouped
+# shape makes AGY reject the whole file with "command hook must specify
+# 'command'", which disables every hook in it.
+AGY_GROUPED_HOOK_NAMES: tuple[str, ...] = ("PreToolUse", "PostToolUse")
+AGY_FLAT_HOOK_NAMES: tuple[str, ...] = tuple(
+    name for name in AGY_HOOK_NAMES if name not in AGY_GROUPED_HOOK_NAMES
+)
+
+# AGY documents `timeout` in seconds, defaulting to 30.
+AGY_HOOK_TIMEOUT_SECONDS = 30
+
 
 AGY_HOOK_CONTRACTS: dict[str, AgyHookContract] = {
     "PreInvocation": AgyHookContract(
