@@ -1,10 +1,13 @@
 """Tests for gobby.agents.kill module."""
 
+import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.agents.kill import (
@@ -55,136 +58,193 @@ class TestPidMatchesAgentIdentity:
     SESSION_ID = "ec032f4b-c626-4177-90ce-c1f3765c47d0"
 
     @staticmethod
-    def _runner(cmdline: str, rc: int = 0):
-        async def run_subprocess(*args, timeout=2.0):
-            return rc, cmdline, ""
-
-        return run_subprocess
+    def _process(
+        cmdline: list[str],
+        *,
+        environment: dict[str, str] | None = None,
+    ) -> MagicMock:
+        process = MagicMock(spec=psutil.Process)
+        process.cmdline.return_value = cmdline
+        process.environ.return_value = environment or {}
+        return process
 
     @pytest.mark.asyncio
     async def test_claude_cmdline_session_marker_matches(self):
-        cmdline = f"claude --model opus --session-id {self.SESSION_ID}"
-        assert (
-            await pid_matches_agent_identity(
-                1234,
-                provider="claude",
-                session_id=self.SESSION_ID,
-                run_subprocess=self._runner(cmdline),
-            )
-            is True
-        )
+        process = self._process(["claude", "--model", "opus", "--session-id", self.SESSION_ID])
+        process_factory = MagicMock(return_value=process)
 
-    @pytest.mark.asyncio
-    async def test_codex_without_argv_marker_matches_via_environment(self):
-        cmdline = 'codex --model gpt-5.6-sol -c model_reasoning_effort="medium"'
-        with patch("gobby.agents.kill.psutil.Process") as process_cls:
-            process_cls.return_value.environ.return_value = {"GOBBY_SESSION_ID": self.SESSION_ID}
+        with patch("gobby.agents.kill.asyncio.to_thread", wraps=asyncio.to_thread) as to_thread:
             assert (
                 await pid_matches_agent_identity(
                     1234,
-                    provider="codex",
+                    provider="claude",
                     session_id=self.SESSION_ID,
-                    run_subprocess=self._runner(cmdline),
+                    process_factory=process_factory,
                 )
                 is True
             )
 
-    @pytest.mark.asyncio
-    async def test_environment_session_mismatch_is_refused(self):
-        cmdline = "codex --model gpt-5.6-sol"
-        with patch("gobby.agents.kill.psutil.Process") as process_cls:
-            process_cls.return_value.environ.return_value = {
-                "GOBBY_SESSION_ID": "some-other-session"
-            }
-            assert (
-                await pid_matches_agent_identity(
-                    1234,
-                    provider="codex",
-                    session_id=self.SESSION_ID,
-                    run_subprocess=self._runner(cmdline),
-                )
-                is False
-            )
+        to_thread.assert_awaited_once()
+        process_factory.assert_called_once_with(1234)
+        process.environ.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_missing_process_environment_is_refused(self):
-        import psutil
-
-        cmdline = "codex --model gpt-5.6-sol"
-        with patch("gobby.agents.kill.psutil.Process") as process_cls:
-            process_cls.return_value.environ.side_effect = psutil.NoSuchProcess(1234)
-            assert (
-                await pid_matches_agent_identity(
-                    1234,
-                    provider="codex",
-                    session_id=self.SESSION_ID,
-                    run_subprocess=self._runner(cmdline),
-                )
-                is False
-            )
-
-    @pytest.mark.asyncio
-    async def test_provider_mismatch_is_refused_without_env_lookup(self):
-        cmdline = f"claude --session-id {self.SESSION_ID}"
-        with patch("gobby.agents.kill.psutil.Process") as process_cls:
-            assert (
-                await pid_matches_agent_identity(
-                    1234,
-                    provider="codex",
-                    session_id=self.SESSION_ID,
-                    run_subprocess=self._runner(cmdline),
-                )
-                is False
-            )
-            process_cls.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_dead_process_nonzero_ps_is_refused(self):
+    async def test_codex_without_argv_marker_matches_via_environment(self):
+        process = self._process(
+            ["codex", "--model", "gpt-5.6-sol", "-c", 'model_reasoning_effort="medium"'],
+            environment={"GOBBY_SESSION_ID": self.SESSION_ID},
+        )
         assert (
             await pid_matches_agent_identity(
                 1234,
                 provider="codex",
                 session_id=self.SESSION_ID,
-                run_subprocess=self._runner("", rc=1),
+                process_factory=MagicMock(return_value=process),
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_environment_session_mismatch_is_refused(self):
+        process = self._process(
+            ["codex", "--model", "gpt-5.6-sol"],
+            environment={"GOBBY_SESSION_ID": "some-other-session"},
+        )
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(return_value=process),
             )
             is False
         )
 
     @pytest.mark.asyncio
-    async def test_lookup_failure_returns_unverifiable_result(self):
-        async def failing_runner(*args, timeout=2.0):
-            raise TimeoutError
+    async def test_missing_process_environment_is_refused(self):
+        process = self._process(["codex", "--model", "gpt-5.6-sol"])
+        process.environ.side_effect = psutil.NoSuchProcess(1234)
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(return_value=process),
+            )
+            is False
+        )
 
-        for expected in (False, True):
+    @pytest.mark.asyncio
+    async def test_provider_mismatch_is_refused_without_env_lookup(self):
+        process = self._process(["claude", "--session-id", self.SESSION_ID])
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(return_value=process),
+            )
+            is False
+        )
+        process.environ.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [psutil.NoSuchProcess(1234), psutil.ZombieProcess(1234)],
+        ids=["missing", "zombie"],
+    )
+    async def test_missing_or_zombie_process_is_refused(self, error: psutil.NoSuchProcess):
+        process = self._process([])
+        process.cmdline.side_effect = error
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(return_value=process),
+            )
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_unreadable_cmdline_obeys_safety_policy(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        process = self._process([])
+        process.cmdline.side_effect = psutil.AccessDenied(1234)
+        caplog.set_level(logging.DEBUG, logger="gobby.agents.kill")
+
+        for expected in (True, False):
+            caplog.clear()
             assert (
                 await pid_matches_agent_identity(
                     1234,
                     provider="codex",
                     session_id=self.SESSION_ID,
-                    run_subprocess=failing_runner,
+                    process_factory=MagicMock(return_value=process),
                     unverifiable_result=expected,
                 )
                 is expected
             )
+            records = [record for record in caplog.records if record.name == "gobby.agents.kill"]
+            assert any(
+                "cmdline inspection failed: AccessDenied" in record.message for record in records
+            )
+            if expected:
+                assert not [record for record in records if record.levelno >= logging.WARNING]
+            else:
+                assert any(record.levelno == logging.WARNING for record in records)
 
     @pytest.mark.asyncio
-    async def test_unreadable_environment_returns_unverifiable_result(self):
-        import psutil
+    async def test_empty_exception_message_uses_exception_class(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        caplog.set_level(logging.WARNING, logger="gobby.agents.kill")
 
-        cmdline = "codex --model gpt-5.6-sol"
-        with patch("gobby.agents.kill.psutil.Process") as process_cls:
-            process_cls.return_value.environ.side_effect = psutil.AccessDenied(1234)
-            for expected in (False, True):
-                assert (
-                    await pid_matches_agent_identity(
-                        1234,
-                        provider="codex",
-                        session_id=self.SESSION_ID,
-                        run_subprocess=self._runner(cmdline),
-                        unverifiable_result=expected,
-                    )
-                    is expected
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(side_effect=TimeoutError()),
+            )
+            is False
+        )
+        assert "process inspection failed: TimeoutError" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_unreadable_environment_returns_unverifiable_result(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        process = self._process(["codex", "--model", "gpt-5.6-sol"])
+        process.environ.side_effect = psutil.AccessDenied(1234)
+        caplog.set_level(logging.DEBUG, logger="gobby.agents.kill")
+
+        for expected in (False, True):
+            caplog.clear()
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    process_factory=MagicMock(return_value=process),
+                    unverifiable_result=expected,
                 )
+                is expected
+            )
+            records = [record for record in caplog.records if record.name == "gobby.agents.kill"]
+            assert any(
+                "environment inspection failed: AccessDenied" in record.message
+                for record in records
+            )
+            if expected:
+                assert not [record for record in records if record.levelno >= logging.WARNING]
+            else:
+                assert any(record.levelno == logging.WARNING for record in records)
 
 
 class TestValidateTerminalValue:
@@ -258,16 +318,26 @@ class TestCloseTerminalWindow:
         mock_killpg.assert_called_once_with(456, signal.SIGTERM)
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.psutil.Process")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.SessionManager")
-    async def test_close_parent_pid_refuses_recycled_pid(self, mock_sm_cls, mock_kill, mock_run):
+    async def test_close_parent_pid_refuses_recycled_pid(
+        self,
+        mock_sm_cls,
+        mock_kill,
+        mock_process,
+    ):
         mock_session = MagicMock()
         mock_session.terminal_context = {"parent_pid": "456"}
         mock_sm = MagicMock()
         mock_sm.get.return_value = mock_session
         mock_sm_cls.return_value = mock_sm
-        mock_run.return_value = (0, "python qwen session-id other", "")
+        mock_process.return_value.cmdline.return_value = [
+            "python",
+            "qwen",
+            "session-id",
+            "other",
+        ]
 
         res = await _close_terminal_window("sess1", MagicMock(), provider="claude")
 
@@ -278,6 +348,17 @@ class TestCloseTerminalWindow:
 
 
 class TestKillAgent:
+    @pytest.fixture(autouse=True)
+    def mock_agent_process(self) -> Iterator[MagicMock]:
+        with patch("gobby.agents.kill.psutil.Process") as process_factory:
+            process_factory.return_value.cmdline.return_value = [
+                "python",
+                "claude",
+                "session-id",
+                "sess1",
+            ]
+            yield process_factory
+
     @pytest.fixture
     def mock_db(self) -> MagicMock:
         return MagicMock()
@@ -363,15 +444,13 @@ class TestKillAgent:
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.killpg")
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
     async def test_close_terminal_true(
-        self, mock_close, mock_kill, mock_run, mock_killpg, agent_run, mock_db
+        self, mock_close, mock_kill, mock_killpg, agent_run, mock_db
     ):
         agent_run.pid = 999
         mock_kill.side_effect = [None, ProcessLookupError("closed")]
-        mock_run.return_value = (0, "python claude session-id sess1", "")
         mock_close.return_value = {"success": True, "method": "tmux"}
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
         assert res["success"] is True
@@ -381,21 +460,18 @@ class TestKillAgent:
         mock_killpg.assert_not_called()
 
     @patch("gobby.agents.kill._signal_process_group")
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
     async def test_failed_terminal_close_falls_back_to_direct_pid(
         self,
         mock_close: AsyncMock,
         mock_kill: MagicMock,
-        mock_run: AsyncMock,
         mock_signal: MagicMock,
         agent_run: AgentRun,
         mock_db: MagicMock,
     ) -> None:
         agent_run.pid = 999
         mock_close.return_value = {"success": False, "error": "terminal unavailable"}
-        mock_run.return_value = (0, "python claude session-id sess1", "")
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
 
@@ -409,14 +485,12 @@ class TestKillAgent:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.killpg")
     @patch("gobby.agents.kill.os.getpgid", return_value=999)
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
     async def test_close_terminal_zero_timeout_escalates_alive_pid(
         self,
         mock_close,
         mock_kill,
-        mock_run,
         mock_getpgid,
         mock_killpg,
         agent_run,
@@ -424,7 +498,6 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         mock_kill.return_value = None
-        mock_run.return_value = (0, "python claude session-id sess1", "")
         mock_close.return_value = {"success": True, "method": "tmux"}
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
@@ -438,15 +511,13 @@ class TestKillAgent:
         mock_killpg.assert_called_once_with(999, signal.SIGKILL)
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.os.killpg")
     @patch("gobby.agents.kill.os.getpgid", return_value=999)
     async def test_kill_by_explicit_pid(
-        self, mock_getpgid, mock_killpg, mock_kill, mock_run, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_kill, agent_run, mock_db
     ):
         agent_run.pid = 999
-        mock_run.return_value = (0, "python claude session-id sess1", "")
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
         assert res["pid"] == 999
@@ -455,18 +526,22 @@ class TestKillAgent:
         mock_killpg.assert_called_once_with(999, signal.SIGTERM)
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     async def test_kill_by_explicit_pid_refuses_recycled_pid(
         self,
         mock_kill,
-        mock_run,
         agent_run,
         mock_db,
         caplog: pytest.LogCaptureFixture,
+        mock_agent_process: MagicMock,
     ):
         agent_run.pid = 999
-        mock_run.return_value = (0, "python other-provider session-id other-session", "")
+        mock_agent_process.return_value.cmdline.return_value = [
+            "python",
+            "other-provider",
+            "session-id",
+            "other-session",
+        ]
         caplog.set_level(logging.WARNING, logger="gobby.agents.kill")
 
         res = await kill_agent(agent_run, mock_db, timeout=0)
@@ -478,13 +553,12 @@ class TestKillAgent:
         assert "Refusing to signal PID 999: cmdline does not match provider identity" in caplog.text
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.os.killpg")
     @patch("gobby.agents.kill.os.getpgid", return_value=888)
     async def test_kill_pid_from_terminal_context(
-        self, mock_getpgid, mock_killpg, mock_kill, mock_sm_cls, mock_run, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_kill, mock_sm_cls, agent_run, mock_db
     ):
         agent_run.pid = None
         mock_session = MagicMock()
@@ -492,7 +566,6 @@ class TestKillAgent:
         mock_sm = MagicMock()
         mock_sm.get.return_value = mock_session
         mock_sm_cls.return_value = mock_sm
-        mock_run.return_value = (0, "python claude session-id sess1", "")
 
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
@@ -515,8 +588,6 @@ class TestKillAgent:
             cmd = args[0] if args else ""
             if cmd == "pgrep":
                 return (0, "777\n", "")
-            if cmd == "ps":
-                return (0, "python claude session-id sess1", "")
             return (1, "", "")
 
         mock_run.side_effect = _run_side_effect
@@ -543,12 +614,6 @@ class TestKillAgent:
             cmd = args[0] if args else ""
             if cmd == "pgrep":
                 return (0, "777\n778\n", "")
-            if cmd == "ps":
-                if args[2] == "777":
-                    return (0, "python claude session-id sess1", "")
-                if args[2] == "778":
-                    # Both PIDs match — kill_agent picks the highest PID for disambiguation
-                    return (0, "python claude session-id sess1 --wrapper", "")
             return (1, "", "")
 
         mock_run.side_effect = _run_side_effect
@@ -575,14 +640,12 @@ class TestKillAgent:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.asyncio.sleep")
-    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.killpg")
     @patch("gobby.agents.kill.os.getpgid", return_value=999)
     async def test_kill_escalates_to_kill(
-        self, mock_getpgid, mock_killpg, mock_run, mock_sleep, mock_kill, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_sleep, mock_kill, agent_run, mock_db
     ):
         agent_run.pid = 999
-        mock_run.return_value = (0, "python claude session-id sess1", "")
         mock_kill.side_effect = [None, None, ProcessLookupError("dead after sigkill")]
 
         # Custom side effect for os.kill

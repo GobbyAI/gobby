@@ -11,7 +11,7 @@ import os
 import re
 import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 import psutil
@@ -102,15 +102,15 @@ async def pid_matches_agent_identity(
     *,
     provider: str,
     session_id: str | None,
-    run_subprocess: Callable[..., Awaitable[tuple[int, str, str]]] | None = None,
+    process_factory: Callable[[int], psutil.Process] | None = None,
     unverifiable_result: bool = False,
 ) -> bool:
     """Verify a recorded PID still belongs to the expected provider/session.
 
-    unverifiable_result is returned when identity cannot be determined at all
-    (the ps lookup itself fails, e.g. times out under load). Signal/kill paths
-    keep the False default (never signal an unverified PID); liveness checks
-    must pass True so a failed lookup is not mistaken for a dead agent.
+    unverifiable_result is returned when identity cannot be determined at all.
+    Signal/kill paths keep the False default (never signal an unverified PID);
+    liveness checks must pass True so a failed lookup is not mistaken for a
+    dead agent.
     """
     if not session_id or not _validate_terminal_value("session_id", session_id):
         logger.warning("Refusing to signal PID %s: missing or invalid session id", pid)
@@ -121,59 +121,72 @@ async def pid_matches_agent_identity(
         logger.warning("Refusing to signal PID %s: missing provider", pid)
         return False
 
-    runner = run_subprocess or _run_subprocess
-    try:
-        rc, stdout, _ = await runner("ps", "-p", str(pid), "-o", "args=", timeout=2.0)
-    except Exception as e:
-        logger.warning(
-            "PID %s identity unverifiable (cmdline lookup failed: %s); treating as %s",
+    matches, failure_stage, error = await asyncio.to_thread(
+        _inspect_process_identity,
+        pid,
+        provider_marker,
+        session_id,
+        process_factory or psutil.Process,
+    )
+    if matches is None:
+        assert failure_stage is not None
+        assert error is not None
+        error_name = type(error).__name__
+        error_message = str(error).strip()
+        error_details = f"{error_name}: {error_message}" if error_message else error_name
+        log = logger.debug if unverifiable_result else logger.warning
+        log(
+            "PID %s identity unverifiable (%s inspection failed: %s); treating as %s",
             pid,
-            e or type(e).__name__,
+            failure_stage,
+            error_details,
             "alive" if unverifiable_result else "unsafe to signal",
         )
         return unverifiable_result
-
-    cmdline = stdout.strip()
-    if rc != 0 or provider_marker not in cmdline.lower():
+    if not matches:
         logger.warning(
             "Refusing to signal PID %s: cmdline does not match provider identity",
             pid,
         )
         return False
+    return True
+
+
+def _inspect_process_identity(
+    pid: int,
+    provider_marker: str,
+    session_id: str,
+    process_factory: Callable[[int], psutil.Process],
+) -> tuple[bool | None, str | None, Exception | None]:
+    """Inspect process identity synchronously; None means inspection failed."""
+    try:
+        process = process_factory(pid)
+    except psutil.NoSuchProcess:
+        return False, None, None
+    except Exception as error:
+        return None, "process", error
+
+    try:
+        cmdline = " ".join(process.cmdline())
+    except psutil.NoSuchProcess:
+        return False, None, None
+    except Exception as error:
+        return None, "cmdline", error
+
+    if provider_marker not in cmdline.lower():
+        return False, None, None
     if f"session-id {session_id}" in cmdline:
-        return True
+        return True, None, None
+
     # Providers like codex carry no session marker in argv; the spawn-time
     # GOBBY_SESSION_ID environment variable is the identity there.
-    env_match = await _process_env_matches_session(pid, session_id)
-    if env_match:
-        return True
-    if env_match is None:
-        logger.warning(
-            "PID %s identity unverifiable (environment unreadable); treating as %s",
-            pid,
-            "alive" if unverifiable_result else "unsafe to signal",
-        )
-        return unverifiable_result
-    logger.warning(
-        "Refusing to signal PID %s: cmdline does not match provider/session identity",
-        pid,
-    )
-    return False
-
-
-async def _process_env_matches_session(pid: int, session_id: str) -> bool | None:
-    """Check the process environment for GOBBY_SESSION_ID; None means unreadable."""
-
-    def _read_env() -> bool | None:
-        try:
-            env = psutil.Process(pid).environ()
-        except psutil.NoSuchProcess:
-            return False
-        except (psutil.Error, OSError):
-            return None
-        return bool(env.get("GOBBY_SESSION_ID") == session_id)
-
-    return await asyncio.to_thread(_read_env)
+    try:
+        environment = process.environ()
+    except psutil.NoSuchProcess:
+        return False, None, None
+    except Exception as error:
+        return None, "environment", error
+    return environment.get("GOBBY_SESSION_ID") == session_id, None, None
 
 
 async def _close_terminal_window(

@@ -84,19 +84,23 @@ def test_auth_cli_inference_looks_through_srt_wrapper() -> None:
 
 @pytest.mark.asyncio
 async def test_pane_pid_identity_accepts_provider_inside_srt_argv() -> None:
-    async def fake_run_subprocess(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        return (
-            0,
-            "/managed/node /managed/runner.mjs --settings /policy -- "
-            "/opt/claude/versions/2.1.220 --session-id child-session",
-            "",
-        )
+    process = MagicMock()
+    process.cmdline.return_value = [
+        "/managed/node",
+        "/managed/runner.mjs",
+        "--settings",
+        "/policy",
+        "--",
+        "/opt/claude/versions/2.1.220",
+        "--session-id",
+        "child-session",
+    ]
 
     assert await pid_matches_agent_identity(
         123,
         provider="claude",
         session_id="child-session",
-        run_subprocess=fake_run_subprocess,
+        process_factory=MagicMock(return_value=process),
     )
 
 
