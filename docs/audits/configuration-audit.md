@@ -129,13 +129,13 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | session_summary.summary_file_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
 | compact_handoff.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
 | compact_handoff.refresh_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
-| context_injection.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
-| context_injection.default_source | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
-| context_injection.max_file_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
-| context_injection.max_content_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
-| context_injection.max_transcript_messages | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
-| context_injection.truncation_suffix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
-| context_injection.context_template | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
+| context_injection.enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.default_source | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.max_file_size | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.max_content_size | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.max_transcript_messages | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.truncation_suffix | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
+| context_injection.context_template | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
 | mcp_client_proxy.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | mcp-tools |  |
 | mcp_client_proxy.connect_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | mcp-tools |  |
 | mcp_client_proxy.proxy_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | mcp-tools |  |
@@ -156,14 +156,14 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | gobby-tasks.expansion.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | gobby-tasks.expansion.prompt_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
 | gobby-tasks.expansion.system_prompt_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.codebase_research_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.research_model | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.research_max_steps | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.research_system_prompt | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.web_research_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| gobby-tasks.expansion.codebase_research_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
+| gobby-tasks.expansion.research_model | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
+| gobby-tasks.expansion.research_max_steps | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
+| gobby-tasks.expansion.research_system_prompt | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
+| gobby-tasks.expansion.web_research_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
 | gobby-tasks.expansion.default_strategy | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | automation-workflows |  |
 | gobby-tasks.expansion.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| gobby-tasks.expansion.research_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| gobby-tasks.expansion.research_timeout | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead expansion research knob; no runtime consumer |
 | gobby-tasks.expansion.pattern_criteria.patterns | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | automation-workflows | object items= map=array |
 | gobby-tasks.expansion.pattern_criteria.detection_keywords | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | automation-workflows | object items= map=array |
 | gobby-tasks.validation.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | automation-workflows |  |
@@ -192,8 +192,8 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | communications.channel_defaults.retry_count | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks |  |
 | communications.channel_defaults.poll_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks |  |
 | communications.channel_defaults.retention_days | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks |  |
-| communications.inbound_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | integrations-hooks |  |
-| communications.outbound_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | integrations-hooks |  |
+| communications.inbound_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead toggle; no runtime consumer |
+| communications.outbound_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead toggle; no runtime consumer |
 | communications.auto_create_sessions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | integrations-hooks |  |
 | digest.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | runtime-infrastructure |  |
 | digest.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
@@ -405,15 +405,15 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | skill_description.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | providers-models | array items=string map= |
 | context_window_overrides | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=integer |
 | code_index.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
-| code_index.auto_index_on_commit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
+| code_index.auto_index_on_commit | (removed) | (removed) | dead | drop | (none) | removed in #19400 — no hook or indexer read site |
 | code_index.maintenance_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.missing_root_purge_observations | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| code_index.max_file_size_bytes | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| code_index.exclude_patterns | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
+| code_index.max_file_size_bytes | (removed) | (removed) | dead | drop | (none) | removed in #19400 — zero consumers; gcode applies its own built-in limits |
+| code_index.exclude_patterns | (removed) | (removed) | dead | drop | (none) | removed in #19400 — zero consumers; gcode uses its own hardcoded DEFAULT_EXCLUDES |
 | code_index.embedding_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | code_index.graph_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
-| code_index.qdrant_collection_prefix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
-| code_index.languages | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
+| code_index.qdrant_collection_prefix | (removed) | (removed) | dead | drop | (none) | removed in #19400 — validation-only mirror of databases.qdrant.collection_prefix |
+| code_index.languages | (removed) | (removed) | dead | drop | (none) | removed in #19400 — nothing passes a language list to gcode |
 | code_index.symbol_summary.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | code_index.symbol_summary.batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.symbol_summary.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | runtime-infrastructure |  |
@@ -422,7 +422,7 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | code_index.symbol_summary.max_tokens | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| code_index.content_extensions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
+| code_index.content_extensions | (removed) | (removed) | dead | drop | (none) | removed in #19400 — zero consumers; gcode decides content handling itself |
 | indexing.respect_gitignore | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | bin_freshness.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | bin_freshness.initial_delay_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
@@ -444,7 +444,7 @@ These are the rows that P13 must either fix before/while building the overlay or
 
 ### Fix: Structured Editors
 
-45 schema rows are arrays, object lists, or maps currently rendered through the generic text-input fallback. Build JSON/list/map editors or dedicated section controls for these rows:
+42 schema rows are arrays, object lists, or maps currently rendered through the generic text-input fallback. Build JSON/list/map editors or dedicated section controls for these rows:
 
 | Option | Current control | Target section |
 | --- | --- | --- |
@@ -487,10 +487,7 @@ These are the rows that P13 must either fix before/while building the overlay or
 | merge_resolution.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | skill_description.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | context_window_overrides | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
-| code_index.exclude_patterns | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
-| code_index.languages | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | code_index.symbol_summary.candidates | ConfigFormTab -> string list | runtime-infrastructure |
-| code_index.content_extensions | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | wiki.roots | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 | wiki.ignore_globs | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 
