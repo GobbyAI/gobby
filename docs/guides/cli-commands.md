@@ -31,11 +31,9 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
 | `embeddings` | Manage the embedding service and indices. | `src/gobby/cli/embeddings.py` |
-| `export` | Export project resources. | `src/gobby/cli/export_import.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
 | `hooks` | Manage hook endpoints and configuration. | `src/gobby/cli/extensions.py` |
-| `import` | Import project resources. | `src/gobby/cli/export_import.py` |
 | `init` | Initialize `.gobby/project.json`. | `src/gobby/cli/init.py` |
 | `install` | Install required infrastructure, configuration, integrations, and hooks. | `src/gobby/cli/install.py` |
 | `linear` | Manage Linear integration. | `src/gobby/cli/linear.py` |
@@ -636,8 +634,6 @@ gobby linear import [OPTIONS]
 gobby linear sync TASK
 gobby linear create TASK
 
-gobby export workflow|agent|prompt|all [NAME] [--to PATH] [--global] [--dry-run]
-gobby import workflow|agent|prompt|all [NAME] [--from PATH] [--from-project PATH]
 ```
 
 ## Admin And Diagnostics

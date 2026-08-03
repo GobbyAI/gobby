@@ -1,66 +1,63 @@
-# Webhook Workflow Action Schema
+# Webhook Transport And Workflow Action Model
 
-This guide documents the webhook action model implemented by
-`src/gobby/workflows/webhook.py` and the request executor implemented by
-`src/gobby/workflows/webhook_executor.py`.
+This guide distinguishes the workflow action data model from Gobby's live
+webhook delivery stack.
 
-The webhook action schema is a workflow helper model. It is separate from:
+The current source paths are:
 
-- `hook_extensions.webhooks`, which dispatches hook events to configured HTTP
-  endpoints.
-- Pipeline `webhooks`, which notify on pipeline approval, completion, and
-  failure.
-- Rule effects. Rules use effect types such as `mcp_call`, `set_variable`, and
-  `block`; `webhook` is not a rule effect type.
+- `src/gobby/workflows/webhook.py`: parses and serializes `WebhookAction`,
+  `RetryConfig`, and `CaptureConfig` values.
+- `src/gobby/utils/webhook_transport.py`: performs bounded outbound HTTP
+  delivery for runtime webhook callers.
+- `src/gobby/hooks/webhooks.py`: matches configured hook endpoints, builds
+  payloads, invokes the shared transport, and interprets blocking decisions.
+- `src/gobby/hooks/dispatchers/webhook.py`: connects the hook manager to
+  synchronous blocking delivery and asynchronous observer delivery.
+- `src/gobby/workflows/pipeline_webhooks.py`: sends pipeline notifications
+  through the shared transport.
 
-When authoring rules that run near agent lifecycle boundaries, target semantic
-events such as `turn_start` and `turn_end`. Raw `before_agent`, `after_agent`,
-and `stop` events remain provider/runtime details. Agent termination is a
-separate lifecycle action and still requires `gobby-agents:end_agent_run`.
+`WebhookAction` is currently a helper model with no runtime workflow action
+dispatcher. Parsing an action dictionary does not send a request. In particular,
+the model's `webhook_id`, callback, response-capture, and retry fields are stored
+configuration; no shipped runtime resolves or executes them as a generic YAML
+`action: webhook` step.
 
-## Schema
+The action model is also separate from rule effects. Rules use effect types such
+as `mcp_call`, `set_variable`, and `block`; `webhook` is not a rule effect type.
+
+## Action Model Schema
 
 Webhook action dictionaries are parsed with `WebhookAction.from_dict(data)`.
 
 ### Required Fields
 
-Exactly one of these fields is required:
+Exactly one target field is required by the model:
 
-| Field | Type | Description |
+| Field | Type | Current behavior |
 | --- | --- | --- |
-| `url` | string | Literal `http://` or `https://` URL to call. |
-| `webhook_id` | string | Key looked up in a caller-provided webhook registry. |
+| `url` | string | Must use the `http` or `https` scheme. Stored for serialization. |
+| `webhook_id` | string | Stored as an identifier. The current runtime has no registry resolver for this field. |
 
-Providing both fields raises a validation error. Providing neither field also
-raises a validation error.
+Providing both fields or neither field raises `ValueError`.
 
 ### Optional Fields
 
-| Field | Type | Default | Description |
+| Field | Type | Default | Current behavior |
 | --- | --- | --- | --- |
-| `method` | string enum | `POST` | HTTP method. Parsed case-insensitively and stored uppercase. |
-| `headers` | object | `{}` | Request headers. The executor interpolates `${secrets.NAME}` in string header values. |
-| `payload` | string, object, or null | `null` | Request body. Dict payloads are sent as JSON; string payloads are sent as raw data. |
-| `timeout` | integer | `30` | Total request timeout in seconds. Must be 1-300. |
-| `retry` | object or null | `null` | Retry configuration. No retry is attempted when omitted. |
-| `on_success` | string or null | `null` | Parsed and serialized by the model. Executor callers provide callbacks directly. |
-| `on_failure` | string or null | `null` | Parsed and serialized by the model. Executor callers provide callbacks directly. |
-| `capture_response` | object or null | `null` | Names for response fields a caller may capture after execution. |
+| `method` | string enum | `POST` | Parsed case-insensitively and stored uppercase. |
+| `headers` | object | `{}` | Stored as supplied. The model performs no interpolation. |
+| `payload` | string, object, or null | `null` | Stored as supplied. The model performs no rendering. |
+| `timeout` | integer | `30` | Must be between 1 and 300 seconds. |
+| `retry` | object or null | `null` | Parsed into `RetryConfig`; the model does not schedule requests. |
+| `on_success` | string or null | `null` | Stored and serialized only. |
+| `on_failure` | string or null | `null` | Stored and serialized only. |
+| `capture_response` | object or null | `null` | Parsed into `CaptureConfig` and serialized only. |
 
-Valid methods are:
+Valid methods are `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 
-- `GET`
-- `POST`
-- `PUT`
-- `PATCH`
-- `DELETE`
+## Retry And Capture Metadata
 
-## Retry Configuration
-
-`retry` is optional. If it is omitted — or provided as an empty `retry: {}`,
-which is treated the same as omitting it — the executor performs one request
-attempt. When `retry` contains at least one field, unspecified fields default
-to:
+A non-empty `retry` mapping is parsed with these defaults:
 
 ```yaml
 retry:
@@ -69,24 +66,11 @@ retry:
   retry_on_status: [429, 500, 502, 503, 504]
 ```
 
-`max_attempts` is the total number of attempts, including the first request. The
-model accepts values from 1 through 10. Retry sleeps use exponential backoff:
+`max_attempts` must be between 1 and 10. An omitted or empty mapping becomes
+`null`. These values are model metadata until a caller explicitly maps them to
+the transport API.
 
-```text
-delay = backoff_seconds * 2 ** (attempt - 1)
-```
-
-The executor retries these failure classes until attempts are exhausted:
-
-- HTTP responses whose status code is in `retry_on_status`.
-- `TimeoutError`.
-- `aiohttp.ClientError`.
-
-Non-2xx HTTP responses outside `retry_on_status` return immediately as failures.
-
-## Response Capture
-
-`capture_response` is parsed as a `CaptureConfig`:
+Response-capture names are parsed in the same way:
 
 ```yaml
 capture_response:
@@ -95,130 +79,94 @@ capture_response:
   headers_var: webhook_headers
 ```
 
-The executor returns a `WebhookResult` with:
+The model does not write workflow variables or call success/failure callbacks.
+
+## Live Transport API
+
+Runtime callers use `WebhookTransport.execute()` from
+`src/gobby/utils/webhook_transport.py`. It accepts a URL, method, headers,
+payload, timeout, response-size limit, retry bounds, retry statuses, and an
+optional shared `httpx.AsyncClient`.
+
+The transport validates methods, headers, URLs, and numeric limits; resolves and
+pins target addresses; disables redirects and environment proxy inheritance;
+caps response bodies; and sanitizes transport errors. Address policy is chosen
+by the caller through `allow_private_addresses`.
+
+`execute()` returns `WebhookTransportResult`, containing:
 
 - `success`
 - `status_code`
 - `body`
 - `headers`
-- `error`
+- `error` and structured failure diagnostics
+- `attempts`
 
-`WebhookResult.json_body()` returns a parsed JSON object when the body is valid
-JSON and returns `None` otherwise. The action model stores the capture variable
-names, but the executor does not mutate workflow variables by itself; the caller
-is responsible for writing returned fields into state.
+`WebhookTransportResult.json_body()` returns a JSON object when the response
+body contains one. The transport defaults to one attempt. Callers opt into
+additional attempts and backoff explicitly.
 
-## Interpolation
+## Hook-Dispatcher Stack
 
-Current interpolation is intentionally narrow:
+Hook extension webhooks are configured under `hook_extensions.webhooks`.
+`WebhookDispatcher` in `src/gobby/hooks/webhooks.py` filters enabled endpoints by
+event, builds the normalized payload, expands configured URL and header values,
+and calls `WebhookTransport.execute()`.
 
-| Location | Behavior |
-| --- | --- |
-| `headers` | String values support `${secrets.NAME}` interpolation through the executor's `secrets` dict. Missing secrets raise `ValueError`. |
-| string `payload` | Rendered through the provided `TemplateRenderer`, when one is supplied. |
-| dict `payload` | Sent as-is; the executor does not deep-render nested strings. |
-| `url` | Not interpolated by the action model or executor. Direct `url` values must already parse as `http://` or `https://`. |
+For each hook endpoint, the dispatcher maps `retry_count` to
+`max_attempts = retry_count + 1`. Blocking endpoints are awaited within the
+shared blocking-effect deadline and may return a blocking decision. Fail-closed
+endpoints also block when delivery fails. Observer endpoints are scheduled by
+`src/gobby/hooks/dispatchers/webhook.py` for background delivery.
 
-Do not use `${env.NAME}` or `${secrets.NAME}` as a direct `url` value for this
-action schema. The model validates the URL before any executor call.
+## Pipeline Notifications
 
-## Registered Webhooks
+`WebhookNotifier` in `src/gobby/workflows/pipeline_webhooks.py` sends approval,
+completion, and failure notifications through the same transport. It uses the
+transport's one-attempt default and logs delivery failures without changing the
+pipeline transition.
 
-`webhook_id` is resolved by `WebhookExecutor.execute_by_webhook_id()` from the
-executor's in-memory registry:
+## Parse-Only Example
 
-```python
-registry = {
-    "slack_alerts": {
-        "url": "https://hooks.slack.com/services/xxx",
-        "method": "POST",
-        "headers": {"Content-Type": "application/json"},
-        "timeout": 30,
-    }
-}
-```
-
-Registry headers are merged with per-call headers, and per-call headers win on
-key conflicts. `method` and `timeout` passed to `execute_by_webhook_id()`
-override registry values. A missing registry key raises `ValueError`.
-
-This registry is supplied by the caller. It is not the same schema as
-`hook_extensions.webhooks.endpoints` in the daemon config.
-
-## Examples
-
-### Minimal Direct URL
-
-```yaml
-url: "https://api.example.com/events"
-```
-
-Parsed defaults:
-
-```yaml
-method: POST
-headers: {}
-payload: null
-timeout: 30
-retry: null
-```
-
-### Full Action Shape
+The following dictionary is valid input to `WebhookAction.from_dict()` and can
+be serialized back with `WebhookAction.to_dict()`:
 
 ```yaml
 url: "https://api.example.com/events"
 method: PUT
 headers:
   Authorization: "Bearer ${secrets.API_TOKEN}"
-  X-Custom: "value"
 payload:
   event: "session_end"
-  session_id: "sess-123"
 timeout: 60
 retry:
   max_attempts: 3
   backoff_seconds: 2
   retry_on_status: [429, 500, 502]
 on_success: log_success
-on_failure: alert_failure
 capture_response:
   status_var: response_status
-  body_var: response_body
-  headers_var: response_headers
 ```
 
-### Registered Webhook Reference
-
-```yaml
-webhook_id: "slack_alerts"
-payload:
-  text: "Build finished"
-```
-
-The registry lookup must provide the target URL. If the registry value has no
-`url`, execution raises `ValueError`.
+The `${secrets.API_TOKEN}` value remains literal in this model. Runtime hook and
+pipeline surfaces perform their own configuration expansion before calling the
+transport.
 
 ## Validation And Serialization
 
-`WebhookAction.from_dict()` validates:
-
-- `url` and `webhook_id` are mutually exclusive.
-- one target field is present.
-- direct `url` values use `http` or `https`.
-- `method` is one of the supported HTTP methods.
-- `timeout` is between 1 and 300.
-- `retry.max_attempts` is between 1 and 10.
-
-`WebhookAction.to_dict()` serializes only populated optional fields, plus the
-stored `method` and `timeout`.
+`WebhookAction.from_dict()` validates target exclusivity, URL scheme, HTTP
+method, timeout, and retry attempt bounds. `WebhookAction.to_dict()` serializes
+populated optional fields plus the stored `method` and `timeout`.
 
 ## Related Files
 
 - `src/gobby/workflows/webhook.py`
-- `src/gobby/workflows/webhook_executor.py`
+- `src/gobby/utils/webhook_transport.py`
+- `src/gobby/hooks/webhooks.py`
+- `src/gobby/hooks/dispatchers/webhook.py`
+- `src/gobby/workflows/pipeline_webhooks.py`
 - `tests/workflows/test_webhook_action.py`
-- `tests/workflows/test_webhook_executor.py`
+- [Webhooks And Plugins](./webhooks-and-plugins.md)
 - [Rules](./rules.md)
-- [Configuration](./configuration.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-08-02_

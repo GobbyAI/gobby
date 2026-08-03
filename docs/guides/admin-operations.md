@@ -187,18 +187,9 @@ On macOS this uses launchd. On Linux it uses systemd. Service environments do no
 inherit all shell variables, so put required values in `~/.gobby/bootstrap.yaml`,
 Gobby secrets, or managed config instead of relying on an interactive shell.
 
-## Export And Import
+## Configuration Export And Import
 
-Resource import/export moves workflow, agent, and prompt files between projects
-or the global Gobby directory:
-
-```bash
-uv run gobby export all --to /path/to/other/project
-uv run gobby export prompt --global
-uv run gobby import all --from-project /path/to/other/project
-```
-
-The Configuration API can also export and import UI-managed configuration:
+The Configuration API exports and imports UI-managed configuration:
 
 ```text
 POST /api/config/export
@@ -207,7 +198,7 @@ POST /api/config/import
 
 ## Pack And Unpack
 
-`gobby pack` creates a broader snapshot than resource export. It can include the
+`gobby pack` creates a full-state snapshot. It can include the
 database, bootstrap config, machine ID, secret salt, transcripts, summaries,
 services, hooks, certs, scripts, current project `.gobby`, and
 Docker volumes such as Qdrant and FalkorDB data.
@@ -251,8 +242,6 @@ uv run gobby status
 uv run gobby auth ...
 uv run gobby secrets ...
 uv run gobby service ...
-uv run gobby export ...
-uv run gobby import ...
 uv run gobby pack ...
 uv run gobby unpack ...
 uv run gobby sync ...
@@ -285,7 +274,6 @@ Use progressive discovery before calling any server.
 - `src/gobby/cli/auth.py`: auth CLI.
 - `src/gobby/cli/secrets.py`: secrets CLI.
 - `src/gobby/cli/service.py`: service manager CLI.
-- `src/gobby/cli/export_import.py`: resource export/import.
 - `src/gobby/cli/pack.py`: pack/unpack.
 - `src/gobby/servers/routes/auth.py`: auth HTTP routes.
 - `src/gobby/servers/routes/admin/`: setup, health, status, metrics, usage,

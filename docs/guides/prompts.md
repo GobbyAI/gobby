@@ -26,24 +26,6 @@ List synced content changes for prompts:
 uv run gobby sync --type prompts --verbose
 ```
 
-Dry-run prompt export:
-
-```bash
-uv run gobby export prompt
-```
-
-Export project prompt overrides to the global Gobby directory:
-
-```bash
-uv run gobby export prompt --global
-```
-
-Import prompts from another project:
-
-```bash
-uv run gobby import prompt --from-project /path/to/project
-```
-
 Use the Configuration page for browser editing:
 
 ```text
@@ -89,19 +71,11 @@ In production mode, sync verifies bundled content integrity unless `--force` is
 provided. In development mode, sync is allowed without that production integrity
 gate.
 
-## Export And Import
+## Moving Prompt Overrides
 
-The export/import CLI works with file-backed resource directories in `.gobby/`:
-
-```bash
-uv run gobby export prompt NAME --to /path/to/other/project
-uv run gobby export prompt NAME --global
-uv run gobby import prompt NAME --from /path/to/prompt.md
-uv run gobby import prompt --from-project /path/to/other/project
-```
-
-The Configuration API also supports config export and import that includes prompt
-overrides. Use this when moving UI-managed configuration between environments.
+The Configuration page and Configuration API export and import UI-managed
+configuration, including prompt overrides. Use that surface when moving
+overrides between environments.
 
 ## CLI
 
@@ -109,13 +83,10 @@ Prompt-related operator commands:
 
 ```bash
 uv run gobby sync --type prompts
-uv run gobby export prompt [NAME]
-uv run gobby import prompt [NAME] --from PATH
-uv run gobby import prompt --from-project PROJECT_PATH
 ```
 
-Use `gobby sync` for bundled content. Use `gobby export` and `gobby import` for
-sharing overrides.
+Use `gobby sync` for bundled content. Manage and transfer overrides through the
+Configuration page or API.
 
 ## HTTP
 
@@ -149,10 +120,6 @@ the relevant owning server, such as `gobby-config`, `gobby-workflows`, or
 - `src/gobby/install/shared/prompts/`: bundled prompt markdown.
 - `src/gobby/servers/routes/configuration.py`: prompt override HTTP routes.
 - `src/gobby/cli/sync.py`: bundled content sync CLI.
-- `src/gobby/cli/export_import.py`: resource export/import CLI.
-- `.gobby/prompts/`: export/import transport directory only; active
-  project/global overrides are DB records managed via the Configuration page
-  or `PUT /api/config/prompts/{path}`.
 
 ## See Also
 

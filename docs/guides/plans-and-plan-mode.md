@@ -68,7 +68,7 @@ Plan mode is enforced through workflow/rule state. In plan mode:
   and paths that escape an approved root remain blocked.
 - Multi-file operations are allowed only when every target is the active plan
   artifact or an approved scratch path.
-- Other file writes are blocked by `block-writes-outside-plan-artifact.yaml`.
+- Other file writes are blocked by `block-edits-plan-mode.yaml`.
 - Shell mutation policy is unchanged; redirections and heredoc writes still use
   the existing plan-mode shell restrictions.
 - `/gobby plan` does not create planning epics, review anchors, or per-round
@@ -80,7 +80,7 @@ Plan mode is enforced through workflow/rule state. In plan mode:
 The relevant rule template is:
 
 ```text
-src/gobby/install/shared/workflows/rules/plan-mode/block-writes-outside-plan-artifact.yaml
+src/gobby/install/shared/workflows/rules/plan-mode/block-edits-plan-mode.yaml
 ```
 
 Rule templates are not runtime rules by themselves. Installed DB rules are the
