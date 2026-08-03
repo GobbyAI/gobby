@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import normalize_machine_id
 from gobby.utils.datetime import normalize_datetime_model
 
 BinUpdateStatus = Literal[
@@ -32,7 +33,8 @@ _STATUS_SQL = ",".join(f"'{status}'" for status in BIN_UPDATE_STATUS_VALUES)
 
 BIN_UPDATE_STATE_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS bin_update_state (
-    tool_name TEXT PRIMARY KEY,
+    machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
     installed_version TEXT,
     floor_version TEXT NOT NULL,
     latest_version TEXT,
@@ -45,12 +47,14 @@ CREATE TABLE IF NOT EXISTS bin_update_state (
     source_url TEXT,
     is_dev BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_dev IN (FALSE, TRUE)),
     floor_drift BOOLEAN NOT NULL DEFAULT FALSE CHECK (floor_drift IN (FALSE, TRUE)),
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (machine_id, tool_name)
 );
 """
 
 
 _RECORD_COLUMNS = """
+            machine_id,
             tool_name,
             installed_version,
             floor_version,
@@ -68,6 +72,7 @@ _RECORD_COLUMNS = """
 
 def _row_to_record(row: Mapping[str, Any]) -> BinUpdateRecord:
     return BinUpdateRecord(
+        machine_id=str(row["machine_id"]),
         tool_name=row["tool_name"],
         installed_version=row["installed_version"],
         floor_version=row["floor_version"],
@@ -89,6 +94,7 @@ def _row_to_record(row: Mapping[str, Any]) -> BinUpdateRecord:
 class BinUpdateRecord:
     """Persisted update state for one managed native binary."""
 
+    machine_id: str
     tool_name: str
     installed_version: str | None
     floor_version: str
@@ -107,8 +113,12 @@ class BinUpdateRecord:
 class BinUpdateStateStore:
     """Read and write rows in ``bin_update_state``."""
 
-    def __init__(self, db: HubDatabase) -> None:
+    def __init__(self, db: HubDatabase, *, machine_id: str) -> None:
         self.db = db
+        normalized = normalize_machine_id(machine_id)
+        if normalized is None:
+            raise ValueError("machine_id is required for bin update state")
+        self.machine_id = normalized
 
     def upsert(
         self,
@@ -130,6 +140,7 @@ class BinUpdateStateStore:
         self.db.execute(
             """
             INSERT INTO bin_update_state (
+                machine_id,
                 tool_name,
                 installed_version,
                 floor_version,
@@ -145,8 +156,8 @@ class BinUpdateStateStore:
                 floor_drift,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT(tool_name) DO UPDATE SET
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT(machine_id, tool_name) DO UPDATE SET
                 installed_version = excluded.installed_version,
                 floor_version = excluded.floor_version,
                 latest_version = excluded.latest_version,
@@ -162,6 +173,7 @@ class BinUpdateStateStore:
                 updated_at = excluded.updated_at
             """,
             (
+                self.machine_id,
                 tool_name,
                 installed_version,
                 floor_version,
@@ -186,10 +198,10 @@ class BinUpdateStateStore:
         row = self.db.fetchone(
             f"""
             SELECT {_RECORD_COLUMNS}
-              FROM bin_update_state
-             WHERE tool_name = %s
+             FROM bin_update_state
+             WHERE machine_id = %s AND tool_name = %s
             """,
-            (tool_name,),
+            (self.machine_id, tool_name),
         )
         if row is None:
             return None
@@ -201,8 +213,10 @@ class BinUpdateStateStore:
             f"""
             SELECT {_RECORD_COLUMNS}
               FROM bin_update_state
+             WHERE machine_id = %s
              ORDER BY tool_name
-            """
+            """,
+            (self.machine_id,),
         )
         return [_row_to_record(row) for row in rows]
 

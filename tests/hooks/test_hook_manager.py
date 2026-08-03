@@ -63,11 +63,11 @@ def test_record_machine_ingress_upserts_payload_metadata(
             "tailscale_name": "workstation.tailnet",
         }
     )
-    event.machine_id = "machine-hook"
+    event.machine_id = "2b158c70-5e21-4b49-a996-cb749570120d"
 
     manager_with_mocks._record_machine_ingress(event)
 
-    machine = LocalMachineManager(temp_db).get("machine-hook")
+    machine = LocalMachineManager(temp_db).get("2b158c70-5e21-4b49-a996-cb749570120d")
     assert machine is not None
     assert machine.hostname == "workstation"
     assert machine.os == "Darwin"
@@ -76,7 +76,7 @@ def test_record_machine_ingress_upserts_payload_metadata(
 
     payload_event = make_event(
         data={
-            "machineId": "payload-machine",
+            "machineId": "e44191db-6853-4999-be63-af0c91fac8ba",
             "hostname": "laptop",
             "os": "Linux",
             "machine_label": "travel",
@@ -86,7 +86,9 @@ def test_record_machine_ingress_upserts_payload_metadata(
 
     manager_with_mocks._record_machine_ingress(payload_event)
 
-    payload_machine = LocalMachineManager(temp_db).get("payload-machine")
+    payload_machine = LocalMachineManager(temp_db).get(
+        "e44191db-6853-4999-be63-af0c91fac8ba"
+    )
     assert payload_machine is not None
     assert payload_machine.hostname == "laptop"
     assert payload_machine.os == "Linux"

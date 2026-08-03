@@ -2,15 +2,17 @@
 
 import os
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from gobby.utils.durable_file import durable_replace_text
 from gobby.utils.machine_id import (
     _generate_machine_id,
     _get_or_create_machine_id,
-    _write_file_secure,
     clear_cache,
     get_machine_id,
 )
@@ -122,7 +124,6 @@ class TestGetOrCreateMachineId:
             patch(
                 "gobby.utils.machine_id._generate_machine_id", side_effect=generate
             ) as mock_generate,
-            patch("gobby.utils.machine_id.os.replace", wraps=os.replace) as replace,
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
             first = executor.submit(_get_or_create_machine_id)
@@ -136,7 +137,6 @@ class TestGetOrCreateMachineId:
         assert first.result() == second.result() == "generated-id-1"
         assert test_file.read_text() == "generated-id-1"
         mock_generate.assert_called_once()
-        replace.assert_called_once()
 
     def test_creates_parent_directory_if_missing(self, tmp_path) -> None:
         """Test creates parent directory if it doesn't exist."""
@@ -165,14 +165,14 @@ class TestGetOrCreateMachineId:
         assert result == "new-id"
 
 
-class TestWriteFileSecure:
-    """Tests for _write_file_secure function."""
+class TestDurableReplace:
+    """Tests for the shared durable replacement primitive."""
 
     def test_writes_content_to_file(self, tmp_path) -> None:
         """Test writes content correctly."""
         test_file = tmp_path / "test_file"
 
-        _write_file_secure(test_file, "test-content")
+        durable_replace_text(test_file, "test-content")
 
         assert test_file.read_text() == "test-content"
 
@@ -180,7 +180,7 @@ class TestWriteFileSecure:
         """Test file is created with 0o600 permissions."""
         test_file = tmp_path / "test_file"
 
-        _write_file_secure(test_file, "test-content")
+        durable_replace_text(test_file, "test-content")
 
         # Check permissions (owner read/write only)
         mode = test_file.stat().st_mode & 0o777
@@ -192,7 +192,7 @@ class TestWriteFileSecure:
         test_file.write_text("old-content")
         test_file.chmod(0o644)
 
-        _write_file_secure(test_file, "new-content")
+        durable_replace_text(test_file, "new-content")
 
         assert test_file.read_text() == "new-content"
         assert test_file.stat().st_mode & 0o777 == 0o600
@@ -203,63 +203,44 @@ class TestWriteFileSecure:
         test_file.write_text("old-content")
 
         with (
-            patch("gobby.utils.machine_id.uuid.uuid4") as uuid4,
-            patch("gobby.utils.machine_id.os.replace", side_effect=OSError("replace failed")),
+            patch("gobby.utils.durable_file.uuid.uuid4") as uuid4,
+            patch("gobby.utils.durable_file.os.replace", side_effect=OSError("replace failed")),
             pytest.raises(OSError, match="replace failed"),
         ):
             uuid4.return_value.hex = "known"
-            _write_file_secure(test_file, "new-content")
+            durable_replace_text(test_file, "new-content")
 
         assert test_file.read_text() == "old-content"
         assert not (tmp_path / ".test_file.known.tmp").exists()
+
+    def test_fsyncs_file_and_parent_then_reads_back(self, tmp_path: Path) -> None:
+        test_file = tmp_path / "test_file"
+
+        with (
+            patch("gobby.utils.durable_file.os.fsync", wraps=os.fsync) as fsync,
+            patch(
+                "pathlib.Path.read_bytes",
+                autospec=True,
+                side_effect=Path.read_bytes,
+            ) as read_bytes,
+        ):
+            durable_replace_text(test_file, "durable")
+
+        assert fsync.call_count == 2
+        assert read_bytes.call_count == 1
 
 
 class TestGenerateMachineId:
     """Tests for _generate_machine_id function."""
 
-    def test_uses_machineid_library_when_available(self) -> None:
-        """Test uses an app-scoped machine ID hash if available."""
-        mock_machineid = MagicMock()
-        mock_machineid.hashed_id.return_value = "hashed-machine-id"
+    def test_generates_uuid4_unconditionally(self) -> None:
+        expected = uuid.UUID("c37b7e38-6b2f-4c76-a53a-7da88f9d84cf")
 
-        # Remove machineid from sys.modules if cached, so the mock is picked up
-        import sys
-
-        cached_module = sys.modules.pop("machineid", None)
-        try:
-            with patch.dict("sys.modules", {"machineid": mock_machineid}):
-                # Call directly - the function does runtime import
-                result = _generate_machine_id()
-
-                # Should return the mocked value
-                assert result == "hashed-machine-id"
-                mock_machineid.hashed_id.assert_called_once_with("gobby")
-        finally:
-            # Restore if it was cached
-            if cached_module is not None:
-                sys.modules["machineid"] = cached_module
-
-    def test_falls_back_to_uuid_when_import_fails(self) -> None:
-        """Test falls back to UUID when machineid unavailable."""
-        with patch.dict("sys.modules", {"machineid": None}):
+        with patch("gobby.utils.machine_id.uuid.uuid4", return_value=expected) as uuid4:
             result = _generate_machine_id()
 
-        # Should be a valid UUID string
-        assert result is not None
-        assert isinstance(result, str)
-        assert len(result) == 36  # UUID format
-
-    def test_falls_back_to_uuid_when_machineid_raises(self) -> None:
-        """Test falls back to UUID when machineid.hashed_id() raises."""
-        mock_machineid = MagicMock()
-        mock_machineid.hashed_id.side_effect = Exception("Hardware access failed")
-
-        with patch.dict("sys.modules", {"machineid": mock_machineid}):
-            result = _generate_machine_id()
-
-        # Should fall back to UUID
-        assert result is not None
-        assert isinstance(result, str)
+        assert result == str(expected)
+        uuid4.assert_called_once_with()
 
 
 class TestClearCache:
