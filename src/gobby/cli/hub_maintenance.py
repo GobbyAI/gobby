@@ -7,10 +7,9 @@ import json
 import os
 import subprocess  # nosec B404 - fixed Python module invocation, never shell=True
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 import click
 
@@ -82,11 +81,6 @@ def run_campaign(ctx: click.Context, campaign: Campaign) -> None:
     """Open a new epoch and run CAMPAIGN through verified release."""
     executor = _load_campaign_executor(campaign)
     intent: JsonObject = {"campaign": campaign}
-    prepare_intent = getattr(executor, "prepare_intent", None)
-    if prepare_intent is not None:
-        intent = cast(Callable[[], JsonObject], prepare_intent)()
-        if intent.get("campaign") != campaign:
-            raise click.ClickException("Campaign executor returned mismatched intent")
     database_url = _resolve_database_url()
     _stop_daemon_before_fence()
     owner_command = f"hub-maintenance:{campaign}"

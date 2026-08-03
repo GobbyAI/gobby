@@ -47,14 +47,6 @@ pub fn delete_project_collection(
     delete_qdrant_collection(&client, qdrant, &collection)
 }
 
-pub fn delete_exact_collection(
-    qdrant: &QdrantConfig,
-    collection: &str,
-) -> Result<usize, VectorLifecycleError> {
-    let client = qdrant_http_client()?;
-    delete_qdrant_collection(&client, qdrant, collection)
-}
-
 pub fn delete_file_vectors(
     qdrant: &QdrantConfig,
     project_id: &str,

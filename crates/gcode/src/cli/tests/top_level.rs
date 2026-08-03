@@ -42,36 +42,6 @@ fn test_parse_invalidate_project_id() {
 }
 
 #[test]
-fn test_parse_drop_namespace_requires_exact_manifest_and_hash() {
-    let cli = Cli::try_parse_from([
-        "gcode",
-        "drop-namespace",
-        "code_symbols_graph-standalone-123",
-        "--manifest",
-        "/tmp/deletions.json",
-        "--manifest-sha256",
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ])
-    .expect("drop-namespace parses");
-
-    match cli.command {
-        Command::DropNamespace {
-            namespace,
-            manifest,
-            manifest_sha256,
-        } => {
-            assert_eq!(namespace, "code_symbols_graph-standalone-123");
-            assert_eq!(manifest, std::path::PathBuf::from("/tmp/deletions.json"));
-            assert_eq!(
-                manifest_sha256,
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            );
-        }
-        _ => panic!("expected drop-namespace command"),
-    }
-}
-
-#[test]
 fn test_parse_callers_remains_top_level() {
     let cli = Cli::try_parse_from(["gcode", "callers", "handleAuth"]).expect("callers parses");
 

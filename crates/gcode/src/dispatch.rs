@@ -84,7 +84,6 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         Command::Index { .. } => ServiceConfigSelection::all(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
-        Command::DropNamespace { .. } => ServiceConfigSelection::qdrant_only(),
         Command::Codewiki {
             purge: true,
             compare_to: None,
@@ -336,13 +335,6 @@ fn run() -> anyhow::Result<()> {
             project_id: Some(_),
             ..
         } => Ok(()),
-        Command::DropNamespace {
-            namespace,
-            manifest,
-            manifest_sha256,
-        } => {
-            commands::status::drop_namespace(&ctx, &namespace, &manifest, &manifest_sha256, format)
-        }
         Command::Graph {
             command:
                 GraphCommand::SyncFile {

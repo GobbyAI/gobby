@@ -104,19 +104,6 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new("invalidate", "Clear index state and force re-index.")
             },
             CommandContract {
-                positionals: vec![PositionalContract::required("NAMESPACE")],
-                flags: vec![
-                    FlagContract::value("--manifest", "PATH").required(),
-                    FlagContract::value("--manifest-sha256", "SHA256").required(),
-                    format_flag(),
-                ],
-                json_output_keys: vec!["namespace", "deleted"],
-                ..CommandContract::new(
-                    "drop-namespace",
-                    "Delete one exact manifest-authorized Qdrant namespace.",
-                )
-            },
-            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![
                     PositionalContract::required("QUERY"),
