@@ -62,6 +62,7 @@ from gobby.memory.services.search import SearchDebugSnapshot, SearchService
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.memories import Memory
 from tests.memory._recall_corpus import _Stub, _StubExtractor
+from tests.memory.recall_benchmark_cleanup import drop_recall_benchmark_graph
 
 pytestmark = [pytest.mark.integration]
 
@@ -569,6 +570,6 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
     finally:
         try:
             if reachable:
-                await client.query("MATCH (n) DETACH DELETE n")
+                await drop_recall_benchmark_graph(client, graph_name)
         finally:
             await client.close()

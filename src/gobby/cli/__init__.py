@@ -2,6 +2,9 @@
 Gobby CLI entry point.
 """
 
+import runpy
+from pathlib import Path
+
 import click
 
 from gobby.utils.version import get_version
@@ -34,6 +37,7 @@ from .postgres import postgres_cli
 from .profiles import profiles
 from .projects import projects
 from .qdrant import qdrant
+from .recall_maintenance import recall_maintenance
 from .rules import rules
 from .runtime import CliRuntime
 from .schema import schema
@@ -51,6 +55,10 @@ from .ui import ui
 from .utils import load_full_config_from_db
 from .workflows import workflows
 from .worktrees import worktrees
+
+_RECONCILE_SCRIPT = Path(__file__).resolve().parents[3] / "scripts/hub_vector_graph_reconcile.py"
+if _RECONCILE_SCRIPT.is_file():
+    runpy.run_path(str(_RECONCILE_SCRIPT), run_name="gobby._hub_vector_graph_reconcile")
 
 
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
@@ -129,6 +137,7 @@ cli.add_command(auth)
 cli.add_command(secrets)
 cli.add_command(service)
 cli.add_command(qdrant)
+cli.add_command(recall_maintenance)
 cli.add_command(postgres_cli)
 cli.add_command(pack)
 cli.add_command(unpack)

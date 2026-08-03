@@ -224,6 +224,17 @@ pub(crate) enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Delete one exact Qdrant namespace authorized by a sealed reconciliation manifest
+    DropNamespace {
+        /// Exact Qdrant collection name
+        namespace: String,
+        /// Sealed reconciliation deletion manifest
+        #[arg(long, value_name = "PATH")]
+        manifest: std::path::PathBuf,
+        /// SHA-256 of the exact manifest bytes
+        #[arg(long, value_name = "SHA256")]
+        manifest_sha256: String,
+    },
     /// Manage and inspect the code-index graph projection [requires FalkorDB]
     Graph {
         #[command(subcommand)]

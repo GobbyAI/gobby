@@ -86,6 +86,7 @@ from tests.memory._recall_corpus import (
     build_corpus,
     make_embed_fn,
 )
+from tests.memory.recall_benchmark_cleanup import drop_recall_benchmark_graph
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -655,7 +656,7 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
             assert m.cluster_count > 0
     finally:
         try:
-            await client.query("MATCH (n) DETACH DELETE n")
+            await drop_recall_benchmark_graph(client, graph_name)
         finally:
             await client.close()
 
