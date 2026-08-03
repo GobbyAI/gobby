@@ -7,6 +7,21 @@ from gobby.storage.hub.protocol import HubDatabase
 
 def ensure_dream_schema(db: HubDatabase) -> None:
     """Create dream tables for upgraded daemons that have not migrated yet."""
+    row = db.fetchone(
+        "SELECT to_regclass('memory_dream_runs') AS runs,"
+        " to_regclass('memory_dream_snapshots') AS snapshots,"
+        " to_regclass('idx_memory_dream_runs_single_running') AS single_running,"
+        " to_regclass('memory_dream_truth_state') AS truth_state"
+    )
+    if row is not None and all(
+        row[key] is not None for key in ("runs", "snapshots", "single_running", "truth_state")
+    ):
+        # Fully migrated steady state: baseline + migrations own the schema.
+        # The daemon runtime role has no DDL privilege, and even CREATE TABLE
+        # IF NOT EXISTS fails its schema-CREATE check before the existence
+        # short-circuit. Any missing object falls through to the legacy
+        # repair path, which needs a privileged connection.
+        return
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS memory_dream_runs (
