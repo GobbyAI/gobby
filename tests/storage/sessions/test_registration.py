@@ -14,7 +14,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
-from gobby.storage.sessions import _field_update as session_field_update
+from gobby.storage.sessions import _session_metadata_update as session_metadata_update
 from gobby.storage.sessions import _upsert as session_upsert
 from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
 from gobby.storage.sessions._title_defaults import (
@@ -61,7 +61,7 @@ def test_session_registration_boolean_case_is_postgres_safe() -> None:
 
 
 def test_session_had_edits_updates_use_boolean_literals() -> None:
-    source = inspect.getsource(session_field_update)
+    source = inspect.getsource(session_metadata_update)
 
     assert "had_edits = 1" not in source
     assert "had_edits = 0" not in source
