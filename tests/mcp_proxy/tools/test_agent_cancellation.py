@@ -10,6 +10,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminalize_cancelled_agent_run,
@@ -18,6 +19,17 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    reaper = AsyncMock(return_value=0)
+    monkeypatch.setattr(
+        agent_cancellation,
+        "reap_srt_runner_process_tree",
+        reaper,
+    )
+    return reaper
 
 
 @pytest.mark.asyncio
@@ -48,7 +60,9 @@ async def test_terminalize_cancelled_agent_run_uses_lifecycle_monitor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() -> None:
+async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim(
+    _stub_srt_runner_reap: AsyncMock,
+) -> None:
     runner = MagicMock()
     runner.cancel_run.return_value = True
     runner.run_storage = MagicMock()
@@ -88,6 +102,7 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() ->
         cancelled_run,
         outcome="cancelled",
     )
+    _stub_srt_runner_reap.assert_awaited_once_with("run-123")
     completion_registry.notify.assert_awaited_once_with(
         "run-123",
         result={

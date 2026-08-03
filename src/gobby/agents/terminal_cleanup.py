@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents import terminal_delivery
+from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.storage.attention import run_attention_entry_id
 
 if TYPE_CHECKING:
@@ -140,6 +141,15 @@ class TerminalResourceCleaner:
             except OSError:
                 pass
         await self._close_tmux_session(run)
+        if not parking:
+            try:
+                await reap_srt_runner_process_tree(run.id)
+            except Exception:
+                logger.warning(
+                    "Failed to reap SRT sandbox runner for terminal agent %s",
+                    run.id,
+                    exc_info=True,
+                )
 
         self._prompt_detector.clear(run.id)
         self._terminal_prompt_monitor.clear(run.id)

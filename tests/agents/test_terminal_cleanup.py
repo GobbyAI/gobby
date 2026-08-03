@@ -21,6 +21,14 @@ from tests.agents.cleanup_test_support import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def reap(_run_id: str) -> int:
+        return 0
+
+    monkeypatch.setattr(terminal_cleanup, "reap_srt_runner_process_tree", reap)
+
+
 def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None:
     db = MagicMock()
     task_manager = MagicMock()

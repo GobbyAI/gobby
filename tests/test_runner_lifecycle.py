@@ -3481,6 +3481,10 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
         events.append("recover")
         return 0
 
+    async def reap(_runner: object) -> int:
+        events.append("reap")
+        return 0
+
     def schedule(*_args: object) -> None:
         events.append("schedule")
 
@@ -3514,10 +3518,11 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             AsyncMock(),
             None,
             reconcile_agent_runs_after_restart=reconcile,
+            reap_orphaned_srt_runners=reap,
             recover_agent_completion_subscribers=recover,
         )
 
-    assert events == ["barrier", "classify", "recover", "schedule", "connect"]
+    assert events == ["barrier", "classify", "reap", "recover", "schedule", "connect"]
 
 
 @pytest.mark.asyncio

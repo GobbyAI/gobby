@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.runner_lifecycle_agents import (
+    _reap_orphaned_srt_runners_on_startup,
     _reclassify_reconciliation_pending_runs,
     _reconcile_agent_runs_after_restart,
     _recover_agent_completion_subscribers_on_startup,
@@ -773,6 +774,7 @@ async def init_subsystems(
     reconcile_agent_runs_after_restart: AgentLifecycleOperation = (
         _reconcile_agent_runs_after_restart
     ),
+    reap_orphaned_srt_runners: AgentLifecycleOperation = (_reap_orphaned_srt_runners_on_startup),
     recover_agent_completion_subscribers: AgentLifecycleOperation = (
         _recover_agent_completion_subscribers_on_startup
     ),
@@ -796,6 +798,10 @@ async def init_subsystems(
             "Reconciled %d active agent run(s) after daemon restart",
             reconciled_runs,
         )
+    try:
+        await reap_orphaned_srt_runners(runner)
+    except Exception:
+        logger.exception("SRT sandbox runner cleanup failed during startup")
     try:
         recovered_subscribers = await recover_agent_completion_subscribers(runner)
         if recovered_subscribers > 0:

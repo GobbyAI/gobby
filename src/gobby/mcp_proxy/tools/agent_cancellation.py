@@ -6,9 +6,21 @@ import logging
 from typing import Any, Literal, cast
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.agents.task_recovery import TaskRecoveryHandler
 
 logger = logging.getLogger(__name__)
+
+
+async def _reap_terminal_srt_runner(run_id: str) -> None:
+    try:
+        await reap_srt_runner_process_tree(run_id)
+    except Exception:
+        logger.warning(
+            "Failed to reap SRT sandbox runner for terminal agent %s",
+            run_id,
+            exc_info=True,
+        )
 
 
 class _TerminalRunClassifier:
@@ -87,6 +99,7 @@ async def terminalize_cancelled_agent_run(
         run_id=run_id,
         outcome="cancelled",
     )
+    await _reap_terminal_srt_runner(run_id)
     await deliver_existing_terminal_run(
         db=runner.run_storage.db,
         agent_run_manager=runner.run_storage,
@@ -134,6 +147,7 @@ async def terminalize_killed_agent_run(
                 run_id=run_id,
                 outcome="failed",
             )
+        await _reap_terminal_srt_runner(run_id)
         await deliver_existing_terminal_run(
             db=runner.run_storage.db,
             agent_run_manager=runner.run_storage,
