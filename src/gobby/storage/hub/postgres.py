@@ -272,7 +272,7 @@ class PostgresHubDatabase:
         except Exception as exc:
             return {"pool_stats_error": f"{type(exc).__name__}: {exc}"}
 
-    def assert_runtime_identity(self) -> None:
+    def verify_runtime_identity(self) -> None:
         """Acquire and verify one connection from a served runtime-role pool."""
         if self._runtime_role is None:
             raise RuntimeError("PostgreSQL database is not configured with a runtime role")

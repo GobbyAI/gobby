@@ -100,7 +100,7 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
         runtime_role="gobby_daemon_runtime",
     )
     try:
-        postgres_db.assert_runtime_identity()
+        postgres_db.verify_runtime_identity()
     except Exception:
         postgres_db.close()
         raise

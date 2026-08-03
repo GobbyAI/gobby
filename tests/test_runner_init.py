@@ -444,7 +444,7 @@ class TestInitHubDatabase:
         ):
             migration_db = MagicMock()
             runtime_db = MagicMock()
-            runtime_db.assert_runtime_identity = MagicMock()
+            runtime_db.verify_runtime_identity = MagicMock()
             postgres_database.side_effect = [migration_db, runtime_db]
             config = SimpleNamespace(
                 hub_backend="postgres",
@@ -468,7 +468,7 @@ class TestInitHubDatabase:
         ]
         migration_db.apply_migrations.assert_called_once_with()
         migration_db.close.assert_called_once_with()
-        runtime_db.assert_runtime_identity.assert_called_once_with()
+        runtime_db.verify_runtime_identity.assert_called_once_with()
 
     def test_postgres_startup_retries_transient_connection_failure(
         self,
@@ -504,7 +504,7 @@ class TestInitHubDatabase:
             def close(self) -> None:
                 self.closed = True
 
-            def assert_runtime_identity(self) -> None:
+            def verify_runtime_identity(self) -> None:
                 assert self.runtime_role == "gobby_daemon_runtime"
 
         monkeypatch.setattr(
