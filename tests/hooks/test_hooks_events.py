@@ -91,7 +91,7 @@ class TestHookEvent:
             source=SessionSource.UNKNOWN,
             timestamp=now,
             data={"tool_name": "bash", "args": ["ls", "-la"]},
-            machine_id="machine-abc",
+            machine_id="21000000-0000-4000-8000-000000000007",
             cwd="/home/user/project",
             user_id="user-123",
             project_id="project-456",
@@ -100,7 +100,7 @@ class TestHookEvent:
         )
 
         assert event.event_type == HookEventType.BEFORE_TOOL
-        assert event.machine_id == "machine-abc"
+        assert event.machine_id == "21000000-0000-4000-8000-000000000007"
         assert event.cwd == "/home/user/project"
         assert event.user_id == "user-123"
         assert event.project_id == "project-456"

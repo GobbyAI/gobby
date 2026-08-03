@@ -41,7 +41,7 @@ def make_event() -> Callable[..., HookEvent]:
             source=source,
             timestamp=datetime.now(UTC),
             data=data or {},
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
         )
 
     return _make
@@ -115,7 +115,7 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
     assert fallback_machine.hostname == "laptop"
 
     unattributable_event = make_event(data={"machineId": "also-not-a-uuid"})
-    unattributable_event.machine_id = "testmachine"
+    unattributable_event.machine_id = "unknown-machine"
 
     manager_with_mocks._record_machine_ingress(unattributable_event)
 
@@ -598,15 +598,15 @@ class TestHookManagerHelpers:
 
         assert result == "test-123"
 
-    def test_get_machine_id_fallback(
+    def test_get_machine_id_returns_none_when_unattributable(
         self,
         manager_with_mocks: HookManager,
     ) -> None:
-        """get_machine_id returns 'unknown-machine' when underlying returns None."""
+        """Missing local identity remains absent at hook ingress."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
             result = manager_with_mocks.get_machine_id()
 
-        assert result == "unknown-machine"
+        assert result is None
 
     def test_resolve_project_id_with_explicit_id(
         self,

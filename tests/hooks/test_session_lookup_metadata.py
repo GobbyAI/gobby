@@ -37,7 +37,7 @@ def _service(
         session_manager=session_manager,
         session_coordinator=coordinator,
         session_task_manager=session_task_manager,
-        get_machine_id=lambda: "machine-id",
+        get_machine_id=lambda: "21000000-0000-4000-8000-000000000009",
         resolve_project_id=resolve_project_id,
         logger=MagicMock(),
     )
@@ -166,7 +166,7 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     session_manager.get_session_id.assert_any_call(
         "claude-external",
         "claude",
-        machine_id="machine-id",
+        machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-from-cwd",
     )
 
@@ -204,7 +204,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.recover_session.assert_any_call(
         external_id="codex-external",
         source="codex",
-        machine_id="machine-id",
+        machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-1",
     )
     session_manager.register_session.assert_not_called()
@@ -223,7 +223,7 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
     canonical = SimpleNamespace(
         id="canonical-session",
         external_id="canonical-provider-id",
-        machine_id="machine-id",
+        machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-1",
         source="claude",
         title="Canonical session",

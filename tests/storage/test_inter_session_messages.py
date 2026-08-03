@@ -62,13 +62,13 @@ class TestInterSessionMessageDataclass:
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent-ext",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
         )
         child = session_mgr.register(
             external_id="child-ext",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
         )
@@ -218,10 +218,10 @@ class TestInterSessionMessageManagerCreateMessage:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -250,10 +250,10 @@ class TestInterSessionMessageManagerCreateMessage:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -279,10 +279,10 @@ class TestInterSessionMessageManagerCreateMessage:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -309,10 +309,10 @@ class TestInterSessionMessageManagerGetMessages:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -346,10 +346,10 @@ class TestInterSessionMessageManagerGetMessages:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -379,13 +379,13 @@ class TestInterSessionMessageManagerGetMessages:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child1 = session_mgr.register(
-            external_id="child1", machine_id="m1", source="claude", project_id=project.id
+            external_id="child1", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child2 = session_mgr.register(
-            external_id="child2", machine_id="m1", source="claude", project_id=project.id
+            external_id="child2", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -414,10 +414,10 @@ class TestInterSessionMessageManagerGetMessage:
 
         session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
-            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+            external_id="parent", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         child = session_mgr.register(
-            external_id="child", machine_id="m1", source="claude", project_id=project.id
+            external_id="child", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         manager = InterSessionMessageManager(temp_db)
@@ -455,19 +455,19 @@ class TestInterSessionMessageManagerDeliveryClaims:
         sessions = SessionManager(temp_db)
         sender = sessions.register(
             external_id="claim-sender",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="claude",
             project_id=project.id,
         )
         recipient = sessions.register(
             external_id="claim-recipient",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="claude",
             project_id=project.id,
         )
         foreign = sessions.register(
             external_id="claim-foreign",
-            machine_id="m1",
+            machine_id="21000000-0000-4000-8000-000000000005",
             source="claude",
             project_id=project.id,
         )
@@ -612,10 +612,10 @@ class TestInterSessionMessageManagerListMessages:
 
         session_mgr = SessionManager(temp_db)
         s_alpha = session_mgr.register(
-            external_id="alpha", machine_id="m1", source="claude", project_id=project.id
+            external_id="alpha", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
         s_beta = session_mgr.register(
-            external_id="beta", machine_id="m1", source="claude", project_id=project.id
+            external_id="beta", machine_id="21000000-0000-4000-8000-000000000005", source="claude", project_id=project.id
         )
 
         mgr = InterSessionMessageManager(temp_db)

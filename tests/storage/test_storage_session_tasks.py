@@ -35,7 +35,7 @@ def sample_task(task_manager, sample_project):
 def sample_session(session_manager, sample_project):
     return session_manager.register(
         external_id="ext-123",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="cli",
         project_id=sample_project["id"],
         title="Sample Session",
@@ -80,10 +80,10 @@ class TestSessionTaskManager:
     ) -> None:
         # Create two distinct sessions
         s1 = session_manager.register(
-            external_id="ext-1", machine_id="m1", source="s1", project_id=sample_project["id"]
+            external_id="ext-1", machine_id="21000000-0000-4000-8000-000000000005", source="s1", project_id=sample_project["id"]
         )
         s2 = session_manager.register(
-            external_id="ext-2", machine_id="m1", source="s1", project_id=sample_project["id"]
+            external_id="ext-2", machine_id="21000000-0000-4000-8000-000000000005", source="s1", project_id=sample_project["id"]
         )
 
         session_task_manager.link_task(s1.id, sample_task.id, "worked_on")

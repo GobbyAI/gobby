@@ -134,7 +134,6 @@ export const MemoryTab = memo(function MemoryTab({
       selectedId !== null &&
       filteredMemories.some((memory) => memory.id === selectedId);
     const next = keep ? selectedId : filteredMemories[0]?.id ?? null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- default-selection sync with the filtered list (SkillsTab pattern); settles in one pass.
     if (next !== selectedId) setSelectedId(next);
   }, [filteredMemories, selectedId]);
 

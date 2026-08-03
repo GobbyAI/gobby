@@ -189,7 +189,7 @@ async def test_auto_create_session_when_no_existing():
 
     session_store.register.assert_called_once_with(
         external_id="comms:chan-1:ext-user-1",
-        machine_id="comms",
+        machine_id=None,
         source="comms",
         project_id=None,
         title="Comms: alice",

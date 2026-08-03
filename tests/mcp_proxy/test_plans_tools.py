@@ -238,7 +238,7 @@ async def test_snapshot_returns_complete_decoded_document(
     )
     session = SessionManager(temp_db).register(
         external_id="review-evidence-tools",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -476,7 +476,7 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     session = session_manager.register(
         external_id="envelope-review-evidence",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -510,7 +510,7 @@ async def test_prepare_review_round_staged_binding_with_ambient_context(
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     ambient_session = session_manager.register(
         external_id="staged-review-evidence-ambient",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
@@ -553,13 +553,13 @@ async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
     tools, session_manager = _create_plan_daemon_tools(temp_db, project_id)
     ambient_session = session_manager.register(
         external_id="explicit-review-evidence-ambient",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
     explicit_session = session_manager.register(
         external_id="explicit-review-evidence-target",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )

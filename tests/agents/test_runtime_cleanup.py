@@ -37,7 +37,7 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_conditionally_deletes_wo
         (
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
             "ext-child-session",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "codex",
             sample_project["id"],
         ),

@@ -60,7 +60,7 @@ class _DiscoveryMixin:
     def find_by_external_id(
         self: _ManagerState,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         source: str,
         session_type: str | None = None,
@@ -86,7 +86,7 @@ class _DiscoveryMixin:
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id = %s
+              AND machine_id IS NOT DISTINCT FROM %s
               AND project_id = %s
               AND source = %s
         """
@@ -128,7 +128,7 @@ class _DiscoveryMixin:
     def find_by_external_id_any_project(
         self: _ManagerState,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         source: str,
         session_type: str | None = None,
     ) -> Session | None:
@@ -149,7 +149,7 @@ class _DiscoveryMixin:
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id = %s
+              AND machine_id IS NOT DISTINCT FROM %s
               AND source = %s
         """
         params: list[str | None] = [external_id, machine_id, source]
@@ -163,7 +163,7 @@ class _DiscoveryMixin:
     def find_by_external_id_all_sources(
         self: _ManagerState,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         session_type: str | None = None,
     ) -> list[Session]:
@@ -171,7 +171,7 @@ class _DiscoveryMixin:
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id = %s
+              AND machine_id IS NOT DISTINCT FROM %s
         """
         params: list[str | None] = [external_id, machine_id]
         if project_id is not None:

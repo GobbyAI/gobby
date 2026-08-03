@@ -72,7 +72,7 @@ class EventHandlers(
         memory_recall_config: MemoryRecallConfig | None = None,
         call_tool: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None = None,
         workflow_config: WorkflowConfig | None = None,
-        get_machine_id: Callable[[], str] | None = None,
+        get_machine_id: Callable[[], str | None] | None = None,
         resolve_project_id: Callable[[str | None, str | None], str] | None = None,
         code_index_trigger: CodeIndexTrigger | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
@@ -126,7 +126,7 @@ class EventHandlers(
         self._memory_recall_config = memory_recall_config
         self._call_tool = call_tool
         self._workflow_config = workflow_config
-        self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
+        self._get_machine_id = get_machine_id or (lambda: None)
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
         self._attention_metadata_store = attention_metadata_store

@@ -75,7 +75,7 @@ class TestPipelineChildSession:
         session_manager = SessionManager(temp_db)
         caller = session_manager.register(
             external_id="approval-caller",
-            machine_id="test-machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project.id,
         )
@@ -294,7 +294,7 @@ class TestPipelineChildSession:
         session_manager = SessionManager(temp_db)
         caller_session = session_manager.register(
             external_id="caller-ext-storage",
-            machine_id="test-machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project_id,
             title="caller",
@@ -338,7 +338,7 @@ class TestPipelineChildSession:
 
         child_session = session_manager.find_by_external_id(
             f"pipeline-{execution.id}",
-            "pipeline",
+            None,
             project_id,
             "pipeline",
         )

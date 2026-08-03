@@ -2,11 +2,7 @@
 Pydantic models for HTTP server request/response schemas.
 """
 
-from typing import Annotated
-
-from pydantic import BaseModel, Field, StringConstraints
-
-MachineId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+from pydantic import BaseModel, Field
 
 
 class SessionRegisterRequest(BaseModel):
@@ -15,8 +11,6 @@ class SessionRegisterRequest(BaseModel):
     external_id: str = Field(
         ..., description="External session identifier (e.g., from Claude Code)"
     )
-    machine_id: MachineId = Field(..., description="Unique machine identifier")
-
     # Session metadata
     transcript_path: str | None = Field(None, description="Path to JSONL transcript file")
     title: str | None = Field(None, description="Natural language session summary/title")
@@ -46,7 +40,6 @@ class WebChatSessionRequest(BaseModel):
         description="CLI provider backing the web chat session (claude, grok, qwen, codex, droid)",
     )
     project_id: str | None = Field(None, description="Project ID to associate with session")
-    machine_id: MachineId = Field(..., description="Unique client machine identifier")
     cwd: str | None = Field(
         None,
         description="Working directory used to resolve the project when project_id is omitted",

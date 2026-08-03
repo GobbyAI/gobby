@@ -42,7 +42,7 @@ def test_agent_run_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
     project = LocalProjectManager(db).create(name="agent-local-project")
     session = SessionManager(db).register(
         external_id="parent-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project.id,
     )
@@ -66,7 +66,7 @@ def test_count_active_local_agents_uses_run_manager_is_local_flag(
     project = LocalProjectManager(db).create(name="agent-local-count-project")
     session = SessionManager(db).register(
         external_id="parent-count-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project.id,
     )
@@ -105,7 +105,7 @@ def test_session_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
     project = LocalProjectManager(db).create(name="session-local-project")
 
     session = SessionManager(db).create_web_chat_session(
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         project_id=project.id,
         source="codex",
         title="Local session",
@@ -126,7 +126,7 @@ def test_session_row_preserves_null_flag_without_legacy_reclassification() -> No
     row = {
         "id": "session-local-legacy",
         "external_id": "external-local-legacy",
-        "machine_id": "machine-1",
+        "machine_id": "21000000-0000-4000-8000-000000000001",
         "source": "lmstudio",
         "project_id": "project-1",
         "title": None,

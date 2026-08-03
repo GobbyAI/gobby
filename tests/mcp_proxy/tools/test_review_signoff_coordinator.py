@@ -51,13 +51,13 @@ def _coordinated_review_fixture(
     sessions = SessionManager(temp_db)
     coordinator = sessions.register(
         external_id=f"coordinator-{name}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=coordinator_project.id,
     )
     reviewer = sessions.register(
         external_id=f"reviewer-{name}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project.id,
         agent_depth=1,

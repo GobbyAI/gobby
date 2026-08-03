@@ -51,7 +51,7 @@ async def test_cancel_pipeline_stops_exact_background_task_and_preserves_cancell
         patch("gobby.storage.sessions.SessionManager") as session_manager_cls,
         patch("gobby.storage.agents.LocalAgentRunManager"),
     ):
-        session_manager_cls.return_value.find_by_external_id_any_project.return_value = None
+        session_manager_cls.return_value.find_active_by_external_id.return_value = None
         result = await cancel_pipeline(manager, "execution-123")
 
     assert result["success"] is True
@@ -80,18 +80,15 @@ async def test_cancel_pipeline_kills_only_pipeline_child_session_agents() -> Non
         patch("gobby.agents.kill.kill_agent", new_callable=AsyncMock) as kill_agent,
     ):
         pipeline_session = MagicMock(id="pipeline-session")
-        session_manager_cls.return_value.find_by_external_id_any_project.return_value = (
-            pipeline_session
-        )
+        session_manager_cls.return_value.find_active_by_external_id.return_value = pipeline_session
         agent_manager_cls.return_value.list_by_parent.return_value = [pipeline_run]
 
         result = await cancel_pipeline(manager, "execution-123")
 
     assert result["success"] is True
-    session_manager_cls.return_value.find_by_external_id_any_project.assert_called_once_with(
-        external_id="pipeline-execution-123",
-        machine_id="pipeline",
-        source="pipeline",
+    session_manager_cls.return_value.find_active_by_external_id.assert_called_once_with(
+        "pipeline-execution-123",
+        "pipeline",
     )
     agent_manager_cls.return_value.list_by_parent.assert_called_once_with("pipeline-session")
     kill_agent.assert_awaited_once_with(pipeline_run, manager.db, signal_name="KILL")

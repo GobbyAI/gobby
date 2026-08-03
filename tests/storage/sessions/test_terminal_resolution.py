@@ -22,7 +22,7 @@ def _register_terminal(
 ) -> Session:
     session = session_manager.register(
         external_id=external_id,
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project_id,
         session_type=session_type,

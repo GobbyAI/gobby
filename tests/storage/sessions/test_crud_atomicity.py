@@ -28,7 +28,7 @@ def test_register_assigns_unique_seq_nums_under_concurrency(
             barrier.wait(timeout=5)
             session = manager.register(
                 external_id=f"concurrent-{index}",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="claude",
                 project_id=sample_project["id"],
             )
@@ -62,7 +62,7 @@ def test_register_assigns_unique_projectless_seq_nums_under_concurrency(
             barrier.wait(timeout=5)
             session = manager.register(
                 external_id=f"projectless-{index}",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="claude",
                 project_id=None,
             )
@@ -97,7 +97,7 @@ def test_register_same_identity_with_different_projects_is_atomic(
             barrier.wait(timeout=5)
             session = manager.register(
                 external_id="concurrent-project-discovery",
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 source="codex",
                 project_id=project_id,
             )
@@ -121,7 +121,7 @@ def test_register_same_identity_with_different_projects_is_atomic(
         SELECT id FROM sessions
         WHERE external_id = %s AND machine_id = %s AND source = %s AND session_type = %s
         """,
-        ("concurrent-project-discovery", "machine-1", "codex", "terminal"),
+        ("concurrent-project-discovery", "20000000-0000-4000-8000-000000000002", "codex", "terminal"),
     )
 
     assert errors == []
@@ -143,7 +143,7 @@ def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
     with patch.object(session_manager.db, "execute", side_effect=fail_on_model_update):
         with pytest.raises(RuntimeError, match="boom"):
             session_manager.create_web_chat_session(
-                machine_id="machine-1",
+                machine_id="20000000-0000-4000-8000-000000000002",
                 project_id=sample_project["id"],
                 source="claude",
                 title="Web Chat",
@@ -161,7 +161,7 @@ def test_update_chat_mode_refreshes_updated_at(
 ) -> None:
     session = session_manager.register(
         external_id="chat-mode-updated-at",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -188,7 +188,7 @@ def test_update_approved_tools_refreshes_updated_at(
 ) -> None:
     session = session_manager.register(
         external_id="approved-tools-updated-at",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -216,7 +216,7 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
     manager = SessionManager(temp_db)
     session = manager.register(
         external_id="terminal-context-partial-update",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
         terminal_context={
@@ -258,7 +258,7 @@ def test_update_terminal_context_merges_concurrent_disjoint_keys(
     manager = SessionManager(temp_db)
     session = manager.register(
         external_id="terminal-context-concurrent-update",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
         terminal_context={"tmux_pane": "%9"},

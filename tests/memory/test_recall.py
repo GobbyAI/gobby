@@ -137,7 +137,7 @@ def persisted_session(temp_db: HubDatabase) -> None:
         (
             SESSION_ID,
             EXTERNAL_SESSION_ID,
-            "test-machine",
+            "21000000-0000-4000-8000-000000000002",
             SessionSource.CLAUDE.value,
             PROJECT_ID,
         ),
@@ -169,7 +169,7 @@ async def test_hard_skips_without_classifier_or_search(
     event: HookEvent,
     variables: dict[str, Any],
 ) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": True, "reason": "task"})
 
     result = await _runner(temp_db, manager, llm).run(event, SESSION_ID, variables)
@@ -189,7 +189,7 @@ async def test_classifier_approval_runs_one_low_feature_and_one_hybrid_search(
     result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == ["m1", "m2", "m3"]
+    assert [memory["id"] for memory in result.memories] == ["21000000-0000-4000-8000-000000000005", "m2", "m3"]
     assert len(llm.calls) == 1
     assert llm.calls[0]["caller"] == "memory.recall.classify"
     assert llm.calls[0]["feature_config"].profile == FeatureProfile.LOW
@@ -200,7 +200,7 @@ async def test_classifier_approval_runs_one_low_feature_and_one_hybrid_search(
 
 @pytest.mark.asyncio
 async def test_classifier_rejection_does_not_search(temp_db: HubDatabase) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": False, "reason": "conversational"})
 
     result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
@@ -214,7 +214,7 @@ async def test_classifier_rejection_does_not_search(temp_db: HubDatabase) -> Non
 async def test_classifier_boolean_wins_when_true_reason_is_non_substantive(
     temp_db: HubDatabase,
 ) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": True, "reason": "status_question"})
 
     result = await _runner(temp_db, manager, llm).run(
@@ -231,7 +231,7 @@ async def test_classifier_boolean_wins_when_true_reason_is_non_substantive(
 async def test_classifier_boolean_wins_when_false_reason_is_substantive(
     temp_db: HubDatabase,
 ) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": False, "reason": "technical_question"})
     prompt = (
         "Please inspect this complicated regression and implement the complete focused "
@@ -261,7 +261,7 @@ async def test_malformed_classifier_uses_eight_token_fallback(
     temp_db: HubDatabase,
     response: Any,
 ) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService(response)
     prompt = (
         "Please inspect this complicated regression and implement the complete focused "
@@ -276,7 +276,7 @@ async def test_malformed_classifier_uses_eight_token_fallback(
 
 @pytest.mark.asyncio
 async def test_classifier_failure_uses_technical_action_fallback(temp_db: HubDatabase) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": True, "reason": "task"})
     llm.error = RuntimeError("offline")
 
@@ -297,7 +297,7 @@ async def test_classifier_timeout_uses_heuristic_fallback(
         raise TimeoutError
 
     monkeypatch.setattr("gobby.memory.recall.asyncio.wait_for", timeout)
-    manager = FakeMemoryManager([_memory("m1")])
+    manager = FakeMemoryManager([_memory("21000000-0000-4000-8000-000000000005")])
     llm = FakeLLMService({"substantive": True, "reason": "task"})
 
     result = await _runner(temp_db, manager, llm).run(
@@ -330,8 +330,8 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "injected_memory_ids", ["m2"])
     manager = FakeMemoryManager(
         [
-            _memory("m1"),
-            _memory("m1"),
+            _memory("21000000-0000-4000-8000-000000000005"),
+            _memory("21000000-0000-4000-8000-000000000005"),
             _memory("review", tags=["review_lesson"]),
             _memory("m2"),
             _memory("m3", similarity=None),
@@ -342,7 +342,7 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
     result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == ["m1", "m3"]
+    assert [memory["id"] for memory in result.memories] == ["21000000-0000-4000-8000-000000000005", "m3"]
 
 
 @pytest.mark.asyncio

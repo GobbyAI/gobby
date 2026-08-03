@@ -59,7 +59,6 @@ export function TaskTextField({
   const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setDraft(value);
   }, [value]);
@@ -133,7 +132,6 @@ export function TaskTextAreaField({
 
   useEffect(() => {
     clearTimer();
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setDraft(value);
   }, [clearTimer, value]);
@@ -254,7 +252,6 @@ export function TaskTagsField({
   const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- server updates replace the local draft.
     setCommitted(value);
     setTags(value);
   }, [value]);

@@ -80,13 +80,13 @@ async def test_turn_start_message_retrieval_seeds_resolved_caller_context(
     session_manager = SessionManager(temp_db)
     sender = session_manager.register(
         external_id="inline-delivery-sender",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project.id,
     )
     recipient = session_manager.register(
         external_id="inline-delivery-recipient",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project.id,
     )

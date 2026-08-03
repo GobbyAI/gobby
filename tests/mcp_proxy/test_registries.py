@@ -156,7 +156,7 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
     worktree_storage = LocalWorktreeManager(temp_db)
     project = project_manager.create(name="test-project", repo_path="/tmp/test-project")
     session = session_manager.register(
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
         external_id="ext-test-session",

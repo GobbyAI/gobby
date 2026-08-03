@@ -215,6 +215,9 @@ def register_core_routes(
                 )
 
             project_id = await server.run_db(server.resolve_project_id, body.project_id, body.cwd)
+            from gobby.utils.machine_id import get_machine_id
+
+            machine_id = get_machine_id()
 
             model = body.model if isinstance(body.model, str) and body.model else None
             from gobby.llm.local_detection import is_local_agent_definition
@@ -233,7 +236,7 @@ def register_core_routes(
 
             session = await server.run_db(
                 server.session_manager.create_web_chat_session,
-                machine_id=body.machine_id,
+                machine_id=machine_id,
                 project_id=project_id,
                 source=provider,
                 title=body.title,
@@ -287,12 +290,15 @@ def register_core_routes(
             project_id = await server.run_db(
                 server.resolve_project_id, request_data.project_id, request_data.cwd
             )
+            from gobby.utils.machine_id import get_machine_id
+
+            machine_id = get_machine_id()
 
             # Register session in local storage
             session = await server.run_db(
                 server.session_manager.register,
                 external_id=request_data.external_id,
-                machine_id=request_data.machine_id,
+                machine_id=machine_id,
                 source=request_data.source or "Claude Code",
                 project_id=project_id,
                 transcript_path=request_data.transcript_path,
@@ -317,7 +323,7 @@ def register_core_routes(
                 "status": "registered",
                 "external_id": request_data.external_id,
                 "id": session.id,
-                "machine_id": request_data.machine_id,
+                "machine_id": machine_id,
             }
 
         except HTTPException:

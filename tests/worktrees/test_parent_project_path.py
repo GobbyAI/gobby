@@ -124,7 +124,7 @@ class TestCopyProjectJsonToWorktree:
         main_gobby_dir = main_repo / ".gobby"
         main_gobby_dir.mkdir()
         main_project_json = main_gobby_dir / "project.json"
-        main_project_json.write_text(json.dumps({"id": "test-id"}))
+        main_project_json.write_text(json.dumps({"id": "21000000-0000-4000-8000-00000000001c"}))
 
         # Setup worktree without .gobby dir
         worktree = tmp_path / "worktree"
@@ -203,7 +203,7 @@ class TestGetWorkflowProjectPath:
         gobby_dir.mkdir()
         project_json = gobby_dir / "project.json"
         # project_path is normally added by get_project_context, but test edge case
-        project_json.write_text(json.dumps({"id": "test-id"}))
+        project_json.write_text(json.dumps({"id": "21000000-0000-4000-8000-00000000001c"}))
 
         result = get_workflow_project_path(project)
 
@@ -357,7 +357,7 @@ class TestEdgeCases:
         main_gobby_dir = main_repo / ".gobby"
         main_gobby_dir.mkdir()
         main_project_json = main_gobby_dir / "project.json"
-        main_project_json.write_text(json.dumps({"id": "test-id"}))
+        main_project_json.write_text(json.dumps({"id": "21000000-0000-4000-8000-00000000001c"}))
 
         # Setup worktree
         worktree = tmp_path / "worktree"

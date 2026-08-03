@@ -349,7 +349,7 @@ class TestSearchSkillsTool:
         )
         session = SessionManager(populated_db).register(
             external_id="invalid-active-skills",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=project.id,
         )

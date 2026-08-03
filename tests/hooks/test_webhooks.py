@@ -41,7 +41,7 @@ def sample_event() -> HookEvent:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(),
         data={"test": "data"},
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         cwd="/test/path",
     )
 
@@ -187,7 +187,7 @@ class TestWebhookDispatcherPayload:
         assert payload["session_id"] == "test-session-123"
         assert payload["source"] == "claude"
         assert payload["data"] == {"test": "data"}
-        assert payload["machine_id"] == "machine-1"
+        assert payload["machine_id"] == "21000000-0000-4000-8000-000000000001"
         assert payload["cwd"] == "/test/path"
 
     def test_build_payload_includes_enriched_block_response(self, sample_event: HookEvent) -> None:

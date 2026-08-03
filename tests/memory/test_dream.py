@@ -216,7 +216,7 @@ class _RecordingSweepSource:
 
 @pytest.mark.asyncio
 async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
-    source = _RecordingSweepSource([_memory("m1", last_dreamed_at="2026-01-01T00:00:00+00:00")])
+    source = _RecordingSweepSource([_memory("21000000-0000-4000-8000-000000000005", last_dreamed_at="2026-01-01T00:00:00+00:00")])
 
     result = await list_sweep_candidates(
         source,
@@ -227,7 +227,7 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
         now=datetime(2026, 6, 15, tzinfo=UTC),
     )
 
-    assert [candidate.id for candidate in result] == ["m1"]
+    assert [candidate.id for candidate in result] == ["21000000-0000-4000-8000-000000000005"]
     assert source.calls == [
         {
             "limit": 50,
@@ -356,7 +356,7 @@ async def test_batch_split_guard() -> None:
     assert planner.call_count == 4
     assert [
         [candidate.id for candidate in call.kwargs["candidates"]] for call in planner.call_args_list
-    ] == [["m0"], ["m1"], ["m2"], ["m3"]]
+    ] == [["m0"], ["21000000-0000-4000-8000-000000000005"], ["m2"], ["m3"]]
     assert {
         candidate.id: candidate.content
         for call in planner.call_args_list
@@ -439,10 +439,10 @@ async def test_build_raw_plan_isolates_failed_page() -> None:
 
 @pytest.mark.asyncio
 async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> None:
-    candidates = [_candidate("m0"), _candidate("m1"), _candidate("m2")]
+    candidates = [_candidate("m0"), _candidate("21000000-0000-4000-8000-000000000005"), _candidate("m2")]
     groups = [
         DuplicateGroup(
-            memory_ids=["m1", "m2"],
+            memory_ids=["21000000-0000-4000-8000-000000000005", "m2"],
             canonical_content="canonical",
             reason="exact duplicate",
         )
@@ -465,7 +465,7 @@ async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> No
     assert planned_ids == ["m0"]  # duplicate members are not sent to the planner
     merge_actions = [action for action in plan["actions"] if action["action"] == "merge"]
     assert len(merge_actions) == 1
-    assert merge_actions[0]["memory_ids"] == ["m1", "m2"]
+    assert merge_actions[0]["memory_ids"] == ["21000000-0000-4000-8000-000000000005", "m2"]
     keep_ids = [action["memory_id"] for action in plan["actions"] if action["action"] == "keep"]
     assert keep_ids == ["m0"]
 
@@ -2657,7 +2657,7 @@ async def test_skip_consolidation_records_inventory_only() -> None:
     assert run["summary"]["candidates_eligible"] == 3
     assert run["summary"]["mutations"] == 0
     assert run["plan"]["candidate_count"] == 3
-    assert sorted(run["plan"]["candidate_ids"]) == ["m0", "m1", "m2"]
+    assert sorted(run["plan"]["candidate_ids"]) == ["m0", "21000000-0000-4000-8000-000000000005", "m2"]
     # Zero snapshot, mutation, or cursor writes: inventory candidates remain due.
     assert db.snapshots == []
     assert all(row["last_dreamed_at"] is None for row in db.memories.values())
@@ -2665,7 +2665,7 @@ async def test_skip_consolidation_records_inventory_only() -> None:
         redream_cutoff=datetime.now(UTC).isoformat(),
         scope=MemoryScope.project_visible("proj-1"),
     )
-    assert sorted(remaining) == ["m0", "m1", "m2"]
+    assert sorted(remaining) == ["m0", "21000000-0000-4000-8000-000000000005", "m2"]
 
 
 @pytest.mark.asyncio
@@ -3241,7 +3241,7 @@ async def test_service_current_project_id_none_selects_no_daemon_project(tmp_pat
     repo_path = tmp_path / "repo"
     _write_truth_digest(repo_path, _complete_digest_payload(service="Repo sidecar"))
     db.projects[project_id] = _project_row(project_id, repo_path)
-    db.memories = {"m1": {**_row("m1", "Project memory"), "project_id": project_id}}
+    db.memories = {"21000000-0000-4000-8000-000000000005": {**_row("21000000-0000-4000-8000-000000000005", "Project memory"), "project_id": project_id}}
 
     digest = await _capture_service_truth_digest(
         db,

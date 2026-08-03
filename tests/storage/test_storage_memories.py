@@ -51,7 +51,7 @@ def test_storage_create_requires_concrete_owner(db) -> None:
 def _insert_session(db: HubDatabase, session_id: str, project_id: str) -> None:
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
-        "VALUES (%s, %s, 'machine-1', 'claude', %s, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, '21000000-0000-4000-8000-000000000001', 'claude', %s, CURRENT_TIMESTAMP)",
         (session_id, f"ext-{session_id}", project_id),
     )
 

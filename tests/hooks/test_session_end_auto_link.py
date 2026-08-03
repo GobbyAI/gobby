@@ -22,7 +22,7 @@ def _session() -> Session:
     return Session(
         id="session-19495",
         external_id="external-19495",
-        machine_id="machine-19495",
+        machine_id="21000000-0000-4000-8000-000000000011",
         source="codex",
         project_id="project-19495",
         title="Session auto-link regression",
@@ -44,7 +44,7 @@ def _event() -> HookEvent:
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={"cwd": "/tmp/session-19495"},
-        machine_id="machine-19495",
+        machine_id="21000000-0000-4000-8000-000000000011",
         metadata={"_platform_session_id": "session-19495"},
     )
 

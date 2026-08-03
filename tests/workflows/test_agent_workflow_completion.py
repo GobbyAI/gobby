@@ -59,7 +59,7 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
+        (session_id, "ext-1", "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
     )
 
 
@@ -653,14 +653,14 @@ class TestAgentWorkflowCompletion:
         sessions = SessionManager(db)
         parent = sessions.register(
             external_id="dispatcher-launcher-project-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="dispatcher_launcher",
             project_id=PROJECT_ID,
             title="Dispatcher Launcher",
         )
         child = sessions.register(
             external_id="child-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=PROJECT_ID,
             parent_session_id=parent.id,
@@ -748,13 +748,13 @@ class TestAgentWorkflowCompletion:
         sessions = SessionManager(db)
         parent = sessions.register(
             external_id=f"workflow-parent-{with_lifecycle_monitor}",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=PROJECT_ID,
         )
         child = sessions.register(
             external_id=f"workflow-child-{with_lifecycle_monitor}",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=PROJECT_ID,
             parent_session_id=parent.id,

@@ -76,7 +76,7 @@ def _insert_session(
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
         ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (session_id, external_id, "machine-1", "codex", project_id),
+        (session_id, external_id, "21000000-0000-4000-8000-000000000001", "codex", project_id),
     )
 
 
@@ -106,7 +106,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = None
         self._call_tool = None
-        self._get_machine_id = MagicMock(return_value="machine-1")
+        self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
         self._handler_map = {}
         self.handle_count = 0

@@ -87,7 +87,7 @@ def test_is_empty_inject_payload_shapes() -> None:
     assert _is_empty_inject_payload({"success": True, "messages": [], "count": 0}) is True
     assert _is_empty_inject_payload({"success": True, "memories": []}) is True
     assert _is_empty_inject_payload({"success": True, "messages": ["x"], "count": 1}) is False
-    assert _is_empty_inject_payload({"success": True, "memories": [{"id": "m1"}]}) is False
+    assert _is_empty_inject_payload({"success": True, "memories": [{"id": "21000000-0000-4000-8000-000000000005"}]}) is False
 
 
 def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:

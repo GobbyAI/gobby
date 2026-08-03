@@ -19,7 +19,7 @@ from gobby.servers.routes.sessions import create_sessions_router
 
 pytestmark = pytest.mark.unit
 
-MACHINE = "machine-1"
+MACHINE = "21000000-0000-4000-8000-000000000001"
 
 
 # ---------------------------------------------------------------------------

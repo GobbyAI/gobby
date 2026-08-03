@@ -164,7 +164,7 @@ class TestEpicWithIndependentSubtasks:
         session_external_id = f"parallel-epic-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -355,7 +355,7 @@ class TestSpawnAgentWithCloneIsolation:
         session_external_id = f"spawn-mode-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -414,7 +414,7 @@ class TestParallelTaskProcessing:
         session_external_id = f"parallel-complete-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -555,7 +555,7 @@ class TestWorkflowActivation:
         session_external_id = f"workflow-status-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=session_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )

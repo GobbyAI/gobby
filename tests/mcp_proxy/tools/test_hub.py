@@ -96,21 +96,21 @@ def populated_hub_db(temp_hub_db):
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (SESS_1, PROJECT_ALPHA, "ext-1", "claude", "machine-1", "active"),
+        (SESS_1, PROJECT_ALPHA, "ext-1", "claude", "21000000-0000-4000-8000-000000000001", "active"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (SESS_2, PROJECT_BETA, "ext-2", "qwen", "machine-1", "ended"),
+        (SESS_2, PROJECT_BETA, "ext-2", "qwen", "21000000-0000-4000-8000-000000000001", "ended"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (SESS_3, PROJECT_ALPHA, "ext-3", "claude", "machine-2", "ended"),
+        (SESS_3, PROJECT_ALPHA, "ext-3", "claude", "21000000-0000-4000-8000-000000000015", "ended"),
     )
 
     return db

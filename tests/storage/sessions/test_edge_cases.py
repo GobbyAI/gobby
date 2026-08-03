@@ -21,14 +21,14 @@ class TestSessionEdgeCases:
         # Create initial session
         session_manager.register(
             external_id="disappearing-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
 
         # Store the original find_by_external_id result
         existing = session_manager.find_by_external_id(
-            "disappearing-session", "machine", sample_project["id"], "claude"
+            "disappearing-session", "20000000-0000-4000-8000-000000000001", sample_project["id"], "claude"
         )
 
         # Mock find_by_external_id to return the existing session (so we go into update path)
@@ -38,7 +38,7 @@ class TestSessionEdgeCases:
                 with pytest.raises(RuntimeError, match="disappeared during update"):
                     session_manager.register(
                         external_id="disappearing-session",
-                        machine_id="machine",
+                        machine_id="20000000-0000-4000-8000-000000000001",
                         source="claude",
                         project_id=sample_project["id"],
                         title="Updated",
@@ -56,7 +56,7 @@ class TestSessionEdgeCases:
                 with pytest.raises(RuntimeError, match="not found after creation"):
                     session_manager.register(
                         external_id="ghost-session",
-                        machine_id="machine",
+                        machine_id="20000000-0000-4000-8000-000000000001",
                         source="claude",
                         project_id=sample_project["id"],
                     )
@@ -70,7 +70,7 @@ class TestSessionEdgeCases:
         # Create a stale session
         session = session_manager.register(
             external_id="stale-log-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -99,7 +99,7 @@ class TestSessionEdgeCases:
         # Create an active session
         session = session_manager.register(
             external_id="pause-log-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -128,7 +128,7 @@ class TestSessionEdgeCases:
         with patch("gobby.storage.sessions.logger") as mock_logger:
             session_manager.register(
                 external_id="log-new-session",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
             )
@@ -145,7 +145,7 @@ class TestSessionEdgeCases:
         # Create initial session (without mocking logger)
         session_manager.register(
             external_id="log-reuse-session",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -154,7 +154,7 @@ class TestSessionEdgeCases:
         with patch("gobby.storage.sessions.logger") as mock_logger:
             session_manager.register(
                 external_id="log-reuse-session",
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
                 title="Updated",
@@ -171,7 +171,7 @@ class TestSessionEdgeCases:
         """Test Session.from_row handles NULL agent_depth by defaulting to 0."""
         session = session_manager.register(
             external_id="null-depth",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -195,7 +195,7 @@ class TestSessionEdgeCases:
         """Test updating just title via update method."""
         session = session_manager.register(
             external_id="title-only-update",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Original",
@@ -215,7 +215,7 @@ class TestSessionEdgeCases:
         # Create first handoff_ready session
         session1 = session_manager.register(
             external_id="parent-1",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -230,7 +230,7 @@ class TestSessionEdgeCases:
         # Create second handoff_ready session (more recent)
         session2 = session_manager.register(
             external_id="parent-2",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -238,7 +238,7 @@ class TestSessionEdgeCases:
 
         # Find parent - should return the more recent one
         parent = session_manager.find_parent(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
         )
@@ -253,7 +253,7 @@ class TestSessionEdgeCases:
     ) -> None:
         matching_parent = session_manager.register(
             external_id="matching-parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
@@ -265,7 +265,7 @@ class TestSessionEdgeCases:
         )
         newer_wrong_parent = session_manager.register(
             external_id="newer-wrong-parent",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
@@ -273,7 +273,7 @@ class TestSessionEdgeCases:
         session_manager.update_status(newer_wrong_parent.id, "handoff_ready")
 
         parent = session_manager.find_parent(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
             terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
@@ -291,14 +291,14 @@ class TestSessionEdgeCases:
         for external_id in ("ambiguous-parent-1", "ambiguous-parent-2"):
             session = session_manager.register(
                 external_id=external_id,
-                machine_id="machine",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
             )
             session_manager.update_status(session.id, "handoff_ready")
 
         parent = session_manager.find_parent(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
             candidate_limit=8,
@@ -314,7 +314,7 @@ class TestSessionEdgeCases:
         """Test count with all three filters (project_id, status, source)."""
         s1 = session_manager.register(
             external_id="all-filters-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -322,7 +322,7 @@ class TestSessionEdgeCases:
 
         session_manager.register(
             external_id="all-filters-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -343,7 +343,7 @@ class TestSessionEdgeCases:
         """Test list with all three filters (project_id, status, source)."""
         s1 = session_manager.register(
             external_id="list-all-filters-1",
-            machine_id="m1",
+            machine_id="20000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -351,7 +351,7 @@ class TestSessionEdgeCases:
 
         session_manager.register(
             external_id="list-all-filters-2",
-            machine_id="m2",
+            machine_id="20000000-0000-4000-8000-000000000004",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -377,7 +377,7 @@ class TestSessionEdgeCases:
         """
         session = session_manager.register(
             external_id="agent-run-only",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -413,7 +413,7 @@ class TestSessionEdgeCases:
         """Test updating just original_prompt in terminal pickup metadata."""
         session = session_manager.register(
             external_id="prompt-only",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )

@@ -53,7 +53,7 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="task-recovery-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -100,7 +100,7 @@ async def test_resolve_claimed_task_requires_child_session_ownership(
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="task-recovery-claimed-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

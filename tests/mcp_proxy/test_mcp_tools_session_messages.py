@@ -498,7 +498,7 @@ async def test_get_handoff_context_most_recent(mock_session_manager, full_sessio
 
     with patch(
         "gobby.utils.machine_id.get_machine_id",
-        return_value="machine-1",
+        return_value="21000000-0000-4000-8000-000000000001",
     ):
         result = await full_sessions_registry.call(
             "get_handoff_context", {"project_id": "proj-123"}

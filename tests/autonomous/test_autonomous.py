@@ -85,7 +85,7 @@ def session_id(session_manager: SessionManager, test_project: dict) -> str:
     """Create a test session and return its ID."""
     session = session_manager.register(
         external_id="ext-test-session-123",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=test_project["id"],
     )
@@ -118,7 +118,7 @@ def create_session(
     """Helper to create additional test sessions."""
     session = session_manager.register(
         external_id=external_id,
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
     )

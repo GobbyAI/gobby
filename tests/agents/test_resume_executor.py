@@ -42,7 +42,7 @@ def _resume_metadata() -> dict[str, Any]:
         "cwd": "/repo",
         "project_id": "f963cb16-3802-4fcf-b202-0198bb4d271c",
         "parent_session_id": "7d307ae2-5834-43d0-8d59-c385ab37885f",
-        "machine_id": "machine-1",
+        "machine_id": "21000000-0000-4000-8000-000000000001",
         "env": {
             "UV_CACHE_DIR": "/cache/uv",
             "OPENAI_API_KEY": "must-not-survive",

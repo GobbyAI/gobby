@@ -1529,13 +1529,13 @@ class TestEntityGraphActiveFiltering:
             ],
         }
         backing_rows: list[dict[str, object]] = [
-            {"entity_key": "e-active", "memory_ids": ["m1"]},
+            {"entity_key": "e-active", "memory_ids": ["21000000-0000-4000-8000-000000000005"]},
             {"entity_key": "e-mixed", "memory_ids": ["m2", "m3"]},
             {"entity_key": "e-hidden", "memory_ids": ["m4"]},
         ]
         long_content = "Gobby is a local-first daemon. " * 20
         active_previews: dict[str, ActiveMemoryPreview] = {
-            "m1": ActiveMemoryPreview(
+            "21000000-0000-4000-8000-000000000005": ActiveMemoryPreview(
                 content=long_content,
                 updated_at=datetime(2026, 7, 1, tzinfo=UTC),
             ),

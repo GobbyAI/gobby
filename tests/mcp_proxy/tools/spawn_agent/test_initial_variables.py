@@ -311,13 +311,13 @@ class TestSpawnAgentStepVariables:
         session_manager = SessionManager(db)
         parent = session_manager.register(
             external_id="parent-ext",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
         )
         child = session_manager.register(
             external_id="child-ext",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
             parent_session_id=parent.id,
@@ -435,13 +435,13 @@ class TestSpawnAgentStepVariables:
         session_manager = SessionManager(db)
         parent = session_manager.register(
             external_id=f"{agent_name}-parent-ext",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
         )
         child = session_manager.register(
             external_id=f"{agent_name}-child-ext",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
             parent_session_id=parent.id,

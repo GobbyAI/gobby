@@ -34,7 +34,7 @@ class TestFindProjectRoot:
         # Create project structure
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
-        (gobby_dir / "project.json").write_text('{"id": "test-id"}')
+        (gobby_dir / "project.json").write_text('{"id": "21000000-0000-4000-8000-00000000001c"}')
 
         result = find_project_root(tmp_path)
         assert result is not None
@@ -46,7 +46,7 @@ class TestFindProjectRoot:
         # Create project structure
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
-        (gobby_dir / "project.json").write_text('{"id": "test-id"}')
+        (gobby_dir / "project.json").write_text('{"id": "21000000-0000-4000-8000-00000000001c"}')
 
         # Create deep nested directory
         deep_subdir = tmp_path / "src" / "lib" / "utils" / "helpers"
@@ -154,7 +154,7 @@ class TestGetProjectContext:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "created_at": "2024-01-01T00:00:00Z",
         }
@@ -163,7 +163,7 @@ class TestGetProjectContext:
         result = get_project_context(tmp_path)
 
         assert result is not None
-        assert result["id"] == "test-id"
+        assert result["id"] == "21000000-0000-4000-8000-00000000001c"
         assert result["name"] == "test-project"
         assert result["created_at"] == "2024-01-01T00:00:00Z"
         # project_path should be added
@@ -209,7 +209,7 @@ class TestGetProjectContext:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {
                 "unit_tests": "pytest tests/",
@@ -333,7 +333,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {
                 "unit_tests": "uv run pytest tests/ -v",
@@ -365,7 +365,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {
                 "unit_tests": "pytest",
@@ -387,7 +387,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {},
         }
@@ -404,7 +404,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
         }
         (gobby_dir / "project.json").write_text(json.dumps(project_data))
@@ -422,7 +422,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {
                 "unit_tests": 12345,  # Should be string or None
@@ -440,7 +440,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": None,
         }
@@ -464,7 +464,7 @@ class TestGetVerificationConfig:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "verification": {
                 "custom": {
@@ -662,7 +662,7 @@ class TestEdgeCases:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "My Project with emoji and unicode characters",
         }
         (gobby_dir / "project.json").write_text(json.dumps(project_data, ensure_ascii=False))
@@ -676,7 +676,7 @@ class TestEdgeCases:
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {
-            "id": "test-id",
+            "id": "21000000-0000-4000-8000-00000000001c",
             "name": "test-project",
             "extra_data": "x" * 100000,  # Large string
         }
@@ -684,7 +684,7 @@ class TestEdgeCases:
 
         result = get_project_context(tmp_path)
         assert result is not None
-        assert result["id"] == "test-id"
+        assert result["id"] == "21000000-0000-4000-8000-00000000001c"
 
     def test_symlinked_gobby_dir(self, tmp_path: Path) -> None:
         """Test finding project root with symlinked .gobby directory."""

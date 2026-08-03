@@ -400,7 +400,7 @@ class TestListMCPTools:
         """Resolved session identity should drive discovery tracking."""
         session = session_storage.register(
             external_id="discovery-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=None,
         )
@@ -999,7 +999,7 @@ class TestGetToolSchema:
         project = project_storage.create(name="test-project", repo_path=str(temp_dir))
         session = session_storage.register(
             external_id="external-session-1",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project.id,
         )
@@ -2514,7 +2514,7 @@ class TestMCPProxy:
         terminal_context = {"parent_pid": 4242, "tmux_pane": "%12"}
         session = session_storage.register(
             external_id="ambient-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
             terminal_context=terminal_context,

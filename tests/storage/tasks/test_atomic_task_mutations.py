@@ -188,7 +188,7 @@ def test_submit_for_review_preserves_label_added_during_transition(
     manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="atomic-review",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )

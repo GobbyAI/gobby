@@ -247,7 +247,7 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
                 """
                 SELECT *
                 FROM sessions
-                WHERE COALESCE(BTRIM(machine_id), '') = %s
+                WHERE machine_id IS NOT DISTINCT FROM %s
                   AND session_type = 'terminal'
                   AND BTRIM(terminal_context ->> 'tmux_pane') = %s
                   AND CASE

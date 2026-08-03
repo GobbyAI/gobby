@@ -112,7 +112,7 @@ def _register_session(
 ) -> str:
     return session_manager.register_session(
         external_id=external_id,
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project_id,
         project_path=str(tmp_path),

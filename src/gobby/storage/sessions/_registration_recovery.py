@@ -31,7 +31,7 @@ class _RegistrationRecoveryHost(Protocol):
     def find_by_external_id_all_sources(
         self,
         external_id: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         session_type: str | None = None,
     ) -> list[Session]: ...
@@ -51,7 +51,7 @@ class _RegistrationRecoveryMixin:
         self: _RegistrationRecoveryHost,
         external_id: str,
         source: str,
-        machine_id: str,
+        machine_id: str | None,
         project_id: str | None,
         session_type: str | None = None,
     ) -> Session | None:

@@ -27,7 +27,7 @@ class TestSessionManagerMetadata:
         """Test updating session title."""
         session = session_manager.register(
             external_id="title-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -45,7 +45,7 @@ class TestSessionManagerMetadata:
         """Title changes propagate to tmux through the shared title update path."""
         session = session_manager.register(
             external_id="tmux-title-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%42"},
@@ -68,7 +68,7 @@ class TestSessionManagerMetadata:
         """Changing provenance alone should not notify listeners or rename tmux."""
         session = session_manager.register(
             external_id="title-source-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%42"},
@@ -99,7 +99,7 @@ class TestSessionManagerMetadata:
         """Listeners receive successful title changes."""
         session = session_manager.register(
             external_id="title-listener-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -121,7 +121,7 @@ class TestSessionManagerMetadata:
         """No-op title updates do not notify listeners or rewrite updated_at."""
         session = session_manager.register(
             external_id="title-noop-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Stable Title",
@@ -148,7 +148,7 @@ class TestSessionManagerMetadata:
     ) -> None:
         session = session_manager.register(
             external_id=f"direct-title-precedence-{owner}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -195,7 +195,7 @@ class TestSessionManagerMetadata:
     ) -> None:
         session = session_manager.register(
             external_id=f"bulk-title-precedence-{owner}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -265,7 +265,7 @@ class TestSessionManagerMetadata:
         """Digest persistence updates all digest fields and title metadata in one call."""
         session = session_manager.register(
             external_id="digest-state-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             terminal_context={"tmux_pane": "%42"},
@@ -309,7 +309,7 @@ class TestSessionManagerMetadata:
         """Digest state lands while a user-owned title remains unchanged."""
         session = session_manager.register(
             external_id="manual-title-digest-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="My Title",
@@ -344,7 +344,7 @@ class TestSessionManagerMetadata:
     ) -> None:
         session = session_manager.register(
             external_id="llm-title-refresh-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -380,7 +380,7 @@ class TestSessionManagerMetadata:
     ) -> None:
         session = session_manager.register(
             external_id="manual-after-llm-title-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -438,7 +438,7 @@ class TestSessionManagerMetadata:
         """A failed digest update leaves title and digest columns unchanged."""
         session = session_manager.register(
             external_id="digest-rollback-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             title="Old Title",
@@ -501,7 +501,7 @@ class TestSessionManagerMetadata:
         """One broken listener cannot block the title update or later listeners."""
         session = session_manager.register(
             external_id="title-failure-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -529,7 +529,7 @@ class TestSessionManagerMetadata:
         """Unregistered listeners are not called."""
         session = session_manager.register(
             external_id="title-unregister-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -559,7 +559,7 @@ class TestSessionManagerMetadata:
 
         session = session_manager.register(
             external_id="change-register-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -578,7 +578,7 @@ class TestSessionManagerMetadata:
         )
 
         session = session_manager.create_web_chat_session(
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
             title="Web Chat",
@@ -598,7 +598,7 @@ class TestSessionManagerMetadata:
         """Re-registering an existing session notifies as an update."""
         session = session_manager.register(
             external_id="change-reactivation-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -611,7 +611,7 @@ class TestSessionManagerMetadata:
 
         updated = session_manager.register(
             external_id="change-reactivation-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -628,7 +628,7 @@ class TestSessionManagerMetadata:
         """Status changes emit update or expired events."""
         session = session_manager.register(
             external_id="change-status-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -653,7 +653,7 @@ class TestSessionManagerMetadata:
         """Title, model, summary, digest, last turn, and bulk updates notify listeners."""
         session = session_manager.register(
             external_id="change-metadata-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -686,7 +686,7 @@ class TestSessionManagerMetadata:
         """Deleting a session notifies catalog listeners."""
         session = session_manager.register(
             external_id="change-delete-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -708,7 +708,7 @@ class TestSessionManagerMetadata:
         """One broken generic listener cannot block the mutation or later listeners."""
         session = session_manager.register(
             external_id="change-failure-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -735,7 +735,7 @@ class TestSessionManagerMetadata:
     ) -> None:
         session = session_manager.register(
             external_id="broken-status-listener-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -764,7 +764,7 @@ class TestSessionManagerMetadata:
         """Test updating session stats."""
         session = session_manager.register(
             external_id="stats-update-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -799,7 +799,7 @@ class TestSessionManagerMetadata:
         """Test updating session model."""
         session = session_manager.register(
             external_id="model-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -819,7 +819,7 @@ class TestSessionManagerMetadata:
         """Test updating session summary."""
         session = session_manager.register(
             external_id="summary-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -865,7 +865,7 @@ class TestSessionManagerMetadata:
         """Summary state persistence writes the revision and session metadata together."""
         session = session_manager.register(
             external_id="summary-state-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -913,7 +913,7 @@ class TestSessionManagerMetadata:
         """A failed session update leaves no orphaned summary revision."""
         session = session_manager.register(
             external_id="summary-state-rollback-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -970,7 +970,7 @@ class TestSessionManagerMetadata:
         """Test updating session_type/model/chat_mode together for tmux resume."""
         session = session_manager.register(
             external_id="resume-ext",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
             session_type="terminal",
@@ -1000,7 +1000,7 @@ class TestSessionManagerMetadata:
         """Terminal-to-web resume is idempotent when the web chat row already exists."""
         terminal = session_manager.register(
             external_id="resume-dupe",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             session_type="terminal",
@@ -1008,7 +1008,7 @@ class TestSessionManagerMetadata:
         )
         web_chat = session_manager.register(
             external_id="resume-dupe",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             session_type="web_chat",
@@ -1043,7 +1043,7 @@ class TestSessionManagerMetadata:
         """Test updating terminal pickup metadata."""
         session = session_manager.register(
             external_id="pickup-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1070,7 +1070,7 @@ class TestSessionManagerMetadata:
         """Test updating terminal pickup metadata with partial fields."""
         session = session_manager.register(
             external_id="partial-pickup",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1093,7 +1093,7 @@ class TestSessionManagerMetadata:
         """Test update_terminal_pickup_metadata with no fields returns session unchanged."""
         session = session_manager.register(
             external_id="no-pickup-update",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1111,7 +1111,7 @@ class TestSessionManagerMetadata:
         """Test updating context_injected to False."""
         session = session_manager.register(
             external_id="context-false",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1139,7 +1139,7 @@ class TestSessionManagerMetadata:
         """Test updating summary with only summary_path."""
         session = session_manager.register(
             external_id="summary-partial",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1204,7 +1204,7 @@ class TestSessionManagerMetadata:
         """Test updating summary with only summary_markdown."""
         session = session_manager.register(
             external_id="summary-md-only",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1227,7 +1227,7 @@ class TestHandoffTitlePrecedence:
     ) -> None:
         session = session_manager.register(
             external_id="handoff-title-test",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -1251,7 +1251,7 @@ class TestHandoffTitlePrecedence:
     ) -> None:
         session = session_manager.register(
             external_id=f"stronger-than-handoff-{owner}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -1280,7 +1280,7 @@ class TestHandoffTitlePrecedence:
     ) -> None:
         session = session_manager.register(
             external_id=f"handoff-downgrade-{owner}",
-            machine_id="machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )

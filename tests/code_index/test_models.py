@@ -68,7 +68,7 @@ def test_symbol_to_dict_round_trip(sample_symbols: list[Symbol]) -> None:
 def test_symbol_timestamps_auto_set() -> None:
     """created_at and updated_at are set automatically."""
     sym = Symbol(
-        id="test-id",
+        id="21000000-0000-4000-8000-00000000001c",
         project_id="p",
         file_path="f.py",
         name="x",

@@ -98,7 +98,7 @@ def _make_real_event_handlers(
     return EventHandlers(
         session_manager=SessionManager(db),  # type: ignore[arg-type]
         memory_recall_config=memory_recall_config,
-        get_machine_id=lambda: "machine-1",
+        get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
         resolve_project_id=lambda _project_id, _cwd: project_id,
         logger=logging.getLogger("test"),
     )
@@ -107,7 +107,7 @@ def _make_real_event_handlers(
 def _register_session(db: HubDatabase, project_id: str, tmp_path: Path) -> str:
     return SessionManager(db).register_session(
         external_id="external-activation",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=project_id,
         project_path=str(tmp_path),
@@ -141,7 +141,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
     session_manager = SessionManager(temp_db)
     session = session_manager.register(
         external_id="gobby-pre-created",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project_id,
         terminal_context={
@@ -611,7 +611,7 @@ def test_variables_seeded_in_pre_created_session_flow(
     assert existing_session is not None
     handlers = EventHandlers(
         session_manager=session_manager,  # type: ignore[arg-type]
-        get_machine_id=lambda: "machine-1",
+        get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
         logger=logging.getLogger("test"),
     )
     event = _make_hook_event({"agent_name_override": "default"}, external_id="external-pre")
@@ -670,7 +670,7 @@ def test_pre_created_web_chat_seeds_profile_when_activation_skipped(
 
     handlers = EventHandlers(
         session_manager=session_manager,  # type: ignore[arg-type]
-        get_machine_id=lambda: "machine-1",
+        get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
         logger=logging.getLogger("test"),
     )
     event = _make_hook_event(

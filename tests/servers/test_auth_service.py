@@ -74,7 +74,7 @@ def live_agent_run(
     """A pending agent run backing the per-request liveness check."""
     session = session_manager.register(
         external_id="auth-service-agent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )

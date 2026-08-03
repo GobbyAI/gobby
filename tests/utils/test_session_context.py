@@ -171,7 +171,7 @@ def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
     session_manager = SessionManager(temp_db)
     canonical_id = session_manager.register_session(
         external_id="codex-external-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project.id,
     )
@@ -180,7 +180,7 @@ def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
     with patch.object(session_manager, "register", side_effect=RuntimeError("boom")):
         injected_session_id = session_manager.register_session(
             external_id="codex-external-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project.id,
         )

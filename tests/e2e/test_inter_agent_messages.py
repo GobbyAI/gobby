@@ -71,7 +71,7 @@ class TestInterAgentMessagingE2E:
         # Register parent session first and get internal ID
         parent_result = cli_events.register_session(
             external_id=parent_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -80,7 +80,7 @@ class TestInterAgentMessagingE2E:
         # Register child session with parent relationship
         child_result = cli_events.register_session(
             external_id=child_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             parent_session_id=parent_session_id,
             cwd=str(daemon_instance.project_dir),
@@ -212,7 +212,7 @@ class TestInterAgentMessagingE2E:
         external_id = f"test-session-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -255,7 +255,7 @@ class TestInterAgentMessagingE2E:
 
         parent_result = cli_events.register_session(
             external_id=parent_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
@@ -263,7 +263,7 @@ class TestInterAgentMessagingE2E:
 
         child_result = cli_events.register_session(
             external_id=child_external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             parent_session_id=parent_session_id,
             cwd=str(daemon_instance.project_dir),
@@ -342,7 +342,7 @@ class TestInterAgentMessagingE2E:
         external_id = f"test-session-{uuid.uuid4().hex[:8]}"
         session_result = cli_events.register_session(
             external_id=external_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )

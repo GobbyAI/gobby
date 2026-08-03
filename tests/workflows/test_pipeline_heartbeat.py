@@ -44,7 +44,7 @@ def _seed_db(db: HubDatabase) -> None:
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
-        (SESSION_ID, "ext-1", "machine-1", "claude_code", PROJECT_ID, "active"),
+        (SESSION_ID, "ext-1", None, "claude_code", PROJECT_ID, "active"),
     )
 
 
@@ -54,7 +54,7 @@ def _seed_session(db: HubDatabase, session_id: str, *, status: str = "stopped") 
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
-        (session_id, f"{session_id}-ext", "machine-1", "claude_code", PROJECT_ID, status),
+        (session_id, f"{session_id}-ext", None, "claude_code", PROJECT_ID, status),
     )
 
 

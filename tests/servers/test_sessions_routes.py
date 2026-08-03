@@ -104,7 +104,7 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test that git_branch is extracted from project_path when not provided."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"),
+            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             mock_git.return_value = {"git_branch": "feature/extracted-branch"}
@@ -113,7 +113,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "git-branch-test",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "cwd": str(temp_dir),
@@ -131,7 +131,7 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test registration when git metadata has no branch."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"),
+            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             # Return empty dict - no git_branch key
@@ -141,7 +141,7 @@ class TestRegisterSessionEdgeCases:
                 "/api/sessions/register",
                 json={
                     "external_id": "no-git-branch-test",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "cwd": str(temp_dir),
@@ -160,14 +160,14 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test that explicit git_branch skips metadata extraction."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"),
+            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             response = client.post(
                 "/api/sessions/register",
                 json={
                     "external_id": "explicit-branch-test",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "project_path": str(temp_dir),
                     "git_branch": "explicit/branch",
@@ -194,14 +194,14 @@ class TestRegisterSessionEdgeCases:
         test_client = TestClient(server.app)
 
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"),
+            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
             patch.object(session_storage, "register", side_effect=RuntimeError("Database error")),
         ):
             response = test_client.post(
                 "/api/sessions/register",
                 json={
                     "external_id": "error-test",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "project_id": test_project["id"],
                 },
@@ -248,7 +248,7 @@ class TestListSessionsEdgeCases:
         # Create a session first
         session_storage.register(
             external_id="list-msg-fail",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -304,7 +304,7 @@ class TestGetSessionEdgeCases:
         """Session detail payload should use effective context-window resolution."""
         session = session_storage.register(
             external_id="codex-stale-context",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
             title="Codex stale context",
@@ -344,7 +344,7 @@ class TestGetSessionEdgeCases:
     ) -> None:
         session = session_storage.register(
             external_id="codex-context-override",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=test_project["id"],
             title="Codex context override",
@@ -410,7 +410,7 @@ class TestGetMessagesEdgeCases:
         # Create a session
         session = session_storage.register(
             external_id="messages-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -456,7 +456,7 @@ class TestGetMessagesEdgeCases:
         """An oversized limit is clamped (never 422) to the rendered cap."""
         session = session_storage.register(
             external_id="messages-clamp",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -491,7 +491,7 @@ class TestGetMessagesEdgeCases:
         """Test that internal errors during a window render return 500."""
         session = session_storage.register(
             external_id="messages-error-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -535,7 +535,7 @@ class TestFindCurrentSessionEdgeCases:
             "/api/sessions/find_current",
             json={
                 "external_id": "test",
-                "machine_id": "machine",
+                "machine_id": "21000000-0000-4000-8000-000000000003",
                 "source": "claude",
                 "project_id": "test-project",
             },
@@ -559,7 +559,7 @@ class TestFindCurrentSessionEdgeCases:
             "/api/sessions/find_current",
             json={
                 "external_id": "test",
-                "machine_id": "machine",
+                "machine_id": "21000000-0000-4000-8000-000000000003",
                 "source": "claude",
             },
         )
@@ -585,7 +585,7 @@ class TestFindCurrentSessionEdgeCases:
                 "/api/sessions/find_current",
                 json={
                     "external_id": "test",
-                    "machine_id": "machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000003",
                     "source": "claude",
                     "project_id": "test-project",
                 },
@@ -614,7 +614,7 @@ class TestUpdateStatusEdgeCases:
         response = test_client.post(
             "/api/sessions/update_status",
             json={
-                "session_id": "test-id",
+                "session_id": "21000000-0000-4000-8000-00000000001c",
                 "status": "paused",
             },
         )
@@ -629,7 +629,7 @@ class TestUpdateStatusEdgeCases:
         """Test that internal errors during update_status return 500."""
         session = session_storage.register(
             external_id="status-error-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -675,7 +675,7 @@ class TestUpdateSummaryEdgeCases:
         response = test_client.post(
             "/api/sessions/update_summary",
             json={
-                "session_id": "test-id",
+                "session_id": "21000000-0000-4000-8000-00000000001c",
                 "summary_path": "/path/to/summary.md",
             },
         )
@@ -690,7 +690,7 @@ class TestUpdateSummaryEdgeCases:
         """Test that internal errors during update_summary return 500."""
         session = session_storage.register(
             external_id="summary-error-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -972,7 +972,7 @@ class TestRequestValidation:
         # Create a session for listing
         session_storage.register(
             external_id="limit-test",
-            machine_id="machine",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )

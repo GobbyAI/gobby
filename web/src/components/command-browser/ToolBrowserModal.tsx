@@ -189,7 +189,6 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                       )}
                       // Ref access occurs inside the click handler, after render.
-                      // eslint-disable-next-line react-hooks/refs
                       onClick={() => handleSelectTool(serverName, tool.name)}
                     >
                       <div className="font-medium text-foreground text-xs">{tool.name}</div>

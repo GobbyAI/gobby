@@ -61,7 +61,7 @@ def session(temp_db, project_id: str):
     session_manager = SessionManager(temp_db)
     return session_manager.register(
         external_id="test-external-session",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         title="Test session",
@@ -175,7 +175,7 @@ class TestListTasks:
         owners = [
             server.session_manager.register(
                 external_id=f"owner-{index}",
-                machine_id="test-machine",
+                machine_id="21000000-0000-4000-8000-000000000002",
                 source="codex",
                 project_id=project_id,
             )

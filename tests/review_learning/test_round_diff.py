@@ -406,7 +406,7 @@ def _create_durable_lineage(temp_db: HubDatabase, tmp_path: Path) -> DurableLine
     )
     session = SessionManager(temp_db).register(
         external_id="round-diff-parent",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )

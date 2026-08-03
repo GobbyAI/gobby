@@ -397,7 +397,7 @@ class CronExecutor:
                 cron_session = await self._run_db(
                     sm.register,
                     external_id=f"cron-{job.id}-{run.id}-{pipeline_name}",
-                    machine_id="cron",
+                    machine_id=None,
                     source="cron",
                     project_id=job.project_id,
                     title=f"cron:{job.name}",

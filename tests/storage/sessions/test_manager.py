@@ -38,7 +38,7 @@ def test_update_session_status_returns_bool(temp_db: HubDatabase, project_id: st
     session_mgr = _storage_session_manager_cls()(temp_db)
     session_id = session_mgr.register_session(
         external_id="status-session",
-        machine_id="machine-1",
+        machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
     )

@@ -401,7 +401,7 @@ class PipelineExecutor(
                         child_session = await self._run_db(
                             self.session_manager.register,
                             external_id=f"pipeline-{execution.id}",
-                            machine_id="pipeline",
+                            machine_id=None,
                             source="pipeline",
                             project_id=project_id,
                             parent_session_id=caller_session_id,

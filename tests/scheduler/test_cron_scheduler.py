@@ -1238,7 +1238,7 @@ async def test_run_now_executes_in_empty_session_context(
     )
     caller = SessionManager(temp_db).register(
         external_id="cron-caller",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )

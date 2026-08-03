@@ -45,7 +45,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     # 2. Register a session
     session = session_manager.register(
         external_id="test-session-1",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
         title="Test Session",
@@ -123,7 +123,7 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
     project = project_manager.create("test-shell-edit", str(repo_root))
     session = session_manager.register(
         external_id="test-shell-session",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
         title="Shell Edit Session",
@@ -178,7 +178,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     project = project_manager.create("test-project-outside", str(repo_root))
     session = session_manager.register(
         external_id="test-session-outside",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
         title="Out-of-Repo Edit Session",
@@ -222,7 +222,7 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
 
     session = session_manager.register(
         external_id="test-session-2",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="qwen",
         project_id=project_id,
     )
@@ -267,7 +267,7 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
     project = project_manager.create("test-project-no-claim", str(repo_root))
     session = session_manager.register(
         external_id="test-session-no-claim",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="qwen",
         project_id=project.id,
     )
@@ -305,7 +305,7 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     project = project_manager.create("test-project-multi-claim", str(repo_root))
     session = session_manager.register(
         external_id="test-session-multi-claim",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="qwen",
         project_id=project.id,
     )
@@ -365,7 +365,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     )
     session = session_manager.register(
         external_id="codex-patch-ledger",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=project.id,
     )
@@ -439,7 +439,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     handlers.handle_pre_compact(compact_event)
     resumed = session_manager.register(
         external_id="codex-patch-ledger",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=project.id,
     )

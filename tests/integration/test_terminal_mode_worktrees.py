@@ -75,7 +75,7 @@ def child_session_manager(session_storage: SessionManager) -> ChildSessionManage
 def parent_session(session_storage: SessionManager, project: Project) -> Session:
     """Create a parent session for testing."""
     return session_storage.register(
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project.id,
         external_id="ext-parent-terminal",
@@ -207,7 +207,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
         )
 
@@ -228,7 +228,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
         )
 
@@ -247,7 +247,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             workflow_name="plan-execute",
         )
@@ -268,7 +268,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             prompt=short_prompt,
         )
@@ -289,7 +289,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             prompt=long_prompt,
         )
@@ -313,7 +313,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             max_agent_depth=5,
         )
@@ -331,7 +331,7 @@ class TestPrepareTerminalSpawn:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
         )
 
@@ -388,7 +388,7 @@ class TestWorktreeIntegration:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             git_branch="feature-x",
         )
@@ -407,7 +407,7 @@ class TestWorktreeIntegration:
             session_manager=child_session_manager,
             parent_session_id=parent_session.id,
             project_id=project.id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
             workflow_name="isolated-work",
             git_branch="feature-worktree",

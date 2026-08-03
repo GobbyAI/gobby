@@ -37,7 +37,7 @@ def db(hub_db):
         for sid in SESSION_IDS:
             conn.execute(
                 """INSERT INTO sessions (id, external_id, machine_id, source, project_id, session_type)
-                   VALUES (%s, %s, 'test-machine', 'claude', %s, 'web_chat')""",
+                   VALUES (%s, %s, '21000000-0000-4000-8000-000000000002', 'claude', %s, 'web_chat')""",
                 (sid, sid, PROJECT_ID),
             )
     return hub_db

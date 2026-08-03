@@ -69,7 +69,7 @@ def sample_session(
 ) -> dict:
     session = session_manager.register(
         external_id="lifecycle-test-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
@@ -195,7 +195,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
     )
     child = session_manager.register(
         external_id="stuck-child-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
         parent_session_id=sample_session["id"],
@@ -339,7 +339,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
 ) -> None:
     child = session_manager.register(
         external_id="child-refresh-dispatch-mutex",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -395,7 +395,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_spawn_held_mutex(
 ) -> None:
     child = session_manager.register(
         external_id="child-refresh-spawn-mutex",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -453,7 +453,7 @@ async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_ru
 ) -> None:
     child = session_manager.register(
         external_id="child-refresh-foreign-mutex",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -507,7 +507,7 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
 ) -> None:
     child = session_manager.register(
         external_id="child-restore-dispatch-mutex",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -553,7 +553,7 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
 ) -> None:
     child = session_manager.register(
         external_id="child-no-stage-dispatch-mutex",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -996,7 +996,7 @@ class TestCheckDeadAgents:
         """Worktrees are released when a dead agent is cleaned up."""
         child_session = session_manager.register(
             external_id="child-sess-wt",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1606,7 +1606,7 @@ class TestCheckIdleAgents:
         # Create a child session and register it
         child = session_manager.register(
             external_id="child-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1653,7 +1653,7 @@ class TestCheckIdleAgents:
         )
         child = session_manager.register(
             external_id="child-hook-active",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1705,7 +1705,7 @@ class TestCheckIdleAgents:
         )
         child = session_manager.register(
             external_id="child-pane-active",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1775,7 +1775,7 @@ class TestCheckIdleAgents:
         # Create child session with stale updated_at
         child = session_manager.register(
             external_id="child-stale",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1840,7 +1840,7 @@ class TestCheckIdleAgents:
         )
         child = session_manager.register(
             external_id="child-planner-step",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_session.get("project_id"),
         )
@@ -1933,7 +1933,7 @@ class TestCheckIdleAgents:
         )
         child = session_manager.register(
             external_id="child-naive-stale",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -1997,7 +1997,7 @@ class TestCheckIdleAgents:
 
         child = session_manager.register(
             external_id="child-xhigh-scaled-active",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_session.get("project_id"),
         )
@@ -2065,7 +2065,7 @@ class TestCheckIdleAgents:
 
         child = session_manager.register(
             external_id="child-high-base-stale",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_session.get("project_id"),
         )
@@ -2132,7 +2132,7 @@ class TestCheckIdleAgents:
 
         child = session_manager.register(
             external_id="child-xhigh-scaled-stale",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_session.get("project_id"),
         )
@@ -2195,7 +2195,7 @@ class TestCheckIdleAgents:
         # Create child session with stale updated_at
         child = session_manager.register(
             external_id="child-stale-active",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -2602,7 +2602,7 @@ class TestCheckExpiredAgents:
     ) -> None:
         child = session_manager.register(
             external_id="child-timeout-kill-before-release",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -2734,7 +2734,7 @@ class TestCheckExpiredAgents:
         """Visible terminal output with zero Gobby counters is containment, not work failure."""
         child = session_manager.register(
             external_id="child-zero-accounting",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -2810,7 +2810,7 @@ class TestCheckExpiredAgents:
         """Repeated bootstrap/accounting stalls stop redispatching the same reviewer."""
         child = session_manager.register(
             external_id="child-zero-accounting-cap",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -2877,7 +2877,7 @@ class TestCheckExpiredAgents:
         """Timed-out agent runs expire their child session."""
         child_session = session_manager.register(
             external_id="child-sess-timeout",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -2932,7 +2932,7 @@ class TestCheckExpiredAgents:
         """Already-terminal agent runs expire sessions even if their panes remain alive."""
         child_session = session_manager.register(
             external_id="child-sess-completed-run",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -2974,7 +2974,7 @@ class TestCheckExpiredAgents:
         """Recovery closes tmux left behind after a successful end_agent_run outage."""
         child_session = session_manager.register(
             external_id="child-sess-completed-lingering-tmux",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -3034,7 +3034,7 @@ class TestCheckExpiredAgents:
         """Session-end terminal errors must recover claimed dispatch tasks."""
         child = session_manager.register(
             external_id="child-terminal-error-recovery",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -3100,7 +3100,7 @@ class TestCheckExpiredAgents:
     ) -> None:
         child = session_manager.register(
             external_id="child-terminal-error-recovery-mutex",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -3192,7 +3192,7 @@ class TestCheckExpiredAgents:
         """Terminal cancelled sweeps release ownership without failing active work."""
         child = session_manager.register(
             external_id="child-terminal-cancel-recovery",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -3258,7 +3258,7 @@ class TestCheckExpiredAgents:
         """Expired agent cleanup releases worktrees."""
         child_session = session_manager.register(
             external_id="child-sess-exp-wt",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -3558,7 +3558,7 @@ class TestCheckProviderStallsKillsAgent:
         """Provider stall recovery must not leave a task stage stuck in progress."""
         child = session_manager.register(
             external_id="child-provider-stall",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -3678,7 +3678,7 @@ class TestCheckInitializationTimeout:
         # Create a child session with updated_at == created_at
         child = session_manager.register(
             external_id="child-uninit",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -3728,7 +3728,7 @@ class TestCheckInitializationTimeout:
         """Initialization timeout must not signal a PID that fails identity verification."""
         child = session_manager.register(
             external_id="child-uninit-recycled-pid",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -3781,7 +3781,7 @@ class TestCheckInitializationTimeout:
         """Provider startup timeout must return the task to dispatchable state."""
         child = session_manager.register(
             external_id="child-init-timeout-stage",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -3842,7 +3842,7 @@ class TestCheckInitializationTimeout:
         """Agent whose session was updated is NOT killed."""
         child = session_manager.register(
             external_id="child-init",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -3899,7 +3899,7 @@ class TestCheckInitializationTimeout:
         """Agent under init_timeout_seconds is NOT killed even if uninitialized."""
         child = session_manager.register(
             external_id="child-young",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -3937,7 +3937,7 @@ class TestCheckInitializationTimeout:
         """Naive started_at/created_at/updated_at values should not crash init checks."""
         child = session_manager.register(
             external_id="child-naive-uninit",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -3984,7 +3984,7 @@ class TestCheckInitializationTimeout:
 
         child = session_manager.register(
             external_id="child-pattern",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -4428,7 +4428,7 @@ class TestSessionExpirationOnCleanup:
         # Create a child session for the agent
         child_session = session_manager.register(
             external_id="child-session-for-agent",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session.get("project_id"),
         )
@@ -4568,7 +4568,7 @@ class TestReapDaemonStopOrphans:
 
         child_session = session_manager.register(
             external_id="parked-orphan-expiry",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_session["project_id"],
         )

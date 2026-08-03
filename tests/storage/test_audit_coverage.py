@@ -45,7 +45,7 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
         VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (id) DO NOTHING
         """,
-        (session_id, session_id, "test-machine", "test", AUDIT_PROJECT_ID),
+        (session_id, session_id, "21000000-0000-4000-8000-000000000002", "test", AUDIT_PROJECT_ID),
     )
 
 

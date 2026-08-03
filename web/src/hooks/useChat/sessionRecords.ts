@@ -5,7 +5,6 @@ import type {
   SessionObservationMeta,
 } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
-import { getBrowserMachineId } from "../../lib/browserMachineId";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
 const CHAT_PROVIDERS = new Set(["claude", "qwen", "codex", "droid", "agy", "grok"]);
@@ -118,7 +117,6 @@ export async function createWebChatSession(params?: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      machine_id: getBrowserMachineId(),
       project_id: params?.projectId ?? null,
       provider: params?.provider ?? null,
       model: params?.model ?? null,

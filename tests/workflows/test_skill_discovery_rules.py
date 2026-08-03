@@ -3422,7 +3422,7 @@ class TestCodeIndexNavigationRules:
         )
         session_id = SessionManager(db).register_session(
             external_id="code-index-fail-open-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project_id,
             project_path="/tmp/code-index-fail-open",

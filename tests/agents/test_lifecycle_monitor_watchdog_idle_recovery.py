@@ -358,13 +358,13 @@ def _make_idle_monitor_run(
     )
     parent = session_manager.register(
         external_id=f"parent-{run_id}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id=f"child-{run_id}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source=child_source,
         project_id=sample_project["id"],
         transcript_path=str(transcript_path) if transcript_path is not None else None,
@@ -1335,13 +1335,13 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     )
     parent = session_manager.register(
         external_id="parent-session-fallback",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id="codex-child-fallback",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

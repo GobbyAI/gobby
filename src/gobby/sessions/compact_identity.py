@@ -27,7 +27,7 @@ class CompactIdentityResolution:
 def resolve_compact_continuation(
     db: HubDatabase,
     *,
-    machine_id: str,
+    machine_id: str | None,
     source: str,
     terminal_context: dict[str, Any] | None,
 ) -> CompactIdentityResolution:

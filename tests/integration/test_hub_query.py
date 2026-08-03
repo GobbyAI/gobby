@@ -370,7 +370,7 @@ class TestHubQueryEdgeCases:
                 sessions_only_project,
                 "ext-1",
                 "claude",
-                "machine-1",
+                "21000000-0000-4000-8000-000000000001",
                 "active",
             ),
         )

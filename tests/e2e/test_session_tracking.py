@@ -80,7 +80,7 @@ class TestHookEvents:
 
         result = cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
 
@@ -96,13 +96,13 @@ class TestHookEvents:
         # Start then end session
         cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
 
         result = cli_events.session_end(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="claude",
         )
 
@@ -118,7 +118,7 @@ class TestHookEvents:
         # Start session first
         cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
 
@@ -145,7 +145,7 @@ class TestSessionState:
         # Execute some hooks
         cli_events.session_start(
             session_id=session_id,
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             cli_source="claude",
         )
 
@@ -165,7 +165,7 @@ class TestSessionState:
             session_id = f"test-session-{i}-{uuid.uuid4().hex[:8]}"
             cli_events.session_start(
                 session_id=session_id,
-                machine_id="test-machine",
+                machine_id="21000000-0000-4000-8000-000000000002",
                 cli_source="claude",
             )
 

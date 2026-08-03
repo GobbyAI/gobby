@@ -1244,20 +1244,20 @@ class TestTmuxPTYBridge:
         from gobby.agents.tmux.pty_bridge import BridgeInfo
 
         mock_proc = MagicMock()
-        bridge._bridges["test-id"] = BridgeInfo(
+        bridge._bridges["21000000-0000-4000-8000-00000000001c"] = BridgeInfo(
             master_fd=999, proc=mock_proc, session_name="sess", socket_name="gobby"
         )
 
         with pytest.raises(RuntimeError, match="already exists"):
-            await bridge.attach("sess", "test-id")
+            await bridge.attach("sess", "21000000-0000-4000-8000-00000000001c")
 
     @pytest.mark.asyncio
     async def test_attach_duplicate_pending_raises(self) -> None:
         bridge = TmuxPTYBridge()
-        bridge._pending_bridges.add("test-id")
+        bridge._pending_bridges.add("21000000-0000-4000-8000-00000000001c")
 
         with pytest.raises(RuntimeError, match="already exists"):
-            await bridge.attach("sess", "test-id")
+            await bridge.attach("sess", "21000000-0000-4000-8000-00000000001c")
 
     @pytest.mark.asyncio
     async def test_resize_missing_is_noop(self) -> None:

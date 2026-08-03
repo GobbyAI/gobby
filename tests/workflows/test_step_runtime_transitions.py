@@ -45,7 +45,7 @@ def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
+        (session_id, "ext-1", "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
     )
 
 

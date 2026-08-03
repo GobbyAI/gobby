@@ -921,13 +921,13 @@ class TestApprovalReplayIntegration:
         sessions = SessionManager(temp_db)
         caller = sessions.register(
             external_id="reject-caller",
-            machine_id="test-machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=_REPLAY_PROJECT_ID,
         )
         child = sessions.register(
             external_id=f"pipeline-{execution_id}",
-            machine_id="pipeline",
+            machine_id=None,
             source="pipeline",
             project_id=_REPLAY_PROJECT_ID,
             parent_session_id=caller.id,

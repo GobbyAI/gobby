@@ -38,13 +38,13 @@ def test_claim_task_raises_task_already_claimed_error(temp_db, sample_project) -
     session_manager = SessionManager(temp_db)
     owner = session_manager.register(
         external_id="owner-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     other = session_manager.register(
         external_id="other-session",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -67,7 +67,7 @@ def test_concurrent_claim_has_exactly_one_winner(temp_db, sample_project) -> Non
     claimants = [
         session_manager.register(
             external_id=f"claimant-{index}",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )
@@ -113,19 +113,19 @@ def test_expected_owner_does_not_stomp_replacement_owner(temp_db, sample_project
     session_manager = SessionManager(temp_db)
     owner = session_manager.register(
         external_id="delegating-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     replacement = session_manager.register(
         external_id="replacement-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id="delegated-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

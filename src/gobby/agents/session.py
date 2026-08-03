@@ -32,7 +32,7 @@ class ChildSessionConfig:
     project_id: str
     """Project ID the session belongs to."""
 
-    machine_id: str
+    machine_id: str | None
     """Machine identifier."""
 
     source: str

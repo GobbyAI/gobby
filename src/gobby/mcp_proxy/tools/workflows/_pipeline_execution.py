@@ -265,10 +265,9 @@ async def cancel_pipeline(
         _db: HubDatabase | None = getattr(execution_manager, "db", None)
         if _db is None:
             raise RuntimeError("execution manager has no database")
-        pipeline_session = SessionManager(_db).find_by_external_id_any_project(
-            external_id=f"pipeline-{execution_id}",
-            machine_id="pipeline",
-            source="pipeline",
+        pipeline_session = SessionManager(_db).find_active_by_external_id(
+            f"pipeline-{execution_id}",
+            "pipeline",
         )
         pipeline_session_id = pipeline_session.id if pipeline_session else None
         arm = LocalAgentRunManager(_db)

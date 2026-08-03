@@ -88,7 +88,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._skills_config = None
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = None
-        self._get_machine_id = MagicMock(return_value="machine-1")
+        self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
 
@@ -711,7 +711,7 @@ class TestSessionMoreCoverage:
         row.parent_session_id = None
         row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
         row.external_id = "ext-3"
-        row.machine_id = "machine-1"
+        row.machine_id = "21000000-0000-4000-8000-000000000001"
         row.project_id = "proj-1"
 
         handler._session_manager.get.side_effect = lambda sid: (row if sid == "sess-1" else None)
@@ -790,7 +790,7 @@ class TestComposeSessionResponse:
             session_id="sess-1",
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
         )
         assert isinstance(result, HookResponse)
         assert result.decision == "allow"
@@ -807,7 +807,7 @@ class TestComposeSessionResponse:
             session_id="sess-1",
             external_id="ext-1",
             parent_session_id="parent-1",
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
         )
         # system_message is now session ID banner only — parent info in metadata
         assert "#42" in result.system_message
@@ -822,7 +822,7 @@ class TestComposeSessionResponse:
             session_id="sess-1",
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
         )
         # Agent tree removed from system_message — just session ID banner
         assert "#42" in result.system_message
@@ -837,7 +837,7 @@ class TestComposeSessionResponse:
             session_id="sess-1",
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
             is_pre_created=True,
             terminal_context={"parent_pid": "12345", "gobby_session_id": None},
         )
@@ -855,7 +855,7 @@ class TestComposeSessionResponse:
             session_id="sess-uuid-1",
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
         )
         assert "sess-uuid-1" in result.system_message
 
@@ -867,7 +867,7 @@ class TestComposeSessionResponse:
             session_id=None,
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
         )
 
         assert result.system_message is None
@@ -884,7 +884,7 @@ class TestComposeSessionResponse:
             session_id="sess-uuid-1",
             external_id="ext-1",
             parent_session_id=None,
-            machine_id="m-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
             additional_context=[claimed_context],
         )
         # Claimed tasks removed from system_message (handled by build_claimed_task_context)

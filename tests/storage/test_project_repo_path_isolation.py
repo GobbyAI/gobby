@@ -44,13 +44,13 @@ def _register_isolated_agent(
     sessions = SessionManager(db)
     parent = sessions.register(
         external_id=f"parent-{isolation}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=project.id,
     )
     child = sessions.register(
         external_id=f"child-{isolation}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project.id,
         parent_session_id=parent.id,

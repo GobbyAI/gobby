@@ -19,7 +19,7 @@ def test_agent_run_persists_resume_metadata(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="parent-resume-metadata",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
@@ -63,7 +63,7 @@ def test_agent_run_accepts_none_resume_metadata(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="parent-resume-metadata-none",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )
@@ -99,7 +99,7 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="parent-resume-candidates",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=sample_project["id"],
     )

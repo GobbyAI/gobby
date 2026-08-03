@@ -137,7 +137,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     )
     coordinator = SessionManager(temp_db).register(
         external_id="coord-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project_id,
         title="Coordinator",
@@ -199,7 +199,7 @@ async def test_build_rejects_coordinator_from_another_project(
     )
     coordinator = SessionManager(temp_db).register(
         external_id="other-coord-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=other_project.id,
         title="Other Coordinator",
@@ -237,7 +237,7 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
     )
     coordinator = SessionManager(temp_db).register(
         external_id="other-explicit-coord-ext",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=other_project.id,
         title="Other Coordinator",
@@ -2255,7 +2255,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         (
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa5001",
             "reviewer-session",
-            "machine-1",
+            "21000000-0000-4000-8000-000000000001",
             "test",
             sample_project["id"],
         ),

@@ -86,13 +86,13 @@ class TestListSkillsTool:
         session_manager = SessionManager(populated_db)
         first_session = session_manager.register(
             external_id="usage-stats-first",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=None,
         )
         second_session = session_manager.register(
             external_id="usage-stats-second",
-            machine_id="test-machine",
+            machine_id="21000000-0000-4000-8000-000000000002",
             source="codex",
             project_id=None,
         )

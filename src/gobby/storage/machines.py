@@ -11,27 +11,6 @@ from uuid import UUID
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
 
-_PLACEHOLDER_MACHINE_IDS = {
-    "none",
-    "null",
-    "unknown",
-    "unknown-machine",
-    "unknown_machine",
-}
-
-
-def normalize_machine_id(machine_id: str | None) -> str | None:
-    """Return a canonical UUID or None for missing/placeholder values."""
-    normalized = (machine_id or "").strip()
-    if not normalized:
-        return None
-    if normalized.lower() in _PLACEHOLDER_MACHINE_IDS:
-        return None
-    try:
-        return str(UUID(normalized))
-    except ValueError as exc:
-        raise ValueError("machine_id must be a valid UUID") from exc
-
 
 def _clean_optional_text(value: str | None) -> str | None:
     normalized = (value or "").strip()
@@ -102,10 +81,10 @@ class LocalMachineManager:
         owner_user_id: str | None = None,
         seen_at: datetime | str | None = None,
     ) -> Machine | None:
-        """Insert or refresh a real machine id, skipping missing placeholders."""
-        normalized_machine_id = normalize_machine_id(machine_id)
-        if normalized_machine_id is None:
+        """Insert or refresh a real machine id, skipping missing attribution."""
+        if machine_id is None:
             return None
+        normalized_machine_id = str(UUID(machine_id.strip()))
 
         now = parse_stored_datetime(seen_at) or utc_now()
         row = self.db.fetchone(
@@ -160,9 +139,7 @@ class LocalMachineManager:
 
     def get(self, machine_id: str) -> Machine | None:
         """Return a machine by id."""
-        normalized_id = normalize_machine_id(machine_id)
-        if normalized_id is None:
-            return None
+        normalized_id = str(UUID(machine_id.strip()))
         row = self.db.fetchone(
             "SELECT * FROM machines WHERE id = %s",
             (normalized_id,),

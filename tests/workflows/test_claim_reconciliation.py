@@ -42,7 +42,7 @@ def claim_context(temp_db: HubDatabase, tmp_path: Path) -> ClaimContext:
     session_manager = SessionManager(temp_db)
     session_id = session_manager.register_session(
         external_id="claim-reconciliation-external",
-        machine_id="claim-reconciliation-machine",
+        machine_id="21000000-0000-4000-8000-000000000012",
         source=SessionSource.CLAUDE.value,
         project_id=project.id,
         project_path=str(tmp_path),

@@ -21,12 +21,12 @@ class TestProjectResolutionEndpoints:
         temp_dir: Path,
     ) -> None:
         """Test session registration endpoint."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"):
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"):
             response = client.post(
                 "/api/sessions/register",
                 json={
                     "external_id": "test-cli-key",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "cwd": str(temp_dir),
                 },
@@ -72,7 +72,7 @@ class TestProjectResolutionEndpoints:
         """Test finding current session by composite key."""
         session = session_storage.register(
             external_id="find-current",
-            machine_id="my-machine",
+            machine_id="21000000-0000-4000-8000-000000000020",
             source="qwen",
             project_id=test_project["id"],
         )
@@ -81,7 +81,7 @@ class TestProjectResolutionEndpoints:
             "/api/sessions/find_current",
             json={
                 "external_id": "find-current",
-                "machine_id": "my-machine",
+                "machine_id": "21000000-0000-4000-8000-000000000020",
                 "source": "qwen",
                 "project_id": test_project["id"],
             },
@@ -97,7 +97,7 @@ class TestProjectResolutionEndpoints:
             "/api/sessions/find_current",
             json={
                 "external_id": "nonexistent",
-                "machine_id": "machine",
+                "machine_id": "21000000-0000-4000-8000-000000000003",
                 "source": "claude",
                 "project_id": test_project["id"],
             },
@@ -113,7 +113,7 @@ class TestProjectResolutionEndpoints:
             "/api/sessions/find_current",
             json={
                 "external_id": "test",
-                "machine_id": "machine",
+                "machine_id": "21000000-0000-4000-8000-000000000003",
                 "source": "claude",
             },
         )
@@ -134,7 +134,7 @@ class TestProjectResolutionEndpoints:
                 "/api/sessions/register",
                 json={
                     "external_id": "persist-test-key",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "cwd": str(temp_dir),
                     "title": "Persistence Test Session",
@@ -165,12 +165,12 @@ class TestProjectResolutionEndpoints:
         When cwd points to a path without .gobby/project.json, _resolve_project_id
         raises ValueError, which is caught and converted to HTTP 400 Bad Request.
         """
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"):
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"):
             response = client.post(
                 "/api/sessions/register",
                 json={
                     "external_id": "invalid-path-test",
-                    "machine_id": "test-machine",
+                    "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "cwd": "/nonexistent/path/that/does/not/exist",
                 },

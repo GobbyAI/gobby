@@ -156,7 +156,7 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
     _ensure_project(db)
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
-        "VALUES (%s, %s, 'test-machine', 'claude', %s) "
+        "VALUES (%s, %s, '21000000-0000-4000-8000-000000000002', 'claude', %s) "
         "ON CONFLICT (id) DO NOTHING",
         (session_id, session_id, _TEST_PROJECT_ID),
     )

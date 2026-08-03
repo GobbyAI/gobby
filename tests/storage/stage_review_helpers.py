@@ -39,7 +39,7 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="stage-review-launcher",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )

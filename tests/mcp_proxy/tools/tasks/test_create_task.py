@@ -33,7 +33,7 @@ async def test_create_task_fails_closed_when_session_project_lookup_errors(
     )
     session = SessionManager(temp_db).register(
         external_id="task-create-project-error",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -78,7 +78,7 @@ def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="task-tree-project-error",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -121,7 +121,7 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="stage-caps-mcp",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -154,7 +154,7 @@ async def test_create_and_update_task_round_trip_schedule_fields(
 ) -> None:
     session = SessionManager(temp_db).register(
         external_id="schedule-fields-mcp",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )

@@ -21,20 +21,20 @@ def test_register_recovery_remints_seq_num_in_destination(
     source_project_id = _create_source_project(temp_db, "registration-move-source")
     source = session_manager.register(
         external_id="registration-move",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=source_project_id,
     )
     destination = session_manager.register(
         external_id="destination-existing",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
 
     recovered = session_manager.register(
         external_id="registration-move",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -53,13 +53,13 @@ def test_update_project_id_remints_seq_num_in_destination(
     source_project_id = _create_source_project(temp_db, "update-move-source")
     source = session_manager.register(
         external_id="update-move",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=source_project_id,
     )
     destination = session_manager.register(
         external_id="update-destination-existing",
-        machine_id="machine",
+        machine_id="20000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )

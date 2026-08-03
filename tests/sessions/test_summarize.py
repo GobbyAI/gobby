@@ -339,7 +339,7 @@ class TestGenerateSessionSummaries:
         )
         session = sm.register(
             external_id="summary-bounded-db",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=project.id,
         )

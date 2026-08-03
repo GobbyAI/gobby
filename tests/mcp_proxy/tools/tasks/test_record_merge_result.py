@@ -123,7 +123,7 @@ def _register_session(
         SessionManager(temp_db)
         .register(
             external_id=external_id,
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
             title=external_id,

@@ -196,7 +196,7 @@ class WebChatSessionBootstrap:
 
     PRIORITY: ClassVar[int] = 500
     external_id: str
-    machine_id: str
+    machine_id: str | None
     source: str
     project_id: str | None
     session_type: str
@@ -208,7 +208,7 @@ class SessionRegistration:
 
     PRIORITY: ClassVar[int] = 600
     external_id: str
-    machine_id: str
+    machine_id: str | None
     source: str
     session_type: str
 

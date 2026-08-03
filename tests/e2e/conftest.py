@@ -835,7 +835,7 @@ class CLIEventSimulator:
     def register_session(
         self,
         external_id: str,
-        machine_id: str = "test-machine",
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
         source: str = "Claude Code",
         project_id: str | None = None,
         parent_session_id: str | None = None,
@@ -864,7 +864,7 @@ class CLIEventSimulator:
     def session_start(
         self,
         session_id: str,
-        machine_id: str = "test-machine",
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
         cli_source: str = "claude",
         session_start_source: str = "startup",
         project_id: str | None = None,
@@ -907,7 +907,7 @@ class CLIEventSimulator:
     def session_end(
         self,
         session_id: str,
-        machine_id: str = "test-machine",
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
         source: str = "claude",
     ) -> dict[str, Any]:
         """Simulate session end hook event via /hooks/execute endpoint."""
@@ -958,7 +958,7 @@ class CLIEventSimulator:
         event_data = {
             **input_data,
             "session_id": session_id,
-            "machine_id": "test-machine",
+            "machine_id": "21000000-0000-4000-8000-000000000002",
         }
         if project_id:
             event_data["project_id"] = project_id
@@ -986,7 +986,7 @@ class CLIEventSimulator:
         session_id: str,
         prompt: str,
         source: str = "claude",
-        machine_id: str = "test-machine",
+        machine_id: str = "21000000-0000-4000-8000-000000000002",
         cwd: str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:

@@ -78,7 +78,7 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
     run_manager = LocalAgentRunManager(temp_db)
     parent_session = SessionManager(temp_db).register(
         external_id="stop-target-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -149,13 +149,13 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="phantom-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="phantom-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,
@@ -486,13 +486,13 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="merge-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="merge-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="claude",
         project_id=sample_project["id"],
         parent_session_id=parent.id,
@@ -1093,13 +1093,13 @@ async def test_clean_force_resets_runtime_state_without_artifacts(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="clean-parent",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     child = sessions.register(
         external_id="clean-child",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,

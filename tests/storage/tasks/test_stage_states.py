@@ -887,7 +887,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
 ) -> None:
     stale_owner = SessionManager(temp_db).register(
         external_id="stale-owner-ext",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -972,7 +972,7 @@ def test_move_to_stage_rejects_other_session_claim_without_force(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -996,7 +996,7 @@ def test_move_to_stage_preserves_same_session_claim(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )
@@ -1022,7 +1022,7 @@ def test_move_to_stage_force_overrides_other_session_claim(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="machine",
+        machine_id="21000000-0000-4000-8000-000000000003",
         source="codex",
         project_id=sample_project["id"],
     )

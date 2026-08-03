@@ -34,7 +34,7 @@ def review_setup(
     )
     session = SessionManager(temp_db).register(
         external_id="review-evidence-parent",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )
@@ -775,7 +775,7 @@ def test_two_phase_run_binding(
     )
     other_session = SessionManager(service.db).register(
         external_id="other-review-parent",
-        machine_id="test-machine",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )

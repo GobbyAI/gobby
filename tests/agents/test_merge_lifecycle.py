@@ -61,7 +61,7 @@ def _create_session(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "11111111-1111-4111-8111-111111110001"),
+        (session_id, "ext-1", "21000000-0000-4000-8000-000000000001", "claude", "11111111-1111-4111-8111-111111110001"),
     )
 
 

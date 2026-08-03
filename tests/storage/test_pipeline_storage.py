@@ -246,7 +246,7 @@ class TestCreateExecution:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_123, "ext-1", "machine-1", "claude_code", PROJECT_ID, "active"),
+            (SESSION_123, "ext-1", None, "claude_code", PROJECT_ID, "active"),
         )
 
         execution = manager.create_execution(
@@ -456,12 +456,12 @@ class TestListExecutionsExtended:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_A, "ext-a", "machine-1", "claude_code", PROJECT_ID, "active"),
+            (SESSION_A, "ext-a", None, "claude_code", PROJECT_ID, "active"),
         )
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_B, "ext-b", "machine-1", "claude_code", PROJECT_ID, "active"),
+            (SESSION_B, "ext-b", None, "claude_code", PROJECT_ID, "active"),
         )
         manager.create_execution(pipeline_name="deploy", session_id=SESSION_A)
         manager.create_execution(pipeline_name="test", session_id=SESSION_A)
@@ -1119,13 +1119,13 @@ class TestApprovalTimeout:
         sessions = SessionManager(db)
         caller = sessions.register(
             external_id="timeout-caller",
-            machine_id="test-machine",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=PROJECT_ID,
         )
         child = sessions.register(
             external_id=f"pipeline-{execution.id}",
-            machine_id="pipeline",
+            machine_id=None,
             source="pipeline",
             project_id=PROJECT_ID,
             parent_session_id=caller.id,
@@ -1423,7 +1423,7 @@ class TestPagination:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_X, "ext-x", "machine-1", "claude_code", PROJECT_ID, "active"),
+            (SESSION_X, "ext-x", None, "claude_code", PROJECT_ID, "active"),
         )
         manager.create_execution(pipeline_name="p1", session_id=SESSION_X)
         manager.create_execution(pipeline_name="p2", session_id=SESSION_X)
@@ -1456,7 +1456,7 @@ class TestPagination:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_Q, "ext-q", "machine-1", "claude_code", PROJECT_ID, "active"),
+            (SESSION_Q, "ext-q", None, "claude_code", PROJECT_ID, "active"),
         )
         e1 = manager.create_execution(pipeline_name="p1", session_id=SESSION_Q)
         e2 = manager.create_execution(pipeline_name="p2", session_id=SESSION_Q)

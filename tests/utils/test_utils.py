@@ -51,7 +51,7 @@ class TestMachineId:
     def test_clear_cache(self) -> None:
         """Test clearing the machine ID cache."""
         with patch("gobby.utils.machine_id._get_or_create_machine_id") as mock_get:
-            mock_get.return_value = "test-id"
+            mock_get.return_value = "21000000-0000-4000-8000-00000000001c"
 
             get_machine_id()
             clear_cache()
@@ -63,7 +63,7 @@ class TestMachineId:
     def test_get_machine_id_returns_string(self) -> None:
         """Test that get_machine_id returns a string."""
         with patch("gobby.utils.machine_id._get_or_create_machine_id") as mock_get:
-            mock_get.return_value = "test-machine-id"
+            mock_get.return_value = "21000000-0000-4000-8000-000000000004"
             result = get_machine_id()
             assert isinstance(result, str)
             assert len(result) > 0
@@ -220,7 +220,7 @@ class TestProjectContext:
         # Create project structure
         gobby_dir = temp_dir / ".gobby"
         gobby_dir.mkdir()
-        (gobby_dir / "project.json").write_text('{"id": "test-id"}')
+        (gobby_dir / "project.json").write_text('{"id": "21000000-0000-4000-8000-00000000001c"}')
 
         # Test from project root - resolve both to handle macOS symlinks
         result = find_project_root(temp_dir)
@@ -255,12 +255,12 @@ class TestProjectContext:
         # Create project structure
         gobby_dir = temp_dir / ".gobby"
         gobby_dir.mkdir()
-        project_data = {"id": "test-id", "name": "test-project"}
+        project_data = {"id": "21000000-0000-4000-8000-00000000001c", "name": "test-project"}
         (gobby_dir / "project.json").write_text(json.dumps(project_data))
 
         result = get_project_context(temp_dir)
         assert result is not None
-        assert result["id"] == "test-id"
+        assert result["id"] == "21000000-0000-4000-8000-00000000001c"
         assert result["name"] == "test-project"
         # Handle macOS symlinks (/var -> /private/var)
         assert Path(result["project_path"]).resolve() == temp_dir.resolve()

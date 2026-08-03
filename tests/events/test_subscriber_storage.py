@@ -162,7 +162,7 @@ class TestCompletionSubscribers:
         """Startup sweep removes only subscriber rows tied to terminal agent runs."""
         session = session_manager.register(
             external_id="terminal-sweep-session",
-            machine_id="machine-1",
+            machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",
             project_id=sample_project["id"],
         )

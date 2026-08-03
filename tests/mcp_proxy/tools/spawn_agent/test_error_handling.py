@@ -1064,7 +1064,7 @@ test"""
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="machine-1",
+                return_value="21000000-0000-4000-8000-000000000001",
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",

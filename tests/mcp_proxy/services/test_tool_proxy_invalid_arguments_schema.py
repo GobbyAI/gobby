@@ -30,7 +30,7 @@ def temp_db(postgres_db: HubDatabase) -> HubDatabase:
 def proxy_parts(temp_db: HubDatabase) -> ProxyParts:
     session = SessionManager(temp_db).register(
         external_id="schema-guidance-test-session",
-        machine_id="schema-guidance-test-machine",
+        machine_id="21000000-0000-4000-8000-000000000016",
         source="codex",
         project_id=None,
         title="Schema guidance test session",

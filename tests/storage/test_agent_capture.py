@@ -15,13 +15,13 @@ def _create_run(
 ) -> tuple[LocalAgentRunManager, str, str]:
     parent = session_manager.register(
         external_id=f"capture-parent-{suffix}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id=f"capture-child-{suffix}",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,

@@ -149,7 +149,7 @@ def test_factory_create_reuses_injected_session_manager(
             message_processor=None,
             agent_runner=None,
             completion_registry=None,
-            get_machine_id=lambda: "machine-1",
+            get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
             resolve_project_id=lambda _project_id, _cwd: "project-1",
             session_manager=session_manager,
         )
@@ -192,7 +192,7 @@ def _create_kwargs(session_manager: SessionManager, default_config: DaemonConfig
         "message_processor": None,
         "agent_runner": None,
         "completion_registry": None,
-        "get_machine_id": lambda: "machine-1",
+        "get_machine_id": lambda: "21000000-0000-4000-8000-000000000001",
         "resolve_project_id": lambda _project_id, _cwd: "project-1",
         "session_manager": session_manager,
     }

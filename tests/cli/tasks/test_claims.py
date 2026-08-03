@@ -22,13 +22,13 @@ def test_claimed_task_owners_reads_tasks_claimed_by_active_sessions(
     task_manager = LocalTaskManager(temp_db)
     active_owner = session_manager.register(
         external_id="active-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="cli",
         project_id=sample_project["id"],
     )
     expired_owner = session_manager.register(
         external_id="expired-owner",
-        machine_id="machine-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
         source="cli",
         project_id=sample_project["id"],
     )
