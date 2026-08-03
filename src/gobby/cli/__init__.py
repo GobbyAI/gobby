@@ -6,6 +6,7 @@ import click
 
 from gobby.utils.version import get_version
 
+from . import hub_purge as _hub_purge
 from .agents import agents
 from .auth import auth
 from .build import build_command
