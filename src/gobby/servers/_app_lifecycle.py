@@ -68,7 +68,6 @@ def create_lifespan(
                 if gcode_gateway is not None:
                     hook_manager_kwargs["code_index_trigger"] = CodeIndexTrigger(
                         loop=asyncio.get_running_loop(),
-                        debounce_seconds=2.0,
                         gcode_gateway=gcode_gateway,
                         daemon_config_breaker=code_indexer.daemon_config_breaker,
                     )

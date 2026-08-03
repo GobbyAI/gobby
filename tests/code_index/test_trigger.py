@@ -1,4 +1,4 @@
-"""Tests for CodeIndexTrigger debounced post-edit indexing."""
+"""Tests for CodeIndexTrigger end-of-tick post-edit batching."""
 
 from __future__ import annotations
 
@@ -77,6 +77,33 @@ class RecordingGateway(GcodeGateway):
         return outcome
 
 
+class FirstCallBlockingGateway(RecordingGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_call_started = asyncio.Event()
+        self.release_first_call = asyncio.Event()
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def incremental_index(
+        self,
+        project_root: Path,
+        files: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        self.calls.append((project_root, tuple(files), timeout))
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if len(self.calls) == 1:
+                self.first_call_started.set()
+                await self.release_first_call.wait()
+            return _result(timeout_seconds=timeout or 0.01)
+        finally:
+            self.active_calls -= 1
+
+
 @dataclass
 class TriggerHarness:
     trigger: CodeIndexTrigger
@@ -100,9 +127,8 @@ async def harness() -> TriggerHarness:
     )
     trigger = CodeIndexTrigger(
         loop=asyncio.get_running_loop(),
-        debounce_seconds=0.05,
-        retry_base_seconds=0.05,
-        retry_max_seconds=0.2,
+        retry_base_seconds=5.0,
+        retry_max_seconds=10.0,
         index_timeout_seconds=0.01,
         gcode_gateway=gateway,
         daemon_config_breaker=breaker,
@@ -110,9 +136,36 @@ async def harness() -> TriggerHarness:
     return TriggerHarness(trigger=trigger, gateway=gateway, breaker=breaker, clock=clock)
 
 
-def _cancel_retry_timer(trigger: CodeIndexTrigger, root_key: str) -> None:
-    timer = trigger._flush_timers_by_root.pop(root_key)
-    timer.cancel()
+def _cancel_scheduled_callback(trigger: CodeIndexTrigger, root_key: str) -> None:
+    callback = trigger._scheduled_by_root.pop(root_key)
+    callback.cancel()
+
+
+async def _wait_for_call_count(gateway: RecordingGateway, expected: int) -> None:
+    for _ in range(20):
+        if len(gateway.calls) >= expected:
+            return
+        await _next_loop_turn()
+    pytest.fail(f"expected {expected} gateway calls, received {len(gateway.calls)}")
+
+
+async def _wait_for_scheduled_callback(
+    trigger: CodeIndexTrigger,
+    root_key: str,
+) -> asyncio.Handle:
+    for _ in range(20):
+        callback = trigger._scheduled_by_root.get(root_key)
+        if callback is not None:
+            return callback
+        await _next_loop_turn()
+    pytest.fail(f"expected a scheduled callback for {root_key}")
+
+
+async def _next_loop_turn() -> None:
+    loop = asyncio.get_running_loop()
+    ready = loop.create_future()
+    loop.call_soon(ready.set_result, None)
+    await ready
 
 
 @pytest.mark.asyncio
@@ -124,8 +177,9 @@ async def test_single_file_triggers_gateway_with_root_and_timeout(
     root.mkdir()
     file_path = root / "src" / "foo.py"
 
-    harness.trigger._schedule_file(str(file_path), "proj-1", str(root))
-    await harness.trigger._flush(harness.trigger._root_key(str(root)), "proj-1")
+    harness.trigger.notify_file_changed(str(file_path), "proj-1", str(root))
+    assert harness.gateway.calls == []
+    await _wait_for_call_count(harness.gateway, 1)
 
     assert harness.gateway.calls == [(root.resolve(), ("src/foo.py",), 0.01)]
 
@@ -137,10 +191,11 @@ async def test_multiple_files_are_sorted_and_batched(
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
-    for file_path in ("src/c.py", "src/a.py", "src/b.py"):
-        harness.trigger._schedule_file(file_path, "proj-1", str(root))
+    for file_path in ("src/c.py", "src/a.py", "src/b.py", "src/a.py"):
+        harness.trigger.notify_file_changed(file_path, "proj-1", str(root))
 
-    await harness.trigger._flush(harness.trigger._root_key(str(root)), "proj-1")
+    await _wait_for_call_count(harness.gateway, 1)
+    await _next_loop_turn()
 
     assert harness.gateway.calls == [(root.resolve(), ("src/a.py", "src/b.py", "src/c.py"), 0.01)]
 
@@ -158,22 +213,24 @@ async def test_same_file_is_deduplicated(harness: TriggerHarness, tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_debounce_timer_resets(harness: TriggerHarness, tmp_path: Path) -> None:
+async def test_same_turn_files_share_one_scheduled_callback(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     root_key = harness.trigger._root_key(str(root))
     harness.trigger._schedule_file("src/a.py", "proj-1", str(root))
-    first_timer = harness.trigger._flush_timers_by_root[root_key]
+    first_callback = harness.trigger._scheduled_by_root[root_key]
 
     harness.trigger._schedule_file("src/b.py", "proj-1", str(root))
-    second_timer = harness.trigger._flush_timers_by_root[root_key]
+    second_callback = harness.trigger._scheduled_by_root[root_key]
 
-    assert first_timer.cancelled()
-    assert second_timer is not first_timer
+    assert second_callback is first_callback
+    assert not first_callback.cancelled()
     assert harness.gateway.calls == []
 
-    await harness.trigger._flush(root_key, "proj-1")
-    assert second_timer.cancelled()
+    await _wait_for_call_count(harness.gateway, 1)
     assert harness.gateway.calls[0][1] == ("src/a.py", "src/b.py")
 
 
@@ -186,13 +243,43 @@ async def test_different_roots_flush_independently(
     root_b = tmp_path / "root-b"
     root_a.mkdir()
     root_b.mkdir()
-    harness.trigger._schedule_file("src/shared.py", "parent-proj", str(root_a))
-    harness.trigger._schedule_file("src/shared.py", "parent-proj", str(root_b))
+    harness.trigger.notify_file_changed("src/shared.py", "parent-proj", str(root_a))
+    harness.trigger.notify_file_changed("src/shared.py", "parent-proj", str(root_b))
 
-    await harness.trigger._flush(harness.trigger._root_key(str(root_a)), "parent-proj")
-    await harness.trigger._flush(harness.trigger._root_key(str(root_b)), "parent-proj")
+    await _wait_for_call_count(harness.gateway, 2)
 
-    assert [call[0] for call in harness.gateway.calls] == [root_a.resolve(), root_b.resolve()]
+    assert {call[0] for call in harness.gateway.calls} == {root_a.resolve(), root_b.resolve()}
+
+
+@pytest.mark.asyncio
+async def test_edits_during_active_run_form_one_serial_follow_up_batch(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = FirstCallBlockingGateway()
+    trigger = CodeIndexTrigger(
+        loop=asyncio.get_running_loop(),
+        gcode_gateway=gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="index",
+            failure_threshold=1,
+        ),
+    )
+
+    trigger.notify_file_changed("src/a.py", "proj-1", str(root))
+    await asyncio.wait_for(gateway.first_call_started.wait(), timeout=1.0)
+    for file_path in ("src/c.py", "src/b.py", "src/b.py"):
+        trigger.notify_file_changed(file_path, "proj-1", str(root))
+    await _next_loop_turn()
+    await _next_loop_turn()
+
+    assert len(gateway.calls) == 1
+    gateway.release_first_call.set()
+    await _wait_for_call_count(gateway, 2)
+
+    assert [call[1] for call in gateway.calls] == [("src/a.py",), ("src/b.py", "src/c.py")]
+    assert gateway.max_active_calls == 1
 
 
 @pytest.mark.asyncio
@@ -230,12 +317,12 @@ async def test_command_failure_requeues_with_bounded_backoff(
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.trigger"):
         await harness.trigger._flush(root_key, "proj-1")
-        _cancel_retry_timer(harness.trigger, root_key)
+        _cancel_scheduled_callback(harness.trigger, root_key)
         await harness.trigger._flush(root_key, "proj-1")
-        _cancel_retry_timer(harness.trigger, root_key)
+        _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
-    assert harness.trigger._retry_delay_by_root[root_key] == 0.2
+    assert harness.trigger._retry_delay_by_root[root_key] == 10.0
     assert caplog.text.count("gcode index exited 1: bad index") == 2
 
 
@@ -254,10 +341,10 @@ async def test_lock_busy_requeues_without_warning_and_closes_breaker(
 
     with caplog.at_level(logging.INFO):
         await harness.trigger._flush(root_key, "proj-1")
-    _cancel_retry_timer(harness.trigger, root_key)
+    _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
-    assert harness.trigger._retry_delay_by_root[root_key] == 0.1
+    assert harness.trigger._retry_delay_by_root[root_key] == 10.0
     assert harness.breaker.state is BreakerState.CLOSED
     assert "breaker closed" in caplog.text
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
@@ -279,10 +366,37 @@ async def test_timeout_result_requeues_with_command_backoff(
     )
 
     await harness.trigger._flush(root_key, "proj-1")
-    _cancel_retry_timer(harness.trigger, root_key)
+    _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
-    assert harness.trigger._retry_delay_by_root[root_key] == 0.1
+    assert harness.trigger._retry_delay_by_root[root_key] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_edits_during_retry_backoff_preserve_scheduled_delay(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    root_key = harness.trigger._root_key(str(root))
+    harness.gateway.outcomes.append(_result(returncode=1, stderr="bad index"))
+
+    harness.trigger.notify_file_changed("src/a.py", "proj-1", str(root))
+    await _wait_for_call_count(harness.gateway, 1)
+    first_callback = await _wait_for_scheduled_callback(harness.trigger, root_key)
+    assert isinstance(first_callback, asyncio.TimerHandle)
+    scheduled_for = first_callback.when()
+
+    harness.trigger.notify_file_changed("src/b.py", "proj-1", str(root))
+    await _next_loop_turn()
+    await _next_loop_turn()
+
+    assert harness.trigger._scheduled_by_root[root_key] is first_callback
+    assert first_callback.when() == scheduled_for
+    assert harness.trigger._pending_by_root[root_key] == {"src/a.py", "src/b.py"}
+    assert len(harness.gateway.calls) == 1
+    _cancel_scheduled_callback(harness.trigger, root_key)
 
 
 @pytest.mark.asyncio
@@ -301,9 +415,10 @@ async def test_daemon_config_failure_opens_shared_breaker_and_preserves_batch(
     with caplog.at_level(logging.WARNING):
         await harness.trigger._flush(root_key, "proj-1")
 
-    timer = harness.trigger._flush_timers_by_root[root_key]
-    scheduled_delay = timer.when() - asyncio.get_running_loop().time()
-    _cancel_retry_timer(harness.trigger, root_key)
+    callback = harness.trigger._scheduled_by_root[root_key]
+    assert isinstance(callback, asyncio.TimerHandle)
+    scheduled_delay = callback.when() - asyncio.get_running_loop().time()
+    _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.breaker.state is BreakerState.OPEN
     assert harness.trigger._pending_by_root[root_key] == files
@@ -314,7 +429,7 @@ async def test_daemon_config_failure_opens_shared_breaker_and_preserves_batch(
     assert DAEMON_CONFIG_STDERR not in caplog.text
 
     await harness.trigger._flush(root_key, "proj-1")
-    _cancel_retry_timer(harness.trigger, root_key)
+    _cancel_scheduled_callback(harness.trigger, root_key)
     assert len(harness.gateway.calls) == 1
     assert harness.trigger._pending_by_root[root_key] == files
 
@@ -332,7 +447,7 @@ async def test_half_open_success_resumes_complete_batch(
         GcodeDaemonConfigUnavailableError(("gcode", "index"), 1, DAEMON_CONFIG_STDERR)
     )
     await harness.trigger._flush(root_key, "proj-1")
-    _cancel_retry_timer(harness.trigger, root_key)
+    _cancel_scheduled_callback(harness.trigger, root_key)
     harness.clock.now = 30.0
 
     with caplog.at_level(logging.INFO):
@@ -356,7 +471,7 @@ async def test_unavailable_gateway_requeues_and_warns(
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.trigger"):
         await harness.trigger._flush(root_key, "proj-1")
-    _cancel_retry_timer(harness.trigger, root_key)
+    _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
     assert "gcode index failed: gcode is not installed" in caplog.text

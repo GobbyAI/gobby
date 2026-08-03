@@ -288,7 +288,6 @@ async def test_clone_and_parent_can_index_same_relative_file_without_collision(
     gateway.incremental_index.return_value = MagicMock(success=True)
     trigger = CodeIndexTrigger(
         loop=loop,
-        debounce_seconds=0.05,
         gcode_gateway=gateway,
         daemon_config_breaker=SyncCircuitBreaker(
             name="test",

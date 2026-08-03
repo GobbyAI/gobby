@@ -1,9 +1,7 @@
-"""Debounced trigger for incremental code index updates.
+"""End-of-tick batching for incremental code index updates.
 
-Accumulates file edit notifications and coalesces them into
-batched index_changed_files() calls after a configurable delay.
-Thread-safe: accepts notifications from sync threads, schedules
-work on the asyncio event loop.
+Accepts notifications from sync threads, coalesces same-turn paths by
+project root, and schedules work on the asyncio event loop.
 """
 
 from __future__ import annotations
@@ -23,16 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 class CodeIndexTrigger:
-    """Debounced trigger for post-edit incremental code indexing.
+    """End-of-tick trigger for post-edit incremental code indexing.
 
     Accepts file change notifications from any thread and coalesces
-    them into batched gcode index calls after a debounce window.
+    them into serialized gcode index calls per canonical project root.
     """
 
     def __init__(
         self,
         loop: asyncio.AbstractEventLoop,
-        debounce_seconds: float = 2.0,
         retry_base_seconds: float = 1.0,
         retry_max_seconds: float = 30.0,
         index_timeout_seconds: float = 30.0,
@@ -41,7 +38,6 @@ class CodeIndexTrigger:
         daemon_config_breaker: SyncCircuitBreaker,
     ) -> None:
         self._loop = loop
-        self._debounce_seconds = debounce_seconds
         self._retry_base_seconds = retry_base_seconds
         self._retry_max_seconds = retry_max_seconds
         self._index_timeout_seconds = index_timeout_seconds
@@ -49,7 +45,10 @@ class CodeIndexTrigger:
         self._daemon_config_breaker = daemon_config_breaker
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
-        self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
+        self._project_id_by_root: dict[str, str] = {}
+        self._scheduled_by_root: dict[str, asyncio.Handle] = {}
+        self._active_tasks_by_root: dict[str, asyncio.Task[None]] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._retry_delay_by_root: dict[str, float] = {}
 
     def notify_file_changed(
@@ -60,31 +59,69 @@ class CodeIndexTrigger:
     ) -> None:
         """Thread-safe notification that a file was edited.
 
-        Can be called from any thread. Schedules debounced indexing
-        on the event loop.
+        Can be called from any thread. Schedules end-of-tick indexing on the
+        event loop.
         """
         self._loop.call_soon_threadsafe(self._schedule_file, file_path, project_id, root_path)
 
     def _schedule_file(self, file_path: str, project_id: str, root_path: str) -> None:
-        """Schedule or reschedule indexing for a file (runs on event loop)."""
+        """Add a file to its root's next batch (runs on the event loop)."""
         root_key = self._root_key(root_path)
         normalized_path = self._normalize_file_path(file_path, root_key)
+        self._pending_by_root.setdefault(root_key, set()).add(normalized_path)
+        self._project_id_by_root[root_key] = project_id
 
-        if root_key in self._flush_timers_by_root:
-            self._flush_timers_by_root[root_key].cancel()
+        if root_key in self._scheduled_by_root or root_key in self._active_tasks_by_root:
+            return
+        self._schedule_batch(root_key)
 
-        if root_key not in self._pending_by_root:
-            self._pending_by_root[root_key] = set()
-        self._pending_by_root[root_key].add(normalized_path)
+    def _schedule_batch(self, root_key: str, delay: float | None = None) -> None:
+        """Queue one immediate batch or delayed retry for a root."""
+        if root_key in self._scheduled_by_root:
+            return
+        if delay is None:
+            handle = self._loop.call_soon(self._start_batch, root_key)
+        else:
+            handle = self._loop.call_later(delay, self._start_batch, root_key)
+        self._scheduled_by_root[root_key] = handle
 
-        # Set new flush timer
-        def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
-            self._loop.create_task(self._flush(root, pid))
+    def _start_batch(self, root_key: str) -> None:
+        """Start a root's pending batch when no other run is active."""
+        self._scheduled_by_root.pop(root_key, None)
+        if root_key in self._active_tasks_by_root:
+            return
+        if not self._pending_by_root.get(root_key):
+            self._project_id_by_root.pop(root_key, None)
+            return
 
-        self._flush_timers_by_root[root_key] = self._loop.call_later(
-            self._debounce_seconds,
-            _schedule_flush,
-        )
+        project_id = self._project_id_by_root[root_key]
+        task = self._loop.create_task(self._flush(root_key, project_id))
+        self._active_tasks_by_root[root_key] = task
+        self._background_tasks.add(task)
+
+        def _consume_result(done_task: asyncio.Task[None]) -> None:
+            self._batch_done(root_key, done_task)
+
+        task.add_done_callback(_consume_result)
+
+    def _batch_done(self, root_key: str, task: asyncio.Task[None]) -> None:
+        """Consume task completion and queue edits received during the run."""
+        self._background_tasks.discard(task)
+        if self._active_tasks_by_root.get(root_key) is task:
+            self._active_tasks_by_root.pop(root_key, None)
+
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("gcode index batch cancelled for %s", root_key)
+        except Exception:
+            logger.exception("gcode index batch task failed for %s", root_key)
+
+        if self._pending_by_root.get(root_key):
+            if root_key not in self._scheduled_by_root:
+                self._schedule_batch(root_key)
+        elif root_key not in self._scheduled_by_root:
+            self._project_id_by_root.pop(root_key, None)
 
     def _requeue_for_retry(
         self,
@@ -96,9 +133,11 @@ class CodeIndexTrigger:
     ) -> None:
         """Return a failed batch to pending files and schedule retry with backoff."""
         self._pending_by_root.setdefault(root_key, set()).update(files)
+        self._project_id_by_root[root_key] = project_id
 
-        if root_key in self._flush_timers_by_root:
-            self._flush_timers_by_root[root_key].cancel()
+        scheduled = self._scheduled_by_root.pop(root_key, None)
+        if scheduled is not None:
+            scheduled.cancel()
 
         if retry_delay is None:
             retry_delay = self._retry_delay_by_root.get(root_key, self._retry_base_seconds)
@@ -107,13 +146,7 @@ class CodeIndexTrigger:
                 self._retry_max_seconds,
             )
 
-        def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
-            self._loop.create_task(self._flush(root, pid))
-
-        self._flush_timers_by_root[root_key] = self._loop.call_later(
-            retry_delay,
-            _schedule_flush,
-        )
+        self._schedule_batch(root_key, delay=retry_delay)
 
     def _clear_retry_backoff(self, root_key: str) -> None:
         """Reset retry state after a successful index run."""
@@ -121,7 +154,7 @@ class CodeIndexTrigger:
 
     @staticmethod
     def _root_key(root_path: str) -> str:
-        """Return the canonical debounce key for a filesystem root."""
+        """Return the canonical batching key for a filesystem root."""
         return str(Path(root_path).resolve(strict=False))
 
     @staticmethod
@@ -140,9 +173,9 @@ class CodeIndexTrigger:
     async def _flush(self, root_key: str, project_id: str) -> None:
         """Flush pending files for a root through the shared gcode gateway."""
         files = self._pending_by_root.pop(root_key, set())
-        timer = self._flush_timers_by_root.pop(root_key, None)
-        if timer is not None:
-            timer.cancel()
+        scheduled = self._scheduled_by_root.pop(root_key, None)
+        if scheduled is not None:
+            scheduled.cancel()
 
         if not files:
             return
