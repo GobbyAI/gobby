@@ -104,6 +104,29 @@ class EnforcementCheckMixin:
             return None
         return run, storage
 
+    def _bound_task_is_terminal(self, session_id: str) -> bool:
+        """True when this child session's active run is bound to a closed task."""
+        from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+
+        active = self._active_agent_run(session_id)
+        if active is None:
+            return False
+        run, _storage = active
+        task_id = getattr(run, "task_id", None)
+        if not task_id:
+            return False
+        task_manager = getattr(self, "_task_manager", None)
+        if task_manager is None:
+            db = getattr(self, "db", None)
+            if db is None:
+                return False
+            task_manager = LocalTaskManager(db)
+        try:
+            task = task_manager.get_task(task_id)
+        except TaskNotFoundError:
+            return False
+        return task.closed_at is not None
+
     @staticmethod
     def _denial_scope(
         run_id: str,
@@ -489,6 +512,14 @@ class EnforcementCheckMixin:
                     mcp_server=mcp_server,
                     mcp_tool_name=mcp_tool_name,
                 )
+
+                # A run whose bound task is already terminal has nothing left
+                # for the step to enforce; blocking end_agent_run then strands
+                # a finished worker in a spurious error state (#19554).
+                if mcp_key == "gobby-agents:end_agent_run" and self._bound_task_is_terminal(
+                    session_id
+                ):
+                    return None
 
                 # Explicit blocks override default grants and allow-list exemptions.
                 if mcp_key and step.blocked_mcp_tools:

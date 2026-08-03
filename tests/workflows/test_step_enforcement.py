@@ -2364,3 +2364,124 @@ class TestStepBeforeMcpHandlers:
         assert response.decision == "block"
         assert response.reason is not None
         assert "retry cap reached" in response.reason
+
+
+def _end_agent_run_workflow() -> dict[str, Any]:
+    """Developer workflow whose implement step also blocks end_agent_run."""
+    workflow_data = cast(dict[str, Any], json.loads(json.dumps(_DEVELOPER_WORKFLOW)))
+    workflow_data["steps"][1]["blocked_mcp_tools"].append("gobby-agents:end_agent_run")
+    return workflow_data
+
+
+def _running_rule_engine_with_bound_task(
+    db: "HubDatabase", *, task_closed: bool
+) -> tuple[RuleEngine, LocalAgentRunManager, str]:
+    """Rule engine whose active run is bound to a task, optionally closed."""
+    from gobby.storage.tasks import LocalTaskManager
+
+    task = LocalTaskManager(db).create_task(
+        project_id=PROJECT_ID,
+        title="Bound leaf for end_agent_run valve",
+        validation_criteria="Enforcement valve test fixture.",
+    )
+    if task_closed:
+        db.execute(
+            "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (task.id,),
+        )
+    run_manager = LocalAgentRunManager(db)
+    run = run_manager.create(
+        parent_session_id=SESSION_ID,
+        child_session_id=SESSION_ID,
+        provider="claude",
+        prompt="test",
+        task_id=task.id,
+    )
+    assert run_manager.start(run.id) is not None
+    runner = MagicMock()
+    runner.run_storage = run_manager
+    return RuleEngine(db, runner=runner), run_manager, run.id
+
+
+def _end_agent_run_event() -> HookEvent:
+    return _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-agents",
+                "tool_name": "end_agent_run",
+                "arguments": {},
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_end_agent_run_allowed_when_bound_task_terminal(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """A run bound to a closed task may end itself despite a step block (#19554)."""
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="implement",
+        workflow_data=_end_agent_run_workflow(),
+    )
+    rule_engine, _run_manager, _run_id = _running_rule_engine_with_bound_task(db, task_closed=True)
+
+    response = await rule_engine.evaluate(
+        _end_agent_run_event(), session_id=SESSION_ID, variables={}
+    )
+
+    assert response.decision != "block"
+
+
+@pytest.mark.asyncio
+async def test_end_agent_run_still_blocked_when_bound_task_open(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """The terminal-task valve must not weaken enforcement for open tasks."""
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="implement",
+        workflow_data=_end_agent_run_workflow(),
+    )
+    rule_engine, _run_manager, _run_id = _running_rule_engine_with_bound_task(db, task_closed=False)
+
+    response = await rule_engine.evaluate(
+        _end_agent_run_event(), session_id=SESSION_ID, variables={}
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "end_agent_run" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_end_agent_run_blocked_when_run_has_no_bound_task(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
+    """A run without a bound task gets no valve; the step block stands."""
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="implement",
+        workflow_data=_end_agent_run_workflow(),
+    )
+    rule_engine, _run_manager, _run_id = _running_rule_engine(db)
+
+    response = await rule_engine.evaluate(
+        _end_agent_run_event(), session_id=SESSION_ID, variables={}
+    )
+
+    assert response.decision == "block"
