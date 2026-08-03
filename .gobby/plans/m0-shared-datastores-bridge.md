@@ -184,7 +184,7 @@ state or lifecycle.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/365_machine_scope.sql`
+- `src/gobby/storage/migrations/369_machine_scope.sql`
 - `src/gobby/storage/postgres_baseline_schema.sql`
 - `src/gobby/storage/worktrees.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped uniqueness surfaces together
 - `src/gobby/storage/clones.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped path surfaces together
@@ -194,9 +194,11 @@ Targets:
 - `src/gobby/agents/isolation_clone.py::*` — scope-reason: propagate local machine ownership through clone isolation setup
 
 The migration file is new. Slot allocation (amended 2026-07-30 per
-gcore-schema-authority §0.6): M0's machine-scoping slots live in the
-post-364 range (365+) under that plan's serialized migration allocator —
-slots 354–364 are owned by the gcore-schema-authority allocation
+gcore-schema-authority §0.6; re-serialized 2026-08-02 under #19378 after
+post-merge fixes #19475/#19517/#19518/#19526 consumed slots 360–363):
+M0's machine-scoping slots live in the
+post-368 range (369+) under that plan's serialized migration allocator —
+slots 354–368 are owned by the gcore-schema-authority allocation
 manifest, and independent "next free number" probing is prohibited.
 Re-verify against disk and live `MAX(version)` at implementation.
 Prerequisite: gcore-schema-authority 2.18/2.19 (machines.id UUID PK;
@@ -232,7 +234,7 @@ clone and agent-run models) gain the field.
 
 **Acceptance:**
 
-- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through authoritative session ownership, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/365_machine_scope.sql`.
+- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through authoritative session ownership, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/369_machine_scope.sql`.
 - 2.1.2 - Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 2.1.3 - Same (project, branch) worktree can exist for two machine_ids; same path string can exist for two machine_ids. test: `tests/storage/test_worktrees.py::test_worktree_uniqueness_is_machine_scoped`.
 - 2.1.4 - Worktree/clone/agent-run/cron-run creation stamps the local machine_id. test: `tests/storage/test_machine_scope_writers.py::test_creation_paths_stamp_machine_id`.
@@ -265,7 +267,7 @@ see only rows owned by this machine:
 - Claim/reuse/path-lookup surfaces (`claim`, `claim_if_available`, `get_by_path`,
   `get_by_branch`) are machine-scoped so daemon B never claims or reuses A's
   workspace records.
-- Time-based session pause/expire (`sessions/session_lifecycle.py:252`) deliberately
+- Time-based session pause/expire (`storage/session_lifecycle.py::pause_inactive_active_sessions` and `::expire_stale_sessions`) deliberately
   stays global: pausing a stale session belonging to the asleep machine is correct
   and keeps the pack-up scenario clean. Add a comment pinning this decision.
 

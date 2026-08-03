@@ -490,7 +490,7 @@ amended artifact is the registered one and re-amends only if drift is
 found; 2.18 and 2.19 both carry `depends: 0.6`. The amendment: machine-scoping
 columns become `machine_id UUID REFERENCES machines(id)`, the backfill
 joins the UUID-keyed sessions column, M0's migration slots reallocate to
-the post-364 range (365+; 364 is 5.4's reserved BM25-disposition slot)
+the post-368 range (369+; 368 is 5.4's reserved BM25-disposition slot)
 under the serialized allocator, and the amended artifact re-validates
 (`uv run gobby plans validate`) and re-registers. 2.19 verifies this
 prerequisite instead of performing it; 3.0 gates P3 on the amended M0's
@@ -498,7 +498,7 @@ migrations being applied.
 
 **Acceptance:**
 
-- 0.6.1 - M0 artifact specifies UUID-native machine scoping with post-364
+- 0.6.1 - M0 artifact specifies UUID-native machine scoping with post-368
   slots; no `machine_id TEXT` remains in its spec. file:
   `.gobby/plans/m0-shared-datastores-bridge.md`.
 - 0.6.2 - Amended artifact validates and re-registers. behavior:
@@ -1097,7 +1097,7 @@ transport's bound parameter. Delete the retired executor module; remove
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/363_dream_check_tighten.sql`
+- `src/gobby/storage/migrations/367_dream_check_tighten.sql`
 - `src/gobby/memory/dream/duplicates.py::*` — scope-reason: whole file deleted
 - `src/gobby/memory/dream/planner.py::*` — scope-reason: merge-arm symbols removed per the verified manifest
 - `src/gobby/memory/dream/models.py::*` — scope-reason: DuplicateGroup + merge/supersede action names removed
@@ -1105,7 +1105,7 @@ Targets:
 - `src/gobby/memory/dream/apply.py::*` — scope-reason: merge/legacy arms removed; revert gains the fail-closed forfeiture check
 - `src/gobby/memory/dream/storage_journal.py::*` — scope-reason: merge-only journal helpers removed
 - `src/gobby/memory/dream/storage_runs.py::*` — scope-reason: revert_forfeited joins the run-status vocabulary and terminal-status set
-- `src/gobby/memory/dream/storage_schema.py::*` — scope-reason: CHECK mirror updated in lockstep with migration 363
+- `src/gobby/memory/dream/storage_schema.py::*` — scope-reason: CHECK mirror updated in lockstep with migration 367
 
 Feature is LIVE — removal exactly per the verified manifest, nothing more.
 Verification (call-graph + runtime, completed during planning): `plan.py:23`
@@ -1133,7 +1133,7 @@ transactional body, `_apply_action`, `_apply_fenced_action`, `_advance_cursor`,
 `_reconcile`, `plan.py` entirely, `storage_journal.restore_crossrefs` +
 `insert_snapshot`, remaining models. CHECK constraints tighten to the live
 action set (Josh 2026-07-30, reversing the earlier keep — dead enum values
-are their own cost, and dream can re-run): migration 363 (allocation
+are their own cost, and dream can re-run): migration 367 (allocation
 manifest; destructive-marked — 0.5's gated path) narrows the action
 CHECKs to `{keep, delete, refresh, review, promote}` in the hub schema,
 with `storage_schema.py` mirrored (constraint changes ship as migrations
@@ -1142,14 +1142,14 @@ snapshot purge operates at RUN granularity (Codex F9, blocker —
 `revert_dream_run` replays `list_snapshots(run_id)` and marks the run
 reverted, `apply.py:101-257` verified, so purging only the
 merge/supersede rows of a run would let a later revert replay the
-remainder and stamp a partial restore as `reverted`): migration 363
+remainder and stamp a partial restore as `reverted`): migration 367
 purges the entire reversible state — all snapshot rows — of every run
 containing at least one `merge`/`supersede` snapshot, and stamps those
 runs `revert_forfeited` (run-level tombstone status); `revert_dream_run`
 fails closed on a forfeited run with an explicit error, never a partial
 replay (backup-gated per 0.4; authorized under Decision 11 — reverting
 those historical runs is forfeited, accepted). The new status enters the
-RUNTIME contract, not just the data (Codex round 7 — migration 363 would
+RUNTIME contract, not just the data (Codex round 7 — migration 367 would
 write a status the code doesn't know): `revert_forfeited` joins
 `RUN_TERMINAL_STATUSES` (`storage_runs.py:26` verified — currently
 `{completed, failed, reverted, revert_failed, interrupted, partial}`),
@@ -1322,8 +1322,8 @@ reinstall gcode.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/360_identity_cutover_journal.sql`
-- `src/gobby/storage/migrations/361_machines_uuid_identity.sql`
+- `src/gobby/storage/migrations/364_identity_cutover_journal.sql`
+- `src/gobby/storage/migrations/365_machines_uuid_identity.sql`
 - `src/gobby/storage/identity_cutover.py`
 - `src/gobby/utils/durable_file.py`
 - `src/gobby/runner_init/helpers.py::*` — scope-reason: boot keeps only non-epoch identity work — fresh-identity registration and tombstone re-key
@@ -1374,24 +1374,24 @@ new_id, phase}` with phases `started → db_committed → file_committed` —
 one row per rotated or retired identity, so the rotation is resumable
 identity-by-identity and one completed row never stands in for the full
 legacy inventory (Codex F7); the journal table
-ships as migration 360 (allocation manifest) — a non-destructive
-precursor the old runner auto-applies. Migration 360 also (a) drops the
+ships as migration 364 (allocation manifest) — a non-destructive
+precursor the old runner auto-applies. Migration 364 also (a) drops the
 `sessions.machine_id` NOT NULL constraint
 (`postgres_baseline_schema.sql:179`, verified) — the cutover's
-retirement step writes `machine_id = NULL` while 362, which converts
+retirement step writes `machine_id = NULL` while 366, which converts
 the column, lands only later, so without this precursor the cutover
 could never reach `db_committed` (Codex F6, blocker); the exact
-intermediate sequence 360 → cutover-NULLs-sessions → 361 → 362 is
+intermediate sequence 364 → cutover-NULLs-sessions → 365 → 366 is
 pinned by test — and (b) ships `retired_machine_identities`: one
 tombstone row per retired machine id (old id, retired_at, disposition),
 written by the cutover for every non-live row it retires; a boot whose
 identity file matches a tombstone treats the file as stale and re-keys
 fresh (uuid4 + registration) deterministically. Sequencing (reworked for the orchestrator model — the earlier two-boot
 `to_regclass` dance existed only because the cutover ran at boot):
-migration 360 (journal + fence + tombstones) is a non-destructive
+migration 364 (journal + fence + tombstones) is a non-destructive
 precursor the runner auto-applies at ordinary boot; the identity-cutover
 campaign preflights `to_regclass` for the journal table and refuses to
-start until 360 is applied; migration 361 is
+start until 364 is applied; migration 365 is
 destructive-marked — it never auto-applies and lands only through 0.5's
 gated path (as a step of the same campaign) after the journal reaches
 `file_committed`, with its DO-block
@@ -1407,7 +1407,7 @@ verifying the UUID before the journal advances to `file_committed` —
 power loss cannot strand `file_committed` behind a lost rename. Every
 phase resumes idempotently via `hub-maintenance resume`: a resume
 finding `db_committed` with a stale file rewrites the file and advances;
-a resume finding `file_committed` no-ops; an ordinary boot with 361
+a resume finding `file_committed` no-ops; an ordinary boot with 365
 pending halts at the destructive gate rather than corrupting. Fault-injection tests cover a crash at each DB/file boundary.
 Global writer quiescence (Codex review, blocker): the cutover runs
 inside an open maintenance epoch (0.7) — every daemon connected to the
@@ -1418,7 +1418,7 @@ exclusive lock (`utils/durable_file.py`) for the duration. Quiescence is enforce
 database, not observed once (review findings — preflight is
 point-in-time, a writer can start between preflight and fence
 visibility, and four legacy machine rows are already uuid-shaped, so a
-value-shape fence cannot distinguish them): migration 360 installs a
+value-shape fence cannot distinguish them): migration 364 installs a
 deny-all identity-write fence — triggers on machines/sessions rejecting
 EVERY identity-column mutation once a cutover journal row exists,
 except transactions presenting the cutover's transaction-local
@@ -1427,13 +1427,13 @@ checked by the trigger). The cutover activates the fence (inserts the
 journal row) and takes its machine/session inventory in one transaction
 under `LOCK TABLE machines, sessions IN EXCLUSIVE MODE`, THEN runs the
 `pg_stat_activity` preflight and re-inventories — nothing can slip
-between observation and enforcement; 361 removes the fence with the
+between observation and enforcement; 365 removes the fence with the
 TEXT column. App-level
 machines/sessions write paths in `src/gobby/storage/machines.py` and the
 session stores (hook-ingress upsert included) reject
 non-UUID machine ids from cutover onward; tests cover a legacy
 writer racing fence activation, a uuid-shaped legacy writer mid-window,
-and an old daemon reconnecting between preflight and 361 — all
+and an old daemon reconnecting between preflight and 365 — all
 rejected, not interleaved. Rollback is restore-based
 and documented: the cutover's fresh 0.4 manifest includes
 `~/.gobby/machine_id` and its checksum (Codex review — the rollback
@@ -1464,9 +1464,9 @@ M0's machine-scoping migrations (authored UUID-native after 2.19).
 **Acceptance:**
 - 2.18.1 - Generator is uuid4-only; `machineid` import and dep gone. symbol:
   `_generate_machine_id`.
-- 2.18.2 - Migration 361 ships `machines.id UUID PK` (TEXT column gone) +
+- 2.18.2 - Migration 365 ships `machines.id UUID PK` (TEXT column gone) +
   `bin_update_state` re-key; dual-shape safe; destructive-marked. file:
-  `src/gobby/storage/migrations/361_machines_uuid_identity.sql`.
+  `src/gobby/storage/migrations/365_machines_uuid_identity.sql`.
 - 2.18.3 - Staged cutover verified: inventory ledger, live-machine remap
   (machines row + rewritten local file agree), non-live rows retired with
   sessions NULLed and one `retired_machine_identities` tombstone per
@@ -1478,12 +1478,12 @@ M0's machine-scoping migrations (authored UUID-native after 2.19).
   behavior: "pack/unpack round-trip" in session transcript.
 - 2.18.6 - Cutover journal resumes from every phase AND per identity (a
   partially retired inventory resumes where it stopped); fault-injection
-  at each DB/file boundary green; 361's guard refuses a half-remapped
-  machine; the 360 → cutover-NULLs → 361 → 362 intermediate sequence is
+  at each DB/file boundary green; 365's guard refuses a half-remapped
+  machine; the 364 → cutover-NULLs → 365 → 366 intermediate sequence is
   exercised end-to-end; a tombstoned identity file re-keys fresh at boot.
   test: `tests/storage/` identity-cutover focused run.
 - 2.18.7 - Preflight fails on foreign `pg_stat_activity` connections;
-  360's deny-all fence (activated under table locks before preflight)
+  364's deny-all fence (activated under table locks before preflight)
   rejects an old writer reconnecting mid-window AND a uuid-shaped legacy
   writer (tests); re-inventory runs after activation; identity file
   flocked; identity-file replacement fsyncs file + parent dir and
@@ -1496,7 +1496,7 @@ M0's machine-scoping migrations (authored UUID-native after 2.19).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql`
+- `src/gobby/storage/migrations/366_sessions_machine_uuid_fk.sql`
 - `src/gobby/storage/sessions/_upsert.py::*` — scope-reason: natural-key rebuild + normalize_machine_id removal touch the upsert path broadly
 - `src/gobby/storage/sessions/_discovery.py::*` — scope-reason: placeholder machine-id set removed from discovery
 - `src/gobby/storage/sessions/_registration_cache.py::*` — scope-reason: registration cache keys follow the UUID/NULL contract
@@ -1509,7 +1509,7 @@ Targets:
 - `tests/storage/test_migration_contract.py::*` — scope-reason: UUID/TEXT column allowlists updated
 
 `sessions.machine_id` becomes `UUID NULL REFERENCES machines(id)`
-(migration 362, destructive-marked — 0.5's gated path). It is part
+(migration 366, destructive-marked — 0.5's gated path). It is part
 of the session natural key (`idx_sessions_unique(external_id, machine_id,
 source, project_id, session_type)`, name hard-coded at `_upsert.py:26`);
 rebuild it `UNIQUE NULLS NOT DISTINCT` (PG15+; hub is PG18) so NULL-machine
@@ -1563,17 +1563,17 @@ contract (#17427) is retired. Contract-test UUID/TEXT column allowlists
 sequenced it after the work depending on it): the amendment is 0.6's
 deliverable, landing before M0 expansion consumes any slot and before
 2.18/2.19 expand; 2.19 VERIFIES it — the registered M0 artifact is the
-amended UUID-native version (post-364 slots, no TEXT machine_id) — and
+amended UUID-native version (post-368 slots, no TEXT machine_id) — and
 refuses to close if the amendment is missing or stale.
 Kept-adjacent: `sessions.source` + `external_id` semantics; natural-key
 idempotency guarantees; hook `machine_id` payload field (now UUID or absent);
 `GOBBY_MACHINE_ID` passthrough.
 
 **Acceptance:**
-- 2.19.1 - Migration 362 converts the column, rebuilds `idx_sessions_unique`
+- 2.19.1 - Migration 366 converts the column, rebuilds `idx_sessions_unique`
   NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK; destructive-
   marked. file:
-  `src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql`.
+  `src/gobby/storage/migrations/366_sessions_machine_uuid_fk.sql`.
 - 2.19.2 - Registration idempotency holds for machine-attributed and
   NULL-machine sessions. test: `tests/storage/` sessions-focused run.
 - 2.19.3 - Web-chat session create and pipeline session lookup work
@@ -1582,7 +1582,7 @@ idempotency guarantees; hook `machine_id` payload field (now UUID or absent);
 - 2.19.4 - identity-model.md reflects the UUID contract. file:
   `docs/contracts/identity-model.md`.
 - 2.19.5 - M0 prerequisite verified: the registered M0 artifact is 0.6's
-  amended UUID-native version (post-364 slots, no TEXT machine_id);
+  amended UUID-native version (post-368 slots, no TEXT machine_id);
   collision preflight ledger recorded (zero expected). behavior: "M0
   amendment verification + collision ledger" in session transcript.
 - 2.19.6 - Child-table policy exercised: a synthetic duplicate group
@@ -2156,7 +2156,7 @@ benchmark utilities).
 
 Targets:
 - `docs/evidence/bm25-verification.md`
-- `src/gobby/storage/migrations/364_bm25_disposition.sql`
+- `src/gobby/storage/migrations/368_bm25_disposition.sql`
 
 ~705 MB of pg_search BM25 indexes (`code_content_search_bm25` 387 MB among
 them) show `idx_scan=0`, while gcode search/search-text exercise BM25 daily —
@@ -2167,18 +2167,18 @@ per-index verdict. An index may be dropped only with plan-shape proof of
 non-use (expected outcome: all stay; the counter is the artifact). This is
 the ParadeDB counterpart of 2.3's btree evidence rule. Slot discipline
 (review finding — a conditional drop with no slot would reshuffle the
-pre-M0 sequence): slot 364 is reserved now as the BM25-disposition
+pre-M0 sequence): slot 368 is reserved now as the BM25-disposition
 migration. A proven-dead index ships the destructive-marked drop there;
-an all-stay verdict ships 364 as a no-op verdict-record migration — the
-chain stays contiguous either way and M0's range (365+) is fixed
+an all-stay verdict ships 368 as a no-op verdict-record migration — the
+chain stays contiguous either way and M0's range (369+) is fixed
 regardless of outcome.
 
 **Acceptance:**
 - 5.4.1 - Per-index verdict with EXPLAIN evidence recorded. file:
   `docs/evidence/bm25-verification.md`.
-- 5.4.2 - Slot 364 ships either way: destructive-marked drop with proof
+- 5.4.2 - Slot 368 ships either way: destructive-marked drop with proof
   attached, or no-op verdict record on all-stay. file:
-  `src/gobby/storage/migrations/364_bm25_disposition.sql`.
+  `src/gobby/storage/migrations/368_bm25_disposition.sql`.
 
 ---
 
@@ -2855,14 +2855,19 @@ entry below.
   [destructive], 356 live-drift reconcile v2 incl.
   `memory_dream_truth_state` adoption, 357 drop dead tables [destructive],
   358 drop dead columns + `token_events` indexes [destructive], 359
-  `_pgaudit_probe` drop [destructive], 360 identity-cutover per-identity
+  `_pgaudit_probe` drop [destructive], 360 model-metadata provider drop
+  (landed post-merge, #19475), 361 review-anchor retirement (landed,
+  #19517), 362 maintenance-login-fence hardening (landed, #19518), 363
+  workflow_definition enabled_user_modified (landed, #19526) — those four
+  consumed the original 360–363 pending assignments, so the pending chain
+  re-serialized 2026-08-02 under #19378 — 364 identity-cutover per-identity
   journal + deny-all fence + sessions NOT NULL drop + retired-identity
-  tombstones (precursor — auto-applies), 361 machines UUID PK
-  [destructive], 362 sessions machine FK [destructive], 363 dream CHECK
-  tighten + run-level snapshot purge [destructive], 364 BM25 disposition
+  tombstones (precursor — auto-applies), 365 machines UUID PK
+  [destructive], 366 sessions machine FK [destructive], 367 dream CHECK
+  tighten + run-level snapshot purge [destructive], 368 BM25 disposition
   (reserved
   — destructive drop or no-op verdict record; 5.4). M0's UUID-native
-  machine-scoping slots allocate next (365+, count fixed by 0.6's
+  machine-scoping slots allocate next (369+, count fixed by 0.6's
   M0-artifact amendment). Destructive-marked slots never auto-apply
   (0.5), and every destructive batch runs inside an open maintenance
   epoch (0.7); slot order is enforced by 0.5's contiguous-range guard
@@ -2891,7 +2896,7 @@ entry below.
   as a `gobby hub-maintenance` campaign (0.7), P3 gated
   by 3.0 (cross-epic M0 dependency installed via gobby-tasks — manifest
   edges are same-document only, `plans/manifest_parser.py:243`),
-  3.2 after 5.4 (slot 364 ships either way before the flatten), 5.1→5.2
+  3.2 after 5.4 (slot 368 ships either way before the flatten), 5.1→5.2
   (writers stopped before the purge)
   with a fresh 0.4 snapshot inside 5.2's epoch, 5.3 strictly
   sequenced producers-stopped → manifest → fresh covering backup →
@@ -3036,7 +3041,7 @@ entry below.
   task_type: feature
   depends_on: []
   validation_criteria: '0.6.1: M0 artifact specifies UUID-native machine scoping with
-    post-364 slots; no `machine_id TEXT` remains in its spec. file: `.gobby/plans/m0-shared-datastores-bridge.md`.
+    post-368 slots; no `machine_id TEXT` remains in its spec. file: `.gobby/plans/m0-shared-datastores-bridge.md`.
 
     0.6.2: Amended artifact validates and re-registers. behavior: "validate + register
     output" in session transcript.'
@@ -3434,9 +3439,9 @@ entry below.
   - '0.7'
   - '0.6'
   validation_criteria: "2.18.1: Generator is uuid4-only; `machineid` import and dep\
-    \ gone. symbol: `_generate_machine_id`.\n2.18.2: Migration 361 ships `machines.id\
+    \ gone. symbol: `_generate_machine_id`.\n2.18.2: Migration 365 ships `machines.id\
     \ UUID PK` (TEXT column gone) + `bin_update_state` re-key; dual-shape safe; destructive-marked.\
-    \ file: `src/gobby/storage/migrations/361_machines_uuid_identity.sql`.\n2.18.3:\
+    \ file: `src/gobby/storage/migrations/365_machines_uuid_identity.sql`.\n2.18.3:\
     \ Staged cutover verified: inventory ledger, live-machine remap (machines row\
     \ + rewritten local file agree), non-live rows retired with sessions NULLed and\
     \ one `retired_machine_identities` tombstone per retired id, zero-unmapped gate\
@@ -3446,11 +3451,11 @@ entry below.
     \ Unpack skips identity by default; `--restore-identity` restores it. behavior:\
     \ \"pack/unpack round-trip\" in session transcript.\n2.18.6: Cutover journal resumes\
     \ from every phase AND per identity (a partially retired inventory resumes where\
-    \ it stopped); fault-injection at each DB/file boundary green; 361's guard refuses\
-    \ a half-remapped machine; the 360 \u2192 cutover-NULLs \u2192 361 \u2192 362\
+    \ it stopped); fault-injection at each DB/file boundary green; 365's guard refuses\
+    \ a half-remapped machine; the 364 \u2192 cutover-NULLs \u2192 365 \u2192 366\
     \ intermediate sequence is exercised end-to-end; a tombstoned identity file re-keys\
     \ fresh at boot. test: `tests/storage/` identity-cutover focused run.\n2.18.7:\
-    \ Preflight fails on foreign `pg_stat_activity` connections; 360's deny-all fence\
+    \ Preflight fails on foreign `pg_stat_activity` connections; 364's deny-all fence\
     \ (activated under table locks before preflight) rejects an old writer reconnecting\
     \ mid-window AND a uuid-shaped legacy writer (tests); re-inventory runs after\
     \ activation; identity file flocked; identity-file replacement fsyncs file + parent\
@@ -3476,9 +3481,9 @@ entry below.
   - '0.6'
   - '0.4'
   - '0.5'
-  validation_criteria: '2.19.1: Migration 362 converts the column, rebuilds `idx_sessions_unique`
+  validation_criteria: '2.19.1: Migration 366 converts the column, rebuilds `idx_sessions_unique`
     NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK; destructive- marked.
-    file: `src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql`.
+    file: `src/gobby/storage/migrations/366_sessions_machine_uuid_fk.sql`.
 
     2.19.2: Registration idempotency holds for machine-attributed and NULL-machine
     sessions. test: `tests/storage/` sessions-focused run.
@@ -3489,7 +3494,7 @@ entry below.
     2.19.4: identity-model.md reflects the UUID contract. file: `docs/contracts/identity-model.md`.
 
     2.19.5: M0 prerequisite verified: the registered M0 artifact is 0.6''s amended
-    UUID-native version (post-364 slots, no TEXT machine_id); collision preflight
+    UUID-native version (post-368 slots, no TEXT machine_id); collision preflight
     ledger recorded (zero expected). behavior: "M0 amendment verification + collision
     ledger" in session transcript.
 
@@ -3721,8 +3726,8 @@ entry below.
   validation_criteria: '5.4.1: Per-index verdict with EXPLAIN evidence recorded. file:
     `docs/evidence/bm25-verification.md`.
 
-    5.4.2: Slot 364 ships either way: destructive-marked drop with proof attached,
-    or no-op verdict record on all-stay. file: `src/gobby/storage/migrations/364_bm25_disposition.sql`.'
+    5.4.2: Slot 368 ships either way: destructive-marked drop with proof attached,
+    or no-op verdict record on all-stay. file: `src/gobby/storage/migrations/368_bm25_disposition.sql`.'
   labels:
   - covers:gcore-schema-authority:5.4:5.4.1
   - covers:gcore-schema-authority:5.4:5.4.2

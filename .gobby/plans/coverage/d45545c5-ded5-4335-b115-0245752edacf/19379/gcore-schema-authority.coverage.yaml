@@ -1,11 +1,11 @@
 header:
   plan_id: gcore-schema-authority
-  plan_hash: 360c1e04aa70722b2bdac226e6886dba808c0e1c60ba8f13d2e11ddffdf0b946
+  plan_hash: f07b0249f553ffcf65cc48ada75f6327eb5095a848a03469428e7a7cbb179ea3
   root_task_ref: '#19379'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-07-31T04:57:31Z'
+  generated_at: '2026-08-03T02:08:48Z'
   task_tree_source: db
-  task_tree_source_hash: b3554632b86d768cb7a6ef4295f06410bee10b8909dedcc05e976e6f441d8416
+  task_tree_source_hash: 9d02631008239b5192aeee75e8cbab523be8f2c6acab8fb8c24c4f8f98482088
   evidence_summary: []
   evidence: []
 rows:
@@ -206,12 +206,12 @@ rows:
   deferral_target: null
 - section_id: '0.6'
   item_id: 0.6.1
-  plan_node_hash: aafe9aba7721f4f81ba3fc11f812a6d05fd4944fd1b9c18fea9d075c24e6c3c7
+  plan_node_hash: 79c6150e2b2842b1bd454df01a4a40c6b506704457e184cb0c496dea85156de8
   status: covered
   leaves:
   - leaf_task_ref: '#19390'
     validation_criteria_snippet: '0.6.1: M0 artifact specifies UUID-native machine
-      scoping with post-364 slots; no `machine_id TEXT` remains in its spec. file:
+      scoping with post-368 slots; no `machine_id TEXT` remains in its spec. file:
       `.gobby/plans/m0-shared-datastore...'
     matched_artifact_ref: .gobby/plans/m0-shared-datastores-bridge.md
   deferral_target: null
@@ -222,7 +222,7 @@ rows:
   leaves:
   - leaf_task_ref: '#19390'
     validation_criteria_snippet: '0.6.1: M0 artifact specifies UUID-native machine
-      scoping with post-364 slots; no `machine_id TEXT` remains in its spec. file:
+      scoping with post-368 slots; no `machine_id TEXT` remains in its spec. file:
       `.gobby/plans/m0-shared-datastore...'
     matched_artifact_ref: validate + register output
   deferral_target: null
@@ -849,20 +849,20 @@ rows:
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: _generate_machine_id
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.2
-  plan_node_hash: f5f0e9402a3c08616341aa8a0e405a66dd1cf61d4df49a2aad834b4825a9a62c
+  plan_node_hash: 851ace140d8292d0e38c5cfc8394987b9e9e9772e66a236b5c1908244d44fbcc
   status: covered
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
-    matched_artifact_ref: src/gobby/storage/migrations/361_machines_uuid_identity.sql
+    matched_artifact_ref: src/gobby/storage/migrations/365_machines_uuid_identity.sql
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.3
@@ -871,7 +871,7 @@ rows:
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: cutover ledger + gate evidence
   deferral_target: null
@@ -882,7 +882,7 @@ rows:
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: fresh-home boot check
   deferral_target: null
@@ -893,42 +893,42 @@ rows:
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: pack/unpack round-trip
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.6
-  plan_node_hash: 9ad41e8d078de13782651b1ac0324388ffe0b4b7b20339ea30aac4be57607001
+  plan_node_hash: fed4a90b18fdd79b84fb2869fde1701ace97fca9dc7b983459b213eb43ca8fe4
   status: covered
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: tests/storage/
   deferral_target: null
 - section_id: '2.18'
   item_id: 2.18.7
-  plan_node_hash: 3ddbae97353d87d4685bd0cd40f1adb977cb176ca25bdf60d33fb0079c4f76ec
+  plan_node_hash: 854dd7471421cc8be7e7fa77260430ef381506f9fe359d55399e5eea022590b8
   status: covered
   leaves:
   - leaf_task_ref: '#19410'
     validation_criteria_snippet: '2.18.1: Generator is uuid4-only; `machineid` import
-      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 361 ships `machines.id
+      and dep gone. symbol: `_generate_machine_id`. 2.18.2: Migration 365 ships `machines.id
       UUID PK` (TEXT colum...'
     matched_artifact_ref: quiescence + fence + rollback evidence
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.1
-  plan_node_hash: 586b46c20d83319955955c44aa46b32e742a8891bc953d55feef6c35df2c10e0
+  plan_node_hash: 060fdd75244f4c6a64da0213c7005eca142f649a71466127139338cdb8675ab6
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
-    matched_artifact_ref: src/gobby/storage/migrations/362_sessions_machine_uuid_fk.sql
+    matched_artifact_ref: src/gobby/storage/migrations/366_sessions_machine_uuid_fk.sql
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.2
@@ -936,7 +936,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
     matched_artifact_ref: tests/storage/
@@ -947,7 +947,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
     matched_artifact_ref: web/src/hooks/__tests__/
@@ -958,18 +958,18 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
     matched_artifact_ref: docs/contracts/identity-model.md
   deferral_target: null
 - section_id: '2.19'
   item_id: 2.19.5
-  plan_node_hash: a8f6d17ebaa7f7b563aa534fcb123b2d738f61eca84505eb7f083d1dee5bf24d
+  plan_node_hash: e40db27c9704b031f104de238a6cab7e7a672293f96b2083f11f1e908309de45
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
     matched_artifact_ref: M0 amendment verification + collision ledger
@@ -980,7 +980,7 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#19411'
-    validation_criteria_snippet: '2.19.1: Migration 362 converts the column, rebuilds
+    validation_criteria_snippet: '2.19.1: Migration 366 converts the column, rebuilds
       `idx_sessions_unique` NULLS NOT DISTINCT, maps sentinels to NULL, adds the FK;
       destructive- marked. file: `...'
     matched_artifact_ref: tests/storage/
@@ -1311,20 +1311,20 @@ rows:
   leaves:
   - leaf_task_ref: '#19421'
     validation_criteria_snippet: '5.4.1: Per-index verdict with EXPLAIN evidence recorded.
-      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 364 ships either way:
+      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 368 ships either way:
       destructive-marked drop ...'
     matched_artifact_ref: docs/evidence/bm25-verification.md
   deferral_target: null
 - section_id: '5.4'
   item_id: 5.4.2
-  plan_node_hash: 39035d44985d6f5a5c8fd60d9ff5c1463efaf6d91e51d1d7f70eca17b822d999
+  plan_node_hash: bdff045d6782c02aba37a9d770235cb6415f35a7c40f1806f170042900faaf51
   status: covered
   leaves:
   - leaf_task_ref: '#19421'
     validation_criteria_snippet: '5.4.1: Per-index verdict with EXPLAIN evidence recorded.
-      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 364 ships either way:
+      file: `docs/evidence/bm25-verification.md`. 5.4.2: Slot 368 ships either way:
       destructive-marked drop ...'
-    matched_artifact_ref: src/gobby/storage/migrations/364_bm25_disposition.sql
+    matched_artifact_ref: src/gobby/storage/migrations/368_bm25_disposition.sql
   deferral_target: null
 - section_id: '3.0'
   item_id: 3.0.1
