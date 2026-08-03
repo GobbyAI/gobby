@@ -51,7 +51,7 @@ def _seed_synthetic_sessions(db: HubDatabase) -> None:
     db.executemany(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (%s, %s, 'workflow-tests', 'test', %s)
+        VALUES (%s, %s, '21000000-0000-4000-8000-000000000001', 'test', %s)
         ON CONFLICT (id) DO NOTHING
         """,
         [(session_id, session_id, PERSONAL_PROJECT_ID) for session_id in SYNTHETIC_SESSION_IDS],
