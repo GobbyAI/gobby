@@ -167,6 +167,10 @@ class TestGobbyRunnerInit:
             patch("gobby.runner_init.storage.init_telemetry"),
             patch("gobby.runner_init.storage.setup_file_logging"),
             patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
+            patch(
+                "gobby.runner_init.storage.ensure_machine_identity",
+                return_value="test-machine",
+            ),
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
             patch("gobby.storage.config_store.ConfigStore", return_value=mock_config_store),

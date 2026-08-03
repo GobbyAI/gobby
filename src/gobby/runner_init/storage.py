@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.app import load_config
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
+    ensure_machine_identity,
     init_hub_database,
 )
 from gobby.shutdown_intent import ShutdownIntent
@@ -82,6 +83,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._pending_tasks = set()
 
     runner.database = init_hub_database(runner.config)
+    if runner.machine_id is None:
+        raise RuntimeError("local machine identity is unavailable")
+    runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
     try:
         db_max_workers = int(os.environ.get("RUNNER_MAX_WORKERS", "4"))
     except ValueError:

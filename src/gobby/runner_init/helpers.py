@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import platform
+import socket
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -16,7 +18,10 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.storage.maintenance_epoch import admitted_database_url
+from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
+from gobby.utils.machine_id import MACHINE_ID_FILE, _generate_machine_id, clear_cache
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,38 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     )
     logger.info("Database: PostgreSQL hub")
     return postgres_db
+
+
+def ensure_machine_identity(
+    database: Any,
+    machine_id: str,
+    *,
+    identity_file: Path | None = None,
+) -> str:
+    """Re-key stale identities and canonically register this daemon's machine."""
+    path = identity_file or MACHINE_ID_FILE
+    tombstone = database.fetchone(
+        "SELECT old_id FROM retired_machine_identities WHERE old_id = %s",
+        (machine_id,),
+    )
+    try:
+        canonical_id = normalize_machine_id(machine_id)
+    except ValueError:
+        canonical_id = None
+    if tombstone is not None or canonical_id is None:
+        canonical_id = _generate_machine_id()
+        with exclusive_file_lock(path):
+            durable_replace_text(path, canonical_id)
+        clear_cache()
+
+    registered = LocalMachineManager(database).upsert_seen(
+        canonical_id,
+        hostname=socket.gethostname(),
+        os=platform.system(),
+    )
+    if registered is None:
+        raise RuntimeError("local machine registration did not produce a row")
+    return registered.id
 
 
 def _initialize_postgres_with_startup_retry(

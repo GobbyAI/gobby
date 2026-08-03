@@ -511,6 +511,22 @@ class TestOrchestration:
 
 
 class TestManifest:
+    def test_machine_identity_is_manifest_artifact_with_checksum(self, tmp_path: Path) -> None:
+        gobby_home = tmp_path / ".gobby"
+        backup_root = tmp_path / "backup"
+        gobby_home.mkdir()
+        backup_root.mkdir()
+        identity = b"8fa1247f-e924-4bd7-a54e-b9dd5704304a"
+        (gobby_home / "machine_id").write_bytes(identity)
+
+        artifact = hub_cli._archive_machine_identity(gobby_home, backup_root)
+
+        assert artifact is not None
+        assert artifact.name == "machine_identity"
+        assert artifact.path == "identity/machine_id"
+        assert artifact.sha256 == hashlib.sha256(identity).hexdigest()
+        assert (backup_root / artifact.path).read_bytes() == identity
+
     def test_manifest_is_written_schema_valid_and_owner_only(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
     ) -> None:

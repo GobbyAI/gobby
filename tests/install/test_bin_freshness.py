@@ -25,6 +25,7 @@ from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, man
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 
 pytestmark = pytest.mark.unit
 
@@ -543,7 +544,7 @@ class TestBinUpdater:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir(parents=True)
         spec = _spec()
-        store = BinUpdateStateStore(db)
+        store = BinUpdateStateStore(db, machine_id=TEST_MACHINE_ID)
         store.upsert(
             tool_name=spec.name,
             installed_version="0.4.1",
@@ -852,3 +853,18 @@ class TestGithubReleaseClient:
         assert calls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
         ]
+TEST_MACHINE_ID = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_machine_identity(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.install.bin_freshness_updater.get_machine_id",
+        lambda: TEST_MACHINE_ID,
+    )
+    if "postgres_db" in request.fixturenames:
+        database = request.getfixturevalue("postgres_db")
+        LocalMachineManager(database).upsert_seen(TEST_MACHINE_ID)

@@ -30,6 +30,7 @@ from gobby.install.bin_freshness_models import (
 from gobby.install.bin_freshness_promotion import stage_and_promote_release_binary
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.native_bin import native_bin_dir
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def update_all_managed_bins(
     if not config.enabled:
         return []
     root = bin_dir or native_bin_dir()
-    store = BinUpdateStateStore(db)
+    store = _machine_state_store(db)
     records: list[BinUpdateRecord] = []
     release_client = client or GithubReleaseClient(timeout_seconds=config.github_timeout_seconds)
     for spec in managed_bin_specs():
@@ -96,7 +97,7 @@ def update_managed_bin(
         return None
 
     with lock:
-        store = BinUpdateStateStore(db)
+        store = _machine_state_store(db)
         inspection = inspect_managed_bin(spec, bin_dir=root)
         if inspection.is_dev:
             return _record_state(
@@ -317,6 +318,13 @@ def _record_state(
         is_dev=inspection.is_dev,
         floor_drift=inspection.floor_drift,
     )
+
+
+def _machine_state_store(db: HubDatabase) -> BinUpdateStateStore:
+    machine_id = get_machine_id()
+    if machine_id is None:
+        raise RuntimeError("machine identity is unavailable for bin update state")
+    return BinUpdateStateStore(db, machine_id=machine_id)
 
 
 __all__ = ["update_all_managed_bins", "update_managed_bin"]

@@ -158,7 +158,7 @@ CREATE TABLE agent_runs (
 );
 
 CREATE TABLE machines (
-    machine_id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     hostname TEXT,
     os TEXT,
     label TEXT,
@@ -166,6 +166,27 @@ CREATE TABLE machines (
     owner_user_id TEXT,
     first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE identity_cutover_journal (
+    old_id TEXT PRIMARY KEY,
+    new_id UUID,
+    disposition TEXT NOT NULL CHECK (disposition IN ('rotated', 'retired')),
+    phase TEXT NOT NULL CHECK (phase IN ('started', 'db_committed', 'file_committed')),
+    token UUID NOT NULL UNIQUE,
+    had_machine BOOLEAN NOT NULL,
+    session_count BIGINT NOT NULL,
+    machine_snapshot JSONB,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    db_committed_at TIMESTAMPTZ,
+    file_committed_at TIMESTAMPTZ,
+    CHECK ((disposition = 'rotated' AND new_id IS NOT NULL) OR disposition = 'retired')
+);
+
+CREATE TABLE retired_machine_identities (
+    old_id TEXT PRIMARY KEY,
+    retired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    disposition TEXT NOT NULL
 );
 
 CREATE INDEX idx_machines_last_seen ON machines(last_seen);
@@ -176,7 +197,7 @@ WHERE owner_user_id IS NOT NULL;
 CREATE TABLE sessions (
     id UUID PRIMARY KEY,
     external_id TEXT NOT NULL,
-    machine_id TEXT NOT NULL,
+    machine_id TEXT,
     source TEXT NOT NULL,
     project_id UUID NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
     title TEXT,
@@ -1741,7 +1762,8 @@ CREATE TABLE metric_snapshots (
 CREATE INDEX idx_metric_snapshots_ts ON metric_snapshots(timestamp);
 
 CREATE TABLE bin_update_state (
-    tool_name TEXT PRIMARY KEY,
+    machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
     installed_version TEXT,
     floor_version TEXT NOT NULL,
     latest_version TEXT,
@@ -1763,7 +1785,8 @@ CREATE TABLE bin_update_state (
     source_url TEXT,
     is_dev BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_dev IN (FALSE, TRUE)),
     floor_drift BOOLEAN NOT NULL DEFAULT FALSE CHECK (floor_drift IN (FALSE, TRUE)),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (machine_id, tool_name)
 );
 
 CREATE TABLE comms_channels (

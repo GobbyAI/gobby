@@ -346,3 +346,49 @@ def _batch_payload(batch: DestructiveBatch) -> dict[str, object]:
         "aborted_at": batch.aborted_at.isoformat() if batch.aborted_at else None,
         "abort_disposition": batch.abort_disposition,
     }
+
+
+class _IdentityCutoverExecutor:
+    """Run the file/DB identity journal, then gated migration 365."""
+
+    def apply(self, epoch: MaintenanceEpoch, batch: DestructiveBatch) -> None:
+        from gobby.cli.hub_backup._manifest import DEFAULT_MAX_AGE_HOURS
+        from gobby.cli.schema import _apply_verified_batch
+        from gobby.config.app import load_config
+        from gobby.storage.identity_cutover import run_identity_cutover
+        from gobby.storage.maintenance_epoch import bind_maintenance_epoch
+
+        config = load_config(resolve_database_url=True)
+        if config.database_url is None:
+            raise click.ClickException("Hub database URL is unavailable")
+        bound_url = bind_maintenance_epoch(config.database_url, epoch.id)
+        run_identity_cutover(bound_url, get_gobby_home() / "machine_id")
+        _apply_verified_batch(
+            config.database_url,
+            config.postgres_pool,
+            epoch,
+            batch,
+            max_age_hours=DEFAULT_MAX_AGE_HOURS,
+        )
+
+    def verify(self, epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
+        from gobby.cli.hub_backup._stores import collect_postgres_identity
+        from gobby.config.app import load_config
+        from gobby.storage.identity_cutover import verify_identity_cutover
+        from gobby.storage.maintenance_epoch import bind_maintenance_epoch
+        from gobby.storage.migrations import latest_known_version
+
+        config = load_config(resolve_database_url=True)
+        if config.database_url is None:
+            raise click.ClickException("Hub database URL is unavailable")
+        bound_url = bind_maintenance_epoch(config.database_url, epoch.id)
+        verify_identity_cutover(bound_url, get_gobby_home() / "machine_id")
+        _identity, current_head = collect_postgres_identity(bound_url)
+        if current_head != latest_known_version():
+            raise click.ClickException(
+                f"Identity cutover stopped at schema {current_head}; "
+                f"expected {latest_known_version()}"
+            )
+
+
+register_campaign_executor("identity-cutover", _IdentityCutoverExecutor())

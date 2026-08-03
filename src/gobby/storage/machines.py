@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
@@ -20,13 +21,16 @@ _PLACEHOLDER_MACHINE_IDS = {
 
 
 def normalize_machine_id(machine_id: str | None) -> str | None:
-    """Return a storable machine id or None for missing/placeholder values."""
+    """Return a canonical UUID or None for missing/placeholder values."""
     normalized = (machine_id or "").strip()
     if not normalized:
         return None
     if normalized.lower() in _PLACEHOLDER_MACHINE_IDS:
         return None
-    return normalized
+    try:
+        return str(UUID(normalized))
+    except ValueError as exc:
+        raise ValueError("machine_id must be a valid UUID") from exc
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -44,7 +48,7 @@ def _clean_optional_text(value: str | None) -> str | None:
 class Machine:
     """Machine registry row."""
 
-    machine_id: str
+    id: str
     hostname: str | None
     os: str | None
     label: str | None
@@ -57,7 +61,7 @@ class Machine:
     def from_row(cls, row: Mapping[str, Any]) -> Machine:
         """Create a Machine from a database row."""
         return cls(
-            machine_id=row["machine_id"],
+            id=str(row["id"]),
             hostname=row.get("hostname"),
             os=row.get("os"),
             label=row.get("label"),
@@ -70,7 +74,7 @@ class Machine:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
-            "machine_id": self.machine_id,
+            "id": self.id,
             "hostname": self.hostname,
             "os": self.os,
             "label": self.label,
@@ -106,19 +110,39 @@ class LocalMachineManager:
         now = parse_stored_datetime(seen_at) or utc_now()
         row = self.db.fetchone(
             """
-            INSERT INTO machines (
-                machine_id, hostname, os, label, tailscale_name, owner_user_id,
-                first_seen, last_seen
+            WITH changed AS (
+                INSERT INTO machines (
+                    id, hostname, os, label, tailscale_name, owner_user_id,
+                    first_seen, last_seen
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(id) DO UPDATE SET
+                    hostname = COALESCE(EXCLUDED.hostname, machines.hostname),
+                    os = COALESCE(EXCLUDED.os, machines.os),
+                    label = COALESCE(EXCLUDED.label, machines.label),
+                    tailscale_name = COALESCE(EXCLUDED.tailscale_name, machines.tailscale_name),
+                    owner_user_id = COALESCE(EXCLUDED.owner_user_id, machines.owner_user_id),
+                    last_seen = CASE
+                        WHEN EXCLUDED.last_seen >= machines.last_seen + INTERVAL '5 minutes'
+                        THEN EXCLUDED.last_seen
+                        ELSE machines.last_seen
+                    END
+                WHERE EXCLUDED.last_seen >= machines.last_seen + INTERVAL '5 minutes'
+                   OR EXCLUDED.hostname IS NOT NULL
+                      AND EXCLUDED.hostname IS DISTINCT FROM machines.hostname
+                   OR EXCLUDED.os IS NOT NULL AND EXCLUDED.os IS DISTINCT FROM machines.os
+                   OR EXCLUDED.label IS NOT NULL AND EXCLUDED.label IS DISTINCT FROM machines.label
+                   OR EXCLUDED.tailscale_name IS NOT NULL
+                      AND EXCLUDED.tailscale_name IS DISTINCT FROM machines.tailscale_name
+                   OR EXCLUDED.owner_user_id IS NOT NULL
+                      AND EXCLUDED.owner_user_id IS DISTINCT FROM machines.owner_user_id
+                RETURNING *
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(machine_id) DO UPDATE SET
-                hostname = COALESCE(EXCLUDED.hostname, machines.hostname),
-                os = COALESCE(EXCLUDED.os, machines.os),
-                label = COALESCE(EXCLUDED.label, machines.label),
-                tailscale_name = COALESCE(EXCLUDED.tailscale_name, machines.tailscale_name),
-                owner_user_id = COALESCE(EXCLUDED.owner_user_id, machines.owner_user_id),
-                last_seen = EXCLUDED.last_seen
-            RETURNING *
+            SELECT * FROM changed
+            UNION ALL
+            SELECT * FROM machines
+            WHERE id = %s AND NOT EXISTS (SELECT 1 FROM changed)
+            LIMIT 1
             """,
             (
                 normalized_machine_id,
@@ -129,6 +153,7 @@ class LocalMachineManager:
                 _clean_optional_text(owner_user_id),
                 now,
                 now,
+                normalized_machine_id,
             ),
         )
         return Machine.from_row(row) if row else None
@@ -139,7 +164,7 @@ class LocalMachineManager:
         if normalized_id is None:
             return None
         row = self.db.fetchone(
-            "SELECT * FROM machines WHERE machine_id = %s",
+            "SELECT * FROM machines WHERE id = %s",
             (normalized_id,),
         )
         return Machine.from_row(row) if row else None

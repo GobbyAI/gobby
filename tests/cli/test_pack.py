@@ -234,6 +234,10 @@ class TestUnpackCommand:
             bootstrap_path = tmp_path / "bootstrap.yaml"
             bootstrap_path.write_text("hub_backend: postgres\n")
             tar.add(str(bootstrap_path), arcname="gobby/bootstrap.yaml")
+
+            machine_id_path = tmp_path / "machine_id"
+            machine_id_path.write_text("8fa1247f-e924-4bd7-a54e-b9dd5704304a")
+            tar.add(str(machine_id_path), arcname="gobby/machine_id")
         return out_path
 
     def _create_postgres_archive(self, tmp_path: Path) -> Path:
@@ -284,7 +288,24 @@ class TestUnpackCommand:
 
         assert (fake_home / "hub-postgres.db").read_text() == "restored db"
         assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
+        assert not (fake_home / "machine_id").exists()
         assert "Restored: hub-postgres.db" in result.output
+
+    @patch("gobby.cli.pack.get_gobby_home")
+    @patch("gobby.cli.pack._daemon_is_running", return_value=False)
+    @patch("gobby.cli.pack._docker_available", return_value=False)
+    @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
+    def test_unpack_restore_identity_is_explicit(
+        self, mock_hooks, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+    ) -> None:
+        archive = self._create_fake_archive(tmp_path)
+        fake_home = tmp_path / ".gobby"
+        mock_home.return_value = fake_home
+
+        result = runner.invoke(unpack, [str(archive), "--restore-identity"])
+
+        assert result.exit_code == 0
+        assert (fake_home / "machine_id").read_text() == "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
@@ -435,12 +456,12 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
     def test_unpack_no_postgres_skips_postgres_payload(
         self,
-        mock_hooks,
-        mock_docker,
-        mock_stop_services,
-        mock_daemon,
-        mock_home,
-        tmp_path,
+        mock_hooks: MagicMock,
+        mock_docker: MagicMock,
+        mock_stop_services: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         archive = self._create_postgres_archive(tmp_path)

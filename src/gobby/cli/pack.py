@@ -26,6 +26,7 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
+from gobby.utils.durable_file import durable_replace
 
 # Directories to include in pack (relative to ~/.gobby/)
 PACK_DIRS = [
@@ -484,6 +485,11 @@ def _write_restricted_archive(output_path: Path, items: list[tuple[str, Path]]) 
 @click.option("--no-postgres", is_flag=True, help="Skip PostgreSQL logical dump restore")
 @click.option("--dry-run", is_flag=True, help="Show what would be unpacked without extracting")
 @click.option(
+    "--restore-identity",
+    is_flag=True,
+    help="Restore machine_id for same-machine disaster recovery",
+)
+@click.option(
     "--force",
     is_flag=True,
     help="Overwrite existing data without prompting",
@@ -493,6 +499,7 @@ def unpack(
     no_docker: bool,
     no_postgres: bool,
     dry_run: bool,
+    restore_identity: bool,
     force: bool,
 ) -> None:
     """Unpack a Gobby archive to restore data on a new machine.
@@ -599,6 +606,9 @@ def unpack(
 
             if member.name.startswith("gobby/"):
                 rel = member.name.removeprefix("gobby/")
+                if rel == "machine_id" and not restore_identity:
+                    click.echo("  Skipped: machine_id (use --restore-identity to opt in)")
+                    continue
                 target = _safe_archive_target(get_gobby_home(), rel, member)
                 if member.isdir():
                     target.mkdir(parents=True, exist_ok=True)
@@ -606,7 +616,11 @@ def unpack(
                     target.parent.mkdir(parents=True, exist_ok=True)
                     f = tar.extractfile(member)
                     if f:
-                        target.write_bytes(f.read())
+                        content = f.read()
+                        if rel == "machine_id":
+                            durable_replace(target, content)
+                        else:
+                            target.write_bytes(content)
                 click.echo(f"  Restored: {rel}")
 
         # Import Docker volumes

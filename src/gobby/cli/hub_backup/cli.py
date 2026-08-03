@@ -10,6 +10,7 @@ secret reaches the manifest or stdout.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -83,6 +84,7 @@ from gobby.storage.maintenance_epoch import (
     MAINTENANCE_EPOCH_ENV,
     require_orchestrator_epoch,
 )
+from gobby.utils.durable_file import durable_replace, exclusive_file_lock
 from gobby.utils.version import get_version
 
 # `gobby-postgres-test-1` is deliberately absent: the test cluster is scratch
@@ -278,6 +280,9 @@ def _run_backup(
     volume_artifacts, volume_details = _archive_volumes(gobby_home, backup_root)
     artifacts.extend(volume_artifacts)
     artifacts.extend(archive_rule_allow_audit_logs(logs_dir, backup_root))
+    identity_artifact = _archive_machine_identity(gobby_home, backup_root)
+    if identity_artifact is not None:
+        artifacts.append(identity_artifact)
 
     stores = _verify_stores(
         backup_root=backup_root,
@@ -300,6 +305,24 @@ def _run_backup(
         row_count_probes=probes,
         artifacts=artifacts,
         stores=stores,
+    )
+
+
+def _archive_machine_identity(gobby_home: Path, backup_root: Path) -> ArtifactRecord | None:
+    """Archive the pre-cutover identity inside the verified backup manifest."""
+    source = gobby_home / "machine_id"
+    if not source.is_file():
+        return None
+    with exclusive_file_lock(source):
+        content = source.read_bytes()
+    relative_path = "identity/machine_id"
+    destination = backup_root / relative_path
+    durable_replace(destination, content)
+    return ArtifactRecord(
+        name="machine_identity",
+        path=relative_path,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
     )
 
 
