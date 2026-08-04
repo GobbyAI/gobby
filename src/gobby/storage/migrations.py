@@ -35,7 +35,7 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterator
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from typing import Any, Protocol
@@ -134,7 +134,34 @@ class MigrationRunner:
         self._hub = hub
         self._autocommit_connection = autocommit_connection
 
+    def apply_startup(
+        self,
+        *,
+        baseline_already_applied: Callable[[], bool],
+        apply_baseline: Callable[[], None],
+    ) -> None:
+        """Apply the complete startup schema decision under one session lock."""
+        code_head = self._known_schema_version()
+        with self._migration_lock():
+            baseline_present = baseline_already_applied()
+            if baseline_present:
+                self._raise_if_schema_is_newer(self._read_current_schema_head(), code_head)
+            else:
+                apply_baseline()
+
+            self._apply_pending_locked(fresh_schema=not baseline_present)
+            database_head = self._read_current_schema_head()
+            self._raise_if_schema_is_newer(database_head, code_head)
+            logger.info(
+                "PostgreSQL schema lockstep verified",
+                extra={"code_schema_version": code_head, "database_schema_version": database_head},
+            )
+
     def apply_pending(self, *, fresh_schema: bool = False) -> None:
+        with self._migration_lock():
+            self._apply_pending_locked(fresh_schema=fresh_schema)
+
+    def _apply_pending_locked(self, *, fresh_schema: bool = False) -> None:
         self._ensure_schema_migrations_table()
         applied = self._read_applied_versions()
         migrations = self._discover_migrations()
@@ -153,7 +180,6 @@ class MigrationRunner:
                 applied.add(migration.version)
                 continue
             with self._hub.transaction() as txn:
-                txn.execute(f"SELECT pg_advisory_xact_lock({_MIGRATION_LOCK_SQL})")
                 row = txn.execute(
                     "SELECT version FROM schema_migrations WHERE version = %s",
                     (migration.version,),
@@ -171,6 +197,34 @@ class MigrationRunner:
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration)
             applied.add(migration.version)
+
+    @contextmanager
+    def _migration_lock(self) -> Iterator[None]:
+        if self._autocommit_connection is None:
+            raise MigrationUnsupportedError(
+                "PostgreSQL migration orchestration requires an autocommit connection."
+            )
+        with closing(self._autocommit_connection()) as connection:
+            connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
+            try:
+                yield
+            finally:
+                connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+
+    def _read_current_schema_head(self) -> int:
+        with self._hub.transaction() as txn:
+            return self._read_schema_head(txn)
+
+    def _known_schema_version(self) -> int:
+        return latest_known_version()
+
+    @staticmethod
+    def _raise_if_schema_is_newer(database_head: int, code_head: int) -> None:
+        if database_head > code_head:
+            raise MigrationUnsupportedError(
+                f"hub schema is v{database_head} but this gobby build knows v{code_head} "
+                "— update gobby on this machine."
+            )
 
     def apply_destructive(self, context: DestructiveMigrationContext) -> None:
         """Apply or resume one hub-attested destructive migration batch."""
@@ -413,26 +467,22 @@ class MigrationRunner:
                 "Non-transactional migration requires an autocommit connection."
             )
         with closing(self._autocommit_connection()) as connection:
-            connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
-            try:
-                row = connection.execute(
-                    "SELECT version FROM schema_migrations WHERE version = %s",
-                    (migration.version,),
-                ).fetchone()
-                if row is not None:
-                    return
-                logger.info(
-                    "Applying non-transactional PostgreSQL migration",
-                    extra={
-                        "migration_name": migration.name,
-                        "migration_version": migration.version,
-                    },
-                )
-                self._repair_invalid_concurrent_indexes(connection, migration)
-                self._run_migration(connection, migration)
-                self._record_applied_version(connection, migration)
-            finally:
-                connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+            row = connection.execute(
+                "SELECT version FROM schema_migrations WHERE version = %s",
+                (migration.version,),
+            ).fetchone()
+            if row is not None:
+                return
+            logger.info(
+                "Applying non-transactional PostgreSQL migration",
+                extra={
+                    "migration_name": migration.name,
+                    "migration_version": migration.version,
+                },
+            )
+            self._repair_invalid_concurrent_indexes(connection, migration)
+            self._run_migration(connection, migration)
+            self._record_applied_version(connection, migration)
 
     def _repair_invalid_concurrent_indexes(
         self,

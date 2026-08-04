@@ -479,10 +479,10 @@ class PostgresHubDatabase:
 
     def apply_migrations(self) -> None:
         runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
-        baseline_already_applied = self._postgres_baseline_already_applied()
-        if not baseline_already_applied:
-            self._apply_postgres_baseline()
-        runner.apply_pending(fresh_schema=not baseline_already_applied)
+        runner.apply_startup(
+            baseline_already_applied=self._postgres_baseline_already_applied,
+            apply_baseline=self._apply_postgres_baseline,
+        )
 
     def apply_destructive_migrations(self, context: DestructiveMigrationContext) -> None:
         """Apply or resume one verified destructive migration batch."""

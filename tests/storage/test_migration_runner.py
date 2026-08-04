@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Barrier, Lock
+from threading import Lock
 from types import MethodType
 from typing import Any
 
@@ -105,7 +105,7 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
     runner._record_applied_version = MethodType(record_applied_version, runner)
 
     with caplog.at_level("INFO", logger="gobby.storage.migrations"):
-        runner.apply_pending()
+        runner._apply_pending_locked()
 
     assert hub.applied == [295]
     record = next(
@@ -154,7 +154,7 @@ def test_default_apply_halts_before_destructive_migration_after_safe_prefix(
         MigrationUnsupportedError,
         match=r"gobby schema apply --destructive",
     ):
-        runner.apply_pending()
+        runner._apply_pending_locked()
 
     assert executed == [354]
     assert hub.applied == [354]
@@ -197,7 +197,7 @@ def test_fresh_schema_apply_may_cross_destructive_marker(tmp_path: Path) -> None
         runner,
     )
 
-    runner.apply_pending(fresh_schema=True)
+    runner._apply_pending_locked(fresh_schema=True)
 
     assert executed == [355]
     assert hub.applied == [355]
@@ -216,7 +216,7 @@ def test_apply_pending_rejects_gap_in_bookkeeping_chain(tmp_path: Path) -> None:
     runner._discover_migrations = MethodType(lambda self: [migration], runner)
 
     with pytest.raises(MigrationUnsupportedError, match=r"missing migration v355"):
-        runner.apply_pending()
+        runner._apply_pending_locked()
 
 
 def test_bookkeeping_records_filename_and_checksum_from_version_354(
@@ -563,33 +563,48 @@ def test_destructive_batch_requires_exact_prebatch_head(tmp_path: Path) -> None:
 class _ConcurrentMigrationTransaction:
     def __init__(self, hub: _ConcurrentMigrationHub) -> None:
         self._hub = hub
-        self._locked = False
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         if "SELECT version FROM schema_migrations WHERE" in sql:
-            assert self._locked
+            assert self._hub.advisory_lock.locked()
             version = params[0]
             rows = [{"version": version}] if version in self._hub.applied else []
             return _Result(rows)
         if sql == "SELECT version FROM schema_migrations":
             rows = [{"version": version} for version in self._hub.applied]
-            self._hub.initial_reads.wait()
             return _Result(rows)
         if "pg_advisory_xact_lock" in sql:
-            assert "hashtext(current_schema())" in sql
-            self._hub.advisory_lock.acquire()
-            self._locked = True
-            self._hub.lock_acquisitions += 1
-            return _Result()
+            raise AssertionError("per-migration advisory lock must not be acquired")
         if "INSERT INTO schema_migrations" in sql:
-            assert self._locked
+            assert self._hub.advisory_lock.locked()
             self._hub.applied.add(params[0])
             return _Result()
         raise AssertionError(f"unexpected query: {sql}")
 
     def close(self) -> None:
-        if self._locked:
+        return None
+
+
+class _ConcurrentMigrationLockConnection:
+    def __init__(self, hub: _ConcurrentMigrationHub) -> None:
+        self._hub = hub
+        self._locked = False
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
+        if "pg_advisory_lock" in sql:
+            self._hub.advisory_lock.acquire()
+            self._locked = True
+            self._hub.lock_acquisitions += 1
+            return _Result()
+        if "pg_advisory_unlock" in sql:
+            assert self._locked
             self._hub.advisory_lock.release()
+            self._locked = False
+            return _Result()
+        raise AssertionError(f"unexpected query: {sql}")
+
+    def close(self) -> None:
+        assert not self._locked
 
 
 class _ConcurrentMigrationHub:
@@ -597,7 +612,6 @@ class _ConcurrentMigrationHub:
 
     def __init__(self) -> None:
         self.advisory_lock = Lock()
-        self.initial_reads = Barrier(2)
         self.applied: set[int] = set()
         self.lock_acquisitions = 0
         self.migration_runs = 0
@@ -610,12 +624,17 @@ class _ConcurrentMigrationHub:
         finally:
             txn.close()
 
+    def lock_connection(self) -> _ConcurrentMigrationLockConnection:
+        return _ConcurrentMigrationLockConnection(self)
+
 
 def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() -> None:
     module = _migration_module()
     hub = _ConcurrentMigrationHub()
     migration = Migration(version=321, name="concurrent", path=Path("unused.sql"))
-    runners = [module.MigrationRunner(hub), module.MigrationRunner(hub)]
+    runners = [
+        module.MigrationRunner(hub, autocommit_connection=hub.lock_connection) for _ in range(2)
+    ]
 
     for runner in runners:
         runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
@@ -854,7 +873,7 @@ def test_non_transactional_migration_retries_after_unrecorded_index_creation(
     assert state.index_drops == []
     assert state.index_lookups == ["idx_shadow", "idx_shadow"]
     assert state.unlocked == 2
-    assert state.closed == 2
+    assert state.closed == 4
 
 
 def test_non_transactional_migration_repairs_invalid_concurrent_index(
@@ -885,7 +904,7 @@ def test_non_transactional_migration_repairs_invalid_concurrent_index(
     assert state.index_runs == 1
     assert state.index_valid is True
     assert state.unlocked == 1
-    assert state.closed == 1
+    assert state.closed == 2
 
 
 def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:

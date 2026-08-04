@@ -925,8 +925,16 @@ def test_apply_migrations_proceeds_when_pg_search_present(
             self.autocommit_connection = autocommit_connection
             created_runners.append(self)
 
-        def apply_pending(self, *, fresh_schema: bool = False) -> None:
-            calls.append(f"file_migrations:{fresh_schema}")
+        def apply_startup(
+            self,
+            *,
+            baseline_already_applied: Callable[[], bool],
+            apply_baseline: Callable[[], None],
+        ) -> None:
+            baseline_present = baseline_already_applied()
+            if not baseline_present:
+                apply_baseline()
+            calls.append(f"file_migrations:{not baseline_present}")
 
     created_runners: list[FakeRunner] = []
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
@@ -974,8 +982,16 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 
-        def apply_pending(self, *, fresh_schema: bool = False) -> None:
-            calls.append(f"file_migrations:{fresh_schema}")
+        def apply_startup(
+            self,
+            *,
+            baseline_already_applied: Callable[[], bool],
+            apply_baseline: Callable[[], None],
+        ) -> None:
+            baseline_present = baseline_already_applied()
+            if not baseline_present:
+                apply_baseline()
+            calls.append(f"file_migrations:{not baseline_present}")
 
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
     monkeypatch.setattr(
@@ -1006,8 +1022,16 @@ def test_apply_migrations_skips_postgres_baseline_when_already_applied(
             self.hub = hub
             self.autocommit_connection = autocommit_connection
 
-        def apply_pending(self, *, fresh_schema: bool = False) -> None:
-            calls.append(f"file_migrations:{fresh_schema}")
+        def apply_startup(
+            self,
+            *,
+            baseline_already_applied: Callable[[], bool],
+            apply_baseline: Callable[[], None],
+        ) -> None:
+            baseline_present = baseline_already_applied()
+            if not baseline_present:
+                apply_baseline()
+            calls.append(f"file_migrations:{not baseline_present}")
 
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
     monkeypatch.setattr(
