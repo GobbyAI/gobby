@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
 )
 from gobby.hooks.inbox import (
+    HookInboxBarrierResult,
     _compute_sleep_seconds,
     _load_envelope,
     _post_envelope,
@@ -56,7 +58,7 @@ async def test_barrier_timeout_reports_unresolved_run_and_session(tmp_path: Path
     (tmp_path / "pending.json").write_text(json.dumps(envelope), encoding="utf-8")
 
     with patch(
-        "gobby.hooks.inbox.drain_hook_inbox_once",
+        "gobby.hooks.inbox._drain_hook_inbox_once_locked",
         new=AsyncMock(return_value=0),
     ) as drain:
         result = await drain_hook_inbox_barrier(
@@ -104,6 +106,83 @@ async def test_barrier_replays_fresh_envelope_end_to_end(tmp_path: Path) -> None
     post.assert_awaited_once()
     assert post.await_args is not None
     assert post.await_args.kwargs == {"envelope_id": envelope_id}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_consumer", ["periodic", "barrier"])
+async def test_periodic_and_barrier_drains_serialize_envelope_posts(
+    tmp_path: Path,
+    first_consumer: str,
+) -> None:
+    app = FastAPI()
+    envelope_path = tmp_path / "pending.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()), encoding="utf-8")
+    post_started = asyncio.Event()
+    second_consumer_started = asyncio.Event()
+    release_post = asyncio.Event()
+    active_posts = 0
+    posts_overlapped = False
+
+    async def blocking_post(*args: Any, **kwargs: Any) -> MagicMock:
+        nonlocal active_posts, posts_overlapped
+        active_posts += 1
+        posts_overlapped = posts_overlapped or active_posts > 1
+        post_started.set()
+        try:
+            await asyncio.wait_for(release_post.wait(), timeout=1.0)
+        finally:
+            active_posts -= 1
+        return MagicMock(status_code=200)
+
+    post = AsyncMock(side_effect=blocking_post)
+
+    async def run_waiting_periodic_drain() -> int:
+        second_consumer_started.set()
+        return await drain_hook_inbox_once(app, tmp_path)
+
+    async def run_waiting_barrier_drain() -> HookInboxBarrierResult:
+        second_consumer_started.set()
+        return await drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=1.0)
+
+    periodic_task: asyncio.Task[int] | None = None
+    barrier_task: asyncio.Task[HookInboxBarrierResult] | None = None
+    with (
+        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
+        patch("gobby.hooks.inbox._post_envelope", new=post),
+    ):
+        mock_load_bootstrap.return_value.auth_mode = "disabled"
+        async with asyncio.TaskGroup() as task_group:
+            if first_consumer == "periodic":
+                periodic_task = task_group.create_task(drain_hook_inbox_once(app, tmp_path))
+            else:
+                barrier_task = task_group.create_task(
+                    drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=1.0)
+                )
+
+            await asyncio.wait_for(post_started.wait(), timeout=1.0)
+            if first_consumer == "periodic":
+                barrier_task = task_group.create_task(run_waiting_barrier_drain())
+            else:
+                periodic_task = task_group.create_task(run_waiting_periodic_drain())
+
+            await asyncio.wait_for(second_consumer_started.wait(), timeout=1.0)
+            try:
+                assert post.await_count == 1
+                assert posts_overlapped is False
+            finally:
+                release_post.set()
+
+    assert periodic_task is not None
+    assert barrier_task is not None
+    assert posts_overlapped is False
+    assert post.await_count == 1
+    assert envelope_path.exists() is False
+    if first_consumer == "periodic":
+        assert periodic_task.result() == 1
+        assert barrier_task.result() == HookInboxBarrierResult(0, False, (), ())
+    else:
+        assert barrier_task.result() == HookInboxBarrierResult(1, False, (), ())
+        assert periodic_task.result() == 0
 
 
 @pytest.mark.asyncio

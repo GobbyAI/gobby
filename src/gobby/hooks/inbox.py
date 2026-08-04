@@ -31,6 +31,7 @@ from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
+_DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
 
 
 def get_hook_inbox_dir() -> Path:
@@ -184,16 +185,22 @@ class HookInboxBarrierResult:
     unresolved_session_ids: tuple[str, ...]
 
 
-async def drain_hook_inbox_once(
+def _get_hook_inbox_drain_lock(app: Any) -> asyncio.Lock:
+    """Return the app-scoped lock coordinating hook inbox consumers."""
+    lock: asyncio.Lock | None = getattr(app.state, _DRAIN_LOCK_STATE_KEY, None)
+    if lock is None:
+        lock = asyncio.Lock()
+        setattr(app.state, _DRAIN_LOCK_STATE_KEY, lock)
+    return lock
+
+
+async def _drain_hook_inbox_once_locked(
     app: Any,
     inbox_dir: Path | None = None,
     *,
     include_fresh: bool = False,
 ) -> int:
-    """Replay all pending hook envelopes once.
-
-    Returns the number of envelopes successfully replayed and deleted.
-    """
+    """Replay pending envelopes while the app-scoped drain lock is held."""
     pending_dir = inbox_dir or get_hook_inbox_dir()
     if not pending_dir.exists():
         return 0
@@ -274,6 +281,24 @@ async def drain_hook_inbox_once(
     return replayed
 
 
+async def drain_hook_inbox_once(
+    app: Any,
+    inbox_dir: Path | None = None,
+    *,
+    include_fresh: bool = False,
+) -> int:
+    """Replay all pending hook envelopes once.
+
+    Returns the number of envelopes successfully replayed and deleted.
+    """
+    async with _get_hook_inbox_drain_lock(app):
+        return await _drain_hook_inbox_once_locked(
+            app,
+            inbox_dir,
+            include_fresh=include_fresh,
+        )
+
+
 async def drain_hook_inbox_barrier(
     app: Any,
     inbox_dir: Path | None = None,
@@ -286,24 +311,25 @@ async def drain_hook_inbox_barrier(
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     replayed = 0
 
-    while True:
-        replayed += await drain_hook_inbox_once(
-            app,
-            pending_dir,
-            include_fresh=True,
-        )
-        pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-        if not pending_files:
-            return HookInboxBarrierResult(replayed, False, (), ())
-        if time.monotonic() >= deadline:
-            run_ids, session_ids = _unresolved_envelope_identities(pending_files)
-            return HookInboxBarrierResult(
-                replayed,
-                True,
-                tuple(sorted(run_ids)),
-                tuple(sorted(session_ids)),
+    async with _get_hook_inbox_drain_lock(app):
+        while True:
+            replayed += await _drain_hook_inbox_once_locked(
+                app,
+                pending_dir,
+                include_fresh=True,
             )
-        await asyncio.sleep(poll_interval_seconds)
+            pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
+            if not pending_files:
+                return HookInboxBarrierResult(replayed, False, (), ())
+            if time.monotonic() >= deadline:
+                run_ids, session_ids = _unresolved_envelope_identities(pending_files)
+                return HookInboxBarrierResult(
+                    replayed,
+                    True,
+                    tuple(sorted(run_ids)),
+                    tuple(sorted(session_ids)),
+                )
+            await asyncio.sleep(poll_interval_seconds)
 
 
 def _unresolved_envelope_identities(paths: list[Path]) -> tuple[set[str], set[str]]:
