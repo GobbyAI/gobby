@@ -95,6 +95,22 @@ def test_interactive_checkpoint_and_handoff_contract() -> None:
     assert "without launching another enhancement or adversary round" in body
     assert "planning_seed_state=approved" in body
     assert "completed_plan_review_rounds` only when finalization succeeds" in body
+    assert "derive_plan_handoff_manifest(plan_path, routing_decisions)" in body
+    assert "apply_plan_handoff_manifest" in body
+    assert "Never invoke `emit_stub_manifest`" in body
+
+
+def test_capped_review_processes_final_findings_before_human_handoff() -> None:
+    body = _normalized(PLAN_SKILL_PATH)
+
+    cap = body.index("reaches the configured review cap")
+    vote = body.index("process every final finding and vote", cap)
+    finalize = body.index("finalize the normal rejection checkpoint", vote)
+    handoff = body.index("explicit human-handoff tools", finalize)
+    assert cap < vote < finalize < handoff
+    assert "Do not launch another adversary round" in body[cap:handoff]
+    assert "never manufactures an adversary verdict" in body
+    assert "`coverage_attestation`" in body
 
 
 def test_interactive_phase_approvals_and_item_voting_remain_separate() -> None:

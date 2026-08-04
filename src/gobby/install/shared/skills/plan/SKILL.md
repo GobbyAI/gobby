@@ -164,6 +164,11 @@ Start only after explicit adversarial-review approval.
    `continue interactively` after `needs_review` revises and launches the next
    approved review round. Choosing it after `approved` keeps planning open;
    edits invalidate approval and require a fresh reviewed round.
+   When a `needs_review` verdict reaches the configured review cap, process
+   every final finding and vote before editing, apply accepted repairs, persist
+   and finalize the normal rejection checkpoint, then append a human-handoff
+   changelog entry. Do not launch another adversary round. Continue only through
+   the explicit human-handoff tools described below.
 6. On approval, apply the server-derived manifest, persist the checkpoint,
    finalize evidence, complete lesson-mint checkpointing, and run:
 
@@ -194,8 +199,10 @@ enhancement and adversarial rounds. Handoff always:
    every material gap before handoff.
 2. Runs base validation.
 3. Derives explicit routing decisions for every deliverable, calls
-   `derive_plan_review_manifest`, and writes `## M1 Task Manifest` only through
-   `apply_plan_review_manifest`.
+   `derive_plan_handoff_manifest(plan_path, routing_decisions)`, and passes its
+   exact `source_plan_hash`, `rendered_plan_hash`, and `manifest_digest` to
+   `apply_plan_handoff_manifest`. These coordinator-only tools perform the only
+   handoff manifest write.
 4. Runs `uv run gobby plans validate <plan-file> --mode expansion`.
 5. Invokes build with `planning_seed_state=approved` and the count of finalized
    adversary rounds:
@@ -209,6 +216,11 @@ pending and wait for that run to finish. Present every returned suggestion or
 finding for individual voting, apply accepted edits, complete the normal
 changelog/checkpoint/finalization work for that phase, and base-validate. Then
 perform handoff without launching another enhancement or adversary round.
+
+Human handoff never manufactures an adversary verdict, findings,
+`coverage_attestation`, or review evidence. Never invoke `emit_stub_manifest`;
+the coordinator handoff derivation is the sole evidence-independent route to a
+canonical M1 manifest.
 
 ## Interactive Review Evidence Protocol
 

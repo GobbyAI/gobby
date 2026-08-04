@@ -327,6 +327,8 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         "bind_evidence_run",
         "expire_plan_review_evidence",
         "verify_plan_unchanged",
+        "derive_plan_handoff_manifest",
+        "apply_plan_handoff_manifest",
         "apply_plan_review_manifest",
         "render_v1_round_checkpoint",
         "finalize_plan_review_evidence",
@@ -342,6 +344,15 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
     coverage_properties = coverage_schema["inputSchema"]["properties"]
     assert "shadow_manifest_status" in coverage_properties
     assert "routing_decisions" not in coverage_properties
+    handoff_schema = registry.get_schema("apply_plan_handoff_manifest")
+    assert handoff_schema is not None
+    assert set(handoff_schema["inputSchema"]["required"]) == {
+        "plan_path",
+        "routing_decisions",
+        "source_plan_hash",
+        "rendered_plan_hash",
+        "manifest_digest",
+    }
 
     created = await registry.call(
         "create_plan",
@@ -352,6 +363,32 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         },
     )
     assert created["ok"] is True
+
+    routing = {
+        "1.1": {
+            "category": "docs",
+            "assigned_agent": "tech-writer",
+            "tdd": False,
+        }
+    }
+    handoff = await registry.call(
+        "derive_plan_handoff_manifest",
+        {"plan_path": str(plan_path), "routing_decisions": routing},
+    )
+    assert handoff["ok"] is True
+    assert "rendered_plan" not in handoff
+    applied = await registry.call(
+        "apply_plan_handoff_manifest",
+        {
+            "plan_path": str(plan_path),
+            "routing_decisions": routing,
+            "source_plan_hash": handoff["source_plan_hash"],
+            "rendered_plan_hash": handoff["rendered_plan_hash"],
+            "manifest_digest": handoff["manifest_digest"],
+        },
+    )
+    assert applied["ok"] is True
+    assert applied["result"]["applied"] is True
 
     listed = await registry.call("list_plans", {"state": "active"})
     assert listed["count"] == 1

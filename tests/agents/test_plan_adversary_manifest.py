@@ -145,6 +145,8 @@ class TestCoordinatorOwnedWrites:
         assert review is not None
         assert {
             "gobby-plans:apply_plan_review_manifest",
+            "gobby-plans:derive_plan_handoff_manifest",
+            "gobby-plans:apply_plan_handoff_manifest",
             "gobby-plans:finalize_plan_review_evidence",
             "gobby-plans:checkpoint_plan_review_lesson_mint",
         } <= set(review.blocked_mcp_tools or [])

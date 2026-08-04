@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.plans.handoff_manifest_service import PlanHandoffManifestService
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
@@ -29,6 +30,7 @@ def register_review_evidence_tools(
 ) -> None:
     """Register the trusted evidence producer and its lifecycle operations."""
     service = PlanReviewEvidenceService(db)
+    handoff_service = PlanHandoffManifestService(db)
 
     async def prepare_plan_review_round(
         plan_path: str,
@@ -202,6 +204,84 @@ def register_review_evidence_tools(
             "required": ["evidence_id", "routing_decisions"],
         },
         func=derive_plan_review_manifest,
+    )
+
+    async def derive_plan_handoff_manifest(
+        plan_path: str,
+        routing_decisions: Mapping[str, object],
+        project: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            result = await asyncio.to_thread(
+                handoff_service.derive,
+                project_id=resolve_project_id(project),
+                plan_path=plan_path,
+                routing_decisions=routing_decisions,
+            )
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "derive_plan_handoff_manifest_failed")
+        result.pop("rendered_plan", None)
+        return {"ok": True, **result}
+
+    registry.register(
+        name="derive_plan_handoff_manifest",
+        description=("Coordinator-only canonical M1 derivation for explicit human plan handoff."),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "plan_path": {"type": "string"},
+                "routing_decisions": {"type": "object"},
+                "project": {"type": "string"},
+            },
+            "required": ["plan_path", "routing_decisions"],
+        },
+        func=derive_plan_handoff_manifest,
+    )
+
+    async def apply_plan_handoff_manifest(
+        plan_path: str,
+        routing_decisions: Mapping[str, object],
+        source_plan_hash: str,
+        rendered_plan_hash: str,
+        manifest_digest: str,
+        project: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            result = await asyncio.to_thread(
+                handoff_service.apply,
+                project_id=resolve_project_id(project),
+                plan_path=plan_path,
+                routing_decisions=routing_decisions,
+                source_plan_hash=source_plan_hash,
+                rendered_plan_hash=rendered_plan_hash,
+                manifest_digest=manifest_digest,
+            )
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "apply_plan_handoff_manifest_failed")
+        return {"ok": True, "result": result}
+
+    registry.register(
+        name="apply_plan_handoff_manifest",
+        description=("Coordinator-only drift-checked atomic M1 apply for explicit human handoff."),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "plan_path": {"type": "string"},
+                "routing_decisions": {"type": "object"},
+                "source_plan_hash": {"type": "string"},
+                "rendered_plan_hash": {"type": "string"},
+                "manifest_digest": {"type": "string"},
+                "project": {"type": "string"},
+            },
+            "required": [
+                "plan_path",
+                "routing_decisions",
+                "source_plan_hash",
+                "rendered_plan_hash",
+                "manifest_digest",
+            ],
+        },
+        func=apply_plan_handoff_manifest,
     )
 
     def validate_plan_review_coverage(

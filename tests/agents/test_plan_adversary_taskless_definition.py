@@ -35,6 +35,8 @@ def test_taskless_adversary_has_no_task_lifecycle_claim() -> None:
     assert "gobby-tasks:claim_task" not in set(review_step.get("allowed_mcp_tools") or [])
     assert "gobby-tasks-ops:approve_review" in blocked
     assert "gobby-tasks-ops:reject_review" in blocked
+    assert "gobby-plans:derive_plan_handoff_manifest" in blocked
+    assert "gobby-plans:apply_plan_handoff_manifest" in blocked
 
 
 def test_taskless_adversary_loads_plan_review_and_reports_structured_result() -> None:

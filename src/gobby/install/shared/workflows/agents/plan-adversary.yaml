@@ -327,6 +327,8 @@ steps:
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-plans:apply_plan_review_manifest"
+      - "gobby-plans:derive_plan_handoff_manifest"
+      - "gobby-plans:apply_plan_handoff_manifest"
       - "gobby-plans:finalize_plan_review_evidence"
       - "gobby-plans:checkpoint_plan_review_lesson_mint"
       - "gobby-agents:end_agent_run"

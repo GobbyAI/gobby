@@ -14,8 +14,10 @@ reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
 blocked_mcp_tools:
-  - "gobby-agents:spawn_agent"
-  - "gobby-agents:kill_agent"
+- "gobby-agents:spawn_agent"
+- "gobby-agents:kill_agent"
+- "gobby-plans:derive_plan_handoff_manifest"
+- "gobby-plans:apply_plan_handoff_manifest"
 
 instructions: |
   You are the taskless adversarial reviewer for an interactive /gobby plan run.
@@ -227,6 +229,8 @@ steps:
       - "gobby-tasks-ops:reject_review"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
+      - "gobby-plans:derive_plan_handoff_manifest"
+      - "gobby-plans:apply_plan_handoff_manifest"
     allowed_mcp_tools:
       - "gobby-agents:end_agent_run"
       - "gobby-agents:send_message"
