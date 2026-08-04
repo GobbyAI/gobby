@@ -17,7 +17,11 @@ from fastapi.testclient import TestClient
 from gobby.config.logging import LoggingSettings
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
-from gobby.runner_maintenance_resources import resource_monitor_loop, run_resource_check
+from gobby.runner_maintenance_resources import (
+    LogFileSizes,
+    resource_monitor_loop,
+    run_resource_check,
+)
 from gobby.servers.routes.admin import create_admin_router
 from gobby.utils.status import format_status_message
 
@@ -35,12 +39,12 @@ def logs_dir(tmp_path: Path) -> Path:
 
 def _check(
     logs_dir: Path,
-    previous: dict[str, int] | None,
+    previous: LogFileSizes | None,
     *,
     growth_warn_mb: int = 1,
     runtime_max_mb: int = 1,
     set_runtime_output_over_limit: Callable[[bool], None] | None = None,
-) -> dict[str, int]:
+) -> LogFileSizes:
     update_limit_state = set_runtime_output_over_limit or (lambda _: None)
     return run_resource_check(
         logs_dir,
@@ -60,16 +64,18 @@ def test_first_tick_records_baseline_without_warning(
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
         sizes = _check(logs_dir, None)
 
-    assert sizes == {"daemon.log": 5 * _MB}
+    assert list(sizes.values()) == [("daemon.log", 5 * _MB)]
     assert not caplog.records
 
 
 def test_growth_over_cap_warns_with_per_file_attribution(
     logs_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    (logs_dir / "daemon.log").write_bytes(b"")
+    (logs_dir / "recall_signal.jsonl").write_bytes(b"x" * (50 * 1024))
+    previous = _check(logs_dir, None)
     (logs_dir / "daemon.log").write_bytes(b"x" * (3 * _MB))
     (logs_dir / "recall_signal.jsonl").write_bytes(b"x" * (100 * 1024))
-    previous = {"daemon.log": 0, "recall_signal.jsonl": 50 * 1024}
 
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
         _check(logs_dir, previous, growth_warn_mb=1)
@@ -95,15 +101,32 @@ def test_steady_state_stays_silent(logs_dir: Path, caplog: pytest.LogCaptureFixt
 def test_shrinking_files_do_not_offset_growth(
     logs_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    (logs_dir / "grower.log").write_bytes(b"")
+    (logs_dir / "shrinker.log").write_bytes(b"x" * (10 * _MB))
+    previous = _check(logs_dir, None)
     (logs_dir / "grower.log").write_bytes(b"x" * (2 * _MB))
     (logs_dir / "shrinker.log").write_bytes(b"")
-    previous = {"grower.log": 0, "shrinker.log": 10 * _MB}
 
     with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
         _check(logs_dir, previous, growth_warn_mb=1)
 
     [record] = caplog.records
     assert "grower.log +2.0MB" in record.getMessage()
+
+
+def test_log_rotation_preserves_inode_identity_without_false_growth(
+    logs_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    active_log = logs_dir / "daemon.log"
+    active_log.write_bytes(b"x" * (2 * _MB))
+    previous = _check(logs_dir, None)
+    active_log.rename(logs_dir / "daemon.log.1")
+    active_log.write_bytes(b"new")
+
+    with caplog.at_level(logging.WARNING, logger="gobby.runner_maintenance_resources"):
+        _check(logs_dir, previous, growth_warn_mb=1)
+
+    assert not caplog.records
 
 
 def test_runtime_log_over_cap_is_left_intact(logs_dir: Path) -> None:
@@ -120,7 +143,7 @@ def test_runtime_log_over_cap_is_left_intact(logs_dir: Path) -> None:
     )
 
     assert runtime_log.read_bytes() == captured
-    assert sizes["runtime.log"] == len(captured)
+    assert list(sizes.values()) == [("runtime.log", len(captured))]
     assert limit_states == [True]
 
 

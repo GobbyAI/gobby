@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,7 +14,8 @@ from gobby.review_learning.file_paths import (
     paths_match,
 )
 from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
-from gobby.review_learning.service import ReviewLearningService
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import FakeMemory, FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
@@ -172,3 +175,57 @@ async def test_plan_lesson_colliding_path_excluded(candidate_path: str) -> None:
     )
 
     assert result["lessons"] == []
+
+
+@pytest.mark.asyncio
+async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -> None:
+    first_path = "src/gobby/review_learning/service.py"
+    second_path = "src/gobby/hooks/session_activation.py"
+    legacy = FakeMemory(
+        id="mem-legacy",
+        content="\n".join(
+            [
+                "# Review Lesson",
+                "- pattern_id: legacy-path-lesson",
+                "- principle: Preserve legacy path matching.",
+                "- prevention: DO match evidence paths. AVOID dropping legacy lessons.",
+                f"- path: {first_path}",
+            ]
+        ),
+        tags=["review-lesson", "confirmed"],
+    )
+    tagged = FakeMemory(
+        id="mem-tagged",
+        content="\n".join(
+            [
+                "# Review Lesson",
+                "- pattern_id: tagged-path-lesson",
+                "- principle: Prefer directly tagged lessons.",
+                "- prevention: DO prioritize matching tags. AVOID per-path queries.",
+                f"- path: {second_path}",
+            ]
+        ),
+        tags=["review-lesson", "confirmed", path_tag(second_path)],
+    )
+    memory_manager = FakeMemoryManager()
+    service = ReviewLearningService(
+        cast(ReviewLearningMemoryManager, memory_manager),
+        cast(PromotionTaskManager, FakeTaskManager()),
+    )
+    list_memories = AsyncMock(return_value=[legacy, tagged, tagged])
+
+    with patch.object(memory_manager, "alist_memories", list_memories):
+        result = await service.recall_review_lessons_for_files(
+            file_paths=[first_path, second_path],
+            project_id="project",
+            limit=2,
+        )
+
+    assert list_memories.await_count == 1
+    await_args = list_memories.await_args
+    assert await_args is not None
+    assert await_args.kwargs["tags_all"] == ["review-lesson", "confirmed"]
+    assert [lesson["memory_id"] for lesson in result["lessons"]] == [
+        "mem-tagged",
+        "mem-legacy",
+    ]

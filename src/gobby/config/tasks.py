@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 from gobby.config.url_validation import validate_optional_endpoint_url
 
-DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 15.0
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 30.0
 
 __all__ = [
     "CompactHandoffConfig",

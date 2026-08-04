@@ -28,9 +28,12 @@ DEFAULT_STDERR_LOG_MAX_MB = 50
 
 _MB = 1024 * 1024
 
+LogFileIdentity = tuple[int, int]
+LogFileSizes = dict[LogFileIdentity, tuple[str, int]]
 
-def _sample_log_sizes(logs_dir: Path) -> dict[str, int]:
-    sizes: dict[str, int] = {}
+
+def _sample_log_sizes(logs_dir: Path) -> LogFileSizes:
+    sizes: LogFileSizes = {}
     try:
         entries = list(logs_dir.iterdir())
     except OSError:
@@ -38,7 +41,8 @@ def _sample_log_sizes(logs_dir: Path) -> dict[str, int]:
     for entry in entries:
         try:
             if entry.is_file():
-                sizes[entry.name] = entry.stat().st_size
+                file_stat = entry.stat()
+                sizes[(file_stat.st_dev, file_stat.st_ino)] = (entry.name, file_stat.st_size)
         except OSError:
             continue
     return sizes
@@ -62,12 +66,12 @@ def _daemon_rss_and_fds() -> tuple[int | None, int | None]:
 def run_resource_check(
     logs_dir: Path,
     runtime_log: Path,
-    previous_sizes: dict[str, int] | None,
+    previous_sizes: LogFileSizes | None,
     *,
     set_runtime_output_over_limit: Callable[[bool], None],
     growth_warn_bytes: int,
     runtime_max_bytes: int,
-) -> dict[str, int]:
+) -> LogFileSizes:
     """One monitor tick: sample sizes and report unhealthy resource growth.
 
     Returns the fresh size sample to carry into the next tick. The first tick
@@ -77,9 +81,9 @@ def run_resource_check(
     sizes = _sample_log_sizes(logs_dir)
     if previous_sizes is not None:
         deltas = {
-            name: size - previous_sizes.get(name, 0)
-            for name, size in sizes.items()
-            if size > previous_sizes.get(name, 0)
+            name: size - previous_sizes.get(identity, (name, 0))[1]
+            for identity, (name, size) in sizes.items()
+            if size > previous_sizes.get(identity, (name, 0))[1]
         }
         growth = sum(deltas.values())
         if growth >= growth_warn_bytes:
@@ -131,7 +135,7 @@ async def resource_monitor_loop(
     growth_warn_mb = logging_config.growth_warn_mb_per_interval
     runtime_max_mb = logging_config.runtime_max_size_mb
     logs_dir = resolved_logs_dir(logging_config)
-    previous: dict[str, int] | None = None
+    previous: LogFileSizes | None = None
 
     while not is_shutdown_requested():
         try:

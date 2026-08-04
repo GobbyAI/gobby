@@ -26,7 +26,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert cfg.enabled is True
     assert cfg.profile == FeatureProfile.LOW
     assert "claude/haiku" in candidate_labels(cfg.candidates)
-    assert cfg.timeout == 60
+    assert cfg.timeout == 20
     assert cfg.candidate_limit == 8
     assert cfg.min_score == 0.0
     assert DaemonConfig().memory_recall.enabled is True
@@ -35,6 +35,10 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
         MemoryRecallConfig(min_score=-0.1)
     with pytest.raises(ValueError):
         MemoryRecallConfig(min_score=1.1)
+    with pytest.raises(ValueError):
+        MemoryRecallConfig(timeout=0)
+    with pytest.raises(ValueError):
+        MemoryRecallConfig(timeout=21)
 
     disabled_config_file = temp_dir / "disabled.yaml"
     disabled_config_file.write_text(

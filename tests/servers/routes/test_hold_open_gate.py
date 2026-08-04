@@ -22,7 +22,7 @@ from starlette.datastructures import State
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
-from gobby.servers.routes.mcp.hooks import MAX_PENDING_PER_SESSION, _maybe_hold_open
+from gobby.servers.routes.mcp.hook_hold_open import MAX_PENDING_PER_SESSION, _maybe_hold_open
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -103,7 +103,7 @@ def test_rule_denial_short_circuits_before_web_chat_auto_approval(
     with (
         patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
         patch(
-            "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+            "gobby.servers.routes.mcp.hook_hold_open._maybe_hold_open",
             new_callable=AsyncMock,
             return_value={"decision": "approve"},
         ) as hold_open,
@@ -148,7 +148,7 @@ def test_allowed_result_still_uses_web_chat_hold_open(
     with (
         patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
         patch(
-            "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+            "gobby.servers.routes.mcp.hook_hold_open._maybe_hold_open",
             new_callable=AsyncMock,
             return_value=hold_open_result,
         ) as hold_open,

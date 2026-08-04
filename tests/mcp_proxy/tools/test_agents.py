@@ -1524,7 +1524,7 @@ class TestEndAgentRun:
         assert result == {"success": True, "run_id": "run-123", "status": "success"}
 
     @pytest.mark.asyncio
-    async def test_terminalizes_before_closing_terminal(self) -> None:
+    async def test_kills_provider_before_terminalizing_run(self) -> None:
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
             run_id="run-123",
@@ -1560,7 +1560,7 @@ class TestEndAgentRun:
             result = await registry._tools["end_agent_run"].func()
 
         assert result == {"success": True, "run_id": "run-123", "status": "success"}
-        assert events == [("complete", "run-123", None), ("kill", "run-123", False)]
+        assert events == [("kill", "run-123", False), ("complete", "run-123", None)]
 
     @pytest.mark.asyncio
     async def test_returns_error_when_session_has_no_agent_run(self) -> None:
@@ -1822,6 +1822,51 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
     so the wake dispatcher's content-fallback chain surfaces the verdict to
     the parent's P2P inbox.
     """
+
+    @pytest.mark.asyncio
+    async def test_provider_process_is_killed_before_terminal_persistence(self) -> None:
+        from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
+
+        events: list[str] = []
+        run = MagicMock(
+            id="run-ordered-cleanup",
+            child_session_id=None,
+            tmux_session_name=None,
+        )
+        runner = MagicMock()
+
+        async def kill_process(*_args: object, **_kwargs: object) -> dict[str, bool]:
+            events.append("kill")
+            return {"success": True}
+
+        async def complete_run(*_args: object, **_kwargs: object) -> bool:
+            events.append("complete")
+            return True
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new=kill_process,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
+                new=complete_run,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await _complete_self_terminated_run(
+                runner=runner,
+                run=run,
+                kill_db=MagicMock(),
+                completion_registry=MagicMock(),
+                session_manager=None,
+            )
+
+        assert events == ["kill", "complete"]
+        assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_self_termination_removes_acknowledged_subscription(

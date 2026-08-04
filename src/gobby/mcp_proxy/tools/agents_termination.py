@@ -118,14 +118,6 @@ async def _complete_self_terminated_run(
         result["status"] = "success"
         result["tmux_session_killed"] = True
     else:
-        completed = await complete_with_acknowledged_delivery()
-        if not completed:
-            current = runner.get_run(run.id)
-            result["status"] = current.status if current else "unknown"
-            result["noop"] = True
-        else:
-            result["status"] = "success"
-
         kill_result = await agents._kill_agent_process(
             run,
             kill_db,
@@ -136,6 +128,14 @@ async def _complete_self_terminated_run(
             result.update(kill_result)
         else:
             result["terminal_cleanup_error"] = kill_result.get("error") or "unknown cleanup"
+
+        completed = await complete_with_acknowledged_delivery()
+        if not completed:
+            current = runner.get_run(run.id)
+            result["status"] = current.status if current else "unknown"
+            result["noop"] = True
+        else:
+            result["status"] = "success"
 
     await agents._cleanup_terminal_artifacts(
         run_id=run.id,

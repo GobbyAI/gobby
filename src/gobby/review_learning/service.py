@@ -501,30 +501,12 @@ class ReviewLearningService:
         limit: int,
     ) -> list[tuple[Any, str | None]]:
         tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
-        candidates: list[tuple[Any, str | None]] = []
+        tagged_candidates: list[tuple[Any, str | None]] = []
+        untagged_candidates: list[tuple[Any, str | None]] = []
         seen: set[str] = set()
         code_domain_exclusions = list(CODE_DOMAIN_EXCLUDED_TAGS)
 
-        for tag, touched_path in tagged_paths.items():
-            tagged_memories = await self.memory_manager.alist_memories(
-                project_id=project_id,
-                memory_type="pattern",
-                limit=max(_LEGACY_SCAN_LIMIT, limit),
-                tags_all=["review-lesson", "confirmed", tag],
-                tags_none=code_domain_exclusions,
-                include_global=False,
-            )
-            for memory in tagged_memories:
-                memory_id = str(getattr(memory, "id", "") or "")
-                if not memory_id or memory_id in seen:
-                    continue
-                seen.add(memory_id)
-                candidates.append((memory, touched_path))
-
-        if len(candidates) >= limit:
-            return candidates
-
-        legacy_memories = await self.memory_manager.alist_memories(
+        memories = await self.memory_manager.alist_memories(
             project_id=project_id,
             memory_type="pattern",
             limit=max(_LEGACY_SCAN_LIMIT, limit),
@@ -532,14 +514,23 @@ class ReviewLearningService:
             tags_none=code_domain_exclusions,
             include_global=False,
         )
-        for memory in legacy_memories:
+        for memory in memories:
             memory_id = str(getattr(memory, "id", "") or "")
             if not memory_id or memory_id in seen:
                 continue
             seen.add(memory_id)
-            candidates.append((memory, None))
+            memory_tags = set(getattr(memory, "tags", []) or [])
+            matched_path = next(
+                (path for tag, path in tagged_paths.items() if tag in memory_tags),
+                None,
+            )
+            candidate = (memory, matched_path)
+            if matched_path is None:
+                untagged_candidates.append(candidate)
+            else:
+                tagged_candidates.append(candidate)
 
-        return candidates
+        return tagged_candidates + untagged_candidates
 
 
 def build_recall_queries(

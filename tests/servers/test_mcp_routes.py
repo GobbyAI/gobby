@@ -3341,7 +3341,7 @@ class TestHooksEndpoints:
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
-        assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS < 30
+        assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS == 35
         release_adapter = threading.Event()
         adapter_finished = threading.Event()
 
@@ -3908,7 +3908,7 @@ class TestHooksEndpoints:
             TestClient(server.app) as client,
             patch(adapter_patch) as MockAdapter,
             patch(
-                "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+                "gobby.servers.routes.mcp.hook_hold_open._maybe_hold_open",
                 new_callable=AsyncMock,
             ) as mock_hold_open,
         ):
@@ -4254,7 +4254,7 @@ class TestHooksEndpoints:
             TestClient(server.app) as client,
             patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
             patch(
-                "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+                "gobby.servers.routes.mcp.hook_hold_open._maybe_hold_open",
                 new_callable=AsyncMock,
             ) as mock_hold_open,
         ):

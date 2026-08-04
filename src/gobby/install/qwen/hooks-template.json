@@ -8,7 +8,7 @@
             "name": "gobby-session-start",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=SessionStart",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -20,7 +20,7 @@
             "name": "gobby-session-end",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=SessionEnd",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -32,7 +32,7 @@
             "name": "gobby-user-prompt-submit",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=UserPromptSubmit",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -45,7 +45,7 @@
             "name": "gobby-pre-tool-use",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PreToolUse",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -58,7 +58,7 @@
             "name": "gobby-permission-request",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PermissionRequest",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -71,7 +71,7 @@
             "name": "gobby-post-tool-use",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PostToolUse",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -84,7 +84,7 @@
             "name": "gobby-post-tool-use-failure",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PostToolUseFailure",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -96,7 +96,7 @@
             "name": "gobby-stop",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=Stop",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -109,7 +109,7 @@
             "name": "gobby-stop-failure",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=StopFailure",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -122,7 +122,7 @@
             "name": "gobby-subagent-start",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=SubagentStart",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -135,7 +135,7 @@
             "name": "gobby-subagent-stop",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=SubagentStop",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -147,7 +147,7 @@
             "name": "gobby-pre-compact",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PreCompact",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -159,7 +159,7 @@
             "name": "gobby-post-compact",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=PostCompact",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -171,7 +171,7 @@
             "name": "gobby-notification",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=Notification",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -183,7 +183,7 @@
             "name": "gobby-todo-created",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=TodoCreated",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }
@@ -195,7 +195,7 @@
             "name": "gobby-todo-completed",
             "type": "command",
             "command": "ghook --gobby-owned --cli=qwen --type=TodoCompleted",
-            "timeout": 30000
+            "timeout": 45000
           }
         ]
       }

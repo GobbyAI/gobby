@@ -66,6 +66,7 @@ class ToolResultOffloader:
         result: Any,
         session_id: str | None,
         intent: str | None,
+        project_id: str | None = None,
     ) -> Any:
         """Return the original result or a bounded retrieval envelope."""
         return await asyncio.to_thread(
@@ -75,6 +76,7 @@ class ToolResultOffloader:
             result=result,
             session_id=session_id,
             intent=intent,
+            project_id=project_id,
         )
 
     def _maybe_offload_sync(
@@ -85,6 +87,7 @@ class ToolResultOffloader:
         result: Any,
         session_id: str | None,
         intent: str | None,
+        project_id: str | None,
     ) -> Any:
         if not self._config.enabled:
             return result
@@ -112,13 +115,14 @@ class ToolResultOffloader:
 
         total_chars = len(serialized.text)
         stored_content = serialized.text[: self._config.max_stored_chars]
-        project_id: str | None = None
+        resolved_project_id = project_id
         try:
-            project_id = self._project_id_getter()
-            if not project_id:
+            if not resolved_project_id:
+                resolved_project_id = self._project_id_getter()
+            if not resolved_project_id:
                 raise ValueError("project context is unavailable")
             result_id = self._store.save(
-                project_id=project_id,
+                project_id=resolved_project_id,
                 session_id=session_id,
                 server_name=server_name,
                 tool_name=tool_name,
@@ -132,7 +136,7 @@ class ToolResultOffloader:
                 extra={
                     "server_name": server_name,
                     "tool_name": tool_name,
-                    "project_id": project_id,
+                    "project_id": resolved_project_id,
                 },
                 exc_info=True,
             )

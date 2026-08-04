@@ -120,6 +120,7 @@ async def test_dispatch_offloads_after_after_tool_workflow_sees_full_result() ->
             tool_name="large_tool",
             arguments={"value": 1},
             effective_session_id="session",
+            project_id=PROJECT_ID,
             emit_after_workflow=True,
             timeout=None,
             wrapper_originated=True,
@@ -143,6 +144,7 @@ async def test_dispatch_offloads_after_after_tool_workflow_sees_full_result() ->
             "result": full_result,
             "session_id": "session",
             "intent": "find payload",
+            "project_id": PROJECT_ID,
         }
     ]
 
@@ -166,6 +168,7 @@ async def test_dispatch_keeps_full_result_for_internal_consumers() -> None:
             tool_name="large_tool",
             arguments={},
             effective_session_id=None,
+            project_id=None,
             emit_after_workflow=False,
             timeout=None,
             wrapper_originated=False,
@@ -368,6 +371,23 @@ async def test_oversized_result_is_stored_and_returns_configured_envelope() -> N
     assert "3000 chars" in actual["guidance"]
     assert "retrievable for 9 days" in actual["guidance"]
     assert "matches" not in actual
+
+
+async def test_explicit_project_id_keeps_oversized_result_retrievable() -> None:
+    harness = _harness(project_id=None)
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result={"payload": "x" * 4_000},
+        session_id="session",
+        intent=None,
+        project_id=PROJECT_ID,
+    )
+
+    assert actual["retrieval_available"] is True
+    assert actual["result_id"] == RESULT_ID
+    assert harness.store.save.call_args.kwargs["project_id"] == PROJECT_ID
 
 
 @pytest.mark.asyncio

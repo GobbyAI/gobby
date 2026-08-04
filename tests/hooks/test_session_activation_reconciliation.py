@@ -893,6 +893,41 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     assert variables["task_edited_files"] == {}
 
 
+def test_pipeline_session_skips_agent_activation_and_reconciles_baseline(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = session_manager.register_session(
+        external_id="pipeline-session",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="pipeline",
+        project_id=project_id,
+        project_path=str(tmp_path),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {"_agent_type": "pipeline", "session_edited_files": ["kept.py"]},
+    )
+    activate = MagicMock(side_effect=AssertionError("pipeline session activated an agent"))
+    monkeypatch.setattr(handlers, "_activate_default_agent", activate)
+    monkeypatch.setattr(
+        "gobby.workflows.git_utils.get_dirty_files_categorized",
+        lambda _path: DirtyFiles(tracked={"dirty.py"}, untracked={"new.py"}),
+    )
+
+    reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
+
+    variables = _variables(db, session_id)
+    activate.assert_not_called()
+    assert variables["_agent_type"] == "pipeline"
+    assert variables["baseline_dirty_files"] == ["dirty.py", "new.py"]
+    assert variables["session_edited_files"] == ["kept.py"]
+
+
 def test_baseline_dirty_prefers_valid_repo_path_over_unusable_cwd(
     db: HubDatabase,
     session_manager: SessionManager,

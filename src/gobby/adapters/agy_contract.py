@@ -38,8 +38,8 @@ AGY_FLAT_HOOK_NAMES: tuple[str, ...] = tuple(
     name for name in AGY_HOOK_NAMES if name not in AGY_GROUPED_HOOK_NAMES
 )
 
-# AGY documents `timeout` in seconds, defaulting to 30.
-AGY_HOOK_TIMEOUT_SECONDS = 30
+# AGY documents `timeout` in seconds.
+AGY_HOOK_TIMEOUT_SECONDS = 45
 
 
 AGY_HOOK_CONTRACTS: dict[str, AgyHookContract] = {

@@ -350,7 +350,9 @@ async def _call_tool_impl(
     arguments = cast("dict[str, Any]", prepared_arguments or {})
 
     hook_manager = service._resolve_hook_manager()
-    session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
+    session_manager = getattr(service, "session_manager", None)
+    if session_manager is None:
+        session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
     project_ctx = get_project_context()
     project_id = project_ctx.get("id") if project_ctx else None
     project_id_from_context = isinstance(project_id, str)
@@ -432,6 +434,12 @@ async def _call_tool_impl(
             tool_name,
             arguments,
         )
+
+    if effective_session_id and session_manager is not None:
+        effective_session = await asyncio.to_thread(session_manager.get, effective_session_id)
+        session_project_id = getattr(effective_session, "project_id", None)
+        if isinstance(session_project_id, str) and session_project_id:
+            project_id = session_project_id
 
     if enforce_workflow:
         (
@@ -534,6 +542,7 @@ async def _call_tool_impl(
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
+        project_id=project_id,
         emit_after_workflow=enforce_workflow,
         timeout=timeout,
         wrapper_originated=wrapper_originated,
@@ -556,6 +565,7 @@ async def _execute_tool_dispatch(
     tool_name: str,
     arguments: dict[str, Any],
     effective_session_id: str | None,
+    project_id: str | None,
     emit_after_workflow: bool,
     timeout: float | None,
     wrapper_originated: bool,
@@ -591,6 +601,7 @@ async def _execute_tool_dispatch(
             result=result,
             session_id=effective_session_id,
             intent=intent,
+            project_id=project_id,
         )
     return result
 

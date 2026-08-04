@@ -18,6 +18,7 @@ from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.results import create_results_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tool_results import ToolResultStore
 from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 
@@ -28,6 +29,7 @@ pytestmark = pytest.mark.unit
 async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    session_manager: SessionManager,
 ) -> None:
     config = ToolResultOffloadConfig(
         threshold_chars=3_000,
@@ -53,10 +55,17 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
         store,
         temp_db,
         config,
-        lambda: project_id,
+        lambda: None,
+    )
+    session_id = session_manager.register_session(
+        external_id="offload-session",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=project_id,
     )
     mcp_manager = MagicMock()
-    mcp_manager.project_id = project_id
+    mcp_manager.project_id = None
+    mcp_manager.session_manager = session_manager
     proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=manager,
@@ -68,6 +77,7 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
         "gobby-large",
         "list_large",
         {},
+        session_id=session_id,
         wrapper_originated=True,
     )
     full_result = await proxy.call_tool(

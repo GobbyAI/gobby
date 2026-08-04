@@ -155,6 +155,7 @@ def _reconcile_session_activation(
             changed=False,
             reason=f"session_status_terminal:{session_status}",
         )
+    is_pipeline_session = getattr(session, "source", None) == "pipeline"
 
     db = getattr(session_manager, "db", None)
     if db is None:
@@ -178,10 +179,14 @@ def _reconcile_session_activation(
         variables = sv_mgr.get_variables(session_id)
         missing.append("terminal_pickup_metadata")
 
-    activation_missing = _missing_agent_keys(variables)
+    activation_missing = [] if is_pipeline_session else _missing_agent_keys(variables)
     missing.extend(activation_missing)
 
-    step_missing = _missing_step_workflow(db, session_id, variables, session, agent_run)
+    step_missing = (
+        []
+        if is_pipeline_session
+        else _missing_step_workflow(db, session_id, variables, session, agent_run)
+    )
     missing.extend(step_missing)
 
     if activation_missing or step_missing:
@@ -211,7 +216,9 @@ def _reconcile_session_activation(
     missing.extend(_missing_baseline_keys(variables))
     updates.update(_baseline_updates(event, variables, log))
     updates.update(_step_completion_updates(variables))
-    if _ensure_step_workflow_from_definition(db, session_id, variables, session):
+    if not is_pipeline_session and _ensure_step_workflow_from_definition(
+        db, session_id, variables, session
+    ):
         variables = sv_mgr.get_variables(session_id)
         missing = [m for m in missing if m != "step_workflow_instance"]
 
