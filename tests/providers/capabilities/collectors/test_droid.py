@@ -79,7 +79,6 @@ async def test_context_falls_back_to_model_metadata() -> None:
         resolved = resolve_context_window_with_source(
             model.canonical_model,
             provider="droid",
-            catalog=object(),
             provider_reported_context_window=model.context_length,
         )
 
