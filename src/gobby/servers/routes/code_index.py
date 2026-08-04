@@ -72,6 +72,21 @@ def _require_project_id(project_id: str | None) -> str:
     return project_id
 
 
+def _scoped_project_id(
+    server: HTTPServer,
+    request: Request,
+    project_id: str | None,
+) -> str:
+    if request.headers.get("Authorization") is None:
+        return _require_project_id(project_id)
+    claims = server.auth_service.verified_agent_claims(request)
+    if claims is None:
+        return _require_project_id(project_id)
+    if project_id is not None and project_id != claims.project_id:
+        raise HTTPException(status_code=403, detail="Project does not match agent capability")
+    return claims.project_id
+
+
 def _server_wiki_config(server: HTTPServer) -> WikiConfig:
     wiki_config = getattr(getattr(server, "config", None), "wiki", None)
     if isinstance(wiki_config, WikiConfig):
@@ -376,12 +391,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/graph/clear")
     async def clear_graph(
+        request: Request,
         project_id: str | None = Query(None, description="Project ID"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code indexer not available")
-        scoped_project = _require_project_id(project_id)
+        scoped_project = _scoped_project_id(server, request, project_id)
         try:
             result = await code_indexer.clear_graph(scoped_project)
         except HTTPException:
@@ -401,12 +417,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/graph/rebuild")
     async def rebuild_graph(
+        request: Request,
         project_id: str | None = Query(None, description="Project ID"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code indexer not available")
-        scoped_project = _require_project_id(project_id)
+        scoped_project = _scoped_project_id(server, request, project_id)
         try:
             result = await code_indexer.rebuild_graph(scoped_project)
         except HTTPException:
@@ -425,7 +442,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         return cast(dict[str, Any], result)
 
     @router.post("/invalidate")
-    async def invalidate_index(body: InvalidateIndexRequest) -> JSONResponse:
+    async def invalidate_index(request: Request, body: InvalidateIndexRequest) -> JSONResponse:
         """Clear all index data for a project. Called by gcode invalidate."""
         services = server.services
         code_indexer = getattr(services, "code_indexer", None)
@@ -436,12 +453,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 content={"error": "Code indexer not available"},
             )
 
-        project_id = body.project_id
-        if not project_id:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "project_id is required"},
-            )
+        project_id = _scoped_project_id(server, request, body.project_id)
 
         stats = await _run_db(server, code_indexer.storage.get_project_stats, project_id)
         if stats is None:

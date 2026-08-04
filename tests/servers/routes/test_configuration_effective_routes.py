@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.local_token import issue_agent_api_token
 from tests.servers.conftest import create_http_server
+
+if TYPE_CHECKING:
+    from gobby.storage.sessions import SessionManager
 
 LOCAL_RUNTIME_TOKEN = "effective-config-test-token"
 
@@ -64,10 +70,12 @@ def server(
         task_manager=LocalTaskManager(hub_db),
         auth_mode="disabled",
     )
+    token_file = tmp_path / "local-cli-token"
+    token_file.write_text(LOCAL_RUNTIME_TOKEN, encoding="utf-8")
     http_server.auth_service = AuthService(
         lambda: hub_db,
         mode="disabled",
-        token_file=tmp_path / "missing-local-token",
+        token_file=token_file,
     )
     return http_server
 
@@ -78,6 +86,249 @@ def client(server: Any) -> TestClient:
         server.app,
         headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
     )
+
+
+def _agent_headers(
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    *,
+    minted_at: float | None = None,
+) -> tuple[AgentRun, dict[str, str]]:
+    session = session_manager.register(
+        external_id="service-capabilities-agent",
+        machine_id="22000000-0000-4000-8000-000000000001",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    run = LocalAgentRunManager(hub_db).create(
+        parent_session_id=session.id,
+        provider="claude",
+        prompt="service capabilities",
+    )
+    token_args = {
+        "agent_run_id": run.id,
+        "session_id": session.id,
+        "project_id": sample_project["id"],
+    }
+    if minted_at is None:
+        token = issue_agent_api_token(LOCAL_RUNTIME_TOKEN, **token_args)
+    else:
+        with patch("gobby.utils.local_token.time.time", return_value=minted_at):
+            token = issue_agent_api_token(LOCAL_RUNTIME_TOKEN, **token_args)
+    return run, {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Agent-Run-Id": run.id,
+        "X-Gobby-Caller-Project-Id": sample_project["id"],
+        "X-Gobby-Session-Id": session.id,
+    }
+
+
+@pytest.mark.integration
+def test_service_capabilities_are_claim_bound_and_allowlisted(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    ConfigStore(hub_db).set_many(
+        {
+            "indexing.respect_gitignore": False,
+            "gwiki.enabled": True,
+        }
+    )
+    run, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    response = TestClient(server.app).get("/api/config/service-capabilities", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["Cache-Control"] == "no-store"
+    payload = response.json()
+    assert payload["version"] == 1
+    assert payload["execution"] == {
+        "agent_run_id": run.id,
+        "project_id": sample_project["id"],
+        "session_id": headers["X-Gobby-Session-Id"],
+        "expires_at": payload["execution"]["expires_at"],
+    }
+    assert payload["config"] == {
+        "ai.embeddings.dim": "768",
+        "ai.embeddings.model": "daemon-embedding-model",
+        "ai.embeddings.routing": "daemon",
+        "databases.falkordb.host": "daemon-falkor.test",
+        "databases.falkordb.port": "16379",
+        "indexing.respect_gitignore": "false",
+    }
+    assert payload["services"] == {
+        "embeddings": {
+            "mode": "brokered",
+            "operations": [{"name": "embed", "method": "POST", "path": "/api/embeddings"}],
+        },
+        "falkordb": {
+            "mode": "direct",
+            "operations": [
+                {
+                    "name": "clear_projection",
+                    "method": "POST",
+                    "path": "/api/code-index/graph/clear",
+                },
+                {
+                    "name": "rebuild_projection",
+                    "method": "POST",
+                    "path": "/api/code-index/graph/rebuild",
+                },
+            ],
+        },
+        "qdrant": {
+            "mode": "brokered",
+            "operations": [
+                {
+                    "name": "invalidate_projection",
+                    "method": "POST",
+                    "path": "/api/code-index/invalidate",
+                }
+            ],
+        },
+    }
+    for forbidden in (
+        "daemon-embedding-key",
+        "daemon-qdrant-key",
+        "postgresql://daemon",
+        ".secret_kek",
+        "gwiki.enabled",
+    ):
+        assert forbidden not in response.text
+
+
+@pytest.mark.integration
+def test_service_capabilities_reject_operator_expired_and_mismatched_identity(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    _, valid_headers = _agent_headers(hub_db, session_manager, sample_project)
+    _, expired_headers = _agent_headers(
+        hub_db,
+        session_manager,
+        sample_project,
+        minted_at=1,
+    )
+    operator_headers = {
+        **valid_headers,
+        "Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}",
+    }
+    mismatches = [
+        {**valid_headers, "X-Gobby-Agent-Run-Id": "wrong-run"},
+        {**valid_headers, "X-Gobby-Caller-Project-Id": "wrong-project"},
+        {**valid_headers, "X-Gobby-Session-Id": "wrong-session"},
+    ]
+    client = TestClient(server.app)
+
+    responses = [
+        client.get("/api/config/service-capabilities", headers=operator_headers),
+        client.get("/api/config/service-capabilities", headers=expired_headers),
+        *(
+            client.get("/api/config/service-capabilities", headers=headers)
+            for headers in mismatches
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [401, 401, 401, 401, 401]
+
+
+@pytest.mark.integration
+def test_service_capabilities_reject_query_selected_secrets(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    _, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    response = TestClient(server.app).get(
+        "/api/config/service-capabilities?secret_name=embedding_api_key",
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "service_url",
+    ["http://shared:credential@daemon-qdrant.test:6333", "not a valid URL"],
+)
+def test_service_capabilities_broker_credentialed_or_invalid_service_urls(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    service_url: str,
+) -> None:
+    config = server.services.config
+    server.services.config = config.model_copy(
+        update={
+            "databases": config.databases.model_copy(
+                update={
+                    "qdrant": config.databases.qdrant.model_copy(
+                        update={
+                            "url": service_url,
+                            "api_key": None,
+                        }
+                    )
+                }
+            )
+        }
+    )
+    _, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    response = TestClient(server.app).get("/api/config/service-capabilities", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert "databases.qdrant.url" not in response.json()["config"]
+    assert response.json()["services"]["qdrant"]["mode"] == "brokered"
+    assert service_url not in response.text
+
+
+def test_service_capabilities_omit_unresolved_runtime_config_markers(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    config = server.services.config
+    server.services.config = config.model_copy(
+        update={
+            "embeddings": config.embeddings.model_copy(
+                update={"model": "$secret:SHARED_MODEL", "query_prefix": "${SHARED_PREFIX}"}
+            ),
+            "databases": config.databases.model_copy(
+                update={
+                    "falkordb": config.databases.falkordb.model_copy(
+                        update={"host": "$secret:FALKOR_HOST"}
+                    ),
+                    "qdrant": config.databases.qdrant.model_copy(
+                        update={"url": "http://${SHARED_HOST}:6333", "api_key": None}
+                    ),
+                }
+            ),
+        }
+    )
+    _, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    response = TestClient(server.app).get("/api/config/service-capabilities", headers=headers)
+
+    assert response.status_code == 200, response.text
+    managed_config = response.json()["config"]
+    assert "ai.embeddings.model" not in managed_config
+    assert "ai.embeddings.query_prefix" not in managed_config
+    assert "databases.falkordb.host" not in managed_config
+    assert "databases.qdrant.url" not in managed_config
+    assert response.json()["services"]["falkordb"]["mode"] == "brokered"
+    assert response.json()["services"]["qdrant"]["mode"] == "brokered"
+    assert "$secret:" not in response.text
+    assert "${" not in response.text
 
 
 @pytest.mark.integration

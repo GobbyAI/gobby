@@ -9,21 +9,27 @@ use super::services::{
     FallbackConfigSource, ServiceConfigSource, read_standalone_config_optional, service_env_value,
 };
 
+const MANAGED_EXECUTION_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
+
 #[derive(Debug, Clone)]
 pub(crate) struct ConfigLayers {
     daemon: Option<DaemonServedConfig>,
     standalone: Option<StandaloneConfig>,
+    managed: bool,
 }
 
 pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
+    let managed = std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV).is_some();
     match daemon_mode_layers()? {
         Some((daemon, routing)) => Ok(ConfigLayers {
             daemon: Some(daemon),
             standalone: routing,
+            managed,
         }),
         None => Ok(ConfigLayers {
             daemon: None,
             standalone: read_standalone_config_optional(),
+            managed: false,
         }),
     }
 }
@@ -32,6 +38,7 @@ pub(super) enum ServiceSource<'a> {
     Daemon {
         served: DaemonServedConfig,
         routing: Option<StandaloneConfig>,
+        managed: bool,
         hits: HashMap<String, &'static str>,
         last_value_from_routing: bool,
     },
@@ -41,15 +48,20 @@ pub(super) enum ServiceSource<'a> {
 impl<'a> ServiceSource<'a> {
     pub(super) fn new(conn: &'a mut Client, layers: &ConfigLayers) -> Self {
         match layers.daemon.clone() {
-            Some(served) => Self::daemon(served, layers.standalone.clone()),
+            Some(served) => Self::daemon(served, layers.standalone.clone(), layers.managed),
             None => Self::Hub(FallbackConfigSource::new(conn, layers.standalone.clone())),
         }
     }
 
-    fn daemon(served: DaemonServedConfig, routing: Option<StandaloneConfig>) -> Self {
+    fn daemon(
+        served: DaemonServedConfig,
+        routing: Option<StandaloneConfig>,
+        managed: bool,
+    ) -> Self {
         Self::Daemon {
             served,
             routing,
+            managed,
             hits: HashMap::new(),
             last_value_from_routing: false,
         }
@@ -62,11 +74,12 @@ impl ServiceConfigSource for ServiceSource<'_> {
             Self::Daemon {
                 served,
                 routing,
+                managed,
                 hits,
                 last_value_from_routing,
             } => {
                 *last_value_from_routing = false;
-                if let Some(value) = service_env_value(key) {
+                if !*managed && let Some(value) = service_env_value(key) {
                     hits.insert(key.to_string(), "env");
                     return Ok(Some(value));
                 }
@@ -74,9 +87,13 @@ impl ServiceConfigSource for ServiceSource<'_> {
                     hits.insert(key.to_string(), "daemon");
                     return Ok(Some(value));
                 }
-                let value = routing
-                    .as_mut()
-                    .and_then(|routing| routing.config_value(key));
+                let value = if *managed {
+                    None
+                } else {
+                    routing
+                        .as_mut()
+                        .and_then(|routing| routing.config_value(key))
+                };
                 if value.is_some() {
                     hits.insert(key.to_string(), "gcore.yaml");
                     *last_value_from_routing = true;
@@ -148,6 +165,7 @@ mod tests {
             let mut source = ServiceSource::daemon(
                 served([("databases.qdrant.url", "http://daemon.example:6333")]),
                 Some(routing.clone()),
+                false,
             );
             assert_eq!(
                 source
@@ -161,6 +179,7 @@ mod tests {
         let mut source = ServiceSource::daemon(
             served([("databases.qdrant.url", "http://daemon.example:6333")]),
             Some(routing.clone()),
+            false,
         );
         assert_eq!(
             source
@@ -170,7 +189,7 @@ mod tests {
             Some("http://daemon.example:6333")
         );
 
-        let mut source = ServiceSource::daemon(served([]), Some(routing));
+        let mut source = ServiceSource::daemon(served([]), Some(routing), false);
         assert_eq!(
             source
                 .config_value("databases.qdrant.url")
@@ -186,7 +205,7 @@ mod tests {
         let routing =
             StandaloneConfig::from_yaml_str_raw("ai.embeddings.routing: ${ROUTING_ENV}\n")
                 .expect("parse routing config");
-        let mut source = ServiceSource::daemon(served([]), Some(routing));
+        let mut source = ServiceSource::daemon(served([]), Some(routing), false);
         let value = source
             .config_value("ai.embeddings.routing")
             .expect("read routing value")
@@ -201,6 +220,42 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn managed_service_source_uses_only_bundle_values() {
+        let routing =
+            StandaloneConfig::from_yaml_str_raw("databases.qdrant.url: $secret:qdrant_url\n")
+                .expect("parse standalone config");
+
+        temp_env::with_vars(
+            [
+                ("GOBBY_QDRANT_URL", Some("http://env.example:6333")),
+                ("GOBBY_QDRANT_API_KEY", Some("shared-env-secret")),
+            ],
+            || {
+                let mut source = ServiceSource::daemon(
+                    served([("databases.qdrant.url", "http://bundle.example:6333")]),
+                    Some(routing),
+                    true,
+                );
+
+                assert_eq!(
+                    source
+                        .config_value("databases.qdrant.url")
+                        .expect("resolve bundle value")
+                        .as_deref(),
+                    Some("http://bundle.example:6333")
+                );
+                assert_eq!(
+                    source
+                        .config_value("databases.qdrant.api_key")
+                        .expect("secret key fails closed"),
+                    None
+                );
+            },
+        );
+    }
+
+    #[test]
     fn embedding_details_attribute_served_values_to_daemon() {
         let routing = StandaloneConfig::from_yaml_str_raw("ai.embeddings.routing: direct\n")
             .expect("parse routing config");
@@ -211,6 +266,7 @@ mod tests {
                 (embedding_keys::AI_MODEL, "served-embed"),
             ]),
             Some(routing),
+            false,
         );
 
         let details = resolve_embedding_config_details_from_service_source(&mut source)

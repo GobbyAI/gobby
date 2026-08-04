@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Literal
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict
 
 from gobby.config._loading import expand_env_vars
 from gobby.config.app import DaemonConfig
@@ -21,12 +24,72 @@ from gobby.config.embedding_keys import (
 )
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
+from gobby.utils.local_token import AgentApiTokenClaims
 
 logger = logging.getLogger(__name__)
 
 _SERVED_PREFIXES = ("ai.", "databases.", "indexing.", "gwiki.")
 _EXCLUDED_KEYS = {EMBEDDING_SWITCH_JOURNAL_KEY}
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^{}]*\}")
+_MANAGED_CONFIG_KEYS = frozenset(
+    {
+        "ai.embeddings.dim",
+        "ai.embeddings.model",
+        "ai.embeddings.query_prefix",
+        "ai.embeddings.routing",
+        "ai.embeddings.timeout_seconds",
+        "databases.falkordb.host",
+        "databases.falkordb.port",
+        "databases.qdrant.url",
+        "indexing.respect_gitignore",
+    }
+)
+
+
+class BrokerOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: Literal["embed", "clear_projection", "rebuild_projection", "invalidate_projection"]
+    method: Literal["POST"]
+    path: Literal[
+        "/api/embeddings",
+        "/api/code-index/graph/clear",
+        "/api/code-index/graph/rebuild",
+        "/api/code-index/invalidate",
+    ]
+
+
+class ServiceCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["direct", "brokered", "unavailable"]
+    operations: tuple[BrokerOperation, ...]
+
+
+class ServiceCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    embeddings: ServiceCapability
+    falkordb: ServiceCapability
+    qdrant: ServiceCapability
+
+
+class ExecutionBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_run_id: str
+    project_id: str
+    session_id: str
+    expires_at: int
+
+
+class ServiceCapabilityBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal[1] = 1
+    execution: ExecutionBinding
+    config: dict[str, str]
+    services: ServiceCapabilities
 
 
 def _is_served_key(key: str) -> bool:
@@ -45,6 +108,21 @@ def _stringify_config_value(value: object) -> str:
 
 def _contains_unresolved_marker(value: str) -> bool:
     return "$secret:" in value or _UNRESOLVED_ENV_PATTERN.search(value) is not None
+
+
+def _url_requires_broker(value: str | None) -> bool:
+    if not value or _contains_unresolved_marker(value):
+        return True
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+        )
+    except ValueError:
+        return True
 
 
 def _warn_omitted(key: str, reason: str) -> None:
@@ -110,6 +188,97 @@ def _apply_runtime_overlays(
         values[key] = value
 
 
+def _managed_config_values(
+    context: ConfigurationRouteContext,
+    config: DaemonConfig,
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+
+    def include(key: str, raw_value: object) -> None:
+        try:
+            value = _stringify_config_value(raw_value)
+        except (TypeError, ValueError):
+            values.pop(key, None)
+            return
+        if _contains_unresolved_marker(value):
+            values.pop(key, None)
+            return
+        values[key] = value
+
+    for key, raw_value in sorted(context.get_config_store().get_all().items()):
+        if key not in _MANAGED_CONFIG_KEYS:
+            continue
+        include(key, raw_value)
+
+    embeddings = config.embeddings
+    values["ai.embeddings.routing"] = "daemon"
+    include("ai.embeddings.model", embeddings.model)
+    include("ai.embeddings.dim", embeddings.dim)
+    if embeddings.query_prefix is None:
+        values.pop("ai.embeddings.query_prefix", None)
+    else:
+        include("ai.embeddings.query_prefix", embeddings.query_prefix)
+
+    falkordb = config.databases.falkordb
+    if falkordb.password:
+        values.pop("databases.falkordb.host", None)
+        values.pop("databases.falkordb.port", None)
+    else:
+        include("databases.falkordb.host", falkordb.host)
+        include("databases.falkordb.port", falkordb.port)
+
+    qdrant = config.databases.qdrant
+    if qdrant.api_key or _url_requires_broker(qdrant.url):
+        values.pop("databases.qdrant.url", None)
+    elif qdrant.url:
+        include("databases.qdrant.url", qdrant.url)
+    return values
+
+
+_EMBEDDING_BROKERS = (BrokerOperation(name="embed", method="POST", path="/api/embeddings"),)
+_FALKOR_BROKERS = (
+    BrokerOperation(
+        name="clear_projection",
+        method="POST",
+        path="/api/code-index/graph/clear",
+    ),
+    BrokerOperation(
+        name="rebuild_projection",
+        method="POST",
+        path="/api/code-index/graph/rebuild",
+    ),
+)
+_QDRANT_BROKERS = (
+    BrokerOperation(
+        name="invalidate_projection",
+        method="POST",
+        path="/api/code-index/invalidate",
+    ),
+)
+
+
+def _service_capabilities(config: DaemonConfig) -> ServiceCapabilities:
+    falkordb_requires_broker = bool(config.databases.falkordb.password) or (
+        _contains_unresolved_marker(config.databases.falkordb.host)
+    )
+    return ServiceCapabilities(
+        embeddings=ServiceCapability(mode="brokered", operations=_EMBEDDING_BROKERS),
+        falkordb=ServiceCapability(
+            mode="brokered" if falkordb_requires_broker else "direct",
+            operations=_FALKOR_BROKERS,
+        ),
+        qdrant=ServiceCapability(
+            mode=(
+                "brokered"
+                if config.databases.qdrant.api_key
+                or _url_requires_broker(config.databases.qdrant.url)
+                else "direct"
+            ),
+            operations=_QDRANT_BROKERS,
+        ),
+    )
+
+
 def _runtime_token(request: Request) -> str | None:
     authorization = request.headers.get("Authorization")
     if authorization is not None:
@@ -136,6 +305,14 @@ def register_effective_routes(
             detail="Authentication required. Supply the local runtime token.",
         )
 
+    def require_agent_claims(request: Request) -> AgentApiTokenClaims:
+        if request.query_params:
+            raise HTTPException(status_code=400, detail="Query parameters are not supported")
+        claims = context.server.auth_service.verified_agent_claims(request)
+        if claims is None:
+            raise HTTPException(status_code=401, detail="Run-scoped agent capability required")
+        return claims
+
     @router.get("/effective", dependencies=[Depends(require_runtime_token)])
     def get_effective_config() -> JSONResponse:
         """Serve resolved client configuration."""
@@ -155,3 +332,24 @@ def register_effective_routes(
         except Exception as exc:
             logger.exception("Failed to build effective configuration")
             raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    @router.get("/service-capabilities", response_model=ServiceCapabilityBundle)
+    def get_service_capabilities(
+        request: Request,
+        response: Response,
+    ) -> ServiceCapabilityBundle:
+        claims = require_agent_claims(request)
+        config = context.server.services.config
+        if config is None:
+            raise HTTPException(status_code=503, detail="Config not available")
+        response.headers["Cache-Control"] = "no-store"
+        return ServiceCapabilityBundle(
+            execution=ExecutionBinding(
+                agent_run_id=claims.agent_run_id,
+                project_id=claims.project_id,
+                session_id=claims.session_id,
+                expires_at=claims.exp,
+            ),
+            config=_managed_config_values(context, config),
+            services=_service_capabilities(config),
+        )

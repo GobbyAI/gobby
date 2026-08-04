@@ -374,9 +374,6 @@ def test_agent_capability_matrix(
     assert service.is_request_authenticated(
         _request(bearer_only, method="GET", path="/api/embeddings/status")
     )
-    assert service.is_request_authenticated(
-        _request(bearer_only, method="POST", path="/api/code-index/graph/rebuild")
-    )
     # ... but a present-and-wrong identity header still rejects.
     assert not service.is_request_authenticated(
         _request(
@@ -393,6 +390,18 @@ def test_agent_capability_matrix(
     assert service.is_request_authenticated(
         _request(identity, method="POST", path="/api/workflows/variables/set")
     )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/code-index/graph/rebuild")
+    )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/code-index/invalidate")
+    )
+    assert service.is_request_authenticated(
+        _request(identity, method="GET", path="/api/config/service-capabilities")
+    )
+    assert not service.is_request_authenticated(
+        _request(bearer_only, method="GET", path="/api/config/service-capabilities")
+    )
 
     # Out-of-matrix routes stay rejected, whatever the headers.
     for method, path in (
@@ -400,6 +409,7 @@ def test_agent_capability_matrix(
         ("DELETE", "/api/mcp/servers/github"),
         ("PUT", "/api/mcp/servers/github"),
         ("POST", "/api/pipelines/run"),
+        ("GET", "/api/config/effective"),
         ("GET", "/api/configuration/secrets"),
         ("POST", "/api/memories/graph/rebuild"),
     ):

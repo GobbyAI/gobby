@@ -434,6 +434,29 @@ def test_rebuild_graph_delegates(client: TestClient, mock_server: MagicMock) -> 
     assert [parameter["name"] for parameter in operation["parameters"]] == ["project_id"]
 
 
+def test_agent_projection_brokers_reject_cross_project_targets(mock_server: MagicMock) -> None:
+    mock_server.auth_service.verified_agent_claims.return_value = SimpleNamespace(
+        project_id=PROJECT_ID
+    )
+    app = FastAPI()
+    app.include_router(create_code_index_router(mock_server))
+    client = TestClient(app, headers={"Authorization": "Bearer agent-token"})
+
+    clear = client.post(
+        "/api/code-index/graph/clear",
+        params={"project_id": "other-project"},
+    )
+    invalidate = client.post(
+        "/api/code-index/invalidate",
+        json={"project_id": "other-project"},
+    )
+
+    assert clear.status_code == 403
+    assert invalidate.status_code == 403
+    mock_server.services.code_indexer.clear_graph.assert_not_awaited()
+    mock_server.services.code_indexer.invalidate.assert_not_awaited()
+
+
 def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> None:
     async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)

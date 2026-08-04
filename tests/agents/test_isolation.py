@@ -189,7 +189,7 @@ class TestEnsureIsolationCodeIndex:
         assert status.stdout == ""
 
     @pytest.mark.asyncio
-    async def test_runtime_home_links_secret_material_assets(
+    async def test_runtime_home_excludes_kek_and_links_non_secret_assets(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         proc = self._proc()
@@ -222,12 +222,14 @@ class TestEnsureIsolationCodeIndex:
 
         assert result.runtime_home is not None
         runtime_home = Path(result.runtime_home)
-        for name in ("machine_id", ".secret_kek", "models", "services"):
+        for name in ("machine_id", "models", "services"):
             linked = runtime_home / name
             assert linked.is_symlink(), f"{name} not linked into runtime home"
             assert linked.resolve() == (source_home / name).resolve()
+        assert not (runtime_home / ".secret_kek").exists()
+        assert not (runtime_home / ".secret_kek").is_symlink()
 
-    def test_reaps_stale_runtime_credentials_only(self, tmp_path: Path) -> None:
+    def test_reaps_stale_runtime_credentials_and_kek(self, tmp_path: Path) -> None:
         runtime_root = tmp_path / "gcode-runtime"
         symlink_home = runtime_root / "stale-symlink"
         file_home = runtime_root / "stale-file"
@@ -241,6 +243,10 @@ class TestEnsureIsolationCodeIndex:
         symlink_token.symlink_to(source_token)
         file_token = file_home / "local_cli_token"
         file_token.touch()
+        stale_kek = file_home / ".secret_kek"
+        stale_kek.write_text("copied-kek", encoding="utf-8")
+        symlink_kek = symlink_home / ".secret_kek"
+        symlink_kek.symlink_to(tmp_path / "operator-kek")
 
         preserved_files = {
             symlink_home / "bootstrap.yaml": "symlink-home\n",
@@ -255,6 +261,8 @@ class TestEnsureIsolationCodeIndex:
         assert not symlink_token.exists()
         assert not symlink_token.is_symlink()
         assert not file_token.exists()
+        assert not stale_kek.exists()
+        assert not symlink_kek.is_symlink()
         assert source_token.exists()
         for path, contents in preserved_files.items():
             assert path.read_text() == contents

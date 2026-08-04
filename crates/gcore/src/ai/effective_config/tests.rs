@@ -68,6 +68,7 @@ fn spawn_delayed_json_response(delay: Duration) -> std::io::Result<(String, Requ
 }
 
 #[test]
+#[serial_test::serial]
 fn fetch_carries_bearer_and_parses_effective_config_envelope() {
     let home = temp_home();
     fs::write(
@@ -98,6 +99,156 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
 }
 
 #[test]
+#[serial_test::serial]
+fn managed_fetch_uses_typed_bundle_and_bound_identity_headers() {
+    let home = temp_home();
+    let body = r#"{
+        "version": 1,
+        "execution": {
+            "agent_run_id": "run-123",
+            "project_id": "project-123",
+            "session_id": "session-123",
+            "expires_at": 4102444800
+        },
+        "config": {
+            "ai.embeddings.routing": "daemon",
+            "ai.embeddings.model": "managed-model",
+            "databases.falkordb.host": "falkor.local"
+        },
+        "services": {
+            "embeddings": {
+                "mode": "brokered",
+                "operations": [{"name": "embed", "method": "POST", "path": "/api/embeddings"}]
+            },
+            "falkordb": {
+                "mode": "direct",
+                "operations": [
+                    {
+                        "name": "clear_projection",
+                        "method": "POST",
+                        "path": "/api/code-index/graph/clear"
+                    },
+                    {
+                        "name": "rebuild_projection",
+                        "method": "POST",
+                        "path": "/api/code-index/graph/rebuild"
+                    }
+                ]
+            },
+            "qdrant": {
+                "mode": "brokered",
+                "operations": [{
+                    "name": "invalidate_projection",
+                    "method": "POST",
+                    "path": "/api/code-index/invalidate"
+                }]
+            }
+        }
+    }"#;
+    let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
+
+    let (mut daemon, routing) = temp_env::with_vars(
+        [
+            (
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+                Some("/tmp/managed-bootstrap.yaml"),
+            ),
+            ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
+            ("GOBBY_AGENT_RUN_ID", Some("run-123")),
+            ("GOBBY_PROJECT_ID", Some("project-123")),
+            ("GOBBY_SESSION_ID", Some("session-123")),
+        ],
+        || daemon_mode_layers_at(&base_url, home.path()),
+    )
+    .expect("fetch service capability bundle");
+
+    assert!(routing.is_none());
+    assert_eq!(
+        daemon.config_value("ai.embeddings.model").as_deref(),
+        Some("managed-model")
+    );
+    let request = join_request(request);
+    assert!(request.starts_with(&format!("GET {SERVICE_CAPABILITIES_PATH} HTTP/1.1")));
+    assert!(has_header(
+        &request,
+        AUTHORIZATION_HEADER,
+        "Bearer agent-token"
+    ));
+    assert!(has_header(&request, "X-Gobby-Agent-Run-Id", "run-123"));
+    assert!(has_header(
+        &request,
+        "X-Gobby-Caller-Project-Id",
+        "project-123"
+    ));
+    assert!(has_header(&request, "X-Gobby-Session-Id", "session-123"));
+}
+
+#[test]
+#[serial_test::serial]
+fn managed_bundle_rejects_unapproved_config_keys() {
+    let home = temp_home();
+    let body = r#"{
+        "version": 1,
+        "execution": {
+            "agent_run_id": "run-123",
+            "project_id": "project-123",
+            "session_id": "session-123",
+            "expires_at": 4102444800
+        },
+        "config": {"ai.embeddings.api_key": "shared-secret"},
+        "services": {
+            "embeddings": {"mode": "brokered", "operations": []},
+            "falkordb": {"mode": "brokered", "operations": []},
+            "qdrant": {"mode": "brokered", "operations": []}
+        }
+    }"#;
+    let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
+
+    let error = temp_env::with_vars(
+        [
+            (
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+                Some("/tmp/managed-bootstrap.yaml"),
+            ),
+            ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
+            ("GOBBY_AGENT_RUN_ID", Some("run-123")),
+            ("GOBBY_PROJECT_ID", Some("project-123")),
+            ("GOBBY_SESSION_ID", Some("session-123")),
+        ],
+        || daemon_mode_layers_at(&base_url, home.path()),
+    )
+    .expect_err("unapproved key must fail closed");
+
+    assert!(matches!(error, EffectiveConfigError::Contract { .. }));
+    assert!(error.to_string().contains("ai.embeddings.api_key"));
+    assert!(!error.to_string().contains("shared-secret"));
+    join_request(request);
+}
+
+#[test]
+fn managed_services_reject_cross_service_broker_operations() {
+    let services: ManagedServices = serde_json::from_value(serde_json::json!({
+        "embeddings": {
+            "mode": "brokered",
+            "operations": [{
+                "name": "invalidate_projection",
+                "method": "POST",
+                "path": "/api/code-index/invalidate"
+            }]
+        },
+        "falkordb": {"mode": "direct", "operations": []},
+        "qdrant": {"mode": "brokered", "operations": []}
+    }))
+    .expect("parse typed service fixture");
+
+    let error = validate_managed_services(&services).expect_err("service operations are scoped");
+
+    assert!(matches!(error, EffectiveConfigError::Contract { .. }));
+    assert!(error.to_string().contains("services.embeddings.operations"));
+}
+
+#[test]
+#[serial_test::serial]
 fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     let home = temp_home();
 
@@ -163,6 +314,7 @@ fn loopback_timeout_is_bounded_and_categorized() {
 }
 
 #[test]
+#[serial_test::serial]
 fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
     let home = temp_home();
 
@@ -182,6 +334,7 @@ fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
 }
 
 #[test]
+#[serial_test::serial]
 fn served_secret_or_environment_references_are_contract_failures() {
     let home = temp_home();
     let cases = [
@@ -209,6 +362,7 @@ fn served_secret_or_environment_references_are_contract_failures() {
 }
 
 #[test]
+#[serial_test::serial]
 fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
     let home = temp_home();
     fs::write(home.path().join("gcore.yaml"), "ai: [malformed")

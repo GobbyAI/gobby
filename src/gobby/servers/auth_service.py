@@ -76,8 +76,9 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
     # Code index (gcode): codewiki refresh and graph lifecycle.
     _AgentRoute("POST", "/api/code-index/codewiki/refresh", False),
-    _AgentRoute("POST", "/api/code-index/graph/clear", False),
-    _AgentRoute("POST", "/api/code-index/graph/rebuild", False),
+    _AgentRoute("POST", "/api/code-index/graph/clear", True),
+    _AgentRoute("POST", "/api/code-index/graph/rebuild", True),
+    _AgentRoute("POST", "/api/code-index/invalidate", True),
     # AI compute and read-only capability probes (gcore-backed binaries).
     _AgentRoute("POST", "/api/embeddings", False),
     _AgentRoute("GET", "/api/embeddings/status", False),
@@ -86,7 +87,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("GET", "/api/llm/vision/status", False),
     _AgentRoute("GET", "/api/voice/status", False),
     _AgentRoute("GET", "/api/providers/models", False),
-    _AgentRoute("GET", "/api/config/effective", False),
+    _AgentRoute("GET", "/api/config/service-capabilities", True),
     # Read-only `gobby` CLI listings backed by DaemonClient.
     _AgentRoute("GET", "/api/comms/channels", False),
     _AgentRoute("GET", "/api/webhooks", False),
@@ -219,24 +220,43 @@ class AuthService:
 
         return False
 
+    def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
+        """Return identity claims only for a valid run-scoped agent request."""
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return None
+        parts = authorization.split(maxsplit=1)
+        if len(parts) != 2 or parts[0].casefold() != "bearer":
+            return None
+        return self._verified_agent_claims_for_token(request, parts[1])
+
     def _verify_agent_request(self, request: HTTPConnection, token: str) -> bool:
+        return self._verified_agent_claims_for_token(request, token) is not None
+
+    def _verified_agent_claims_for_token(
+        self,
+        request: HTTPConnection,
+        token: str,
+    ) -> AgentApiTokenClaims | None:
         operator_token = self.local_token()
         if operator_token is None:
-            return False
+            return None
         claims = verify_agent_api_token(token, operator_token)
         if claims is None:
-            return False
+            return None
         entry = _agent_capability_allows(request)
         if entry is None:
-            return False
+            return None
         if not self._agent_run_is_live(claims.agent_run_id):
-            return False
-        return _agent_identity_matches(
+            return None
+        if not _agent_identity_matches(
             request,
             claims,
             bind_identity=entry.bind_identity,
             resolve_session=lambda ref: self._resolve_agent_session_ref(ref, claims.project_id),
-        )
+        ):
+            return None
+        return claims
 
     def _agent_run_is_live(self, run_id: str) -> bool:
         """A capability dies with its run: only pending/running runs pass.

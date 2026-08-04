@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 from gobby.config.bootstrap_io import write_bootstrap_yaml
 from gobby.paths import get_gobby_home
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
-from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -392,7 +391,7 @@ def _runtime_home_for_workspace(workspace: Path, runtime_root: Path) -> Path:
 
 
 def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
-    """Drop `local_cli_token` from every runtime home under `runtime_root`.
+    """Drop operator credentials from every runtime home under `runtime_root`.
 
     Best effort: this sweeps homes owned by other sessions, so an unreadable or
     concurrently torn-down home must never abort the caller's preflight.
@@ -405,10 +404,16 @@ def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
     for runtime_home in runtime_homes:
         if runtime_home.is_symlink() or not runtime_home.is_dir():
             continue
-        try:
-            (runtime_home / "local_cli_token").unlink(missing_ok=True)
-        except OSError:
-            logger.debug("Failed to reap gcode runtime token in %s", runtime_home, exc_info=True)
+        for name in ("local_cli_token", ".secret_kek"):
+            try:
+                (runtime_home / name).unlink(missing_ok=True)
+            except OSError:
+                logger.debug(
+                    "Failed to reap gcode runtime credential %s in %s",
+                    name,
+                    runtime_home,
+                    exc_info=True,
+                )
 
 
 def _gcode_wrapper_script(
@@ -469,7 +474,7 @@ def _prepend_path(path: Path) -> str:
 
 
 def _link_runtime_assets(source_home: Path, runtime_home: Path) -> None:
-    for name in ("machine_id", *SECRET_MATERIAL_FILENAMES, "models", "services"):
+    for name in ("machine_id", "models", "services"):
         source = source_home / name
         target = runtime_home / name
         if target.exists() or target.is_symlink() or not source.exists():
