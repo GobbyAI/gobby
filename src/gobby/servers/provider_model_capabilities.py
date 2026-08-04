@@ -98,11 +98,17 @@ def build_capability_matrix(
                 continue
             metadata = normalized_metadata.get(model_id)
             key = (provider, model_id)
+            speed_multiplier = _optional_float(
+                model.get("speed_multiplier"),
+                "speed_multiplier",
+            )
             capabilities[key] = ProviderModelCapability(
                 provider=provider,
                 model_id=model_id,
                 supported_reasoning_efforts=_catalog_reasoning_efforts(model),
                 context_limit=metadata.context_length if metadata is not None else None,
+                speed_tier=SpeedTier.from_multiplier(speed_multiplier),
+                speed_multiplier=speed_multiplier,
             )
 
     return {key: capabilities[key] for key in sorted(capabilities)}

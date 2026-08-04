@@ -160,12 +160,30 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
 }
 AGY_MODELS = {model_id: _agy_model_entry(entry) for model_id, entry in AGY_MODELS.items()}
 
-# Model metadata is captured from `droid exec --help`; GLM-5.2 was refreshed against
-# Factory Droid 0.180.0.
+# Model metadata is captured from `droid exec --help`; fast-route multipliers come
+# from https://docs.factory.ai/models.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "claude-fable-5",
         "label": "Claude Fable 5",
+        "reasoning": {
+            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+            "default_effort": "high",
+        },
+    },
+    {
+        "value": "claude-opus-5",
+        "label": "Claude Opus 5",
+        "reasoning": {
+            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+            "default_effort": "high",
+        },
+    },
+    {
+        "value": "claude-opus-5-fast",
+        "label": "Claude Opus 5 Fast Mode",
+        "base_model_id": "claude-opus-5",
+        "speed_multiplier": 4.0,
         "reasoning": {
             "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
             "default_effort": "high",
@@ -228,6 +246,24 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         },
     },
     {
+        "value": "gpt-5.5",
+        "label": "GPT-5.5",
+        "reasoning": {
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
+            "default_effort": "medium",
+        },
+    },
+    {
+        "value": "gpt-5.5-fast",
+        "label": "GPT-5.5 Fast Mode",
+        "base_model_id": "gpt-5.5",
+        "speed_multiplier": 5.0,
+        "reasoning": {
+            "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
+            "default_effort": "medium",
+        },
+    },
+    {
         "value": "gpt-5.4",
         "label": "GPT-5.4",
         "reasoning": {
@@ -262,6 +298,8 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "gpt-5.3-codex-fast",
         "label": "GPT-5.3-Codex Fast Mode",
+        "base_model_id": "gpt-5.3-codex",
+        "speed_multiplier": 1.4,
         "reasoning": {
             "supported_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_effort": "medium",

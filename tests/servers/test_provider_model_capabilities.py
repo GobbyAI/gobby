@@ -9,7 +9,15 @@ from gobby.servers.provider_model_capabilities import (
     SpeedTier,
     build_capability_matrix,
 )
+from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
 from gobby.storage.model_metadata import ModelMetadata
+
+
+DROID_FAST_VARIANTS = [
+    ("gpt-5.5-fast", "gpt-5.5", 5.0),
+    ("claude-opus-5-fast", "claude-opus-5", 4.0),
+    ("gpt-5.3-codex-fast", "gpt-5.3-codex", 1.4),
+]
 
 
 def test_capability_defaults_to_standard_unknown_metadata() -> None:
@@ -135,3 +143,41 @@ def test_build_capability_matrix_has_deterministic_key_order() -> None:
         ("droid", "alpha"),
         ("droid", "zeta"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "base_model_id", "speed_multiplier"),
+    DROID_FAST_VARIANTS,
+)
+def test_droid_fast_variants_declare_speed_metadata(
+    model_id: str,
+    base_model_id: str,
+    speed_multiplier: float,
+) -> None:
+    models = {model["value"]: model for model in DROID_MODEL_CATALOG}
+
+    assert models[model_id]["base_model_id"] == base_model_id
+    assert models[model_id]["speed_multiplier"] == speed_multiplier
+
+
+def test_build_capability_matrix_uses_explicit_fast_declarations() -> None:
+    matrix = build_capability_matrix(
+        model_metadata={},
+        provider_catalogs={
+            "droid": DROID_MODEL_CATALOG,
+            "codex": [{"value": "gpt-5.5-fast"}],
+        },
+    )
+
+    for model_id, base_model_id, speed_multiplier in DROID_FAST_VARIANTS:
+        capability = matrix[("droid", model_id)]
+        assert capability.speed_tier is SpeedTier.FAST
+        assert capability.speed_multiplier == speed_multiplier
+
+        base_capability = matrix[("droid", base_model_id)]
+        assert base_capability.speed_tier is SpeedTier.STANDARD
+        assert base_capability.speed_multiplier is None
+
+    undeclared = matrix[("codex", "gpt-5.5-fast")]
+    assert undeclared.speed_tier is SpeedTier.STANDARD
+    assert undeclared.speed_multiplier is None
