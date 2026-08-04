@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
+from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
+from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -26,6 +28,11 @@ def init_servers(runner: GobbyRunner) -> None:
     web_chat_session_registry = WebChatSessionRegistry()
     runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
+    provider_capability_service = CapabilityRefreshCoordinator(
+        ProviderCapabilityStore(runner.database),
+        run_db=getattr(runner.db_executor, "run", None),
+    )
+    provider_capability_service.prepare()
 
     def tool_proxy_getter() -> object | None:
         http_server = http_server_ref() if http_server_ref is not None else None
@@ -75,6 +82,7 @@ def init_servers(runner: GobbyRunner) -> None:
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
+        provider_capability_service=provider_capability_service,
         provider_model_catalog=ProviderModelCatalog(),
         web_chat_runtime_manager=None,
         web_chat_session_registry=web_chat_session_registry,

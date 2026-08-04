@@ -24,12 +24,7 @@ from gobby.runner_lifecycle_shutdown import (
     _shutdown_websocket_server,
     shutdown_daemon_services,
 )
-from gobby.runner_lifecycle_startup import (
-    StartupTracker,
-    _log_subsystem_init_result,
-    _record_provider_model_refresh_result,
-    _refresh_provider_model_catalog,
-)
+from gobby.runner_lifecycle_startup import StartupTracker, _log_subsystem_init_result
 from gobby.runner_lifecycle_subsystems import init_subsystems
 from gobby.runner_pid_file import FailOpenPidOwnership, PidOwnershipResolution
 from gobby.shutdown_intent import clear_active_shutdown_intent
@@ -48,8 +43,6 @@ __all__ = [
     "_reap_remaining_child_processes",
     "_recover_agent_runs_after_restart",
     "_reconcile_agent_runs_after_restart",
-    "_record_provider_model_refresh_result",
-    "_refresh_provider_model_catalog",
     "_shutdown_websocket_server",
     "_start_periodic_tasks",
     "get_startup_tracker",
@@ -73,8 +66,6 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
         runner,
         rebuild_vector_store,
         _startup_tracker,
-        refresh_provider_model_catalog=_refresh_provider_model_catalog,
-        record_provider_model_refresh_result=_record_provider_model_refresh_result,
         reconcile_agent_runs_after_restart=_reconcile_agent_runs_after_restart,
     )
 

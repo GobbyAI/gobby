@@ -69,6 +69,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(runner_servers, "HTTPServer", FakeHTTPServer)
     monkeypatch.setattr(runner_servers, "WebSocketServer", FakeWebSocketServer)
     monkeypatch.setattr(runner_servers, "set_app_context", MagicMock())
+    monkeypatch.setattr(runner_servers, "CapabilityRefreshCoordinator", MagicMock())
     monkeypatch.setattr(
         runner_servers.WebChatRuntimeManager, "__init__", lambda self, **kwargs: None
     )

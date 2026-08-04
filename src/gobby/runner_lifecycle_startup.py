@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from typing import Any
@@ -64,55 +63,3 @@ def _log_subsystem_init_result(
         if tracker:
             tracker.error("Subsystem initialization", str(error) or type(error).__name__)
             tracker.finish()
-
-
-async def _refresh_provider_model_catalog(
-    provider_catalog: Any,
-    codex_client: Any,
-) -> dict[str, dict[str, Any]]:
-    """Refresh provider models when the catalog exposes an async refresh API."""
-    refresh = getattr(provider_catalog, "refresh", None)
-    if not callable(refresh):
-        return {}
-
-    result = refresh(codex_client=codex_client)
-    if not inspect.isawaitable(result):
-        logger.debug("Provider model catalog refresh skipped: refresh() is not awaitable")
-        return {}
-
-    refreshed = await result
-    return refreshed if isinstance(refreshed, dict) else {}
-
-
-def _record_provider_model_refresh_result(
-    task: asyncio.Future[dict[str, dict[str, Any]]],
-    tracker: StartupTracker | None,
-) -> None:
-    """Record optional provider model refresh outcome without blocking startup."""
-    if task.cancelled():
-        return
-    try:
-        status = task.result()
-    except Exception as e:
-        logger.debug("Provider model discovery failed in background: %s", e)
-        if tracker:
-            tracker.error("Provider models", str(e))
-        return
-
-    if tracker:
-        tracker.complete("Provider model catalogs updated")
-        for provider, info in status.items():
-            source = info.get("source", "failed")
-            error = info.get("error")
-            if source == "live":
-                continue
-            if source == "cache":
-                tracker.error(
-                    f"Provider models ({provider})",
-                    f"using cache: {error or 'live probe failed'}",
-                )
-            else:
-                tracker.error(
-                    f"Provider models ({provider})",
-                    error or "model discovery failed",
-                )

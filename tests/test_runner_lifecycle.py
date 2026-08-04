@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import ExitStack, nullcontext, suppress
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -318,6 +318,7 @@ class TestInitSubsystems:
             CapabilityBinding,
             build_daemon_text_generation_service,
         )
+        from gobby.app_context import ServiceContainer
         from gobby.config.app import DaemonConfig
         from gobby.runner_init.servers import init_servers
 
@@ -400,6 +401,9 @@ class TestInitSubsystems:
         )
         runner.database = object()
         runner.db_executor = None
+        runner.coverage_executor = None
+        runner.database_concurrency = None
+        runner.database_watchdog = None
         runner.session_manager = None
         runner.task_manager = object()
         runner.span_storage = None
@@ -437,6 +441,7 @@ class TestInitSubsystems:
         runner.prompt_manager = None
         runner.tool_chat_service = None
         runner._dev_mode = False
+        capability_service = MagicMock()
 
         with (
             patch(
@@ -448,6 +453,10 @@ class TestInitSubsystems:
             ),
             patch("gobby.runner_init.servers.HTTPServer", FakeHTTPServer),
             patch("gobby.runner_init.servers.WebChatRuntimeManager", FakeWebChatRuntimeManager),
+            patch(
+                "gobby.runner_init.servers.CapabilityRefreshCoordinator",
+                return_value=capability_service,
+            ),
             patch("gobby.runner_init.servers.set_app_context"),
         ):
             init_servers(runner)
@@ -455,8 +464,11 @@ class TestInitSubsystems:
         assert runner.codex_client is fake_client
         assert web_chat_init["codex_client"] is fake_client
         assert http_init["codex_client"] is fake_client
-        assert http_init["services"].text_generation_service is runner.text_generation_service
-        assert http_init["services"].llm_service is runner.llm_service
+        services = cast(ServiceContainer, http_init["services"])
+        assert services.text_generation_service is runner.text_generation_service
+        assert services.llm_service is None
+        assert services.provider_capability_service is capability_service
+        capability_service.prepare.assert_called_once_with()
         assert fake_client.start_calls == 0
         assert fake_client.stop_calls == 0
         assert fake_client.archived_thread_ids == []
@@ -578,95 +590,6 @@ class TestInitSubsystems:
         assert runner.vector_store is vector_store
         assert runner.lifecycle_manager.start.await_count == 1
         vector_store.initialize.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_provider_model_discovery_runs_in_background_without_startup_warning(
-        self, caplog
-    ) -> None:
-        refresh_started = asyncio.Event()
-        refresh_release = asyncio.Event()
-
-        async def slow_refresh(**_kwargs: object) -> None:
-            refresh_started.set()
-            await refresh_release.wait()
-
-        provider_catalog = SimpleNamespace(refresh=AsyncMock(side_effect=slow_refresh))
-        vector_store = SimpleNamespace(
-            initialize=AsyncMock(),
-            ensure_collection=AsyncMock(),
-            count=AsyncMock(return_value=1),
-        )
-        runner = SimpleNamespace(
-            http_server=SimpleNamespace(
-                services=SimpleNamespace(provider_model_catalog=provider_catalog),
-                codex_client=MagicMock(),
-            ),
-            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
-            config=SimpleNamespace(
-                databases=SimpleNamespace(
-                    qdrant=SimpleNamespace(url=""),
-                    falkordb=SimpleNamespace(password=None),
-                ),
-                embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
-                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
-                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
-                bind_host="localhost",
-                code_index=SimpleNamespace(enabled=False),
-            ),
-            memory_manager=None,
-            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
-            vector_store=vector_store,
-            message_processor=None,
-            communications_manager=None,
-            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
-            agent_lifecycle_monitor=None,
-            cron_scheduler=None,
-            code_indexer=None,
-            pipeline_executor=None,
-            pipeline_execution_manager=None,
-            workflow_loader=None,
-            completion_registry=None,
-            websocket_server=None,
-        )
-
-        with patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager:
-            mock_tmux_manager.return_value.health_check = AsyncMock()
-            await runner_lifecycle._init_subsystems(runner, AsyncMock())
-
-        vector_store.initialize.assert_awaited_once()
-        vector_store.ensure_collection.assert_awaited_once_with(
-            "tool_embeddings",
-            768,
-            recreate_on_mismatch=True,
-        )
-        await asyncio.wait_for(refresh_started.wait(), timeout=1.0)
-        assert "Provider model discovery timed out" not in caplog.text
-
-        task = runner._provider_model_refresh_task
-        assert task is not None
-        assert not task.done()
-        assert refresh_started.is_set()
-        refresh_release.set()
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-
-    @pytest.mark.asyncio
-    async def test_refresh_provider_model_catalog_awaits_refresh_with_codex_client(
-        self,
-    ) -> None:
-        from gobby.runner_lifecycle_startup import _refresh_provider_model_catalog
-
-        async def refreshed(**_kwargs: object) -> dict[str, dict[str, object]]:
-            return {"qwen": {"source": "live"}}
-
-        codex_client = object()
-        provider_catalog = SimpleNamespace(refresh=MagicMock(return_value=refreshed()))
-
-        result = await _refresh_provider_model_catalog(provider_catalog, codex_client)
-
-        assert result == {"qwen": {"source": "live"}}
-        provider_catalog.refresh.assert_called_once_with(codex_client=codex_client)
 
     @pytest.mark.asyncio
     async def test_agent_lifecycle_monitor_cleanup_failure_is_non_fatal(
@@ -796,7 +719,6 @@ class TestInitSubsystems:
         async_noop = AsyncMock()
 
         with (
-            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
             patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
@@ -951,7 +873,6 @@ class TestShutdownDaemonServices:
         async_noop = AsyncMock()
 
         with (
-            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
             patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
@@ -2034,7 +1955,7 @@ class TestShutdownDaemonServices:
         assert preserved_pids == {20_000 + index for index in range(run_count)}
         assert db_calls == [
             (
-                runner_lifecycle_processes._list_active_agent_runs_once,
+                cast(Any, runner_lifecycle_processes)._list_active_agent_runs_once,
                 (runner,),
                 {"include_fenced": True},
             ),
@@ -2307,7 +2228,7 @@ class TestPipelineEventBroadcasting:
 
         assert len(calls) == 1
         assert calls[0][0] is handler
-        assert calls[0][1].execution_id == "pe-124"
+        assert cast(Any, calls[0][1]).execution_id == "pe-124"
         mock_ws_server.broadcast_pipeline_event.assert_awaited_once_with(
             event="pipeline_failed",
             execution_id="pe-124",
@@ -3485,9 +3406,6 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
         events.append("reap")
         return 0
 
-    def schedule(*_args: object) -> None:
-        events.append("schedule")
-
     async def fail_connect(*_args: object) -> None:
         events.append("connect")
         raise RuntimeError("optional startup failed")
@@ -3497,11 +3415,6 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             runner_lifecycle_subsystems,
             "_run_agent_hook_replay_barrier",
             side_effect=barrier,
-        ),
-        patch.object(
-            runner_lifecycle_subsystems,
-            "_schedule_provider_model_refresh",
-            side_effect=schedule,
         ),
         patch.object(
             runner_lifecycle_subsystems,
@@ -3522,7 +3435,7 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             recover_agent_completion_subscribers=recover,
         )
 
-    assert events == ["barrier", "classify", "reap", "recover", "schedule", "connect"]
+    assert events == ["barrier", "classify", "reap", "recover", "connect"]
 
 
 @pytest.mark.asyncio

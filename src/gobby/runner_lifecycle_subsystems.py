@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,22 +18,13 @@ from gobby.runner_lifecycle_agents import (
     _retry_parked_non_task_resumes,
     _run_agent_hook_replay_barrier,
 )
-from gobby.runner_lifecycle_startup import (
-    StartupTracker,
-    _record_provider_model_refresh_result,
-    _refresh_provider_model_catalog,
-)
+from gobby.runner_lifecycle_startup import StartupTracker
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
 
-ProviderCatalogRefresh = Callable[[Any, Any], Coroutine[Any, Any, dict[str, dict[str, Any]]]]
-ProviderCatalogRefreshRecorder = Callable[
-    [asyncio.Future[dict[str, dict[str, Any]]], StartupTracker | None],
-    None,
-]
 AgentLifecycleOperation = Callable[[Any], Awaitable[int]]
 
 _PROJECT_ENUMERATION_PAGE_SIZE = 100
@@ -79,27 +70,6 @@ def _discover_wiki_cron_project_scopes(
         if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
             break
     return scopes, stale_project_ids
-
-
-def _schedule_provider_model_refresh(
-    runner: GobbyRunner,
-    tracker: StartupTracker | None,
-    refresh_provider_model_catalog: ProviderCatalogRefresh,
-    record_provider_model_refresh_result: ProviderCatalogRefreshRecorder,
-) -> None:
-    provider_catalog = getattr(runner.http_server.services, "provider_model_catalog", None)
-    if provider_catalog is None:
-        return
-
-    runner._provider_model_refresh_task = asyncio.create_task(
-        refresh_provider_model_catalog(provider_catalog, runner.http_server.codex_client),
-        name="provider-model-catalog-refresh",
-    )
-    runner._provider_model_refresh_task.add_done_callback(
-        lambda task: record_provider_model_refresh_result(task, tracker)
-    )
-    if tracker:
-        tracker.schedule("Provider model catalog refresh")
 
 
 async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
@@ -767,10 +737,6 @@ async def init_subsystems(
     rebuild_vector_store: Any,
     tracker: StartupTracker | None,
     *,
-    refresh_provider_model_catalog: ProviderCatalogRefresh = _refresh_provider_model_catalog,
-    record_provider_model_refresh_result: ProviderCatalogRefreshRecorder = (
-        _record_provider_model_refresh_result
-    ),
     reconcile_agent_runs_after_restart: AgentLifecycleOperation = (
         _reconcile_agent_runs_after_restart
     ),
@@ -811,12 +777,6 @@ async def init_subsystems(
             )
     except Exception:
         logger.exception("Agent completion subscriber recovery failed during startup")
-    _schedule_provider_model_refresh(
-        runner,
-        tracker,
-        refresh_provider_model_catalog,
-        record_provider_model_refresh_result,
-    )
     await _connect_mcp_servers(runner, tracker)
     code_index_bm25_ready = await _repair_code_index_bm25(runner, tracker)
     await _check_embedding_service(runner, tracker)

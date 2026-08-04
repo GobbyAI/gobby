@@ -270,6 +270,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
         "_model_metadata_refresh_task",
+        "_provider_capability_refresh_task",
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",
         "_metric_snapshot_task",
@@ -301,6 +302,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
     if external_issue_sync_shutdown is not None:
         external_issue_sync_shutdown.set()
 
+    from gobby.providers.capabilities.refresh import CAPABILITY_REFRESH_DRAIN_TIMEOUT_SECONDS
     from gobby.runner_model_metadata_refresh import MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
 
     cancellations = [
@@ -310,9 +312,13 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
                 runner,
                 attr,
                 timeout=(
-                    MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
-                    if attr == "_model_metadata_refresh_task"
-                    else 2.0
+                    CAPABILITY_REFRESH_DRAIN_TIMEOUT_SECONDS
+                    if attr == "_provider_capability_refresh_task"
+                    else (
+                        MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
+                        if attr == "_model_metadata_refresh_task"
+                        else 2.0
+                    )
                 ),
             ),
         )
@@ -668,11 +674,6 @@ async def _run_graceful_shutdown_sequence(
     )
 
     await _best_effort(
-        lambda: _cancel_runner_task(runner, "_provider_model_refresh_task"),
-        "Provider model refresh task cancellation",
-    )
-
-    await _best_effort(
         lambda: shutdown_websocket_server(runner),
         "WebSocket server shutdown",
     )
@@ -756,11 +757,11 @@ async def _run_async_shutdown_cleanup(
             ),
             "Child process reap",
         )
+    _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
     await _best_effort(
         lambda: _shutdown_database_concurrency(runner),
         "Database concurrency shutdown",
     )
-    _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
     reset_terminal_delivery_offload()
 
 

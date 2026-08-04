@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -244,6 +245,17 @@ def start_periodic_tasks(
         ),
         name="model-metadata-refresh",
     )
+    runner._provider_capability_refresh_task = None
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    provider_capability_service = getattr(services, "provider_capability_service", None)
+    if provider_capability_service is not None:
+        run = getattr(provider_capability_service, "run", None)
+        refresh_loop = run(lambda: runner._shutdown_requested) if callable(run) else None
+        if inspect.iscoroutine(refresh_loop):
+            runner._provider_capability_refresh_task = asyncio.create_task(
+                refresh_loop,
+                name="provider-capability-refresh",
+            )
 
     retention_days = 7
     if runner.config.telemetry and hasattr(runner.config.telemetry, "trace_retention_days"):
@@ -458,6 +470,7 @@ def start_periodic_tasks(
             runner._workflow_audit_cleanup_task,
             runner._metrics_archive_task,
             runner._model_metadata_refresh_task,
+            runner._provider_capability_refresh_task,
             runner._span_cleanup_task,
             runner._unmodeled_observations_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),

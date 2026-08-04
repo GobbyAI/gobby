@@ -112,6 +112,7 @@ class ServiceContainer:
 
     # Config
     config_store: Any | None = None  # ConfigStore
+    provider_capability_service: Any | None = None  # CapabilityRefreshCoordinator
     provider_model_catalog: Any | None = None  # ProviderModelCatalog
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager
     web_chat_session_registry: Any | None = None  # WebChatSessionRegistry
