@@ -3,6 +3,41 @@ export interface ProviderModelReasoning {
   default_effort?: string;
 }
 
+export interface ProviderModelRouteActivation {
+  kind: string;
+  surface: string;
+  params: Record<string, unknown>;
+}
+
+export interface ProviderModelRoute {
+  selector: string;
+  available: boolean;
+  usage_multiplier: string | null;
+  throughput_multiplier: string | null;
+  latency_class: string | null;
+  activations: ProviderModelRouteActivation[];
+}
+
+export type ProviderModelRoutes = Partial<
+  Record<"standard" | "fast", ProviderModelRoute>
+>;
+
+export interface ProviderModelRefreshSource {
+  source_key: string;
+  source_url?: string | null;
+  required?: boolean;
+  state: "pending" | "ok" | "stale" | "error";
+  attempts?: number;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface ProviderModelRefresh {
+  generation: number;
+  sources: ProviderModelRefreshSource[];
+}
+
 export interface ProviderModelOption {
   value: string;
   label: string;
@@ -15,6 +50,7 @@ export interface ProviderModelOption {
   supports_tools?: boolean;
   execution_provider?: string;
   reasoning?: ProviderModelReasoning;
+  routes?: ProviderModelRoutes;
 }
 
 export interface ProviderModelEntry {
@@ -32,7 +68,41 @@ export interface ProviderModelEntry {
   supports_web_chat?: boolean;
   supports_agent_spawn?: boolean;
   unavailable_reason?: string | null;
+  refresh?: ProviderModelRefresh;
 }
+
+interface ProviderMatrixFact {
+  value: number | null;
+  source: string;
+}
+
+interface ProviderMatrixReasoning {
+  status: "known" | "unsupported" | "unknown";
+  supported_efforts: string[] | null;
+  default_effort: string | null;
+}
+
+interface ProviderMatrixModel {
+  canonical_model: string;
+  display_name: string;
+  aliases: string[];
+  available: boolean;
+  hidden: boolean;
+  is_default: boolean;
+  context_length: ProviderMatrixFact;
+  max_output_tokens: ProviderMatrixFact;
+  latency_class: string | null;
+  reasoning: ProviderMatrixReasoning;
+  input_modalities: string[] | null;
+  supports_tools: boolean | null;
+  routes: ProviderModelRoutes;
+  provenance: Record<string, unknown>;
+}
+
+type ProviderModelPayload = ProviderModelOption | ProviderMatrixModel;
+type ProviderModelEntryPayload = Omit<ProviderModelEntry, "models"> & {
+  models: ProviderModelPayload[];
+};
 
 export interface ReasoningOption {
   value: string;
@@ -90,7 +160,59 @@ function isProviderModelReasoning(value: unknown): value is ProviderModelReasoni
   );
 }
 
-function isProviderModelOption(value: unknown): value is ProviderModelOption {
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isProviderModelRoutes(value: unknown): value is ProviderModelRoutes {
+  if (!isRecord(value)) return false;
+  return Object.entries(value).every(
+    ([speed, route]) =>
+      ["standard", "fast"].includes(speed) &&
+      isRecord(route) &&
+      typeof route.selector === "string" &&
+      typeof route.available === "boolean" &&
+      isNullableString(route.usage_multiplier) &&
+      isNullableString(route.throughput_multiplier) &&
+      isNullableString(route.latency_class) &&
+      Array.isArray(route.activations) &&
+      route.activations.every(
+        (activation) =>
+          isRecord(activation) &&
+          typeof activation.kind === "string" &&
+          typeof activation.surface === "string" &&
+          isRecord(activation.params),
+      ),
+  );
+}
+
+function isProviderModelRefresh(value: unknown): value is ProviderModelRefresh {
+  if (
+    !isRecord(value) ||
+    !Number.isInteger(value.generation) ||
+    !Array.isArray(value.sources)
+  ) {
+    return false;
+  }
+  return value.sources.every(
+    (source) =>
+      isRecord(source) &&
+      typeof source.source_key === "string" &&
+      ["pending", "ok", "stale", "error"].includes(source.state as string) &&
+      (source.source_url === undefined || isNullableString(source.source_url)) &&
+      (source.required === undefined || typeof source.required === "boolean") &&
+      (source.attempts === undefined || Number.isInteger(source.attempts)) &&
+      (source.last_attempt_at === undefined || isNullableString(source.last_attempt_at)) &&
+      (source.last_success_at === undefined || isNullableString(source.last_success_at)) &&
+      (source.last_error === undefined || isNullableString(source.last_error)),
+  );
+}
+
+function isLegacyProviderModelOption(value: unknown): value is ProviderModelOption {
   return (
     isRecord(value) &&
     typeof value.value === "string" &&
@@ -115,7 +237,43 @@ function isProviderModelOption(value: unknown): value is ProviderModelOption {
   );
 }
 
-function isProviderModelEntry(value: unknown): value is ProviderModelEntry {
+function isProviderMatrixFact(value: unknown): value is ProviderMatrixFact {
+  return (
+    isRecord(value) &&
+    (value.value === null || typeof value.value === "number") &&
+    typeof value.source === "string"
+  );
+}
+
+function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
+  return (
+    isRecord(value) &&
+    typeof value.canonical_model === "string" &&
+    typeof value.display_name === "string" &&
+    isStringArray(value.aliases) &&
+    typeof value.available === "boolean" &&
+    typeof value.hidden === "boolean" &&
+    typeof value.is_default === "boolean" &&
+    isProviderMatrixFact(value.context_length) &&
+    isProviderMatrixFact(value.max_output_tokens) &&
+    isNullableString(value.latency_class) &&
+    isRecord(value.reasoning) &&
+    ["known", "unsupported", "unknown"].includes(value.reasoning.status as string) &&
+    (value.reasoning.supported_efforts === null ||
+      isStringArray(value.reasoning.supported_efforts)) &&
+    isNullableString(value.reasoning.default_effort) &&
+    (value.input_modalities === null || isStringArray(value.input_modalities)) &&
+    (value.supports_tools === null || typeof value.supports_tools === "boolean") &&
+    isProviderModelRoutes(value.routes) &&
+    isRecord(value.provenance)
+  );
+}
+
+function isProviderModelOption(value: unknown): value is ProviderModelPayload {
+  return isLegacyProviderModelOption(value) || isProviderMatrixModel(value);
+}
+
+function isProviderModelEntry(value: unknown): value is ProviderModelEntryPayload {
   return (
     isRecord(value) &&
     typeof value.provider === "string" &&
@@ -140,8 +298,41 @@ function isProviderModelEntry(value: unknown): value is ProviderModelEntry {
       typeof value.supports_agent_spawn === "boolean") &&
     (value.unavailable_reason === undefined ||
       value.unavailable_reason === null ||
-      typeof value.unavailable_reason === "string")
+      typeof value.unavailable_reason === "string") &&
+    (value.refresh === undefined || isProviderModelRefresh(value.refresh))
   );
+}
+
+function mapProviderModel(model: ProviderModelPayload): ProviderModelOption {
+  if ("value" in model) return model;
+  return {
+    value: model.canonical_model,
+    label: model.display_name,
+    canonical_id: model.canonical_model,
+    hidden: model.hidden,
+    is_default: model.is_default,
+    context_length: model.context_length.value,
+    context_length_source: model.context_length.source,
+    ...(model.input_modalities === null
+      ? {}
+      : { input_modalities: model.input_modalities }),
+    ...(model.supports_tools === null ? {} : { supports_tools: model.supports_tools }),
+    ...(model.reasoning.supported_efforts === null
+      ? {}
+      : {
+          reasoning: {
+            supported_efforts: model.reasoning.supported_efforts,
+            ...(model.reasoning.default_effort === null
+              ? {}
+              : { default_effort: model.reasoning.default_effort }),
+          },
+        }),
+    routes: model.routes,
+  };
+}
+
+function mapProviderModelEntry(entry: ProviderModelEntryPayload): ProviderModelEntry {
+  return { ...entry, models: entry.models.map(mapProviderModel) };
 }
 
 export async function fetchProviderModelCatalog(): Promise<
@@ -160,7 +351,9 @@ export async function fetchProviderModelCatalog(): Promise<
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.providers)) {
-        const validModels = data.providers.filter(isProviderModelEntry);
+        const validModels = data.providers
+          .filter(isProviderModelEntry)
+          .map(mapProviderModelEntry);
         cachedModels = validModels;
         cachedModelsTimestamp = now;
         return validModels;

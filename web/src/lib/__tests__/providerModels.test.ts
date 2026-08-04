@@ -464,6 +464,150 @@ describe("providerModels", () => {
     ).toBe(false);
   });
 
+  it("maps_matrix_response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: [
+            {
+              provider: "codex",
+              available: true,
+              source: "live",
+              models: [
+                {
+                  canonical_model: "gpt-5.4",
+                  display_name: "GPT-5.4",
+                  aliases: [],
+                  available: true,
+                  hidden: false,
+                  is_default: true,
+                  context_length: { value: 200_000, source: "provider-catalog" },
+                  max_output_tokens: { value: 100_000, source: "provider-catalog" },
+                  latency_class: null,
+                  reasoning: {
+                    status: "known",
+                    supported_efforts: ["low", "medium", "high"],
+                    default_effort: "medium",
+                  },
+                  input_modalities: ["text", "image"],
+                  supports_tools: true,
+                  routes: {},
+                  provenance: {},
+                },
+              ],
+              refresh: { generation: 4, sources: [] },
+            },
+          ],
+        }),
+      }),
+    );
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "gpt-5.4",
+            label: "GPT-5.4",
+            canonical_id: "gpt-5.4",
+            hidden: false,
+            is_default: true,
+            context_length: 200_000,
+            context_length_source: "provider-catalog",
+            input_modalities: ["text", "image"],
+            supports_tools: true,
+            reasoning: {
+              supported_efforts: ["low", "medium", "high"],
+              default_effort: "medium",
+            },
+            routes: {},
+          },
+        ],
+        refresh: { generation: 4, sources: [] },
+      },
+    ]);
+  });
+
+  it("exposes_routes_and_refresh", async () => {
+    const routes = {
+      standard: {
+        selector: "gpt-5.4",
+        available: true,
+        usage_multiplier: "1",
+        throughput_multiplier: null,
+        latency_class: null,
+        activations: [
+          { kind: "model_selector", surface: "spawn-cli", params: {} },
+        ],
+      },
+      fast: {
+        selector: "gpt-5.4-fast",
+        available: true,
+        usage_multiplier: "5",
+        throughput_multiplier: "2",
+        latency_class: "fast",
+        activations: [
+          { kind: "model_selector", surface: "spawn-cli", params: {} },
+        ],
+      },
+    };
+    const refresh = {
+      generation: 7,
+      sources: [{ source_key: "codex-app-server", state: "ok" }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          providers: [
+            {
+              provider: "codex",
+              available: true,
+              source: "live",
+              models: [
+                {
+                  canonical_model: "gpt-5.4",
+                  display_name: "GPT-5.4",
+                  aliases: [],
+                  available: true,
+                  hidden: false,
+                  is_default: false,
+                  context_length: { value: null, source: "unknown" },
+                  max_output_tokens: { value: null, source: "unknown" },
+                  latency_class: null,
+                  reasoning: {
+                    status: "unknown",
+                    supported_efforts: null,
+                    default_effort: null,
+                  },
+                  input_modalities: null,
+                  supports_tools: null,
+                  routes,
+                  provenance: {},
+                },
+              ],
+              refresh,
+            },
+          ],
+        }),
+      }),
+    );
+
+    const result = await fetchProviderModelCatalog();
+
+    expect(result[0]?.models[0]?.routes).toBe(routes);
+    expect(result[0]?.refresh).toBe(refresh);
+    expectTypeOf(result[0]?.models[0]?.routes?.fast?.selector).toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf(result[0]?.refresh?.generation).toEqualTypeOf<number | undefined>();
+  });
+
   it("logs and returns an empty catalog when the fetch fails", async () => {
     const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
