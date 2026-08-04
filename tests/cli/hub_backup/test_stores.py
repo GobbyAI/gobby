@@ -211,6 +211,8 @@ def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
             ("gobby", True, True),
             ("gobby_ro", False, True),
             ("gobby_agent_issuer", False, False),
+            ("gobby_daemon_runtime", False, True),
+            ("gobby_gcode_capability", False, False),
             ("gobby_agent_0123456789abcdef0123456789abcdef_1", False, True),
         ]
     )
@@ -222,6 +224,8 @@ def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
         {"rolname": "gobby", "rolsuper": True, "rolcanlogin": True},
         {"rolname": "gobby_ro", "rolsuper": False, "rolcanlogin": True},
         {"rolname": "gobby_agent_issuer", "rolsuper": False, "rolcanlogin": False},
+        {"rolname": "gobby_daemon_runtime", "rolsuper": False, "rolcanlogin": True},
+        {"rolname": "gobby_gcode_capability", "rolsuper": False, "rolcanlogin": False},
     ]
     statement = next(s for s in connection.statements if "pg_roles" in s)
     assert "NOT LIKE 'pg\\_%'" in statement
