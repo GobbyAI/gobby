@@ -13,15 +13,12 @@ from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.observability import get_build_status
 from gobby.build.options import BuildOptions
 from gobby.build.resume_lifecycle import (
-    _resume_epic_workspace_refresh_required,
     apply_stage_caps_to_existing_lifecycle,
     repair_expanded_epic_root_manifest_for_resume,
     resume_existing_lifecycle,
 )
 from gobby.build.runtime_hooks import RuntimeHooks
-from gobby.build.workspace_common import BuildWorkspaceError
 from gobby.build.workspace_git import _workspace_path
-from gobby.build.workspaces import ensure_epic_integration_workspaces
 from gobby.config.build import StageCapOverride
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import LocalProjectManager
@@ -51,20 +48,8 @@ def _init_repo(path: Path) -> None:
     _git(path, "commit", "-m", "initial")
 
 
-def test_development_resume_only_needs_dispatcher_tick() -> None:
-    assert _resume_epic_workspace_refresh_required("development") is False
-    assert _resume_epic_workspace_refresh_required("planning") is False
-    assert _resume_epic_workspace_refresh_required(None) is False
-
-
-def test_delivery_resume_refreshes_epic_workspace() -> None:
-    assert _resume_epic_workspace_refresh_required("epic_qa") is True
-    assert _resume_epic_workspace_refresh_required("pr") is True
-    assert _resume_epic_workspace_refresh_required("merge") is True
-
-
 @pytest.mark.asyncio
-async def test_development_resume_blocks_active_child_epic_integration_workspace(
+async def test_development_resume_ticks_with_active_child_epic_integration_workspace(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -145,19 +130,15 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
     )
     run_manager.update_runtime(run.id, worktree_id=worktree.id)
 
-    def ensure_epic(**_kwargs: object) -> None:
-        raise AssertionError("resume must block before refreshing an active workspace")
-
-    def ensure_parent(**_kwargs: object) -> None:
-        raise AssertionError("epic resume must not use leaf parent integration refresh")
+    tick_called = False
 
     async def tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
-        raise AssertionError("resume must not tick after active workspace conflict")
+        nonlocal tick_called
+        tick_called = True
+        return DispatcherTickSummary()
 
     runtime = RuntimeHooks(
         dispatcher_tick=tick,
-        ensure_epic_integration_workspaces=ensure_epic,
-        ensure_task_parent_integration_workspace=ensure_parent,
         build_dispatcher_tick=tick,
         attach_build_run_root=lambda *_args: None,
     )
@@ -165,26 +146,25 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
     before = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project.id)
     assert before["artifact_health"]["ok"] is True
 
-    with pytest.raises(
-        BuildWorkspaceError, match="active run dd49abf3-d60c-533c-8edc-4056c77eba8d"
-    ):
-        await resume_existing_lifecycle(
-            task_manager,
-            root,
-            BuildOptions(isolation="worktree", target_branch="main"),
-            [],
-            [],
-            temp_db,
-            project.id,
-            None,
-            "main",
-            None,
-            runtime=runtime,
-        )
+    await resume_existing_lifecycle(
+        task_manager,
+        root,
+        BuildOptions(isolation="worktree", target_branch="main"),
+        [],
+        [],
+        temp_db,
+        project.id,
+        None,
+        "main",
+        None,
+        runtime=runtime,
+    )
+
+    assert tick_called is True
 
 
 @pytest.mark.asyncio
-async def test_development_resume_refreshes_invalid_child_epic_integration_artifact(
+async def test_development_resume_leaves_invalid_child_epic_workspace_for_dispatch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -240,16 +220,11 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
         target_branch="main",
     )
 
-    def ensure_parent(**_kwargs: object) -> None:
-        raise AssertionError("epic resume must not use leaf parent integration refresh")
-
     async def tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
         return DispatcherTickSummary()
 
     runtime = RuntimeHooks(
         dispatcher_tick=tick,
-        ensure_epic_integration_workspaces=ensure_epic_integration_workspaces,
-        ensure_task_parent_integration_workspace=ensure_parent,
         build_dispatcher_tick=tick,
         attach_build_run_root=lambda *_args: None,
     )
@@ -275,11 +250,10 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
     after = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project.id)
     repaired = LocalWorktreeManager(temp_db).get_by_branch(project.id, child_integration_branch)
 
-    assert after["artifact_health"]["ok"] is True
-    assert after["artifact_health"]["issue_count"] == 0
+    assert after["artifact_health"]["ok"] is False
+    assert after["artifact_health"]["issue_count"] == 1
     assert repaired is not None
-    assert repaired.id != worktree.id
-    assert _git(invalid_path, "rev-parse", "--is-inside-work-tree") == "true"
+    assert repaired.id == worktree.id
 
 
 def test_apply_stage_caps_to_existing_lifecycle_uses_dispatch_mutex(

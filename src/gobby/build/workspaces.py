@@ -12,7 +12,6 @@ from gobby.storage.clones import Clone
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.worktrees import Worktree
 
 __all__ = [
@@ -34,8 +33,15 @@ def ensure_epic_integration_workspaces(
     project_id: str,
     services: object | None,
     merge_closed_descendant_commits: bool = False,
+    repair_only: bool = False,
 ) -> None:
-    """Create/reuse integration workspaces for open epics in a build subtree."""
+    """Create or repair integration workspaces for open epics in a build subtree."""
+    root_artifacts = task_manager.artifacts.get_artifacts(root_task.id)
+    if repair_only and not root_artifacts.integration_branch:
+        raise BuildWorkspaceError(
+            f"epic integration workspace has not been provisioned for {_task_ref(root_task)}"
+        )
+
     repo_path = _project_repo_path(task_manager.db, project_id)
     workspace_services = _WorkspaceServices.resolve(
         db=task_manager.db,
@@ -52,6 +58,8 @@ def ensure_epic_integration_workspaces(
         if task.task_type != "epic" or task.closed_at is not None:
             continue
         artifacts = task_manager.artifacts.get_artifacts(task.id)
+        if repair_only and not artifacts.integration_branch:
+            continue
         parent_integration = _nearest_ancestor_integration(
             task.parent_task_id,
             parent_by_id=parent_by_id,
@@ -74,29 +82,15 @@ def ensure_epic_integration_workspaces(
             base_branch=base_branch,
             artifacts=artifacts,
         )
-        artifact_fields: dict[str, str | int | None] = {
-            "integration_branch": integration_branch,
-            "target_branch": base_branch,
-        }
-        if backend == "worktree":
-            artifact_fields["integration_workspace_id"] = integration.id
-            artifact_fields["integration_clone_id"] = None
-            artifact_fields["clone_id"] = None
-            artifact_fields["clone_path"] = None
-            artifact_fields["base_commit_sha"] = None
-            if artifacts.worktree_id:
-                artifact_fields["worktree_id"] = None
-                artifact_fields["worktree_path"] = None
-        else:
-            artifact_fields["integration_clone_id"] = integration.id
-            artifact_fields["integration_workspace_id"] = None
-            artifact_fields["worktree_id"] = None
-            artifact_fields["worktree_path"] = None
-            artifact_fields["base_commit_sha"] = None
-            if artifacts.clone_id:
-                artifact_fields["clone_id"] = None
-                artifact_fields["clone_path"] = None
-        task_manager.artifacts.set_artifacts_atomic(task.id, **artifact_fields)
+        task_manager.artifacts.set_artifacts_atomic(
+            task.id,
+            **_integration_artifact_fields(
+                backend=backend,
+                integration_id=integration.id,
+                integration_branch=integration_branch,
+                base_branch=base_branch,
+            ),
+        )
         if merge_closed_descendant_commits:
             _merge_closed_descendant_commits(
                 tasks=tasks,
@@ -107,13 +101,14 @@ def ensure_epic_integration_workspaces(
             )
         integration_by_epic[task.id] = integration_branch
 
-    _cascade_nearest_integration_branch(
-        task_manager,
-        tasks=tasks,
-        root_task_id=root_task.id,
-        parent_by_id=parent_by_id,
-        integration_by_epic=integration_by_epic,
-    )
+    if not repair_only:
+        _cascade_nearest_integration_branch(
+            task_manager,
+            tasks=tasks,
+            root_task_id=root_task.id,
+            parent_by_id=parent_by_id,
+            integration_by_epic=integration_by_epic,
+        )
 
 
 def ensure_task_parent_integration_workspace(
@@ -123,36 +118,19 @@ def ensure_task_parent_integration_workspace(
     backend: WorkspaceBackend,
     project_id: str,
     services: object | None,
-    base_branch_override: str | None = None,
 ) -> Worktree | Clone | None:
-    """Ensure the nearest parent epic integration workspace for a child task."""
-    if not task.parent_task_id:
+    """Ensure the open epic ancestry required by an isolated child task."""
+    ancestor_epics = _open_ancestor_epics(task_manager, task)
+    if not ancestor_epics:
         return None
 
-    task_artifacts = task_manager.artifacts.get_artifacts(task.id)
-    branch_name = task_artifacts.target_branch or _nearest_ancestor_integration_branch(
-        task_manager,
-        task.parent_task_id,
-    )
-    if not branch_name:
-        return None
-
-    match = _nearest_parent_epic_for_integration_branch(
-        task_manager,
-        task,
-        branch_name,
-    )
-    if match is None:
-        return None
-
-    epic, artifacts = match
-    base_branch = (
-        artifacts.target_branch
-        or base_branch_override
-        or _nearest_ancestor_integration_branch(task_manager, epic.parent_task_id)
-    )
-    if base_branch is None:
-        raise BuildWorkspaceError("target_branch is required for parent integration workspace")
+    root_epic = ancestor_epics[0]
+    root_artifacts = task_manager.artifacts.get_artifacts(root_epic.id)
+    base_branch = root_artifacts.target_branch
+    if not base_branch:
+        raise BuildWorkspaceError(
+            f"target_branch is required for root epic integration workspace {_task_ref(root_epic)}"
+        )
 
     repo_path = _project_repo_path(task_manager.db, project_id)
     workspace_services = _WorkspaceServices.resolve(
@@ -162,33 +140,68 @@ def ensure_task_parent_integration_workspace(
         repo_path=repo_path,
         services=services,
     )
-    integration = workspace_services.ensure_integration(
-        task=epic,
-        backend=backend,
-        branch_name=branch_name,
-        base_branch=base_branch,
-        artifacts=artifacts,
-    )
-    artifact_fields: dict[str, str | int | None] = {
-        "integration_branch": branch_name,
+    nearest_integration: Worktree | Clone | None = None
+    nearest_branch: str | None = None
+
+    for epic in ancestor_epics:
+        artifacts = task_manager.artifacts.get_artifacts(epic.id)
+        integration_branch = (
+            artifacts.integration_branch
+            or workspace_services.existing_task_workspace_branch(
+                task=epic,
+                backend=backend,
+                artifacts=artifacts,
+            )
+            or _integration_branch(epic)
+        )
+        integration = workspace_services.ensure_integration(
+            task=epic,
+            backend=backend,
+            branch_name=integration_branch,
+            base_branch=base_branch,
+            artifacts=artifacts,
+        )
+        task_manager.artifacts.set_artifacts_atomic(
+            epic.id,
+            **_integration_artifact_fields(
+                backend=backend,
+                integration_id=integration.id,
+                integration_branch=integration_branch,
+                base_branch=base_branch,
+            ),
+        )
+        nearest_integration = integration
+        nearest_branch = integration_branch
+        base_branch = integration_branch
+
+    if nearest_branch is not None:
+        task_manager.artifacts.set_artifact(task.id, "target_branch", nearest_branch)
+    return nearest_integration
+
+
+def _integration_artifact_fields(
+    *,
+    backend: WorkspaceBackend,
+    integration_id: str,
+    integration_branch: str,
+    base_branch: str,
+) -> dict[str, str | int | None]:
+    fields: dict[str, str | int | None] = {
+        "integration_branch": integration_branch,
         "target_branch": base_branch,
+        "worktree_id": None,
+        "worktree_path": None,
+        "clone_id": None,
+        "clone_path": None,
+        "base_commit_sha": None,
     }
     if backend == "worktree":
-        artifact_fields["integration_workspace_id"] = integration.id
-        artifact_fields["integration_clone_id"] = None
-        artifact_fields["clone_id"] = None
-        artifact_fields["clone_path"] = None
-        artifact_fields["base_commit_sha"] = None
+        fields["integration_workspace_id"] = integration_id
+        fields["integration_clone_id"] = None
     else:
-        artifact_fields["integration_clone_id"] = integration.id
-        artifact_fields["integration_workspace_id"] = None
-        artifact_fields["worktree_id"] = None
-        artifact_fields["worktree_path"] = None
-        artifact_fields["base_commit_sha"] = None
-    task_manager.artifacts.set_artifacts_atomic(epic.id, **artifact_fields)
-    if not task_artifacts.target_branch:
-        task_manager.artifacts.set_artifact(task.id, "target_branch", branch_name)
-    return integration
+        fields["integration_clone_id"] = integration_id
+        fields["integration_workspace_id"] = None
+    return fields
 
 
 def _project_repo_path(db: HubDatabase, project_id: str) -> Path:
@@ -258,40 +271,18 @@ def _nearest_ancestor_integration(
     return None
 
 
-def _nearest_parent_epic_for_integration_branch(
-    task_manager: LocalTaskManager,
-    task: Task,
-    branch_name: str,
-) -> tuple[Task, TaskArtifacts] | None:
+def _open_ancestor_epics(task_manager: LocalTaskManager, task: Task) -> list[Task]:
+    epics: list[Task] = []
     current_id = task.parent_task_id
     while current_id:
         current = _task_by_id(task_manager.db, current_id)
         if current is None:
-            return None
-        if current.task_type == "epic":
-            artifacts = task_manager.artifacts.get_artifacts(current.id)
-            if artifacts.integration_branch == branch_name:
-                return current, artifacts
-            if artifacts.integration_branch is None and _integration_branch(current) == branch_name:
-                return current, artifacts
+            break
+        if current.task_type == "epic" and current.closed_at is None:
+            epics.append(current)
         current_id = current.parent_task_id
-    return None
-
-
-def _nearest_ancestor_integration_branch(
-    task_manager: LocalTaskManager,
-    task_id: str | None,
-) -> str | None:
-    current_id = task_id
-    while current_id:
-        task = _task_by_id(task_manager.db, current_id)
-        if task is None:
-            return None
-        artifacts = task_manager.artifacts.get_artifacts(task.id)
-        if artifacts.integration_branch:
-            return artifacts.integration_branch
-        current_id = task.parent_task_id
-    return None
+    epics.reverse()
+    return epics
 
 
 def _task_by_id(db: HubDatabase, task_id: str) -> Task | None:

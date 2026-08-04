@@ -8,11 +8,7 @@ from typing import Protocol
 
 from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.options import BuildOptions
-from gobby.build.workspace_common import WorkspaceBackend
-from gobby.storage.clones import Clone
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.worktrees import Worktree
 
 
 class DispatcherTickHook(Protocol):
@@ -27,33 +23,6 @@ class DispatcherTickHook(Protocol):
         max_actions: int | None = None,
         max_active_agents: int | None = None,
     ) -> Awaitable[DispatcherTickSummary]: ...
-
-
-class EpicIntegrationWorkspacesHook(Protocol):
-    def __call__(
-        self,
-        *,
-        task_manager: LocalTaskManager,
-        root_task: Task,
-        backend: WorkspaceBackend,
-        target_branch: str,
-        project_id: str,
-        services: object | None,
-        merge_closed_descendant_commits: bool = False,
-    ) -> None: ...
-
-
-class TaskParentIntegrationWorkspaceHook(Protocol):
-    def __call__(
-        self,
-        *,
-        task_manager: LocalTaskManager,
-        task: Task,
-        backend: WorkspaceBackend,
-        project_id: str,
-        services: object | None,
-        base_branch_override: str | None = None,
-    ) -> Worktree | Clone | None: ...
 
 
 class BuildDispatcherTickHook(Protocol):
@@ -81,7 +50,5 @@ class AttachBuildRunRootHook(Protocol):
 @dataclass(frozen=True, slots=True)
 class RuntimeHooks:
     dispatcher_tick: DispatcherTickHook
-    ensure_epic_integration_workspaces: EpicIntegrationWorkspacesHook
-    ensure_task_parent_integration_workspace: TaskParentIntegrationWorkspaceHook
     build_dispatcher_tick: BuildDispatcherTickHook
     attach_build_run_root: AttachBuildRunRootHook

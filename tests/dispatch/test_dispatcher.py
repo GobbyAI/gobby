@@ -191,7 +191,13 @@ def _session(
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
         VALUES (%s, %s, %s, %s, %s)
         """,
-        (session_id, session_id, "21000000-0000-4000-8000-000000000001", "test", sample_project["id"]),
+        (
+            session_id,
+            session_id,
+            "21000000-0000-4000-8000-000000000001",
+            "test",
+            sample_project["id"],
+        ),
     )
     return session_id
 
@@ -2223,13 +2229,13 @@ async def test_spawn_action_uses_services_and_records_agent_run(
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
 @pytest.mark.asyncio
-async def test_planning_agents_inherit_task_worktree_isolation(
+async def test_planning_agents_force_main_context(
     agent_slug: str,
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Planning agents inherit build task worktree isolation."""
+    """Planning agents run in the main context without mutating task artifacts."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -2307,22 +2313,22 @@ async def test_planning_agents_inherit_task_worktree_isolation(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "worktree"
+    assert spawn_kwargs["isolation"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
-    assert artifacts.worktree_id is None
-    assert artifacts.worktree_path is None
-    assert artifacts.base_commit_sha is None
+    assert artifacts.worktree_id == stale_worktree_id
+    assert artifacts.worktree_path == stale_worktree_path
+    assert artifacts.base_commit_sha == "old-base"
     assert evidence_threads and evidence_threads[0] != main_thread
 
 
 @pytest.mark.asyncio
-async def test_expansion_review_inherits_task_worktree_isolation(
+async def test_expansion_review_forces_main_context(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Expansion review inherits build task worktree isolation."""
+    """Expansion review runs in the main context without workspace mutation."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -2386,11 +2392,11 @@ async def test_expansion_review_inherits_task_worktree_isolation(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "worktree"
+    assert spawn_kwargs["isolation"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
-    assert artifacts.worktree_id is None
-    assert artifacts.worktree_path is None
+    assert artifacts.worktree_id == "9792b29b-aa8c-5633-a8cb-3cfe44f7de3d"
+    assert artifacts.worktree_path == "/tmp/missing-expansion-worktree"
 
 
 @pytest.mark.asyncio
@@ -2868,7 +2874,9 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
 
 @pytest.mark.asyncio
 async def test_leaf_spawn_skips_stale_parent_integration_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_git_project: dict[str, Any],
 ) -> None:
     """Leaf spawn skips stale parent integration branch artifacts."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2876,6 +2884,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
+    sample_project = sample_git_project
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -2893,6 +2902,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         parent_task_id=root.id,
         task_type="epic",
         allow_automation=False,
+        status="closed",
     )
     leaf = _task(
         temp_db,
@@ -3030,6 +3040,10 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
 
     monkeypatch.setattr("gobby.dispatch.spawn_artifacts._artifact_ref_sha", fake_ref_sha)
     monkeypatch.setattr(
+        "gobby.dispatch.spawn_artifacts.ensure_task_parent_integration_workspace",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         unexpected_spawn_agent_impl,
     )
@@ -3133,6 +3147,8 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
     assert prepare_calls
     root_task = cast(_HasId, prepare_calls[0]["root_task"])
     assert root_task.id == task.id
+    assert prepare_calls[0]["repair_only"] is True
+    assert prepare_calls[0]["merge_closed_descendant_commits"] is True
     assert spawn_kwargs["worktree_id"] == "de982dee-65f9-5a31-a035-b8016c3cd62b"
     assert spawn_kwargs["clone_id"] is None
     assert artifacts.worktree_id is None
@@ -3140,23 +3156,15 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
     assert artifacts.base_commit_sha is None
 
 
-@pytest.mark.asyncio
-async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
-    monkeypatch: pytest.MonkeyPatch,
+def test_epic_qa_spawn_rejects_unprovisioned_epic(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
-    tmp_path: Path,
 ) -> None:
-    """Epic QA spawn promotes existing worktree when target missing."""
-    from gobby.agents.sync import sync_bundled_agents
-    from gobby.dispatch import dispatcher
-    from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SessionManager
-    from gobby.storage.worktrees import LocalWorktreeManager
+    """Epic QA refuses to create a workspace for an untouched epic."""
+    from gobby.dispatch.spawn_artifacts import _prepare_spawn_artifacts
+    from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 
-    sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    session_manager = SessionManager(temp_db)
     task = _task(
         temp_db,
         sample_project,
@@ -3165,21 +3173,10 @@ async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
         task_type="epic",
         isolation="worktree",
         assigned_agent="epic-reviewer",
-    )
-    worktree_path = tmp_path / "phase-worktree"
-    worktree_path.mkdir()
-    worktree = LocalWorktreeManager(temp_db).create(
-        project_id=sample_project["id"],
-        branch_name="4be1ce02-4098-5282-9601-9c5ba6ab0ecd",
-        worktree_path=str(worktree_path),
-        base_branch="main",
-        task_id=task.id,
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
-        worktree_path=str(worktree_path),
-        worktree_id=worktree.id,
-        base_commit_sha="old-base",
+        target_branch="main",
     )
     action = SpawnAgentAction(
         task_id=task.id,
@@ -3188,80 +3185,82 @@ async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
         prompt="review",
         initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
-    prepare_calls: list[dict[str, object]] = []
-    spawn_kwargs: dict[str, object] = {}
 
-    def fake_prepare(**kwargs: object) -> None:
-        prepare_calls.append(kwargs)
-
-    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
-        spawn_kwargs.update(kwargs)
-        run = LocalAgentRunManager(temp_db).create(
-            parent_session_id=str(kwargs["parent_session_id"]),
-            provider="codex",
-            prompt=str(kwargs["prompt"]),
-            agent_name=str(kwargs["agent_lookup_name"]),
-            task_id=task.id,
-            run_id="89567d73-7077-56f5-a309-96e7126a2879",
+    with pytest.raises(
+        DispatchSpawnFailed,
+        match=f"epic integration workspace has not been provisioned for #{task.seq_num}",
+    ):
+        _prepare_spawn_artifacts(
+            db=temp_db,
+            action=action,
+            task=task,
+            task_manager=task_manager,
+            project_id=sample_project["id"],
+            services=None,
+            isolation="worktree",
         )
-        return {
-            "success": True,
-            "run_id": run.id,
-            "isolation": "worktree",
-            "worktree_id": kwargs["worktree_id"],
-            "worktree_path": str(worktree_path),
-        }
 
-    monkeypatch.setattr(
-        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
-        fake_prepare,
-    )
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
-        fake_spawn_agent_impl,
-    )
-    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
-    services = SimpleNamespace(
-        database=temp_db,
-        task_manager=task_manager,
-        session_manager=session_manager,
-        agent_runner=SimpleNamespace(),
-    )
-
-    result = await dispatcher.run_heartbeat(
-        db=temp_db,
-        project_id=sample_project["id"],
-        services=services,
-    )
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
-    stored_worktree = LocalWorktreeManager(temp_db).get(worktree.id)
-
-    assert result.executed == 1
-    assert prepare_calls
-    assert prepare_calls[0]["target_branch"] == "main"
-    assert spawn_kwargs["worktree_id"] == worktree.id
-    assert artifacts.target_branch == "main"
-    assert artifacts.integration_branch == "4be1ce02-4098-5282-9601-9c5ba6ab0ecd"
-    assert artifacts.integration_workspace_id == worktree.id
-    assert artifacts.worktree_id is None
-    assert stored_worktree is not None
-    assert stored_worktree.workspace_role == "integration"
+    assert artifacts.integration_branch is None
+    assert artifacts.integration_workspace_id is None
 
 
-@pytest.mark.asyncio
-async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_git_project: dict[str, Any]
+def test_leaf_spawn_translates_missing_root_target(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
-    """Epic QA spawn recovers missing target from current branch."""
-    from gobby.agents.sync import sync_bundled_agents
-    from gobby.dispatch import dispatcher
-    from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SessionManager
+    """Leaf workspace preparation exposes missing root target metadata as a spawn failure."""
+    from gobby.dispatch.spawn_artifacts import _prepare_spawn_artifacts
+    from gobby.dispatch.spawn_errors import DispatchSpawnFailed
+
+    task_manager = LocalTaskManager(temp_db)
+    root = _task(
+        temp_db,
+        sample_project,
+        title="Root without target",
+        task_type="epic",
+        allow_automation=False,
+    )
+    leaf = _task(
+        temp_db,
+        sample_project,
+        title="Leaf implementation",
+        parent_task_id=root.id,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    action = SpawnAgentAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    with pytest.raises(
+        DispatchSpawnFailed,
+        match=f"target_branch is required for root epic integration workspace #{root.seq_num}",
+    ):
+        _prepare_spawn_artifacts(
+            db=temp_db,
+            action=action,
+            task=leaf,
+            task_manager=task_manager,
+            project_id=sample_project["id"],
+            services=None,
+            isolation="worktree",
+        )
+
+
+def test_epic_qa_spawn_rejects_missing_root_target(
+    temp_db: HubDatabase,
+    sample_git_project: dict[str, Any],
+) -> None:
+    """Epic QA requires the target metadata recorded by the build lifecycle."""
+    from gobby.dispatch.spawn_artifacts import _prepare_spawn_artifacts
+    from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 
     sample_project = sample_git_project
-    sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    session_manager = SessionManager(temp_db)
     task = _task(
         temp_db,
         sample_project,
@@ -3271,6 +3270,10 @@ async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
         isolation="worktree",
         assigned_agent="epic-reviewer",
     )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        integration_branch="gobby/integration/phase",
+    )
     action = SpawnAgentAction(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
@@ -3278,48 +3281,20 @@ async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
         prompt="review",
         initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
-    prepare_calls: list[dict[str, object]] = []
 
-    def fake_prepare(**kwargs: object) -> None:
-        prepare_calls.append(kwargs)
-
-    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
-        run = LocalAgentRunManager(temp_db).create(
-            parent_session_id=str(kwargs["parent_session_id"]),
-            provider="codex",
-            prompt=str(kwargs["prompt"]),
-            agent_name=str(kwargs["agent_lookup_name"]),
-            task_id=task.id,
-            run_id="f0b53f7a-9dca-53d1-9d23-b70ba27a4c5c",
+    with pytest.raises(
+        DispatchSpawnFailed,
+        match=f"target_branch is required for epic integration workspace #{task.seq_num}",
+    ):
+        _prepare_spawn_artifacts(
+            db=temp_db,
+            action=action,
+            task=task,
+            task_manager=task_manager,
+            project_id=sample_project["id"],
+            services=None,
+            isolation="worktree",
         )
-        return {"success": True, "run_id": run.id, "isolation": "worktree"}
-
-    monkeypatch.setattr(
-        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
-        fake_prepare,
-    )
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
-        fake_spawn_agent_impl,
-    )
-    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
-    services = SimpleNamespace(
-        database=temp_db,
-        task_manager=task_manager,
-        session_manager=session_manager,
-        agent_runner=SimpleNamespace(),
-    )
-
-    result = await dispatcher.run_heartbeat(
-        db=temp_db,
-        project_id=sample_project["id"],
-        services=services,
-    )
-    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
-
-    assert result.executed == 1
-    assert prepare_calls[0]["target_branch"] == "main"
-    assert artifacts.target_branch == "main"
 
 
 @pytest.mark.asyncio

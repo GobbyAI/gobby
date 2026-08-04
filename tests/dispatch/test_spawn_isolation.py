@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
 @pytest.mark.parametrize("task_isolation", ["worktree", "clone"])
-def test_task_bound_planning_agents_inherit_task_isolation(
+def test_task_bound_planning_agents_force_none_isolation(
     agent_slug: str,
     task_isolation: str,
 ) -> None:
@@ -28,14 +28,20 @@ def test_task_bound_planning_agents_inherit_task_isolation(
     task = SimpleNamespace(isolation=task_isolation)
     agent_body = SimpleNamespace(isolation="none")
 
-    assert (
-        _effective_spawn_isolation(task=task, action=action, agent_body=agent_body)
-        == task_isolation
-    )
+    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
 
 
-@pytest.mark.parametrize("stage_name", ["planning", "expansion"])
-def test_pre_development_stages_default_to_none_without_task_isolation(stage_name: str) -> None:
+@pytest.mark.parametrize(
+    "stage_name",
+    ["ideation", "research", "architecture", "prd", "planning", "expansion"],
+)
+@pytest.mark.parametrize("task_isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("agent_isolation", ["worktree", "clone"])
+def test_pre_development_stages_force_none_isolation(
+    stage_name: str,
+    task_isolation: str,
+    agent_isolation: str,
+) -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
@@ -43,8 +49,8 @@ def test_pre_development_stages_default_to_none_without_task_isolation(stage_nam
         prompt="go",
         initial_variables={"stage_name": stage_name},
     )
-    task = SimpleNamespace(isolation="none")
-    agent_body = SimpleNamespace(isolation="worktree")
+    task = SimpleNamespace(isolation=task_isolation)
+    agent_body = SimpleNamespace(isolation=agent_isolation)
 
     assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
 

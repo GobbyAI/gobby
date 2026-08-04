@@ -36,10 +36,6 @@ from gobby.build.validation import (
     _validate_planning_seed,
     _validate_retry_caps,
 )
-from gobby.build.workspaces import (
-    ensure_epic_integration_workspaces,
-    ensure_task_parent_integration_workspace,
-)
 from gobby.storage.build_history import (
     best_effort_finish_run,
     best_effort_record_event,
@@ -181,8 +177,6 @@ def _attach_build_run_root(
 def _runtime_hooks() -> RuntimeHooks:
     return RuntimeHooks(
         dispatcher_tick=_kick_dispatcher_tick,
-        ensure_epic_integration_workspaces=ensure_epic_integration_workspaces,
-        ensure_task_parent_integration_workspace=ensure_task_parent_integration_workspace,
         build_dispatcher_tick=_build_dispatcher_tick,
         attach_build_run_root=_attach_build_run_root,
     )

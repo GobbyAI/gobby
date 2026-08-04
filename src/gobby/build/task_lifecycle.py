@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 
 from gobby.build.delivery import record_build_delivery_campaign
@@ -109,19 +108,6 @@ async def build_epic(
         target_branch=target_branch,
     )
     record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
-    if opts.isolation in {"worktree", "clone"}:
-        if target_branch is None:
-            raise ValueError("target_branch is required for epic integration workspaces")
-        if not opts.dry_run:
-            await asyncio.to_thread(
-                runtime.ensure_epic_integration_workspaces,
-                task_manager=task_manager,
-                root_task=task,
-                backend=opts.workspace_backend,
-                target_branch=target_branch,
-                project_id=project_id,
-                services=services,
-            )
     manifest_input_kind: InputKind = (
         "expanded_epic" if has_existing_expansion_output(task_manager, task) else "epic"
     )

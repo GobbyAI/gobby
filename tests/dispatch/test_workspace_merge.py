@@ -727,7 +727,16 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
     integration_path = tmp_path / "phase-integration"
     repo.mkdir()
     _init_repo(repo)
-    _git(repo, "worktree", "add", "-b", "gobby/integration/phase", str(integration_path), "main")
+    _git(repo, "checkout", "-b", "gobby/integration/root")
+    _git(
+        repo,
+        "worktree",
+        "add",
+        "-b",
+        "gobby/integration/phase",
+        str(integration_path),
+        "gobby/integration/root",
+    )
     _git(integration_path, "config", "user.email", "test@example.com")
     _git(integration_path, "config", "user.name", "Test User")
     (integration_path / "phase.txt").write_text("phase\n")
@@ -751,8 +760,26 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
     )
     task_manager.initialize_task_manifest(phase.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(phase.id, "merge", by_session_id="test")
+    task_manager.artifacts.set_artifacts_atomic(
+        root.id,
+        target_branch="main",
+        integration_branch="gobby/integration/root",
+    )
 
     worktrees = LocalWorktreeManager(temp_db)
+    root_integration = worktrees.create(
+        project_id=project.id,
+        branch_name="gobby/integration/root",
+        worktree_path=str(repo),
+        base_branch="main",
+        task_id=root.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifact(
+        root.id,
+        "integration_workspace_id",
+        root_integration.id,
+    )
     integration = worktrees.create(
         project_id=project.id,
         branch_name="gobby/integration/phase",
@@ -763,7 +790,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
     )
     task_manager.artifacts.set_artifacts_atomic(
         phase.id,
-        target_branch="main",
+        target_branch="gobby/integration/root",
         integration_branch="gobby/integration/phase",
         integration_workspace_id=integration.id,
     )
@@ -775,7 +802,7 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
             task_id=phase.id,
             task_ref=f"#{phase.seq_num}",
             backend="worktree",
-            target_branch="main",
+            target_branch="gobby/integration/root",
             source_branch="gobby/integration/phase",
             source_workspace_id=integration.id,
         ),

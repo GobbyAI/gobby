@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -15,8 +16,10 @@ from gobby.build.workspaces import (
     _integration_branch,
     _refresh_clean_git_dir,
     ensure_epic_integration_workspaces,
+    ensure_task_parent_integration_workspace,
 )
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -56,9 +59,9 @@ def _init_repo(path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_child_build_resume_repairs_parent_integration_metadata_only(
+async def test_child_build_resume_leaves_parent_integration_unprovisioned(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -128,20 +131,20 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
     )
 
     parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
-    adopted = worktrees.get_by_branch(project.id, integration_branch)
+    leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
 
-    assert adopted is not None
-    assert adopted.workspace_role == "integration"
-    assert adopted.worktree_path == str(integration_path)
-    assert parent_artifacts.integration_workspace_id == adopted.id
+    assert worktrees.get_by_branch(project.id, integration_branch) is None
+    assert parent_artifacts.integration_branch is None
+    assert parent_artifacts.integration_workspace_id is None
+    assert leaf_artifacts.target_branch == integration_branch
     assert task_manager.stage_states.list_for_task(sibling.id) == []
     assert task_manager.get_task(sibling.id).allow_automation is False
 
 
 @pytest.mark.asyncio
-async def test_child_build_resume_restores_missing_leaf_target_branch(
+async def test_child_build_resume_preserves_workspaces_without_parent_refresh(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -221,9 +224,234 @@ async def test_child_build_resume_restores_missing_leaf_target_branch(
 
     leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
 
-    assert leaf_artifacts.target_branch == integration_branch
+    assert leaf_artifacts.target_branch == "main"
     assert leaf_artifacts.worktree_id == source.id
     assert leaf_artifacts.worktree_path == str(task_path)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    assert parent_artifacts.integration_workspace_id == integration.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["worktree", "clone"])
+async def test_epic_build_does_not_provision_integration_workspaces(
+    backend: Literal["worktree", "clone"],
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / f"repo-{tmp_path.name}-{backend}"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("lazy-build", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Lazy root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    phase = task_manager.create_task(
+        project_id=project.id,
+        title="Future phase",
+        parent_task_id=root.id,
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    branches_before = _git(repo, "branch", "--format=%(refname:short)").splitlines()
+
+    async def fake_tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
+        return DispatcherTickSummary()
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
+
+    await build(
+        str(root.seq_num),
+        BuildOptions(isolation=backend, target_branch="main"),
+        db=temp_db,
+        project_id=project.id,
+    )
+
+    assert _git(repo, "branch", "--format=%(refname:short)").splitlines() == branches_before
+    for task in (root, phase):
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        assert artifacts.integration_branch is None
+        assert artifacts.integration_workspace_id is None
+        assert artifacts.integration_clone_id is None
+
+
+@pytest.mark.parametrize("backend", ["worktree", "clone"])
+def test_leaf_dispatch_provisions_only_open_epic_ancestry(
+    backend: Literal["worktree", "clone"],
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / f"repo-{tmp_path.name}-{backend}"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setattr(
+        "gobby.clones.git.CLONES_ROOT",
+        _workspace_path("clones", repo.name, "probe").parents[1],
+    )
+
+    project = LocalProjectManager(temp_db).create("lazy-ancestry", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root epic",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    phase = task_manager.create_task(
+        project_id=project.id,
+        title="Selected phase",
+        parent_task_id=root.id,
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    sibling = task_manager.create_task(
+        project_id=project.id,
+        title="Untouched phase",
+        parent_task_id=root.id,
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Selected leaf",
+        parent_task_id=phase.id,
+        category="code",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+    task_manager.artifacts.set_artifact(root.id, "target_branch", "main")
+
+    nearest = ensure_task_parent_integration_workspace(
+        task_manager=task_manager,
+        task=leaf,
+        backend=backend,
+        project_id=project.id,
+        services=None,
+    )
+
+    assert nearest is not None
+    root_branch = _integration_branch(root)
+    phase_branch = _integration_branch(phase)
+    sibling_branch = _integration_branch(sibling)
+    root_artifacts = task_manager.artifacts.get_artifacts(root.id)
+    phase_artifacts = task_manager.artifacts.get_artifacts(phase.id)
+    sibling_artifacts = task_manager.artifacts.get_artifacts(sibling.id)
+    leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
+    assert root_artifacts.integration_branch == root_branch
+    assert root_artifacts.target_branch == "main"
+    assert phase_artifacts.integration_branch == phase_branch
+    assert phase_artifacts.target_branch == root_branch
+    assert leaf_artifacts.target_branch == phase_branch
+    assert sibling_artifacts.integration_branch is None
+    assert sibling_artifacts.integration_workspace_id is None
+    assert sibling_artifacts.integration_clone_id is None
+    assert sibling_artifacts.target_branch is None
+    branches = _git(repo, "branch", "--format=%(refname:short)").splitlines()
+    assert root_branch in branches
+    assert phase_branch in branches
+    assert sibling_branch not in branches
+
+    root_id = (
+        root_artifacts.integration_workspace_id
+        if backend == "worktree"
+        else root_artifacts.integration_clone_id
+    )
+    phase_id = (
+        phase_artifacts.integration_workspace_id
+        if backend == "worktree"
+        else phase_artifacts.integration_clone_id
+    )
+    assert root_id is not None
+    assert phase_id is not None
+    assert nearest.id == phase_id
+
+    reused = ensure_task_parent_integration_workspace(
+        task_manager=task_manager,
+        task=leaf,
+        backend=backend,
+        project_id=project.id,
+        services=None,
+    )
+    assert reused is not None
+    assert reused.id == phase_id
+
+    if backend == "worktree":
+        record = LocalWorktreeManager(temp_db).get(phase_id)
+        assert record is not None
+        _git(repo, "worktree", "remove", "--force", record.worktree_path)
+    else:
+        clone = LocalCloneManager(temp_db).get(phase_id)
+        assert clone is not None
+        shutil.rmtree(clone.clone_path)
+
+    recovered = ensure_task_parent_integration_workspace(
+        task_manager=task_manager,
+        task=leaf,
+        backend=backend,
+        project_id=project.id,
+        services=None,
+    )
+    assert recovered is not None
+    assert recovered.id != phase_id
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=root,
+        backend=backend,
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+        repair_only=True,
+    )
+    sibling_artifacts = task_manager.artifacts.get_artifacts(sibling.id)
+    assert sibling_artifacts.integration_branch is None
+    assert sibling_branch not in _git(repo, "branch", "--format=%(refname:short)").splitlines()
+
+
+@pytest.mark.parametrize("backend", ["worktree", "clone"])
+def test_leaf_dispatch_requires_root_target_metadata(
+    backend: Literal["worktree", "clone"],
+    temp_db: HubDatabase,
+) -> None:
+    project = LocalProjectManager(temp_db).create("missing-target")
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root without target",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Blocked leaf",
+        parent_task_id=root.id,
+        category="code",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+
+    with pytest.raises(
+        BuildWorkspaceError,
+        match=f"target_branch is required for root epic integration workspace #{root.seq_num}",
+    ):
+        ensure_task_parent_integration_workspace(
+            task_manager=task_manager,
+            task=leaf,
+            backend=backend,
+            project_id=project.id,
+            services=None,
+        )
+
+    artifacts = task_manager.artifacts.get_artifacts(root.id)
+    assert artifacts.integration_branch is None
+    assert artifacts.integration_workspace_id is None
+    assert artifacts.integration_clone_id is None
 
 
 def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
@@ -533,7 +761,13 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("ac25647a-384a-5232-8d09-117e2043e20b", "ext-active", "21000000-0000-4000-8000-000000000001", "codex", project.id),
+        (
+            "ac25647a-384a-5232-8d09-117e2043e20b",
+            "ext-active",
+            "21000000-0000-4000-8000-000000000001",
+            "codex",
+            project.id,
+        ),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
@@ -1170,7 +1404,7 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
 
 
 def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotion(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.storage.agents import LocalAgentRunManager
@@ -1204,7 +1438,13 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("565acf01-045f-5737-ad46-c4a57a113dee", "ext-promote", "21000000-0000-4000-8000-000000000001", "codex", project.id),
+        (
+            "565acf01-045f-5737-ad46-c4a57a113dee",
+            "ext-promote",
+            "21000000-0000-4000-8000-000000000001",
+            "codex",
+            project.id,
+        ),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
@@ -1245,7 +1485,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
 
 
 def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.storage.agents import LocalAgentRunManager
@@ -1283,7 +1523,13 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("958625ad-2cad-5175-bd8d-ac97ced1d681", "ext-clone", "21000000-0000-4000-8000-000000000001", "codex", project.id),
+        (
+            "958625ad-2cad-5175-bd8d-ac97ced1d681",
+            "ext-clone",
+            "21000000-0000-4000-8000-000000000001",
+            "codex",
+            project.id,
+        ),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
@@ -1324,7 +1570,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
 
 
 def test_epic_integration_workspace_recovers_partially_promoted_worktree(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
