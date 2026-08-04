@@ -14,10 +14,12 @@ from urllib.parse import urlparse
 
 import click
 
+from gobby.cli.installers.remote_preflight import run_remote_preflight
 from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
     BootstrapConfigError,
+    DatastoreMode,
 )
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -71,6 +73,9 @@ def _run_install_preflight(
     embedding_url: str | None,
     embedding_provider: str | None,
     managed_services: bool = False,
+    datastore_mode: DatastoreMode = "local",
+    database_url: str | None = None,
+    gobby_home: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return full-install preflight errors and optional warnings."""
     errors: list[str] = []
@@ -79,13 +84,21 @@ def _run_install_preflight(
     if platform_error := unsupported_platform_error():
         errors.append(platform_error)
     dependency_report = collect_dependency_report(
-        managed_services=managed_services,
+        managed_services=managed_services and datastore_mode == "local",
         include_srt=False,
     )
     errors.extend(required_dependency_errors(dependency_report))
 
     if is_full_install:
-        if not _docker_daemon_available():
+        if datastore_mode == "remote":
+            if database_url:
+                errors.extend(run_remote_preflight(database_url, gobby_home=gobby_home))
+            else:
+                errors.append(
+                    "Remote datastore install requires database_url in bootstrap.yaml. "
+                    "Copy the hub database_url and retry."
+                )
+        elif not _docker_daemon_available():
             errors.append("Docker daemon is required for full install. Start Docker and retry.")
         if _is_source_checkout_install(install_dir) and shutil.which("uv") is None:
             errors.append("uv is required when installing from a source checkout.")

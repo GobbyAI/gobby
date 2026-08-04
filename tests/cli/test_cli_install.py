@@ -3,6 +3,7 @@
 Tests for install.py using Click's CliRunner to test all commands and options.
 """
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -26,6 +27,7 @@ from gobby.cli.install import (
     _resolve_ide_settings_consent,
     uninstall,
 )
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, ensure_local_api_token, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -255,10 +257,9 @@ class TestEnsureDaemonConfig:
         assert content["daemon_port"] == 60887
         assert content["bind_host"] == "localhost"
         assert content["postgres_pool"] == {
-            "min_size": 2,
-            "max_size": 20,
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
+            "max_lifetime_seconds": 300.0,
         }
 
 
@@ -1114,3 +1115,347 @@ class TestInstallWithCodexAllDetected:
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
         return CliRunner()
+
+
+def test_remote_mode_skips_datastore_provisioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    bootstrap = BootstrapConfig(
+        datastore_mode="remote",
+        database_url="postgresql://gobby:secret@hub.test:5432/gobby",
+    )
+
+    with (
+        patch("gobby.cli.install.load_bootstrap", return_value=bootstrap),
+        patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+        patch(
+            "gobby.cli.install._ensure_daemon_config",
+            return_value={"created": False, "path": gobby_home / "bootstrap.yaml"},
+        ),
+        patch(
+            "gobby.cli.install._run_install_preflight",
+            return_value=([], []),
+        ) as preflight,
+        patch("gobby.cli.install._install_required_stack") as install_stack,
+        patch("gobby.cli.install._configure_secret_kek_posture") as configure_kek,
+        patch("gobby.cli.install._provision_local_api_token") as provision_token,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["install", "--config-only", "--no-interactive"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None
+    assert "Configuration and required infrastructure complete." in result.output
+    install_stack.assert_not_called()
+    configure_kek.assert_not_called()
+    provision_token.assert_not_called()
+    preflight.assert_called_once_with(
+        is_full_install=True,
+        install_dir=Path("/fake/install"),
+        embedding_url=None,
+        embedding_provider=None,
+        managed_services=False,
+        datastore_mode="remote",
+        database_url=bootstrap.database_url,
+    )
+
+
+@pytest.mark.parametrize(
+    ("service", "expected_guidance"),
+    [
+        ("PostgreSQL", "database_url"),
+        ("Qdrant", "gobby datastores expose"),
+        ("FalkorDB", ".secret_kek"),
+    ],
+)
+def test_remote_mode_preflight_errors(
+    service: str,
+    expected_guidance: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli.installers import remote_preflight
+
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    (home / ".secret_kek").write_text("copied-kek")
+    (home / "local_cli_token").write_text("copied-token")
+    config = remote_preflight.RemoteDatastoreConfig(
+        qdrant_url="http://qdrant.test:6333",
+        falkordb_host="falkor.test",
+        falkordb_port=6379,
+        falkordb_password="secret",
+    )
+
+    async def postgres_probe(
+        _database_url: str,
+        _gobby_home: Path,
+    ) -> remote_preflight.RemoteDatastoreConfig:
+        if service == "PostgreSQL":
+            raise remote_preflight.RemotePreflightError(service, "connect", "refused")
+        return config
+
+    async def qdrant_probe(_url: str) -> None:
+        if service == "Qdrant":
+            raise remote_preflight.RemotePreflightError(service, "health", "dropped")
+
+    async def falkordb_probe(_config: remote_preflight.RemoteDatastoreConfig) -> None:
+        if service == "FalkorDB":
+            raise remote_preflight.RemotePreflightError(service, "PING", "authentication failed")
+
+    monkeypatch.setattr(remote_preflight, "_probe_postgres", postgres_probe)
+    monkeypatch.setattr(remote_preflight, "_probe_qdrant", qdrant_probe)
+    monkeypatch.setattr(remote_preflight, "_probe_falkordb", falkordb_probe)
+
+    errors = remote_preflight.run_remote_preflight(
+        "postgresql://gobby:secret@hub.test:5432/gobby",
+        gobby_home=home,
+    )
+
+    assert len(errors) == 1
+    assert service in errors[0]
+    assert expected_guidance in errors[0]
+
+
+def test_remote_mode_kek_token_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.cli.installers import remote_preflight
+
+    home = tmp_path / "gobby-home"
+    probe_called = False
+
+    async def unexpected_probe(
+        _database_url: str,
+        _gobby_home: Path,
+    ) -> remote_preflight.RemoteDatastoreConfig:
+        nonlocal probe_called
+        probe_called = True
+        raise AssertionError("network preflight must wait for copied credentials")
+
+    monkeypatch.setattr(remote_preflight, "_probe_postgres", unexpected_probe)
+
+    errors = remote_preflight.run_remote_preflight(
+        "postgresql://gobby:secret@hub.test:5432/gobby",
+        gobby_home=home,
+    )
+
+    assert probe_called is False
+    assert len(errors) == 2
+    assert all("Copy" in error and "hub" in error for error in errors)
+    assert any(".secret_kek" in error for error in errors)
+    assert any("local_cli_token" in error for error in errors)
+    assert not home.exists()
+
+
+def test_remote_mode_install_without_docker(
+    tmp_path: Path,
+) -> None:
+    from gobby.cli import _install_daemon
+
+    with (
+        patch.object(
+            _install_daemon,
+            "_docker_daemon_available",
+            side_effect=AssertionError("remote preflight must not inspect Docker"),
+        ),
+        patch.object(_install_daemon, "run_remote_preflight", return_value=[]) as remote_probe,
+        patch.object(_install_daemon, "unsupported_platform_error", return_value=None),
+        patch.object(_install_daemon, "collect_dependency_report", return_value={}),
+        patch.object(_install_daemon, "required_dependency_errors", return_value=[]),
+        patch.object(_install_daemon, "_port_available", return_value=True),
+    ):
+        errors, warnings = _install_daemon._run_install_preflight(
+            is_full_install=True,
+            install_dir=tmp_path,
+            embedding_url=None,
+            embedding_provider=None,
+            managed_services=False,
+            datastore_mode="remote",
+            database_url="postgresql://gobby:secret@hub.test:5432/gobby",
+            gobby_home=tmp_path,
+        )
+
+    assert errors == []
+    assert warnings == [
+        "No embedding provider override supplied; install will prompt or keep semantic features "
+        "disabled."
+    ]
+    remote_probe.assert_called_once_with(
+        "postgresql://gobby:secret@hub.test:5432/gobby",
+        gobby_home=tmp_path,
+    )
+
+
+def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.cli.installers import remote_preflight
+
+    assert remote_preflight.CONNECT_TIMEOUT_SECONDS == 3
+    assert remote_preflight.OPERATION_TIMEOUT_SECONDS == 5
+    assert remote_preflight.OVERALL_TIMEOUT_SECONDS == 15
+
+    async def checkpoint() -> None:
+        reached = asyncio.Event()
+        asyncio.get_running_loop().call_soon(reached.set)
+        await reached.wait()
+
+    class FakePostgres:
+        def __init__(self, failure: BaseException | None = None) -> None:
+            self.failure = failure
+            self.closed = False
+
+        async def execute(self, _query: str, _params: object = ()) -> object:
+            if self.failure is not None:
+                raise self.failure
+            return MagicMock()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class FakeQdrant:
+        def __init__(self, *, stall: bool = False) -> None:
+            self.stall = stall
+            self.closed = False
+            self.started = asyncio.Event()
+
+        async def get_collections(self) -> object:
+            self.started.set()
+            if self.stall:
+                await asyncio.Event().wait()
+            await checkpoint()
+            return object()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class FakeFalkor:
+        def __init__(self, failure: BaseException | None = None) -> None:
+            self.failure = failure
+            self.closed = False
+
+        async def ping(self) -> bool:
+            if self.failure is not None:
+                raise self.failure
+            await checkpoint()
+            return True
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def run_cases() -> None:
+        async def refused_connect(_database_url: str) -> FakePostgres:
+            raise ConnectionRefusedError("refused")
+
+        monkeypatch.setattr(remote_preflight, "_connect_postgres", refused_connect)
+        with pytest.raises(remote_preflight.RemotePreflightError, match="PostgreSQL.*connect"):
+            await remote_preflight._probe_postgres("postgresql://refused", Path("/tmp"))
+
+        dropped = FakePostgres(ConnectionResetError("dropped"))
+
+        async def dropped_connect(_database_url: str) -> FakePostgres:
+            return dropped
+
+        monkeypatch.setattr(remote_preflight, "_connect_postgres", dropped_connect)
+        with pytest.raises(remote_preflight.RemotePreflightError, match="PostgreSQL.*query"):
+            await remote_preflight._probe_postgres("postgresql://dropped", Path("/tmp"))
+        assert dropped.closed is True
+
+        async def half_open_connect(_database_url: str) -> FakePostgres:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        monkeypatch.setattr(remote_preflight, "_connect_postgres", half_open_connect)
+        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 0.01)
+        with pytest.raises(remote_preflight.RemotePreflightError, match="PostgreSQL.*connect"):
+            await remote_preflight._probe_postgres("postgresql://half-open", Path("/tmp"))
+
+        slow_postgres = FakePostgres()
+
+        async def slow_connect(_database_url: str) -> FakePostgres:
+            await checkpoint()
+            return slow_postgres
+
+        config = remote_preflight.RemoteDatastoreConfig(
+            qdrant_url="http://qdrant",
+            falkordb_host="falkor",
+            falkordb_port=6379,
+            falkordb_password="secret",
+        )
+
+        async def slow_config_read(
+            _connection: object,
+            _gobby_home: Path,
+        ) -> remote_preflight.RemoteDatastoreConfig:
+            await checkpoint()
+            return config
+
+        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(remote_preflight, "_connect_postgres", slow_connect)
+        monkeypatch.setattr(remote_preflight, "_read_remote_config", slow_config_read)
+        assert await remote_preflight._probe_postgres("postgresql://slow", Path("/tmp")) == config
+        assert slow_postgres.closed is True
+
+        stalled_qdrant = FakeQdrant(stall=True)
+        monkeypatch.setattr(remote_preflight, "_create_qdrant_client", lambda _url: stalled_qdrant)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.01)
+        with pytest.raises(remote_preflight.RemotePreflightError, match="Qdrant.*health"):
+            await remote_preflight._probe_qdrant("http://stalled")
+        assert stalled_qdrant.closed is True
+
+        auth_failed = FakeFalkor(RuntimeError("authentication failed"))
+        monkeypatch.setattr(
+            remote_preflight,
+            "_create_falkordb_client",
+            lambda _config: auth_failed,
+        )
+        config = remote_preflight.RemoteDatastoreConfig(
+            qdrant_url="http://qdrant",
+            falkordb_host="falkor",
+            falkordb_port=6379,
+            falkordb_password="secret",
+        )
+        with pytest.raises(remote_preflight.RemotePreflightError, match="FalkorDB.*PING"):
+            await remote_preflight._probe_falkordb(config)
+        assert auth_failed.closed is True
+
+        cancelled_qdrant = FakeQdrant(stall=True)
+        monkeypatch.setattr(
+            remote_preflight,
+            "_create_qdrant_client",
+            lambda _url: cancelled_qdrant,
+        )
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 1)
+        cancelled_probe = asyncio.create_task(remote_preflight._probe_qdrant("http://cancelled"))
+        await cancelled_qdrant.started.wait()
+        cancelled_probe.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_probe
+        assert cancelled_qdrant.closed is True
+
+        slow_qdrant = FakeQdrant()
+        slow_falkor = FakeFalkor()
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(remote_preflight, "_create_qdrant_client", lambda _url: slow_qdrant)
+        monkeypatch.setattr(
+            remote_preflight,
+            "_create_falkordb_client",
+            lambda _config: slow_falkor,
+        )
+        await remote_preflight._probe_qdrant(config.qdrant_url)
+        await remote_preflight._probe_falkordb(config)
+        assert slow_qdrant.closed is True
+        assert slow_falkor.closed is True
+
+    asyncio.run(run_cases())
+
+    helper_path = Path(remote_preflight.__file__)
+    install_path = Path(__file__).parents[2] / "src" / "gobby" / "cli" / "install.py"
+    assert len(helper_path.read_text().splitlines()) < 1_000
+    assert len(install_path.read_text().splitlines()) < 1_000

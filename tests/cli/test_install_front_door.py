@@ -305,6 +305,8 @@ def test_all_with_only_repository_hooks_still_owns_required_stack(
         embedding_url=None,
         embedding_provider=None,
         managed_services=True,
+        datastore_mode="local",
+        database_url=None,
     )
 
 

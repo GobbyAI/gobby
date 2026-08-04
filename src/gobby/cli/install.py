@@ -15,7 +15,7 @@ from typing import Any
 
 import click
 
-from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.bootstrap_io import update_bootstrap_yaml
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import ensure_local_api_token
@@ -504,6 +504,9 @@ def install(
             clis_to_install.append("droid")
 
     is_full_install = all_flag or config_only_flag
+    bootstrap = load_bootstrap()
+    datastore_mode = bootstrap.datastore_mode
+    provision_managed_services = is_full_install and datastore_mode == "local"
     hooks_only_maintenance = (
         hooks_flag
         and not clis_to_install
@@ -527,7 +530,9 @@ def install(
         install_dir=install_dir,
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
-        managed_services=is_full_install,
+        managed_services=provision_managed_services,
+        datastore_mode=datastore_mode,
+        database_url=bootstrap.database_url,
     )
     if no_supported_cli:
         click.echo("No supported AI coding CLIs detected; CLI hooks will be skipped.")
@@ -577,7 +582,7 @@ def install(
     if auth_mode is not None:
         _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
         click.echo(f"Daemon API authentication mode: {auth_mode}")
-    if is_full_install:
+    if provision_managed_services:
         _install_required_stack(
             results,
             falkordb_password=falkordb_password,
@@ -602,7 +607,7 @@ def install(
         return
 
     toggles = list(clis_to_install)
-    if is_full_install:
+    if provision_managed_services:
         toggles.extend(["postgres", "qdrant", "falkordb"])
     if install_hooks:
         toggles.append("git-hooks")
@@ -643,12 +648,13 @@ def install(
                 exc_info=True,
             )
 
-        _configure_secret_kek_posture(
-            secret_store,
-            secret_kek_posture,
-            no_interactive=no_interactive_flag,
-        )
-        _provision_local_api_token(config_store)
+        if datastore_mode == "local":
+            _configure_secret_kek_posture(
+                secret_store,
+                secret_kek_posture,
+                no_interactive=no_interactive_flag,
+            )
+            _provision_local_api_token(config_store)
 
         install_state = empty_install_state()
         if is_full_install:
