@@ -348,8 +348,10 @@ fn query_visible_symbols_by_conditions(
     if project_ids.is_empty() || limit == 0 {
         return Ok(VisibleSearchOutcome::ok(Vec::new()));
     }
-    let project_placeholder = push_id_list_param(&mut params, &project_ids);
-    conditions.push(format!("cs.project_id = ANY({project_placeholder})"));
+    if requires_explicit_project_filter(&ctx.database_url) {
+        let project_placeholder = push_id_list_param(&mut params, &project_ids);
+        conditions.push(format!("cs.project_id = ANY({project_placeholder})"));
+    }
     let bm25_index = matches!(&order, SymbolOrder::Bm25Score).then_some(SYMBOL_INDEX);
     let symbols = query_symbols_by_conditions(
         conn,
@@ -367,6 +369,10 @@ fn query_visible_symbols_by_conditions(
         .map_err(|error| anyhow::anyhow!("visible symbol filtering failed: {error}"))?;
     symbols.truncate(limit);
     Ok(VisibleSearchOutcome::ok(symbols))
+}
+
+fn requires_explicit_project_filter(database_url: &str) -> bool {
+    !gobby_core::postgres::is_managed_agent_connection(database_url)
 }
 
 /// Full-text search for symbols using pg_search BM25.
@@ -399,4 +405,25 @@ pub fn search_text_visible(
         results: results.results.into_iter().map(|s| s.to_brief()).collect(),
         degraded: results.degraded,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_explicit_project_filter;
+
+    #[test]
+    fn scoped_managed_connection_uses_authoritative_rls_project_filter() {
+        let execution_id = "11111111-1111-4111-8111-111111112003";
+        let compact_id = "11111111111141118111111111112003";
+        let scoped = format!(
+            "postgresql://gobby_agent_{compact_id}_1:secret@localhost/gobby?\
+             application_name=gobby-agent-{execution_id}"
+        );
+        assert!(!requires_explicit_project_filter(&scoped));
+
+        let operator = format!(
+            "postgresql://gobby:secret@localhost/gobby?application_name=gobby-agent-{execution_id}"
+        );
+        assert!(requires_explicit_project_filter(&operator));
+    }
 }

@@ -74,6 +74,7 @@ def test_issue_materializes_private_bootstrap_and_revoke_terminates_sessions(
         parsed = conninfo_to_dict(scoped_dsn)
         assert parsed["user"] == credential.role_name
         assert parsed["password"]
+        assert parsed["application_name"] == f"gobby-agent-{execution_id}"
 
         connection = psycopg.connect(scoped_dsn, autocommit=True)
         connection.execute("SELECT 1")

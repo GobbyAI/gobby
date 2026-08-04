@@ -11,6 +11,7 @@ use postgres::{Client, NoTls, config::SslMode};
 use postgres_openssl::MakeTlsConnector;
 
 const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
+const MANAGED_APPLICATION_NAME_PREFIX: &str = "gobby-agent-";
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -72,12 +73,47 @@ pub fn validate_schema(
     run_schema_validator(conn, validator)
 }
 
+/// Return whether a DSN names a daemon-issued, project-scoped agent principal.
+///
+/// Both the login role and application name encode the same managed execution
+/// UUID. Requiring both prevents an operator DSN with a caller-selected
+/// application name from being mistaken for an RLS-scoped connection.
+pub fn is_managed_agent_connection(database_url: &str) -> bool {
+    let Ok(config) = connection_config(database_url) else {
+        return false;
+    };
+    let Some(execution_id) = config
+        .get_application_name()
+        .and_then(|name| name.strip_prefix(MANAGED_APPLICATION_NAME_PREFIX))
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+    else {
+        return false;
+    };
+    let Some(role_suffix) = config
+        .get_user()
+        .and_then(|name| name.strip_prefix("gobby_agent_"))
+    else {
+        return false;
+    };
+    let Some((compact_id, generation)) = role_suffix.rsplit_once('_') else {
+        return false;
+    };
+    generation.parse::<u32>().is_ok_and(|value| value > 0)
+        && compact_id == execution_id.simple().to_string()
+}
+
 fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     let normalized_url = normalize_sslmode_for_parser(database_url);
     let mut config = normalized_url
         .parse::<postgres::Config>()
         .context("failed to parse PostgreSQL connection URL")?;
-    config.application_name(GOBBY_APPLICATION_NAME);
+    let managed_name = config
+        .get_application_name()
+        .and_then(|name| name.strip_prefix(MANAGED_APPLICATION_NAME_PREFIX))
+        .is_some_and(|execution_id| uuid::Uuid::parse_str(execution_id).is_ok());
+    if !managed_name {
+        config.application_name(GOBBY_APPLICATION_NAME);
+    }
     Ok(config)
 }
 
@@ -303,6 +339,43 @@ mod tests {
 
         assert_eq!(config.get_application_name(), Some(GOBBY_APPLICATION_NAME));
         Ok(())
+    }
+
+    #[test]
+    fn connection_config_preserves_managed_agent_application_name() -> anyhow::Result<()> {
+        let managed = "gobby-agent-a158f699-2c1d-44d8-b438-633d7ad8f8db";
+        let config = connection_config(&format!(
+            "postgresql://localhost/gobby?application_name={managed}"
+        ))?;
+
+        assert_eq!(config.get_application_name(), Some(managed));
+        Ok(())
+    }
+
+    #[test]
+    fn managed_agent_connection_requires_matching_role_and_application_identity() {
+        let execution_id = "11111111-1111-4111-8111-111111112003";
+        let compact_id = "11111111111141118111111111112003";
+        let valid = format!(
+            "postgresql://gobby_agent_{compact_id}_2:secret@localhost/gobby?\
+             application_name=gobby-agent-{execution_id}"
+        );
+        assert!(is_managed_agent_connection(&valid));
+
+        let operator = format!(
+            "postgresql://gobby:secret@localhost/gobby?application_name=gobby-agent-{execution_id}"
+        );
+        assert!(!is_managed_agent_connection(&operator));
+
+        let mismatched = format!(
+            "postgresql://gobby_agent_{compact_id}_2:secret@localhost/gobby?\
+             application_name=gobby-agent-22222222-2222-4222-8222-222222222222"
+        );
+        assert!(!is_managed_agent_connection(&mismatched));
+
+        let missing_application =
+            format!("postgresql://gobby_agent_{compact_id}_2:secret@localhost/gobby");
+        assert!(!is_managed_agent_connection(&missing_application));
     }
 
     #[test]

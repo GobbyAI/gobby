@@ -121,25 +121,23 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         symbol_cache.insert(sym.id.clone(), sym);
     }
 
+    let missing_ids = merged
+        .iter()
+        .map(|(symbol_id, _, _)| symbol_id.clone())
+        .filter(|symbol_id| !symbol_cache.contains_key(symbol_id))
+        .collect::<Vec<_>>();
+    for symbol in visibility::visible_symbols_by_ids(&mut conn, ctx, &missing_ids)? {
+        symbol_cache.insert(symbol.id.clone(), symbol);
+    }
+
     // Resolve ALL results first so total reflects resolvable symbols only
     let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
     for (sym_id, score, source_names) in &merged {
-        let sym = match symbol_cache.get(sym_id).cloned() {
-            Some(symbol) => Some(symbol),
-            None => visibility::visible_symbol_by_id(&mut conn, ctx, sym_id)?,
+        let Some(symbol) = symbol_cache.get(sym_id).cloned() else {
+            continue;
         };
-
-        if let Some(s) = sym
-            && symbol_matches_filters(
-                &mut conn,
-                ctx,
-                &s,
-                options.kind,
-                options.language,
-                &path_patterns,
-            )
-        {
-            all_resolved.push((s, *score, source_names.clone()));
+        if prefiltered_symbol_matches(&symbol, options.kind, options.language, &path_patterns) {
+            all_resolved.push((symbol, *score, source_names.clone()));
         }
     }
 
@@ -641,6 +639,17 @@ fn symbol_matches_filters(
         && scope::current_indexed_path_is_valid(conn, ctx, &symbol.file_path)
 }
 
+fn prefiltered_symbol_matches(
+    symbol: &Symbol,
+    kind: Option<&str>,
+    language: Option<&str>,
+    path_patterns: &[glob::Pattern],
+) -> bool {
+    kind.is_none_or(|requested| symbol.kind == requested)
+        && language.is_none_or(|requested| symbol.language == requested)
+        && path_matches_filters(path_patterns, &symbol.file_path)
+}
+
 fn search_result_matches_filters(
     conn: &mut postgres::Client,
     ctx: &Context,
@@ -928,5 +937,24 @@ mod tests {
             compact_snippet("  first line\n    second\tline\r\nthird  "),
             "first line second line third"
         );
+    }
+
+    #[test]
+    fn prefiltered_symbol_uses_only_requested_static_filters() {
+        let symbol = symbol("src/lib.rs", "function", "rust");
+        let matching_path = glob::Pattern::new("src/**").expect("path pattern");
+
+        assert!(prefiltered_symbol_matches(
+            &symbol,
+            Some("function"),
+            Some("rust"),
+            &[matching_path]
+        ));
+        assert!(!prefiltered_symbol_matches(
+            &symbol,
+            Some("class"),
+            None,
+            &[]
+        ));
     }
 }

@@ -148,12 +148,7 @@ class TestSpawnAgentIsolation:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
             ) as mock_config_error,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
-                new=AsyncMock(),
-            ) as mock_code_index,
         ):
-            mock_code_index.return_value = MagicMock(env={"PATH": "/isolated/bin:/usr/bin"})
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
@@ -210,16 +205,9 @@ class TestSpawnAgentIsolation:
                 mock_handler.prepare_environment.return_value,
             )
             # Real provider config and gcode preflight behavior is covered in
-            # tests/agents/test_isolation.py; this boundary test verifies wiring.
+            # tests/agents/test_spawn_executor.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
-            mock_code_index.assert_awaited_once_with(
-                "/tmp/worktrees/branch",
-                database_url=None,
-                daemon_bind_host=None,
-                daemon_port=None,
-                api_token=ANY,
-            )
-            assert mock_execute.await_args.args[0].extra_env == {"PATH": "/isolated/bin:/usr/bin"}
+            assert mock_execute.await_args.args[0].code_index_preflight_mode == "best_effort"
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -255,10 +243,6 @@ class TestSpawnAgentIsolation:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
-                new=AsyncMock(),
             ),
         ):
             mock_ctx.return_value = {
@@ -331,10 +315,6 @@ class TestSpawnAgentIsolation:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
             ) as mock_config_error,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
-                new=AsyncMock(),
-            ) as mock_code_index,
         ):
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",
@@ -392,15 +372,11 @@ class TestSpawnAgentIsolation:
                 mock_handler.prepare_environment.return_value,
             )
             # Real provider config and gcode preflight behavior is covered in
-            # tests/agents/test_isolation.py; this boundary test verifies wiring.
+            # tests/agents/test_spawn_executor.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/clones/branch", "claude")
-            mock_code_index.assert_awaited_once_with(
-                "/tmp/clones/branch",
-                database_url=None,
-                daemon_bind_host=None,
-                daemon_port=None,
-                api_token=ANY,
-            )
+            execute_args = mock_execute.await_args
+            assert execute_args is not None
+            assert execute_args.args[0].code_index_preflight_mode == "best_effort"
             mock_execute.assert_awaited_once()
 
 
@@ -551,6 +527,7 @@ class TestSpawnAgentConcurrencyGuards:
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(cwd=str(project_path))
             )
+            mock_handler.cleanup_environment = AsyncMock()
             mock_handler.build_context_prompt.return_value = "Test prompt"
             mock_get_handler.return_value = mock_handler
 
@@ -663,14 +640,11 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is False
             assert result["error"] == "Terminal not found"
             assert result["reasoning"]["status"] == "not_requested"
-            # DB should mark the run as failed
-            mock_runner.run_storage.fail.assert_called_once_with(
-                ANY,
-                error="Terminal not found",
-            )
-            failed_run_id = mock_runner.run_storage.fail.call_args.args[0]
-            assert isinstance(failed_run_id, str)
-            assert str(uuid.UUID(failed_run_id)) == failed_run_id
+            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.run_storage.fail.assert_not_called()
+            cancelled_run_id = mock_runner.cancel_run.call_args.args[0]
+            assert isinstance(cancelled_run_id, str)
+            assert str(uuid.UUID(cancelled_run_id)) == cancelled_run_id
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -763,8 +737,8 @@ class TestSpawnAgentPreRegistration:
         assert result["success"] is False
         assert result["error"] == "tmux spawn exploded"
         assert run is not None
-        assert run.status == "error"
-        assert run.error == "tmux spawn exploded"
+        assert run.status == "cancelled"
+        assert run.error is None
         assert run.child_session_id is None
         assert session_manager.get(captured["child_session_id"]) is None
         mock_handler.cleanup_environment.assert_awaited_once()
@@ -875,8 +849,8 @@ class TestSpawnAgentPreRegistration:
         run = run_storage.get(captured["run_id"])
         assert result == {"success": False, "error": error, "run_id": captured["run_id"]}
         assert run is not None
-        assert run.status == "error"
-        assert run.error == error
+        assert run.status == "cancelled"
+        assert run.error is None
         assert run.child_session_id is None
         assert session_manager.get(captured["child_session_id"]) is None
         mock_handler.cleanup_environment.assert_awaited_once()
@@ -994,9 +968,8 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is False
             assert result["error"] == "Agent run was no longer pending after spawn"
             mock_runner.run_storage.start.assert_called_once()
-            mock_runner.run_storage.fail.assert_called_once_with(
-                ANY, error="Agent run was no longer pending after spawn"
-            )
+            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.run_storage.fail.assert_not_called()
             mock_fire_agent_event.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1051,7 +1024,8 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is False
             assert result["error"].startswith("Failed to mark agent run")
             assert "db down" in result["error"]
-            mock_runner.run_storage.fail.assert_called_once()
+            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.run_storage.fail.assert_not_called()
             mock_fire_agent_event.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1216,7 +1190,8 @@ class TestSpawnAgentPreRegistration:
             assert "failed live-pane verification" in result["error"]
             assert "Pane output:\nfatal pane output" in result["error"]
             mock_runner.run_storage.start.assert_not_called()
-            mock_runner.run_storage.fail.assert_called_once()
+            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.run_storage.fail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_status_not_transitioned_on_spawn_failure(self, mock_runner, agent_body):

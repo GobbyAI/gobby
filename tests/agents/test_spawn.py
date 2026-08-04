@@ -145,6 +145,7 @@ class TestPrepareTerminalSpawnMetadata:
         assert result.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == (
             "/private/runtime/bootstrap.json"
         )
+        assert result.managed_credential is credential_manager.issue.return_value
 
     def test_env_includes_spawned_agent_uv_cache_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

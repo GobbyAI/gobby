@@ -19,6 +19,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from gobby.storage.hub.protocol import HubDatabase, Row
 
 AUTH_SCHEMA = "gobby_agent_auth"
+MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
 MAX_ROLE_LIFETIME = timedelta(hours=1)
 DAEMON_LEASE_DURATION = timedelta(minutes=2)
 REVOCATION_DRAIN_TIMEOUT_SECONDS = 5.0
@@ -401,7 +402,7 @@ class ManagedCredentialManager:
         parsed.update(
             user=role_name,
             password=password,
-            application_name=f"gobby-managed-{execution_id}",
+            application_name=f"gobby-agent-{execution_id}",
         )
         return make_conninfo("", **parsed)
 

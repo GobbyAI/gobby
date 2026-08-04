@@ -38,11 +38,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
-from ._code_index import (
-    append_code_index_warning,
-    prepare_spawn_code_index,
-    without_code_index_skill,
-)
+from ._code_index import code_index_preflight_mode
 from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
 from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
@@ -508,25 +504,15 @@ async def spawn_agent_impl(
                 handler, spawn_config, cleanup=cleanup_isolation_on_failure
             )
             return {"success": False, "error": config_error}
-    code_index_preflight = await prepare_spawn_code_index(
-        cwd=isolation_ctx.cwd,
-        daemon_config=daemon_config,
+    code_index_mode = code_index_preflight_mode(
         isolation=effective_isolation,
         agent_name=requested_agent_name,
         initial_variables=initial_variables,
         task_category=task_category,
-        api_token=read_local_api_token(),
     )
-    if code_index_preflight.error is not None:
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
-        return {"success": False, "error": code_index_preflight.error}
-    code_index_preflight_warning = code_index_preflight.warning
-    code_index_preflight_env = code_index_preflight.env or {}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
-    if code_index_preflight_warning is not None:
-        enhanced_prompt = append_code_index_warning(enhanced_prompt, code_index_preflight_warning)
 
     # 9. Generate session and run IDs
     session_id = str(uuid.uuid4())
@@ -551,13 +537,9 @@ async def spawn_agent_impl(
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
-    if code_index_preflight_warning is not None:
-        effective_initial_variables["code_index_preflight_warning"] = code_index_preflight_warning
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills
-    if code_index_preflight_warning is not None:
-        additional_skills = without_code_index_skill(additional_skills)
     effective_initial_variables["additional_skills"] = additional_skills
 
     # 10b. Inject isolation context so workflow variables can reference them
@@ -641,13 +623,14 @@ async def spawn_agent_impl(
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
         extra_env={
-            **code_index_preflight_env,
             **(endpoint_resolution.child_env or {}),
         }
         or None,
         timeout_seconds=effective_timeout,
         daemon_config=daemon_config,
         resume_metadata_json=resume_metadata,
+        code_index_preflight_mode=code_index_mode,
+        code_index_api_token=read_local_api_token(),
     )
 
     # run_id is minted above and threaded through SpawnRequest.agent_run_id.
@@ -944,6 +927,6 @@ async def spawn_agent_impl(
         tmux_session_name=tmux_session_name,
         tmux_socket_name=tmux_socket_name,
         tmux_socket_path=tmux_socket_path,
-        code_index_preflight_warning=code_index_preflight_warning,
+        code_index_preflight_warning=spawn_request.code_index_preflight_warning,
         reasoning=reasoning,
     )

@@ -7,9 +7,11 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 import asyncio
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -28,6 +30,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.storage.managed_credentials import ManagedCredential
 from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.unit
@@ -83,6 +86,28 @@ class TestEnsureIsolationCodeIndex:
         proc.communicate.return_value = (b"", stderr)
         return proc
 
+    @staticmethod
+    def _credential(tmp_path: Path) -> ManagedCredential:
+        execution_id = uuid4()
+        bootstrap_path = tmp_path / "managed" / f"{execution_id}.json"
+        bootstrap_path.parent.mkdir(exist_ok=True)
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "database_url": "postgresql://scoped:secret@localhost/gobby",
+                    "managed_execution_id": str(execution_id),
+                }
+            )
+        )
+        return ManagedCredential(
+            managed_execution_id=execution_id,
+            role_name=f"gobby_agent_{execution_id.hex}_1",
+            credential_generation=1,
+            issued_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            bootstrap_path=bootstrap_path,
+        )
+
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
         proc = self._proc()
@@ -106,13 +131,14 @@ class TestEnsureIsolationCodeIndex:
         assert calls[0].kwargs["cwd"] == str(tmp_path)
 
     @pytest.mark.asyncio
-    async def test_database_url_creates_gcode_wrapper_runtime(
+    async def test_scoped_credential_creates_gcode_wrapper_runtime(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         proc = self._proc()
         runtime_root = tmp_path / "runtime"
         workspace = tmp_path / "workspace"
         source_home = tmp_path / "home"
+        credential = self._credential(tmp_path)
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
         source_home.mkdir()
@@ -130,9 +156,7 @@ class TestEnsureIsolationCodeIndex:
         ):
             result = await ensure_isolation_code_index(
                 str(workspace),
-                database_url="postgresql://gobby:secret@localhost/gobby",
-                daemon_bind_host="127.0.0.1",
-                daemon_port=61234,
+                credential=credential,
                 runtime_root=runtime_root,
             )
 
@@ -141,15 +165,16 @@ class TestEnsureIsolationCodeIndex:
         assert result.runtime_home is not None
         assert result.env["PATH"].split(":")[0] == str(wrapper.parent)
         assert result.env["GOBBY_CODE_INDEX_RUNTIME_HOME"] == result.runtime_home
+        assert result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(credential.bootstrap_path)
         assert wrapper.read_text() == (
-            f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
+            f"#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\n"
+            f"export GOBBY_MANAGED_EXECUTION_BOOTSTRAP={credential.bootstrap_path}\n"
+            'exec /tmp/gcode "$@"\n'
         )
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
-        bootstrap_text = bootstrap.read_text()
-        assert "database_url: postgresql://gobby:secret@localhost/gobby" in bootstrap_text
-        assert "database_url_ref" not in bootstrap_text
-        assert "bind_host: 127.0.0.1" in bootstrap_text
-        assert "daemon_port: 61234" in bootstrap_text
+        assert bootstrap.read_text() == (
+            "database_url: postgresql://scoped:secret@localhost/gobby\n"
+        )
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
         assert not runtime_token.is_symlink()
@@ -191,9 +216,7 @@ class TestEnsureIsolationCodeIndex:
         ):
             result = await ensure_isolation_code_index(
                 str(workspace),
-                database_url="postgresql://gobby:secret@localhost/gobby",
-                daemon_bind_host="127.0.0.1",
-                daemon_port=61234,
+                credential=self._credential(tmp_path),
                 runtime_root=runtime_root,
             )
 
@@ -279,9 +302,7 @@ class TestEnsureIsolationCodeIndex:
         ):
             result = await ensure_isolation_code_index(
                 str(workspace),
-                database_url="postgresql://gobby:secret@localhost/gobby",
-                daemon_bind_host="127.0.0.1",
-                daemon_port=61234,
+                credential=self._credential(tmp_path),
                 runtime_root=runtime_root,
                 api_token="operator-token-value",
             )

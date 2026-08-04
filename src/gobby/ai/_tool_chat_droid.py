@@ -380,6 +380,7 @@ class DroidSpawnToolChatAdapter:
             project_path=request.project_path,
             limits=limits,
             builtins=request.builtins,
+            subprocess_env=request.managed_subprocess_env,
         )
         controller = ToolLoopController(limits)
         model = request.model or next(iter(binding.models), None)
@@ -393,6 +394,7 @@ class DroidSpawnToolChatAdapter:
             base_env = os.environ.copy()
             _seed_droid_factory_state(base_env, temp_home)
             isolated_env = _droid_isolated_env(base_env, temp_home)
+            isolated_env.update(request.managed_subprocess_env)
             isolated_env["PATH"] = merge_spawn_path(isolated_env.get("PATH"))
             client = self._client_factory(
                 command_path=self._resolve_command_path(),

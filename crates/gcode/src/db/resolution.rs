@@ -1,13 +1,22 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use gobby_core::ai::effective_config::EffectiveConfigError;
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
+use serde::Deserialize;
+use uuid::Uuid;
 
 const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
 const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
+const MANAGED_EXECUTION_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
+
+#[derive(Deserialize)]
+struct ManagedExecutionBootstrap {
+    database_url: String,
+    managed_execution_id: String,
+}
 
 /// Return Gobby home, respecting `GOBBY_HOME` when the daemon was configured with it.
 pub fn gobby_home() -> anyhow::Result<PathBuf> {
@@ -20,6 +29,10 @@ pub fn bootstrap_path() -> anyhow::Result<PathBuf> {
 
 /// Resolve the standalone database from explicit DSN sources.
 pub fn resolve_database_url() -> anyhow::Result<String> {
+    if let Some(database_url) = resolve_managed_database_url(&mut |name| std::env::var(name).ok())?
+    {
+        return Ok(database_url);
+    }
     let mode = runtime_mode()?;
     let home = gobby_home()?;
     resolve_database_url_from_sources_with_identity_and_reachability(
@@ -72,7 +85,7 @@ fn resolve_database_url_from_sources_with_identity(
 fn resolve_database_url_from_sources_with_identity_and_reachability(
     home: &Path,
     mode: RuntimeMode,
-    get_var: impl FnMut(&str) -> Option<String>,
+    mut get_var: impl FnMut(&str) -> Option<String>,
     daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     mut database_reachable: impl FnMut(&str) -> bool,
     mut identity_probe: impl FnMut(
@@ -82,7 +95,11 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
 ) -> anyhow::Result<String> {
     let path = home.join("bootstrap.yaml");
 
-    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+    if let Some(database_url) = resolve_managed_database_url(&mut get_var)? {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) = resolve_database_url_from_env(&mut get_var) {
         return Ok(database_url);
     }
 
@@ -125,6 +142,25 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
     bail!(
         "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
     )
+}
+
+fn resolve_managed_database_url(
+    get_var: &mut impl FnMut(&str) -> Option<String>,
+) -> anyhow::Result<Option<String>> {
+    let Some(path) = non_empty_trimmed(get_var(MANAGED_EXECUTION_BOOTSTRAP_ENV)) else {
+        return Ok(None);
+    };
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read managed execution bootstrap {path}"))?;
+    let bootstrap: ManagedExecutionBootstrap = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse managed execution bootstrap {path}"))?;
+    Uuid::parse_str(&bootstrap.managed_execution_id)
+        .context("managed execution bootstrap has invalid managed_execution_id")?;
+    let database_url = bootstrap.database_url.trim();
+    if database_url.is_empty() {
+        bail!("managed execution bootstrap has empty database_url");
+    }
+    Ok(Some(database_url.to_string()))
 }
 
 fn resolve_recorded_hub_database_url(
@@ -483,5 +519,54 @@ mod tests {
             parsed.database_url.as_deref(),
             Some("postgresql://inline/db")
         );
+    }
+
+    #[test]
+    fn managed_runtime_prefers_scoped_bootstrap_over_every_shared_source() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let managed = home.path().join("managed-bootstrap.json");
+        std::fs::write(
+            &managed,
+            r#"{"database_url":"postgresql://scoped/db","managed_execution_id":"a158f699-2c1d-44d8-b438-633d7ad8f8db"}"#,
+        )
+        .expect("write managed bootstrap");
+
+        let resolved = resolve_database_url_from_sources_with_identity_and_reachability(
+            home.path(),
+            RuntimeMode::Daemon,
+            |name| match name {
+                MANAGED_EXECUTION_BOOTSTRAP_ENV => Some(managed.display().to_string()),
+                GCODE_DATABASE_URL_ENV => Some("postgresql://operator-env/db".to_string()),
+                _ => None,
+            },
+            || panic!("managed runtime must not query daemon configuration"),
+            |_| panic!("managed runtime must not probe shared database reachability"),
+            |_| panic!("managed runtime must not probe shared database identity"),
+        )
+        .expect("resolve managed bootstrap");
+
+        assert_eq!(resolved, "postgresql://scoped/db");
+    }
+
+    #[test]
+    fn managed_runtime_missing_bootstrap_rejects_shared_fallbacks() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let missing = home.path().join("missing-managed-bootstrap.json");
+
+        let error = resolve_database_url_from_sources_with_identity_and_reachability(
+            home.path(),
+            RuntimeMode::Daemon,
+            |name| match name {
+                MANAGED_EXECUTION_BOOTSTRAP_ENV => Some(missing.display().to_string()),
+                GCODE_DATABASE_URL_ENV => Some("postgresql://operator-env/db".to_string()),
+                _ => None,
+            },
+            || panic!("managed runtime must not query daemon configuration"),
+            |_| panic!("managed runtime must not probe shared database reachability"),
+            |_| panic!("managed runtime must not probe shared database identity"),
+        )
+        .expect_err("missing managed bootstrap must fail closed");
+
+        assert!(error.to_string().contains("managed execution bootstrap"));
     }
 }

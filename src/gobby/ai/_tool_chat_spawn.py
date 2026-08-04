@@ -412,7 +412,10 @@ class GrokSpawnToolChatAdapter:
                 command,
                 neutral_cwd=work,
                 timeout_seconds=self._timeout_seconds,
-                env_overrides={"PATH": merge_spawn_path(None)},
+                env_overrides={
+                    "PATH": merge_spawn_path(None),
+                    **request.managed_subprocess_env,
+                },
             )
         text = ""
         session_id = ""
@@ -534,6 +537,7 @@ class QwenSpawnToolChatAdapter:
             "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
             "SEATBELT_PROFILE": _QWEN_SEATBELT_PROFILE_NAME,
             "PATH": merge_spawn_path(None),
+            **request.managed_subprocess_env,
         }
         endpoint = self._select_endpoint(model)
         if endpoint is not None:

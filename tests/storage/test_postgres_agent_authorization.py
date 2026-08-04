@@ -23,6 +23,9 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "src/gobby/storage/postgres_baseline_schema.sql"
 MIGRATION = ROOT / "src/gobby/storage/migrations/369_scoped_agent_authorization.sql"
 LIFECYCLE_MIGRATION = ROOT / "src/gobby/storage/migrations/371_managed_credential_lifecycle.sql"
+PARALLEL_AUTH_MIGRATION = (
+    ROOT / "src/gobby/storage/migrations/372_parallel_scoped_project_authorization.sql"
+)
 AUTH_SCHEMA = "gobby_agent_auth"
 CAPABILITY_ROLE = "gobby_gcode_capability"
 ISSUER_ROLE = "gobby_agent_issuer"
@@ -73,6 +76,8 @@ def _bootstrap_and_migrate(conn: psycopg.Connection[Any]) -> None:
     conn.execute(MIGRATION.read_text(), prepare=False)
     assert LIFECYCLE_MIGRATION.exists(), "migration slot 371 must implement credential lifecycle"
     conn.execute(LIFECYCLE_MIGRATION.read_text(), prepare=False)
+    assert PARALLEL_AUTH_MIGRATION.exists(), "migration slot 372 must preserve scoped parallelism"
+    conn.execute(PARALLEL_AUTH_MIGRATION.read_text(), prepare=False)
 
 
 def _as_runtime(
@@ -314,6 +319,15 @@ def test_roles_memberships_functions_and_rls_are_hardened(
             "inherit_option": False,
             "set_option": False,
         }
+        project_scope_parallelism = conn.execute(
+            """
+            SELECT p.proparallel
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = %s AND p.proname = 'current_project_id'
+            """,
+            (AUTH_SCHEMA,),
+        ).fetchone()
+        assert project_scope_parallelism == {"proparallel": "s"}
         functions = conn.execute(
             """
             SELECT p.proname, p.prosecdef, p.proconfig,

@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.constants import get_terminal_env_vars
 from gobby.agents.session import ChildSessionConfig, ChildSessionManager
@@ -28,7 +28,11 @@ from gobby.agents.spawners import (
     create_prompt_file,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
+
+if TYPE_CHECKING:
+    from gobby.storage.managed_credentials import ManagedCredential
 
 __all__ = [
     # Result dataclasses
@@ -76,6 +80,9 @@ class PreparedSpawn:
 
     seq_num: int | None = None
     """Session sequence number for human-friendly references."""
+
+    managed_credential: ManagedCredential | None = None
+    """Run-scoped database credential issued before provider launch."""
 
 
 def prepare_terminal_spawn(
@@ -339,7 +346,8 @@ def _issue_prelaunch_credential(
         agent_run_id=uuid.UUID(prepared.agent_run_id),
         expires_at=datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
     )
-    prepared.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(credential.bootstrap_path)
+    prepared.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] = str(credential.bootstrap_path)
+    prepared.managed_credential = credential
     return prepared
 
 

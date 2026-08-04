@@ -714,10 +714,6 @@ class TestDispatchBatchIsolationParity:
                 new_callable=AsyncMock,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
-                new_callable=AsyncMock,
-            ),
-            patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
             ),

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import time
 from pathlib import Path
@@ -41,6 +42,9 @@ from gobby.ai._tool_chat_builtins import (
     validate_builtin_spec,
 )
 from gobby.ai._tool_chat_contracts import ToolLoopLimits, ToolPolicy
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
+
+_OPERATOR_DATABASE_ENV = ("DATABASE_URL", "GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN")
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +244,7 @@ async def run_argv(
     cwd: str,
     timeout: float,
     byte_cap: int,
+    env: dict[str, str] | None = None,
 ) -> str:
     """Run ``argv`` as a subprocess in ``cwd`` and return capped combined output.
 
@@ -255,11 +260,19 @@ async def run_argv(
             byte_cap,
         )
     try:
+        if env is None:
+            child_env = None
+        else:
+            child_env = {**os.environ, **env}
+            if MANAGED_EXECUTION_BOOTSTRAP_ENV in env:
+                for name in _OPERATOR_DATABASE_ENV:
+                    child_env.pop(name, None)
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=child_env,
         )
     except FileNotFoundError:
         return _cap_text(f"[error: executable {argv[0]!r} not found]", byte_cap)
@@ -308,11 +321,13 @@ class ToolRuntime:
         project_path: str,
         limits: ToolLoopLimits | None = None,
         builtins: tuple[BuiltinToolSpec, ...] = (),
+        subprocess_env: dict[str, str] | None = None,
     ) -> None:
         validate_policy(policy, allow_empty=bool(builtins))
         self._policy = policy
         self._project_path = project_path
         self._limits = limits or ToolLoopLimits()
+        self._subprocess_env = subprocess_env
         self._subcommand_by_tool_name: dict[str, str] = {
             tool_name_for(policy.cli, sub): sub for sub in policy.tools
         }
@@ -467,6 +482,7 @@ class ToolRuntime:
             cwd=self._project_path,
             timeout=self._limits.tool_timeout_seconds,
             byte_cap=self._limits.max_bytes_per_tool_result,
+            env=self._subprocess_env,
         )
         self._record(tool_name, arguments, text)
         return text

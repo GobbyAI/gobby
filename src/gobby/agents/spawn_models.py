@@ -57,6 +57,9 @@ class SpawnRequest:
     timeout_seconds: float | None = None
     daemon_config: DaemonConfig | None = None
     resume_metadata_json: dict[str, Any] | None = None
+    code_index_preflight_mode: str | None = None
+    code_index_api_token: str | None = None
+    code_index_preflight_warning: dict[str, str] | None = None
 
 
 @dataclass

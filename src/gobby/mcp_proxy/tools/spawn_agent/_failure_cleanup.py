@@ -44,9 +44,9 @@ async def cleanup_failed_spawn(
             runner=runner,
             run_id=run_id,
             terminal_reason="spawn_rollback",
-            lifecycle_monitor=getattr(handler, "agent_lifecycle_monitor", None),
+            lifecycle_monitor=getattr(runner, "agent_lifecycle_monitor", None),
             completion_registry=completion_registry,
-            task_manager=getattr(handler, "task_manager", None),
+            task_manager=getattr(runner, "task_manager", None),
             message=error,
         )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)

@@ -39,6 +39,13 @@ def mock_runner() -> MagicMock:
     runner.can_spawn.return_value = (True, "Can spawn", 0)
     runner._child_session_manager = MagicMock()
     runner.run_storage.has_active_run_for_task.return_value = False
+    runner.agent_lifecycle_monitor = None
+    runner.task_manager = None
+
+    def cancel_run(run_id: str) -> bool:
+        return runner.run_storage.cancel(run_id) is not None
+
+    runner.cancel_run.side_effect = cancel_run
     return runner
 
 

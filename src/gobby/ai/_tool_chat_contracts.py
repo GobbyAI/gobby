@@ -24,6 +24,7 @@ from gobby._generated_tool_loop_limits import (
     ToolLoopLimitsDict,
 )
 from gobby.config.feature_base import FeatureCandidateInput
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 
 MAX_TURNS_STOP_REASON = "max_turns"
 MAX_TOOL_CALLS_STOP_REASON = "max_tool_calls"
@@ -137,6 +138,12 @@ class ToolChatRequest:
     @property
     def effective_limits(self) -> ToolLoopLimits:
         return self.limits or ToolLoopLimits()
+
+    @property
+    def managed_subprocess_env(self) -> dict[str, str]:
+        if self.credential_bootstrap_path is None:
+            return {}
+        return {MANAGED_EXECUTION_BOOTSTRAP_ENV: self.credential_bootstrap_path}
 
 
 @dataclass(frozen=True, kw_only=True)

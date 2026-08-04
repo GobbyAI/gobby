@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
+
+if TYPE_CHECKING:
+    from gobby.storage.managed_credentials import ManagedCredential
 
 
 async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
-    database_url: str | None = None,
-    daemon_bind_host: str | None = None,
-    daemon_port: int | None = None,
+    credential: ManagedCredential | None = None,
     runtime_root: Path | None = None,
     config_probe_timeout: float = 5.0,
     search_smoke_timeout: float = 10.0,
@@ -24,9 +26,7 @@ async def ensure_isolation_code_index(
     return await _ensure_isolation_code_index(
         isolated_path,
         timeout=timeout,
-        database_url=database_url,
-        daemon_bind_host=daemon_bind_host,
-        daemon_port=daemon_port,
+        credential=credential,
         runtime_root=runtime_root,
         config_probe_timeout=config_probe_timeout,
         search_smoke_timeout=search_smoke_timeout,

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, hook_inbox_dir, managed_tool_bin_dir
 from gobby.agents.spawn_executor import (
     _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
@@ -21,6 +22,7 @@ from gobby.agents.spawn_executor import (
     SpawnRequest,
     SpawnResult,
     _apply_extra_env,
+    _prepare_managed_code_index,
     _record_resume_launch_details,
     _sandbox_config_for_spawn,
     execute_spawn,
@@ -28,6 +30,151 @@ from gobby.agents.spawn_executor import (
 from gobby.mcp_proxy.server import GobbyDaemonTools
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_managed_code_index_preflight_uses_issued_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = MagicMock()
+    context = PreparedSpawn(
+        session_id="child",
+        agent_run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        workflow_name=None,
+        agent_depth=1,
+        env_vars={},
+        managed_credential=credential,
+    )
+    request = SpawnRequest(
+        prompt="Plan",
+        cwd="/isolated",
+        provider="codex",
+        session_id="session",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        code_index_preflight_mode="required",
+        code_index_api_token="probe-token",
+    )
+
+    async def preflight(
+        cwd: str,
+        *,
+        credential: object,
+        api_token: str | None,
+    ) -> SimpleNamespace:
+        assert cwd == "/isolated"
+        assert credential is context.managed_credential
+        assert api_token == "probe-token"
+        return SimpleNamespace(env={"PATH": "/scoped/bin"})
+
+    monkeypatch.setattr("gobby.agents.spawn_executor.ensure_isolation_code_index", preflight)
+
+    error = await _prepare_managed_code_index(request, context)
+
+    assert error is None
+    assert context.env_vars["PATH"] == "/scoped/bin"
+
+
+@pytest.mark.asyncio
+async def test_required_managed_code_index_preflight_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = PreparedSpawn(
+        session_id="child",
+        agent_run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        workflow_name=None,
+        agent_depth=1,
+        env_vars={},
+        managed_credential=MagicMock(),
+    )
+    request = SpawnRequest(
+        prompt="Plan",
+        cwd="/isolated",
+        provider="codex",
+        session_id="session",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        code_index_preflight_mode="required",
+    )
+
+    async def fail_preflight(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("scoped bootstrap missing")
+
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor.ensure_isolation_code_index",
+        fail_preflight,
+    )
+
+    error = await _prepare_managed_code_index(request, context)
+
+    assert error is not None
+    assert error.success is False
+    assert error.error == "planner_code_index_unavailable:scoped bootstrap missing"
+
+
+@pytest.mark.asyncio
+async def test_best_effort_preflight_records_warning_without_operator_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = PreparedSpawn(
+        session_id="child",
+        agent_run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        workflow_name=None,
+        agent_depth=1,
+        env_vars={},
+        managed_credential=MagicMock(),
+    )
+    session_manager = MagicMock()
+    request = SpawnRequest(
+        prompt="Implement",
+        cwd="/isolated",
+        provider="codex",
+        session_id="session",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="project",
+        session_manager=session_manager,
+        initial_variables={"additional_skills": ["code-index", "python"]},
+        code_index_preflight_mode="best_effort",
+    )
+
+    async def fail_preflight(*_args: object, **kwargs: object) -> None:
+        assert "database_url" not in kwargs
+        assert "daemon_config" not in kwargs
+        raise RuntimeError("scoped bootstrap missing")
+
+    variable_manager = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor.ensure_isolation_code_index",
+        fail_preflight,
+    )
+    with patch(
+        "gobby.workflows.state_manager.SessionVariableManager",
+        return_value=variable_manager,
+    ):
+        error = await _prepare_managed_code_index(request, context)
+
+    assert error is None
+    assert request.code_index_preflight_warning == {
+        "preflight": "code_index",
+        "cwd": "/isolated",
+        "message": "scoped bootstrap missing",
+    }
+    assert "Code-index preflight failed: scoped bootstrap missing" in request.prompt
+    assert request.initial_variables is not None
+    assert request.initial_variables["additional_skills"] == ["python"]
+    variable_manager.merge_variables.assert_called_once_with(
+        "child",
+        request.initial_variables,
+    )
 
 
 @pytest.mark.asyncio

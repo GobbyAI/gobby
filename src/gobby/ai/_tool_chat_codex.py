@@ -229,6 +229,7 @@ class CodexSpawnToolChatAdapter:
             project_path=request.project_path,
             limits=limits,
             builtins=request.builtins,
+            subprocess_env=request.managed_subprocess_env,
         )
         model = request.model or next(iter(binding.models), None)
         client = self._client_factory(**self._client_options(binding, model=model))

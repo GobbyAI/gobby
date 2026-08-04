@@ -141,7 +141,14 @@ async def test_execute_rejects_metacharacter_args() -> None:
 async def test_execute_builds_argv_and_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_run_argv(argv: list[str], *, cwd: str, timeout: float, byte_cap: int) -> str:
+    async def fake_run_argv(
+        argv: list[str],
+        *,
+        cwd: str,
+        timeout: float,
+        byte_cap: int,
+        env: dict[str, str] | None = None,
+    ) -> str:
         captured["argv"] = argv
         captured["cwd"] = cwd
         captured["timeout"] = timeout
@@ -160,6 +167,81 @@ async def test_execute_builds_argv_and_delegates(monkeypatch: pytest.MonkeyPatch
     assert captured["cwd"] == "/repo"
     assert captured["timeout"] == 12.0
     assert captured["byte_cap"] == 99
+
+
+@pytest.mark.asyncio
+async def test_execute_passes_managed_bootstrap_to_gcode_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_env: dict[str, str] | None = None
+
+    async def fake_run_argv(
+        argv: list[str],
+        *,
+        cwd: str,
+        timeout: float,
+        byte_cap: int,
+        env: dict[str, str] | None,
+    ) -> str:
+        nonlocal captured_env
+        captured_env = env
+        return "ok"
+
+    monkeypatch.setattr(tools, "run_argv", fake_run_argv)
+    runtime = ToolRuntime(
+        _readonly_gcode_policy(),
+        project_path="/repo",
+        subprocess_env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/managed/bootstrap.json"},
+    )
+
+    result = await runtime.execute("gcode_search", {"args": ["query"]})
+
+    assert result == "ok"
+    assert captured_env == {"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/managed/bootstrap.json"}
+
+
+@pytest.mark.asyncio
+async def test_run_argv_managed_context_strips_operator_database_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_env: dict[str, str] | None = None
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    async def create_process(*_argv: str, **kwargs: object) -> Process:
+        nonlocal captured_env
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured_env = env
+        return Process()
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://operator/database-url")
+    monkeypatch.setenv("GCODE_DATABASE_URL", "postgresql://operator/gcode-url")
+    monkeypatch.setenv("GOBBY_POSTGRES_DSN", "postgresql://operator/gobby-url")
+    monkeypatch.setattr(
+        "gobby.ai._tool_chat_tools.asyncio.create_subprocess_exec",
+        create_process,
+    )
+
+    result = await run_argv(
+        ["gcode", "status"],
+        cwd=str(tmp_path),
+        timeout=1,
+        byte_cap=1024,
+        env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/managed/bootstrap.json"},
+    )
+
+    assert result == "ok"
+    assert captured_env is not None
+    assert captured_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == "/managed/bootstrap.json"
+    assert "DATABASE_URL" not in captured_env
+    assert "GCODE_DATABASE_URL" not in captured_env
+    assert "GOBBY_POSTGRES_DSN" not in captured_env
 
 
 @pytest.mark.asyncio

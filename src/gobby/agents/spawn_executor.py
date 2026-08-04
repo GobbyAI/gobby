@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
 from gobby.agents.spawn_cache_policy import (
@@ -111,6 +112,73 @@ async def _prepare_provider_sandbox(
     env.update(launch.provider_env)
     _record_actual_sandbox_enforcement(request, spawn_context, launch)
     return launch
+
+
+async def _prepare_managed_code_index(
+    request: SpawnRequest,
+    spawn_context: PreparedSpawn,
+) -> SpawnResult | None:
+    mode = request.code_index_preflight_mode
+    if mode is None:
+        return None
+    try:
+        credential = spawn_context.managed_credential
+        if credential is None:
+            raise RuntimeError("managed credential unavailable for code index preflight")
+        preflight = await ensure_isolation_code_index(
+            request.cwd,
+            credential=credential,
+            api_token=request.code_index_api_token,
+        )
+        spawn_context.env_vars.update(preflight.env)
+        return None
+    except Exception as exc:
+        if mode == "required":
+            return SpawnResult(
+                success=False,
+                run_id=request.run_id,
+                child_session_id=spawn_context.session_id,
+                status="failed",
+                error=f"planner_code_index_unavailable:{exc}",
+            )
+        warning = {
+            "preflight": "code_index",
+            "cwd": request.cwd,
+            "message": str(exc),
+        }
+        request.code_index_preflight_warning = warning
+        request.prompt = _append_code_index_warning(request.prompt, warning)
+        if request.initial_variables is not None:
+            skills = request.initial_variables.get("additional_skills", [])
+            if isinstance(skills, list):
+                request.initial_variables["additional_skills"] = [
+                    skill for skill in skills if skill != "code-index"
+                ]
+            request.initial_variables["code_index_preflight_warning"] = warning
+            request.initial_variables["prompt"] = request.prompt
+            if request.session_manager is not None:
+                from gobby.workflows.state_manager import SessionVariableManager
+
+                SessionVariableManager(request.session_manager._storage.db).merge_variables(
+                    spawn_context.session_id,
+                    request.initial_variables,
+                )
+        logging.getLogger(__name__).warning(
+            "Continuing spawn after scoped code index preflight failed for cwd=%s: %s",
+            request.cwd,
+            exc,
+        )
+        return None
+
+
+def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
+    message = warning.get("message", "unknown")
+    return (
+        f"{prompt}\n\n---\n\n"
+        "## Code Index\n"
+        "Use standard file search and read tools for code navigation in this isolated "
+        f"workspace. Code-index preflight failed: {message}"
+    )
 
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
@@ -226,6 +294,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         strict_mcp = True
         cmd.extend(["--mcp-config", claude_mcp_config_arg, "--strict-mcp-config"])
 
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_base:
@@ -341,6 +411,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_base:
@@ -441,6 +513,8 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_base:
@@ -554,6 +628,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_base:
@@ -679,6 +755,8 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
+        return preflight_error
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_token:

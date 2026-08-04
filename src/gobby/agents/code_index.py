@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import re
@@ -16,16 +17,17 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from gobby.config.bootstrap import (
-    DEFAULT_DAEMON_BIND_HOST,
-    DEFAULT_DAEMON_PORT,
-)
 from gobby.config.bootstrap_io import write_bootstrap_yaml
 from gobby.paths import get_gobby_home
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 from gobby.utils.native_bin import resolve_native_bin
+
+if TYPE_CHECKING:
+    from gobby.storage.managed_credentials import ManagedCredential
 
 logger = logging.getLogger(__name__)
 
@@ -248,9 +250,7 @@ async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
-    database_url: str | None = None,
-    daemon_bind_host: str | None = None,
-    daemon_port: int | None = None,
+    credential: ManagedCredential | None = None,
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
@@ -276,9 +276,7 @@ async def ensure_isolation_code_index(
     result = _prepare_gcode_runtime(
         workspace=workspace,
         gcode_bin=Path(gcode_bin),
-        database_url=database_url,
-        daemon_bind_host=daemon_bind_host,
-        daemon_port=daemon_port,
+        credential=credential,
         runtime_root=runtime_root,
     )
     gcode_command = result.wrapper_path or gcode_bin
@@ -325,13 +323,13 @@ def _prepare_gcode_runtime(
     *,
     workspace: Path,
     gcode_bin: Path,
-    database_url: str | None,
-    daemon_bind_host: str | None,
-    daemon_port: int | None,
+    credential: ManagedCredential | None,
     runtime_root: Path | None,
 ) -> CodeIndexPreflightResult:
-    if not database_url:
+    if credential is None:
         return CodeIndexPreflightResult(env={})
+
+    database_url = _scoped_database_url(credential)
 
     source_home = get_gobby_home()
     runtime_home = _runtime_home_for_workspace(
@@ -343,11 +341,7 @@ def _prepare_gcode_runtime(
     _chmod_private(runtime_home)
     write_bootstrap_yaml(
         runtime_home / "bootstrap.yaml",
-        {
-            "database_url": database_url,
-            "daemon_port": daemon_port or DEFAULT_DAEMON_PORT,
-            "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
-        },
+        {"database_url": database_url},
     )
     _link_runtime_assets(source_home, runtime_home)
     # Runs last so it is the final word on #19289: no writer above it can leave
@@ -357,17 +351,35 @@ def _prepare_gcode_runtime(
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
     _exclude_generated_wrapper_from_git(workspace)
-    wrapper_path.write_text(_gcode_wrapper_script(runtime_home, gcode_bin), encoding="utf-8")
+    wrapper_path.write_text(
+        _gcode_wrapper_script(runtime_home, gcode_bin, credential.bootstrap_path),
+        encoding="utf-8",
+    )
     wrapper_path.chmod(0o755)
 
     return CodeIndexPreflightResult(
         env={
             "PATH": _prepend_path(wrapper_path.parent),
             _RUNTIME_HOME_ENV: str(runtime_home),
+            MANAGED_EXECUTION_BOOTSTRAP_ENV: str(credential.bootstrap_path),
         },
         wrapper_path=str(wrapper_path),
         runtime_home=str(runtime_home),
     )
+
+
+def _scoped_database_url(credential: ManagedCredential) -> str:
+    try:
+        payload = json.loads(credential.bootstrap_path.read_text(encoding="utf-8"))
+        execution_id = payload["managed_execution_id"]
+        database_url = payload["database_url"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RuntimeError("managed credential bootstrap is invalid") from exc
+    if execution_id != str(credential.managed_execution_id):
+        raise RuntimeError("managed credential bootstrap execution mismatch")
+    if not isinstance(database_url, str) or not database_url.strip():
+        raise RuntimeError("managed credential bootstrap database_url is invalid")
+    return database_url
 
 
 def _runtime_home_for_workspace(workspace: Path, runtime_root: Path) -> Path:
@@ -399,10 +411,16 @@ def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
             logger.debug("Failed to reap gcode runtime token in %s", runtime_home, exc_info=True)
 
 
-def _gcode_wrapper_script(runtime_home: Path, gcode_bin: Path) -> str:
+def _gcode_wrapper_script(
+    runtime_home: Path,
+    gcode_bin: Path,
+    credential_bootstrap: Path,
+) -> str:
     return (
         "#!/bin/sh\n"
         f"export GOBBY_HOME={shlex.quote(str(runtime_home))}\n"
+        f"export {MANAGED_EXECUTION_BOOTSTRAP_ENV}="
+        f"{shlex.quote(str(credential_bootstrap))}\n"
         f'exec {shlex.quote(str(gcode_bin))} "$@"\n'
     )
 
