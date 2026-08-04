@@ -1429,6 +1429,12 @@ def _chat_result(**overrides: object) -> ToolChatResult:
         "usage": {"input_tokens": 1000, "output_tokens": 200},
         "applied_reasoning_effort": "high",
         "stop_reason": "completed",
+        "speed": {
+            "requested": "standard",
+            "effective": "standard",
+            "status": "standard",
+            "reason": None,
+        },
     }
     base.update(overrides)
     return ToolChatResult(**base)  # type: ignore[arg-type]
@@ -1480,6 +1486,12 @@ def test_chat_completions_returns_openai_shape_with_investigation(
         },
         "usage": {"input_tokens": 1000, "output_tokens": 200},
         "applied_reasoning_effort": "high",
+        "speed": {
+            "requested": "standard",
+            "effective": "standard",
+            "status": "standard",
+            "reason": None,
+        },
     }
     assert len(service.requests) == 1
     request = service.requests[0]
@@ -1499,6 +1511,7 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert request.caller == _TOOL_CHAT_CALLER
     assert request.request_id == _TOOL_CHAT_REQUEST_ID
     assert request.session_id == UUID("019fc08a-1d63-4b23-bbc8-659d56bc4168")
+    assert request.speed_mode == "standard"
 
 
 def test_chat_completions_uses_verified_agent_session_claim(
@@ -1622,6 +1635,7 @@ def test_chat_completions_forwards_explicit_routing(
             "tool_policy": _READONLY_TOOL_POLICY,
             "provider": "endpoint:lm-studio",
             "model": "gemma",
+            "speed_mode": "fast",
         },
     )
 
@@ -1629,6 +1643,7 @@ def test_chat_completions_forwards_explicit_routing(
     request = service.requests[0]
     assert request.provider == "endpoint:lm-studio"
     assert request.model == "gemma"
+    assert request.speed_mode == "fast"
     # Explicit routing leaves the profile unset (no default override).
     assert request.profile is None
 

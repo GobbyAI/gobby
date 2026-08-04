@@ -76,6 +76,7 @@ class OpenAICompatibleToolChatAdapter:
         turns = 0
         content = ""
         stop_reason = MAX_TURNS_STOP_REASON
+        response_metadata: dict[str, object] = {}
 
         while limits.max_turns is None or turns < limits.max_turns:
             turns += 1
@@ -83,6 +84,9 @@ class OpenAICompatibleToolChatAdapter:
                 **_completion_kwargs(model, messages, tools, request)
             )
             message = response.choices[0].message
+            service_tier = getattr(response, "service_tier", None)
+            if isinstance(service_tier, str):
+                response_metadata["serviceTier"] = service_tier
             _accumulate_usage(usage_total, getattr(response, "usage", None))
 
             tool_calls = getattr(message, "tool_calls", None)
@@ -129,6 +133,7 @@ class OpenAICompatibleToolChatAdapter:
             calls_used=runtime.calls_used,
             budget_exhausted=runtime.budget_exhausted,
             trace_available=True,
+            response_metadata=response_metadata,
         )
 
 
@@ -147,6 +152,7 @@ def _completion_kwargs(
     }
     if request.reasoning_effort is not None:
         kwargs["reasoning_effort"] = request.reasoning_effort
+    kwargs.update(request.request_parameters)
     return kwargs
 
 

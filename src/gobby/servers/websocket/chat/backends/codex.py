@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -143,7 +143,12 @@ class CodexManagedChatSession(
 
         return await asyncio.shield(task)
 
-    async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
+    async def send_message(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        request_parameters: Mapping[str, object] | None = None,
+    ) -> AsyncIterator[ChatEvent]:
         if not self._connected:
             await self.start(model=self._model)
 
@@ -186,6 +191,7 @@ class CodexManagedChatSession(
                 self,
                 prompt,
                 context_prefix=context_prefix or None,
+                request_parameters=request_parameters,
             ):
                 if isinstance(event, TextChunk) and event.content:
                     plan_text_parts.append(event.content)
@@ -661,6 +667,7 @@ class CodexWebChatBackend:
         prompt: str,
         *,
         context_prefix: str | None = None,
+        request_parameters: Mapping[str, object] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         if not self._health.available or self._client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
@@ -672,6 +679,7 @@ class CodexWebChatBackend:
             session=session,
             prompt=prompt,
             context_prefix=context_prefix,
+            request_parameters=request_parameters,
             extract_before_tool_dedup_key=self._extract_before_tool_dedup_key,
         ):
             yield event

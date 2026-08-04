@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -144,7 +144,12 @@ class ChatSessionMessagesMixin:
             )
             return None
 
-    async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
+    async def send_message(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        request_parameters: Mapping[str, object] | None = None,
+    ) -> AsyncIterator[ChatEvent]:
         """
         Send a user message and yield streaming events.
 
@@ -154,6 +159,7 @@ class ChatSessionMessagesMixin:
         Yields ChatEvent instances (TextChunk, ToolCallEvent,
         ToolResultEvent, DoneEvent) matching the existing protocol.
         """
+        del request_parameters
         if not self._client or not self._connected:
             raise RuntimeError("ChatSession not connected. Call start() first.")
 

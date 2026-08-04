@@ -6,7 +6,7 @@ import asyncio
 import logging
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.ai._tool_chat_contracts import (
@@ -238,12 +238,15 @@ class CodexSpawnToolChatAdapter:
         text = ""
         stop_reason = "completed"
         thread_id: str | None = None
+        response_metadata: dict[str, object] = {}
+        request_parameters = cast(dict[str, Any], dict(request.request_parameters))
 
         def record_raw_response(
             _method: str,
             _params: dict[str, Any],
         ) -> None:
             nonlocal stop_reason, turns
+            response_metadata.update(_speed_response_metadata(_params))
             turns += 1
             if limits.max_turns is None or turns < limits.max_turns or stop_reason != "completed":
                 return
@@ -358,6 +361,7 @@ class CodexSpawnToolChatAdapter:
                 request.prompt,
                 context_prefix=request.system_prompt,
                 effort=request.reasoning_effort,
+                **request_parameters,
             ):
                 event_type = event.get("type")
                 if event_type == "item/completed":
@@ -398,4 +402,20 @@ class CodexSpawnToolChatAdapter:
             calls_used=runtime.calls_used,
             budget_exhausted=stop_reason in LIMIT_STOP_REASONS,
             trace_available=True,
+            response_metadata=response_metadata,
         )
+
+
+def _speed_response_metadata(params: dict[str, Any]) -> dict[str, object]:
+    containers = [params]
+    for key in ("response", "rawResponse", "raw_response"):
+        nested = params.get(key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    metadata: dict[str, object] = {}
+    for container in containers:
+        for key in ("serviceTier", "service_tier", "tier"):
+            value = container.get(key)
+            if isinstance(value, str):
+                metadata[key] = value
+    return metadata

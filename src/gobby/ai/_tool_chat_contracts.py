@@ -11,8 +11,9 @@ no tool set, no prompt, and no global read-only law.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from gobby._generated_tool_loop_limits import (
@@ -37,6 +38,7 @@ LIMIT_STOP_REASONS = frozenset(
 if TYPE_CHECKING:
     from gobby.ai._tool_chat_builtins import BuiltinToolSpec, InvocationRecord
     from gobby.ai.registry import AIAdapterStyle, CapabilityBinding
+    from gobby.providers.capabilities.apply import SpeedResultData
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -137,6 +139,8 @@ class ToolChatRequest:
     allowed_adapter_styles: tuple[AIAdapterStyle, ...] | None = None
     caller: str | None = None
     request_id: str | None = None
+    speed_mode: Literal["standard", "fast"] = "standard"
+    request_parameters: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def effective_limits(self) -> ToolLoopLimits:
@@ -187,6 +191,8 @@ class ToolChatResult:
     calls_used: int = 0
     budget_exhausted: bool = False
     trace_available: bool = False
+    speed: SpeedResultData | None = None
+    response_metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 class ToolChatAdapter(Protocol):

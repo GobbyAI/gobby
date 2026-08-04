@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,7 +128,13 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
     def _tool_name_adapter(self) -> Any:
         return droid_tool_name_adapter
 
-    async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
+    async def send_message(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        request_parameters: Mapping[str, object] | None = None,
+    ) -> AsyncIterator[ChatEvent]:
+        del request_parameters
         if not self._connected:
             await self.start(model=self._model)
 

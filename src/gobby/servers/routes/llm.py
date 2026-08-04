@@ -155,6 +155,7 @@ class ChatCompletionsPayload(BaseModel):
     candidates: tuple[FeatureCandidateInput, ...] = ()
     limits: ToolLoopLimitsPayload | None = None
     reasoning_effort: str | None = None
+    speed_mode: Literal["standard", "fast"] = "standard"
 
     @field_validator("caller")
     @classmethod
@@ -326,6 +327,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     reasoning_effort=payload.reasoning_effort,
                     caller=payload.caller,
                     request_id=str(payload.request_id),
+                    speed_mode=payload.speed_mode,
                 )
             )
             response: dict[str, Any] = {
@@ -345,6 +347,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     "adapter_style": result.adapter_style,
                     "stop_reason": result.stop_reason,
                 },
+                "speed": result.speed,
             }
             if result.usage is not None:
                 response["usage"] = result.usage

@@ -8,7 +8,7 @@ WebSocket layer to work polymorphically with future session types
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -73,7 +73,12 @@ class ChatSessionProtocol(Protocol):
 
     async def start(self, model: str | None = None) -> None: ...
 
-    def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]: ...
+    def send_message(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        request_parameters: Mapping[str, object] | None = None,
+    ) -> AsyncIterator[ChatEvent]: ...
 
     async def interrupt(self) -> None: ...
 

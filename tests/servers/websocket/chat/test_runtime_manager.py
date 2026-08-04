@@ -1031,7 +1031,7 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
-    async def test_send_message_passes_reasoning_effort_as_effort(self) -> None:
+    async def test_send_message_passes_request_scoped_turn_overrides(self) -> None:
         handlers: dict[str, list[Any]] = {}
 
         def add_handler(method: str, handler: Any) -> None:
@@ -1069,7 +1069,14 @@ class TestCodexBackend:
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
 
-        events = [event async for event in backend.send_message(session, "hello")]
+        events = [
+            event
+            async for event in backend.send_message(
+                session,
+                "hello",
+                request_parameters={"serviceTier": "priority"},
+            )
+        ]
 
         client.start_turn.assert_awaited_once_with(
             "thread-1",
@@ -1077,6 +1084,7 @@ class TestCodexBackend:
             context_prefix=None,
             model="gpt-5.4",
             effort="xhigh",
+            serviceTier="priority",
         )
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].context_window == 200_000

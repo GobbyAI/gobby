@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Protocol
+from collections.abc import AsyncIterator, Callable, Mapping
+from typing import Any, Protocol, cast
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -107,6 +107,7 @@ async def stream_codex_turn(
     prompt: str,
     context_prefix: str | None,
     extract_before_tool_dedup_key: BeforeToolDedupKeyExtractor,
+    request_parameters: Mapping[str, object] | None = None,
 ) -> AsyncIterator[ChatEvent]:
     thread_id = session._thread_id
     if thread_id is None:
@@ -124,6 +125,7 @@ async def stream_codex_turn(
     dynamic_exec_correlator = DynamicExecCorrelator()
     transcript_offset = await session._get_transcript_offset()
     session._reset_before_tool_state()
+    turn_parameters = cast(dict[str, Any], dict(request_parameters or {}))
 
     def _remember_record_usage(record: ParsedMessage | ParsedToolEvent) -> None:
         nonlocal latest_transcript_context_window, latest_transcript_usage
@@ -226,6 +228,7 @@ async def stream_codex_turn(
             context_prefix=context_prefix,
             model=session._model,
             effort=session.reasoning_effort,
+            **turn_parameters,
         )
         session._turn_id = turn.id or session._turn_id
         turn_deadline = asyncio.get_running_loop().time() + _CODEX_TURN_TIMEOUT_SECONDS

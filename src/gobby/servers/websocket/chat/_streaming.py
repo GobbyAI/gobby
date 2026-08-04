@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import httpx
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.providers.capabilities.apply import apply_speed
+from gobby.providers.capabilities.models import SpeedMode
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.chat_stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat._session import (
@@ -101,6 +103,7 @@ class ChatStreamingMixin:
         inject_context: str | None = None,
         provider: str | None = None,
         reasoning_effort: str | None = None,
+        speed_mode: str = "standard",
         tts_enabled: bool | None = None,
         attachments: PreparedMessageAttachments | None = None,
     ) -> None:
@@ -120,6 +123,7 @@ class ChatStreamingMixin:
             inject_context=inject_context,
             provider=provider,
             reasoning_effort=reasoning_effort,
+            speed_mode=speed_mode,
             tts_enabled=tts_enabled,
             attachments=attachments,
             websocket=websocket,
@@ -136,6 +140,7 @@ class ChatStreamingMixin:
         inject_context: str | None = None,
         provider: str | None = None,
         reasoning_effort: str | None = None,
+        speed_mode: str = "standard",
         tts_enabled: bool | None = None,
         attachments: PreparedMessageAttachments | None = None,
         websocket: Any | None = None,
@@ -157,6 +162,7 @@ class ChatStreamingMixin:
 
         gen: AsyncIterator[Any] | None = None
         session: ChatSessionProtocol | None = None
+        restore_model: str | None = None
         try:
             session = self._chat_sessions.get(conversation_id)
             if session is None:
@@ -190,13 +196,47 @@ class ChatStreamingMixin:
                 transport,
                 persistence,
             )
+            request_parameters: Mapping[str, object] = {}
+            base_model = session.model
+            if base_model is not None:
+                from gobby.app_context import get_app_context
+
+                context = get_app_context()
+                resolver = (
+                    getattr(context, "provider_capability_resolver", None)
+                    if context is not None
+                    else None
+                )
+                if resolver is not None:
+                    resolution = resolver.resolve_route(
+                        session.provider,
+                        base_model,
+                        SpeedMode(speed_mode),
+                        "app-server" if session.provider == "codex" else "tool-chat",
+                    )
+                    application = apply_speed(resolution, model=base_model)
+                    request_parameters = application.request_parameters
+                    if application.model is not None and application.model != base_model:
+                        await session.switch_model(application.model)
+                        restore_model = base_model
+                elif speed_mode == "fast":
+                    raise RuntimeError("Provider capability resolver unavailable")
+            elif speed_mode == "fast":
+                raise ValueError("Fast speed requires a resolved provider model")
             session._tool_approval_callback = event_handler.emit_pending_approval
             self._clear_pending_inject_context(conversation_id)
 
             await persistence.persist_user_message(session, content, attachments)
             await persistence.set_status(session, "active")
 
-            gen = session.send_message(self._content_with_inject_context(content, inject_context))
+            message_content = self._content_with_inject_context(content, inject_context)
+            if request_parameters:
+                gen = session.send_message(
+                    message_content,
+                    request_parameters=request_parameters,
+                )
+            else:
+                gen = session.send_message(message_content)
             async for event in gen:
                 if not await event_handler.handle_event(event, session):
                     break
@@ -236,6 +276,15 @@ class ChatStreamingMixin:
                 pass
 
         finally:
+            if session is not None and restore_model is not None:
+                try:
+                    await session.switch_model(restore_model)
+                except Exception:
+                    logger.exception(
+                        "Failed to restore request-scoped model %s for conversation %s",
+                        restore_model,
+                        conversation_id,
+                    )
             if session is not None and not state.completed:
                 await persistence.persist_current_assistant(session)
                 await persistence.set_status(session, "paused")
