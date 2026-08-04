@@ -14,7 +14,6 @@ from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
-from gobby.servers.provider_model_capabilities import ProviderModelCapability, SpeedTier
 from gobby.servers.provider_model_defaults import AGY_MODELS, DROID_MODEL_CATALOG
 from gobby.servers.routes.providers import _configured_endpoints, create_providers_router
 
@@ -429,56 +428,6 @@ class TestProviderModelsRoute:
         assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
         assert providers["agy"]["source"] == "static"
         assert providers["codex"]["source"] == "live"
-
-    def test_models_route_adds_capabilities_without_changing_existing_fields(self) -> None:
-        app = FastAPI()
-        provider_model_catalog = MagicMock()
-        source_model = {
-            "value": "droid-capability-test",
-            "label": "Droid capability test",
-            "reasoning_efforts": ["low"],
-            "context_length": 123_456,
-        }
-        provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
-            "source": "live",
-            "models": (
-                [source_model]
-                if provider == "droid"
-                else [{"value": f"{provider}-model", "label": f"{provider}-label"}]
-            ),
-        }
-        provider_model_catalog.all_capabilities.return_value = {
-            (
-                "droid",
-                "droid-capability-test",
-            ): ProviderModelCapability(
-                provider="droid",
-                model_id="droid-capability-test",
-                supported_reasoning_efforts=("medium", "high"),
-                context_limit=200_000,
-                speed_tier=SpeedTier.FAST,
-                speed_multiplier=4.0,
-            )
-        }
-        server = _server_stub(provider_model_catalog=provider_model_catalog)
-        app.include_router(create_providers_router(server))
-        client = TestClient(app)
-
-        with patch(
-            "gobby.servers.routes.providers.shutil.which",
-            side_effect=lambda binary: f"/usr/local/bin/{binary}",
-        ):
-            response = client.get("/api/providers/models")
-
-        providers = {entry["provider"]: entry for entry in response.json()["providers"]}
-        model = providers["droid"]["models"][0]
-        for key, value in source_model.items():
-            assert model[key] == value
-        assert model["supported_reasoning_efforts"] == ["medium", "high"]
-        assert model["context_limit"] == 200_000
-        assert model["speed_tier"] == "fast"
-        assert model["speed_multiplier"] == 4.0
-        provider_model_catalog.all_capabilities.assert_called_once_with()
 
     def test_models_route_merges_live_droid_gemini_family_models_with_static_metadata(
         self,

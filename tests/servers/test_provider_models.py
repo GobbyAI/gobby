@@ -10,11 +10,17 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from gobby.config.app import DaemonConfig
+from gobby.servers.http import HTTPServer
+from gobby.servers.provider_model_capabilities import ProviderModelCapability, SpeedTier
 from gobby.servers.provider_model_defaults import AGY_MODELS, DROID_MODEL_CATALOG
 from gobby.servers.provider_model_discovery import CLAUDE_ALIASES
 from gobby.servers.provider_models import (
@@ -23,6 +29,7 @@ from gobby.servers.provider_models import (
     create_provider_model_catalog,
 )
 from gobby.servers.provider_models_grok import models_from_cache
+from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
 
@@ -1184,6 +1191,65 @@ class TestProviderModelCatalog:
         assert settings["security"]["auth"]["selectedType"] == "anthropic"
         assert settings["modelProviders"]["openai"][0]["id"] == "gpt-5"
         assert settings["modelProviders"]["anthropic"][0]["id"] == "claude-sonnet-4-5"
+
+
+def test_models_route_adds_capabilities_without_changing_existing_fields() -> None:
+    app = FastAPI()
+    provider_model_catalog = MagicMock()
+    source_model = {
+        "value": "droid-capability-test",
+        "label": "Droid capability test",
+        "reasoning_efforts": ["low"],
+        "context_length": 123_456,
+    }
+    provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
+        "source": "live",
+        "models": (
+            [source_model]
+            if provider == "droid"
+            else [{"value": f"{provider}-model", "label": f"{provider}-label"}]
+        ),
+    }
+    provider_model_catalog.all_capabilities.return_value = {
+        (
+            "droid",
+            "droid-capability-test",
+        ): ProviderModelCapability(
+            provider="droid",
+            model_id="droid-capability-test",
+            supported_reasoning_efforts=("medium", "high"),
+            context_limit=200_000,
+            speed_tier=SpeedTier.FAST,
+            speed_multiplier=4.0,
+        )
+    }
+    server = cast(
+        HTTPServer,
+        SimpleNamespace(
+            services=SimpleNamespace(
+                config=DaemonConfig(),
+                provider_model_catalog=provider_model_catalog,
+            )
+        ),
+    )
+    app.include_router(create_providers_router(server))
+    client = TestClient(app)
+
+    with patch(
+        "gobby.servers.routes.providers.shutil.which",
+        side_effect=lambda binary: f"/usr/local/bin/{binary}",
+    ):
+        response = client.get("/api/providers/models")
+
+    providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+    model = providers["droid"]["models"][0]
+    for key, value in source_model.items():
+        assert model[key] == value
+    assert model["supported_reasoning_efforts"] == ["medium", "high"]
+    assert model["context_limit"] == 200_000
+    assert model["speed_tier"] == "fast"
+    assert model["speed_multiplier"] == 4.0
+    provider_model_catalog.all_capabilities.assert_called_once_with()
 
 
 class TestModelDiscoveryCwdPath:
