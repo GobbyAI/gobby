@@ -15,6 +15,7 @@ from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.hub.protocol import CronRunAdmission
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.project_context import (
     get_project_context,
     reset_project_context,
@@ -62,6 +63,7 @@ class CronScheduler:
         self._cleanup_task: asyncio.Task[None] | None = None
         self._active_tasks: set[asyncio.Task[None]] = set()
         self._active_run_ids: set[str] = set()
+        self._machine_id = require_machine_id()
         self._scheduler_owner = str(uuid.uuid4())
         self._run_db_callback = run_db
         self.on_run_complete: Callable[[CronJob, CronRun], Awaitable[None]] | None = None
@@ -97,7 +99,7 @@ class CronScheduler:
         )
 
     def _reconcile_interrupted_runs_on_startup(self) -> None:
-        result = self.storage.reconcile_interrupted_runs()
+        result = self.storage.reconcile_interrupted_runs(self._machine_id)
         if result["dispatched"] or result["failed"]:
             logger.info(
                 "Reconciled cron runs at scheduler startup: dispatched=%s failed=%s",
@@ -146,6 +148,7 @@ class CronScheduler:
         """Fail timed-out runs so they stop consuming scheduler capacity."""
         swept = self.storage.fail_stale_running_runs(
             self.config.stale_run_timeout_seconds,
+            machine_id=self._machine_id,
             exclude_run_ids=self._active_run_ids,
         )
         if swept:
@@ -159,7 +162,7 @@ class CronScheduler:
         next_run = compute_next_run(job)
         try:
             with self.storage.db.transaction_immediate(lock=CronRunAdmission()):
-                if self.storage.count_running() >= self.config.max_concurrent_jobs:
+                if self.storage.count_running(self._machine_id) >= self.config.max_concurrent_jobs:
                     return None
                 claimed = self.storage.claim_due_job(
                     job.id,
@@ -248,7 +251,10 @@ class CronScheduler:
             return
 
         # Respect max concurrent limit
-        running_count = await self._run_db(self.storage.count_running)
+        running_count = await self._run_db(
+            self.storage.count_running,
+            self._machine_id,
+        )
         available_slots = self.config.max_concurrent_jobs - running_count
 
         if available_slots <= 0:
@@ -288,7 +294,7 @@ class CronScheduler:
                             )
                             continue
 
-                # Compare-and-set the selected schedule before creating its run.
+                # The schedule CAS is global: whichever machine wins dispatches the occurrence.
                 run = await self._run_db(self._create_scheduled_run, job)
                 if run is None:
                     logger.debug(
@@ -437,6 +443,7 @@ class CronScheduler:
             await self._run_db(
                 self.storage.create_run_if_admitted,
                 job.id,
+                machine_id=self._machine_id,
                 max_concurrent_jobs=self.config.max_concurrent_jobs,
                 scheduler_owner=self._scheduler_owner,
             ),

@@ -90,6 +90,7 @@ class CronRunStorageMixin:
         self,
         cron_job_id: str,
         *,
+        machine_id: str,
         max_concurrent_jobs: int,
         scheduler_owner: str | None = None,
     ) -> tuple[CronRun | None, int, bool]:
@@ -103,10 +104,6 @@ class CronRunStorageMixin:
 
         run_id = str(uuid.uuid4())
         now = utc_now()
-        machine_id = get_machine_id()
-        if machine_id is None:
-            raise RuntimeError("Local machine identity is required to create a cron run")
-
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
@@ -117,7 +114,13 @@ class CronRunStorageMixin:
 
         with self.db.transaction_immediate(lock=CronRunAdmission()) as conn:
             count_row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM cron_runs WHERE status IN ('pending', 'running')"
+                """
+                SELECT COUNT(*) as cnt
+                  FROM cron_runs
+                 WHERE status IN ('pending', 'running')
+                   AND machine_id = %s
+                """,
+                (machine_id,),
             ).fetchone()
             active_count = int(count_row["cnt"]) if count_row else 0
             active_job_row = conn.execute(
@@ -142,7 +145,7 @@ class CronRunStorageMixin:
                     status, output, error, agent_run_id,
                     pipeline_execution_id, scheduler_owner, created_at
                 )
-                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                   FROM cron_jobs
                  WHERE id = %s
                 ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
@@ -221,10 +224,16 @@ class CronRunStorageMixin:
         )
         return hydrate_run_children(self.db, [CronRun.from_row(row) for row in rows])
 
-    def count_running(self) -> int:
-        """Count cron-owned slots currently consumed by pending/running runs."""
+    def count_running(self, machine_id: str) -> int:
+        """Count active cron slots owned by one machine."""
         row = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM cron_runs WHERE status IN ('pending', 'running')"
+            """
+            SELECT COUNT(*) as cnt
+              FROM cron_runs
+             WHERE status IN ('pending', 'running')
+               AND machine_id = %s
+            """,
+            (machine_id,),
         )
         return row["cnt"] if row else 0
 
@@ -232,6 +241,7 @@ class CronRunStorageMixin:
         self,
         timeout_seconds: int,
         *,
+        machine_id: str,
         exclude_run_ids: Collection[str] | None = None,
     ) -> int:
         """Fail running cron rows older than the configured execution timeout."""
@@ -253,12 +263,14 @@ class CronRunStorageMixin:
                    error = %s
              WHERE status = 'running'
                AND COALESCE(started_at, triggered_at, created_at) < %s
+               AND machine_id = %s
                AND NOT (id = ANY(%s::uuid[]))
             """,
             (
                 now,
                 f"Cron run exceeded running timeout ({timeout_seconds}s)",
                 cutoff,
+                machine_id,
                 excluded,
             ),
         )
@@ -301,9 +313,9 @@ class CronRunStorageMixin:
         children = project_active_children_for_job(self.db, job_id, action_type)
         return [child.to_dict() for child in children]
 
-    def reconcile_interrupted_runs(self) -> dict[str, int]:
-        """Normalize active cron rows left behind by a previous scheduler process."""
-        return reconcile_interrupted_cron_runs(self.db)
+    def reconcile_interrupted_runs(self, machine_id: str) -> dict[str, int]:
+        """Normalize active cron rows left behind by this machine's scheduler."""
+        return reconcile_interrupted_cron_runs(self.db, machine_id)
 
     def _hydrate_run(self, run: CronRun) -> CronRun:
         return hydrate_run_children(self.db, [run])[0]

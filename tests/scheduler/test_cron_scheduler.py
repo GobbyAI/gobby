@@ -434,7 +434,7 @@ async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats
     assert persisted_job is not None
     assert persisted_job.next_run_at == due_at
     assert cron_storage.list_runs(job.id, limit=10) == []
-    assert cron_storage.count_running() == 0
+    assert cron_storage.count_running(scheduler._machine_id) == 0
     mock_executor.execute.assert_not_awaited()
 
 
@@ -1040,12 +1040,14 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
     def racing_manual_create(
         cron_job_id: str,
         *,
+        machine_id: str,
         max_concurrent_jobs: int,
         scheduler_owner: str | None = None,
     ) -> tuple[CronRun | None, int, bool]:
         admission_barrier.wait(timeout=2)
         return create_manual_run(
             cron_job_id,
+            machine_id=machine_id,
             max_concurrent_jobs=max_concurrent_jobs,
             scheduler_owner=scheduler_owner,
         )
@@ -1075,12 +1077,12 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
 
 
 @pytest.mark.asyncio
-async def test_run_now_racing_heartbeat_respects_global_capacity(
+async def test_run_now_racing_heartbeat_respects_machine_capacity(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Manual and scheduled admission share the global capacity guard."""
+    """Manual and scheduled admission share this machine's capacity guard."""
     scheduler = CronScheduler(
         storage=cron_storage,
         executor=mock_executor,
@@ -1150,7 +1152,7 @@ async def test_run_now_racing_heartbeat_respects_global_capacity(
         )
         assert len(runs) == 1
         assert runs[0].id == manual_run.id
-        assert cron_storage.count_running() == 1
+        assert cron_storage.count_running(manual_run.machine_id) == 1
         mock_executor.execute.assert_awaited_once()
     finally:
         release_scheduled_admission.set()
@@ -1494,5 +1496,6 @@ def test_stale_sweep_excludes_runs_tracked_by_local_scheduler() -> None:
     assert swept == 0
     storage.fail_stale_running_runs.assert_called_once_with(
         60,
+        machine_id=scheduler._machine_id,
         exclude_run_ids={"run-a", "run-b"},
     )

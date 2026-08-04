@@ -51,10 +51,13 @@ def active_children_for_job(
     return []
 
 
-def reconcile_interrupted_runs(db: HubDatabase) -> dict[str, int]:
-    """Normalize active cron rows left behind by a previous process."""
-    dispatched = _reconcile_linked_pipeline_runs(db) + _reconcile_linked_agent_runs(db)
-    failed = _fail_remaining_active_runs(db)
+def reconcile_interrupted_runs(db: HubDatabase, machine_id: str) -> dict[str, int]:
+    """Normalize active cron rows owned by one scheduler machine."""
+    dispatched = _reconcile_linked_pipeline_runs(
+        db,
+        machine_id,
+    ) + _reconcile_linked_agent_runs(db, machine_id)
+    failed = _fail_remaining_active_runs(db, machine_id)
     return {"dispatched": dispatched, "failed": failed}
 
 
@@ -144,7 +147,7 @@ def _active_agent_children(db: HubDatabase, job_id: str) -> list[CronRunChild]:
     ]
 
 
-def _reconcile_linked_pipeline_runs(db: HubDatabase) -> int:
+def _reconcile_linked_pipeline_runs(db: HubDatabase, machine_id: str) -> int:
     placeholders = ", ".join("%s" for _ in PIPELINE_ACTIVE_STATUSES)
     cursor = db.execute(
         f"""
@@ -158,13 +161,14 @@ def _reconcile_linked_pipeline_runs(db: HubDatabase) -> int:
            AND pe.id = cr.pipeline_execution_id
            AND pe.status IN ({placeholders})
            AND cr.status IN ('pending', 'running')
+           AND cr.machine_id = %s
         """,  # nosec B608
-        PIPELINE_ACTIVE_STATUSES,
+        (*PIPELINE_ACTIVE_STATUSES, machine_id),
     )
     return cursor.rowcount
 
 
-def _reconcile_linked_agent_runs(db: HubDatabase) -> int:
+def _reconcile_linked_agent_runs(db: HubDatabase, machine_id: str) -> int:
     placeholders = ", ".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
     cursor = db.execute(
         f"""
@@ -178,13 +182,14 @@ def _reconcile_linked_agent_runs(db: HubDatabase) -> int:
            AND ar.id = cr.agent_run_id
            AND ar.status IN ({placeholders})
            AND cr.status IN ('pending', 'running')
+           AND cr.machine_id = %s
         """,  # nosec B608
-        ACTIVE_AGENT_RUN_STATUSES,
+        (*ACTIVE_AGENT_RUN_STATUSES, machine_id),
     )
     return cursor.rowcount
 
 
-def _fail_remaining_active_runs(db: HubDatabase) -> int:
+def _fail_remaining_active_runs(db: HubDatabase, machine_id: str) -> int:
     cursor = db.execute(
         """
         UPDATE cron_runs
@@ -195,6 +200,8 @@ def _fail_remaining_active_runs(db: HubDatabase) -> int:
                    'Cron run was still active when the scheduler started'
                )
          WHERE status IN ('pending', 'running')
-        """
+           AND machine_id = %s
+        """,
+        (machine_id,),
     )
     return cursor.rowcount

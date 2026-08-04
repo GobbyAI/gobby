@@ -698,9 +698,9 @@ def test_count_running(cron_storage: CronJobStorage) -> None:
     )
     run = cron_storage.create_run(job.id)
     assert run is not None
-    assert cron_storage.count_running() == 1
+    assert cron_storage.count_running(run.machine_id) == 1
     cron_storage.update_run(run.id, status="running")
-    assert cron_storage.count_running() == 1
+    assert cron_storage.count_running(run.machine_id) == 1
 
 
 def test_create_run_returns_none_when_job_already_active(
@@ -976,7 +976,7 @@ def test_reconcile_interrupted_runs_preserves_active_children(
     stale_run = cron_storage.create_run(stale_job.id)
     assert stale_run is not None
 
-    result = cron_storage.reconcile_interrupted_runs()
+    result = cron_storage.reconcile_interrupted_runs(pipeline_run.machine_id)
 
     assert result == {"dispatched": 1, "failed": 1}
     refreshed_pipeline = cron_storage.get_run(pipeline_run.id)
@@ -1024,7 +1024,10 @@ def test_fail_stale_running_runs_uses_configured_cutoff(
         started_at=datetime.now(UTC),
     )
 
-    failed = cron_storage.fail_stale_running_runs(60)
+    failed = cron_storage.fail_stale_running_runs(
+        60,
+        machine_id=stale_run.machine_id,
+    )
 
     refreshed_stale = cron_storage.get_run(stale_run.id)
     refreshed_fresh = cron_storage.get_run(fresh_run.id)
@@ -1058,6 +1061,8 @@ def test_fail_stale_running_runs_excludes_locally_tracked_run(
     )
     tracked_run = cron_storage.create_run(tracked_job.id)
     orphaned_run = cron_storage.create_run(orphaned_job.id)
+    assert tracked_run is not None
+    assert orphaned_run is not None
     stale_started_at = datetime.now(UTC) - timedelta(hours=2)
     cron_storage.update_run(
         tracked_run.id,
@@ -1072,6 +1077,7 @@ def test_fail_stale_running_runs_excludes_locally_tracked_run(
 
     failed = cron_storage.fail_stale_running_runs(
         60,
+        machine_id=tracked_run.machine_id,
         exclude_run_ids={tracked_run.id},
     )
 
@@ -1090,7 +1096,10 @@ def test_fail_stale_running_runs_rejects_invalid_timeout(
     timeout_seconds: object,
 ) -> None:
     with pytest.raises(ValueError, match="timeout_seconds must be a positive integer"):
-        cron_storage.fail_stale_running_runs(timeout_seconds)
+        cron_storage.fail_stale_running_runs(
+            timeout_seconds,
+            machine_id=PROJECT_ID,
+        )
 
 
 def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
