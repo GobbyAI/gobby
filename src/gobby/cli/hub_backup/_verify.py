@@ -690,7 +690,7 @@ def _poll(
 
 def _remove_container(container: str) -> None:
     try:
-        result = _docker("rm", "-f", container, timeout=_DOCKER_RM_TIMEOUT_SECONDS)
+        result = _docker("rm", "-f", "-v", container, timeout=_DOCKER_RM_TIMEOUT_SECONDS)
     except click.ClickException as exc:
         click.echo(f"Warning: failed to remove scratch container {container}: {exc}", err=True)
         return

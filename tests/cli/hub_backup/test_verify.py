@@ -272,7 +272,7 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     assert restore_argv[2:4] == ["-i", fake.container]
     assert restore_argv[4:] == ["pg_restore", "-U", "postgres", "-d", "gobby"]
     assert "--no-owner" not in restore_argv
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_postgres_restore_uses_repair_escape_for_restored_database_probes(
@@ -363,7 +363,7 @@ def test_verify_postgres_restore_raises_when_scratch_cluster_never_ready(
         )
 
     assert "ready" in str(excinfo.value).lower()
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_postgres_restore_raises_on_role_attribute_mismatch(
@@ -386,7 +386,7 @@ def test_verify_postgres_restore_raises_on_role_attribute_mismatch(
     message = str(excinfo.value)
     assert "gobby" in message
     assert "rolsuper" in message
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
     assert not fake.exec_argv_containing("pg_restore")
 
 
@@ -408,7 +408,7 @@ def test_verify_postgres_restore_raises_on_missing_role(
         )
 
     assert "gobby_ro" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_postgres_restore_skips_attribute_compare_for_bootstrap_postgres_role(
@@ -455,7 +455,7 @@ def test_verify_postgres_restore_raises_on_row_count_mismatch_naming_the_table(
     assert "5" in message
     assert "4" in message
     assert "tasks" not in message
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_postgres_restore_rejects_schema_object_count_mismatch(
@@ -502,7 +502,7 @@ def test_verify_postgres_restore_raises_with_stderr_tail_when_pg_restore_fails(
         )
 
     assert "relation missing" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_postgres_restore_raises_when_dump_missing(tmp_path: Path) -> None:
@@ -591,7 +591,7 @@ def test_verify_falkordb_restore_seeds_scratch_dir_and_verifies_graph_list(
 
     assert len(fake.exec_argv_containing("PING")) == 2
     assert fake.exec_argv_containing("GRAPH.LIST")
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
     assert fake.mount_source is not None
     assert not fake.mount_source.exists()
 
@@ -612,7 +612,7 @@ def test_verify_falkordb_restore_raises_on_graph_set_mismatch_and_cleans_up(
         )
 
     assert "code" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
     assert fake.mount_source is not None
     assert not fake.mount_source.exists()
 
@@ -630,7 +630,7 @@ def test_verify_falkordb_restore_raises_when_container_never_answers_ping(
         _verify.verify_falkordb_restore(rdb_path, {"memory": {"nodes": 1, "edges": 0}})
 
     assert "ready" in str(excinfo.value).lower()
-    assert fake.argv_starting("docker", "rm", "-f", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
 
 
 def test_verify_falkordb_restore_raises_when_rdb_missing(tmp_path: Path) -> None:
