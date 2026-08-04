@@ -164,6 +164,27 @@ class PlanReviewEvidenceService:
                         details={"evidence_id": active.evidence_id},
                     )
                 if prepared is None:
+                    prepared = next(
+                        (
+                            evidence.prepared_result()
+                            for evidence in self.store.list_for_path(
+                                project_id=project_id,
+                                plan_path=relative_path,
+                                transaction=transaction,
+                                for_update=True,
+                            )
+                            if evidence.expired_at is None
+                            and self._matches_attempt(
+                                evidence,
+                                round_number=round_number,
+                                session_id=session_id,
+                                task_id=task_id,
+                                stage=stage,
+                            )
+                        ),
+                        None,
+                    )
+                if prepared is None:
                     plan_hash = hashlib.sha256(snapshot).hexdigest()
                     sections = build_section_manifest(snapshot)
                     evidence = self.store.insert(

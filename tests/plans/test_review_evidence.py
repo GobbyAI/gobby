@@ -134,6 +134,47 @@ def test_prepare_round_snapshot(
     assert row.lease_expires_at is not None
 
 
+def test_prepare_finalized_interactive_round_returns_canonical_evidence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    round_result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
+    }
+    plan_path.write_bytes(
+        plan_path.read_bytes()
+        + b"\n"
+        + service.render_v1_round_checkpoint(prepared.evidence_id, round_result)
+    )
+    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+
+    replay = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+
+    assert replay.evidence_id == prepared.evidence_id
+
+
 def test_section_hash_canonicalization() -> None:
     snapshot = (
         b"# Title\n**Plan ID:** p\n\n"
