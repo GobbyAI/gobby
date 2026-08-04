@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Self
 
+from gobby.llm.context_windows import normalize_model_lookup_id
+from gobby.storage.model_metadata import ModelMetadata
+
+CAPABILITY_MATRIX_PROVIDERS = frozenset({"claude", "codex", "droid", "grok", "qwen"})
+
 
 class SpeedTier(str, Enum):
     """Execution speed tier for a provider model route."""
@@ -69,6 +74,55 @@ class ProviderModelCapability:
             "speed_tier": self.speed_tier.value,
             "speed_multiplier": self.speed_multiplier,
         }
+
+
+def build_capability_matrix(
+    *,
+    model_metadata: Mapping[str, ModelMetadata],
+    provider_catalogs: Mapping[str, Sequence[Mapping[str, object]]],
+) -> dict[tuple[str, str], ProviderModelCapability]:
+    """Assemble canonical capabilities from normalized provider catalogs."""
+    normalized_metadata = {
+        normalize_model_lookup_id(model_id): metadata
+        for model_id, metadata in model_metadata.items()
+    }
+    capabilities: dict[tuple[str, str], ProviderModelCapability] = {}
+
+    for raw_provider, models in provider_catalogs.items():
+        provider = raw_provider.strip().lower()
+        if provider not in CAPABILITY_MATRIX_PROVIDERS:
+            continue
+        for model in models:
+            model_id = _catalog_model_id(model)
+            if model_id is None:
+                continue
+            metadata = normalized_metadata.get(model_id)
+            key = (provider, model_id)
+            capabilities[key] = ProviderModelCapability(
+                provider=provider,
+                model_id=model_id,
+                supported_reasoning_efforts=_catalog_reasoning_efforts(model),
+                context_limit=metadata.context_length if metadata is not None else None,
+            )
+
+    return {key: capabilities[key] for key in sorted(capabilities)}
+
+
+def _catalog_model_id(model: Mapping[str, object]) -> str | None:
+    value = model.get("canonical_id") or model.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return normalize_model_lookup_id(value)
+
+
+def _catalog_reasoning_efforts(model: Mapping[str, object]) -> tuple[str, ...]:
+    reasoning = model.get("reasoning")
+    if not isinstance(reasoning, Mapping):
+        return ()
+    efforts = reasoning.get("supported_efforts")
+    if isinstance(efforts, str) or not isinstance(efforts, Sequence):
+        return ()
+    return tuple(effort for effort in efforts if isinstance(effort, str) and effort)
 
 
 def _required_string(data: Mapping[str, object], key: str) -> str:
