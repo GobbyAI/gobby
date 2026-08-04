@@ -1,3 +1,6 @@
+DO $provider_capability_matrix$
+BEGIN
+IF to_regclass('provider_capability_refresh_state') IS NULL THEN
 CREATE TABLE provider_capability_refresh_state (
     provider TEXT NOT NULL,
     source_key TEXT NOT NULL,
@@ -12,7 +15,9 @@ CREATE TABLE provider_capability_refresh_state (
     CONSTRAINT provider_capability_refresh_state_pkey
         PRIMARY KEY (provider, source_key)
 );
+END IF;
 
+IF to_regclass('provider_model_capabilities') IS NULL THEN
 CREATE TABLE provider_model_capabilities (
     provider TEXT NOT NULL,
     canonical_model TEXT NOT NULL,
@@ -34,7 +39,9 @@ CREATE TABLE provider_model_capabilities (
     CONSTRAINT provider_model_capabilities_pkey
         PRIMARY KEY (provider, canonical_model)
 );
+END IF;
 
+IF to_regclass('provider_model_routes') IS NULL THEN
 CREATE TABLE provider_model_routes (
     provider TEXT NOT NULL,
     canonical_model TEXT NOT NULL,
@@ -54,3 +61,6 @@ CREATE TABLE provider_model_routes (
         REFERENCES provider_model_capabilities (provider, canonical_model)
         ON DELETE CASCADE
 );
+END IF;
+END;
+$provider_capability_matrix$;
