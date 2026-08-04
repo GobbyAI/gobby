@@ -76,7 +76,7 @@ def test_update_plan_hash_regenerates_manifest(temp_db: HubDatabase, tmp_path: P
 
     updated = manager.update_plan_hash(record.plan_id, project_id=project_id)
 
-    assert hasattr(manager, "_generate_coverage_manifest")
+    assert hasattr(manager, "generate_coverage_manifest")
     assert updated.plan_hash != record.plan_hash
     assert manifest.stat().st_mtime_ns > first_mtime
 

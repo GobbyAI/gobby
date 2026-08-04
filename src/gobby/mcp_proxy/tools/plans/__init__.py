@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
+from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
+
+P = ParamSpec("P")
+T = TypeVar("T")
+RunDb = Callable[..., Awaitable[Any]]
 
 
 class _InvalidProjectError(ValueError):
@@ -19,7 +25,10 @@ class _InvalidProjectError(ValueError):
 
 
 def create_plan_registry(
-    db: HubDatabase, *, default_project_id: str | None = None
+    db: HubDatabase,
+    *,
+    default_project_id: str | None = None,
+    run_db: RunDb | None = None,
 ) -> InternalToolRegistry:
     """Create the gobby-plans registry."""
 
@@ -29,7 +38,7 @@ def create_plan_registry(
     )
     manager = LocalPlanManager(db)
 
-    def create_plan(
+    async def create_plan(
         plan_id: str,
         plan_path: str,
         plan_kind: str = "implementation",
@@ -44,12 +53,13 @@ def create_plan_registry(
                 "error": "invalid_plan_kind",
                 "message": (f"plan_kind must be one of: {', '.join(sorted(allowed_plan_kinds))}"),
             }
-        project_id = _resolve_project_id(db, project, default_project_id)
         root_ref = root_task_ref or _root_task_from_path(plan_path)
         if root_ref is None:
             return {"ok": False, "error": "missing_root_task_ref"}
-        try:
-            record = manager.create_plan(
+
+        def create_record() -> PlanRecord:
+            project_id = _resolve_project_id(db, project, default_project_id)
+            return manager.create_plan_record(
                 project_id=project_id,
                 plan_id=plan_id,
                 plan_path=plan_path,
@@ -57,6 +67,11 @@ def create_plan_registry(
                 root_task_ref=root_ref,
                 reactivate=reactivate,
             )
+
+        try:
+            record = await _run_db_call(run_db, create_record)
+            if plan_kind == "implementation":
+                await asyncio.to_thread(manager.generate_coverage_manifest, record)
         except (ValueError, OSError, psycopg.Error) as exc:
             return {"ok": False, "error": "create_plan_failed", "message": str(exc)}
         return {"ok": True, "plan": record.to_dict()}
@@ -170,12 +185,17 @@ def create_plan_registry(
         func=archive_plan,
     )
 
-    def update_plan_hash(plan_id: str, project: str | None = None) -> dict[str, Any]:
-        try:
-            record = manager.update_plan_hash(
+    async def update_plan_hash(plan_id: str, project: str | None = None) -> dict[str, Any]:
+        def update_record() -> tuple[PlanRecord, bool]:
+            return manager.update_plan_hash_record(
                 plan_id,
                 project_id=_optional_project_id(db, project, default_project_id),
             )
+
+        try:
+            record, changed = await _run_db_call(run_db, update_record)
+            if changed and record.plan_kind == "implementation":
+                await asyncio.to_thread(manager.generate_coverage_manifest, record)
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except (ValueError, OSError, psycopg.Error) as exc:
@@ -193,12 +213,19 @@ def create_plan_registry(
         func=update_plan_hash,
     )
 
-    def regenerate_coverage_manifest(plan_id: str, project: str | None = None) -> dict[str, Any]:
-        try:
-            path = manager.regenerate_coverage_manifest(
+    async def regenerate_coverage_manifest(
+        plan_id: str,
+        project: str | None = None,
+    ) -> dict[str, Any]:
+        def get_record() -> PlanRecord:
+            return manager.get_plan(
                 plan_id,
                 project_id=_optional_project_id(db, project, default_project_id),
             )
+
+        try:
+            record = await _run_db_call(run_db, get_record)
+            path = await asyncio.to_thread(manager.generate_coverage_manifest, record)
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except (ValueError, OSError, psycopg.Error) as exc:
@@ -283,6 +310,17 @@ def create_plan_registry(
         ),
     )
     return registry
+
+
+async def _run_db_call(
+    run_db: RunDb | None,
+    func: Callable[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    if run_db is None:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return cast(T, await run_db(func, *args, **kwargs))
 
 
 def _resolve_project_id(

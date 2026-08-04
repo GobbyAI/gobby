@@ -36,7 +36,7 @@ class RegistryContext:
         if self.session_manager is None:
             return ref
         ctx = get_project_context()
-        proj_id = ctx.get("id") if ctx else self.project_id
+        proj_id = self.project_id or (ctx.get("id") if ctx else None)
         return str(self.session_manager.resolve_session_reference(ref, proj_id))
 
     def resolve_task_id(self, ref: str) -> str:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import textwrap
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -14,6 +16,7 @@ from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
@@ -46,6 +49,41 @@ def _write_plan(root: Path) -> Path:
             - 1.1.1 — Docs exist. file: `docs/demo.md`
             """
         ).lstrip(),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_large_plan(root: Path) -> Path:
+    plan_dir = root / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    path = plan_dir / "task-100-large.md"
+    deliverables = []
+    for deliverable_index in range(1, 16):
+        criteria = "\n".join(
+            f"- 1.{deliverable_index}.{criterion_index} — Criterion {criterion_index}. "
+            f"file: `docs/deliverable-{deliverable_index}.md`"
+            for criterion_index in range(1, 4)
+        )
+        deliverables.append(
+            textwrap.dedent(
+                f"""
+                ### 1.{deliverable_index} Work {deliverable_index} [category: docs]
+                `kind: deliverable`
+
+                Target: `docs/deliverable-{deliverable_index}.md`
+
+                Body.
+
+                **Acceptance:**
+                {criteria}
+                """
+            ).strip()
+        )
+    path.write_text(
+        "> **Plan ID:** task-100-large\n\n"
+        "## P1 Phase\n"
+        "`kind: framing`\n\n" + "\n\n".join(deliverables) + "\n",
         encoding="utf-8",
     )
     return path
@@ -107,64 +145,161 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     caller_thread = threading.get_ident()
-    worker_threads: list[int] = []
+    db_threads: list[int] = []
+    coverage_threads: list[int] = []
+    other_worker_threads: list[int] = []
     create_kwargs: list[dict[str, object]] = []
     manifest_path = tmp_path / "plan.coverage.yaml"
+    record = SimpleNamespace(
+        plan_kind="implementation",
+        to_dict=lambda: {"plan_id": "plan"},
+    )
 
-    def create_plan(self: LocalPlanManager, **kwargs: object) -> SimpleNamespace:
-        worker_threads.append(threading.get_ident())
+    def create_plan_record(self: LocalPlanManager, **kwargs: object) -> SimpleNamespace:
+        db_threads.append(threading.get_ident())
         create_kwargs.append(kwargs)
-        return SimpleNamespace(to_dict=lambda: {"plan_id": "plan"})
+        return record
 
-    def regenerate_manifest(
+    def update_plan_hash_record(
         self: LocalPlanManager,
         plan_id: str,
         *,
         project_id: str | None = None,
+    ) -> tuple[SimpleNamespace, bool]:
+        db_threads.append(threading.get_ident())
+        return record, True
+
+    def get_plan(
+        self: LocalPlanManager,
+        plan_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> SimpleNamespace:
+        db_threads.append(threading.get_ident())
+        return record
+
+    def generate_coverage_manifest(
+        self: LocalPlanManager,
+        _record: object,
     ) -> Path:
-        worker_threads.append(threading.get_ident())
+        coverage_threads.append(threading.get_ident())
         return manifest_path
 
     def prepare_review_round(
         self: PlanReviewEvidenceService,
         **_kwargs: object,
     ) -> SimpleNamespace:
-        worker_threads.append(threading.get_ident())
+        other_worker_threads.append(threading.get_ident())
         return SimpleNamespace(to_dict=lambda: {"evidence_id": "evidence"})
 
-    monkeypatch.setattr(LocalPlanManager, "create_plan", create_plan)
-    monkeypatch.setattr(LocalPlanManager, "regenerate_coverage_manifest", regenerate_manifest)
+    monkeypatch.setattr(LocalPlanManager, "create_plan_record", create_plan_record)
+    monkeypatch.setattr(LocalPlanManager, "update_plan_hash_record", update_plan_hash_record)
+    monkeypatch.setattr(LocalPlanManager, "get_plan", get_plan)
+    monkeypatch.setattr(LocalPlanManager, "generate_coverage_manifest", generate_coverage_manifest)
     monkeypatch.setattr(
         PlanReviewEvidenceService,
         "prepare_plan_review_round",
         prepare_review_round,
     )
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    executor = DatabaseExecutor(max_workers=1)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id="project-1",
+        run_db=executor.run,
+    )
 
-    created = await registry.call(
-        "create_plan",
-        {
-            "plan_id": "plan",
-            "plan_path": str(tmp_path / "plan.md"),
-            "root_task_ref": "#1",
-            "reactivate": True,
-        },
-    )
-    regenerated = await registry.call("regenerate_coverage_manifest", {"plan_id": "plan"})
-    prepared = await registry.call(
-        "prepare_plan_review_round",
-        {
-            "plan_path": str(tmp_path / "plan.md"),
-            "round_number": 1,
-        },
-    )
+    try:
+        created = await registry.call(
+            "create_plan",
+            {
+                "plan_id": "plan",
+                "plan_path": str(tmp_path / "plan.md"),
+                "root_task_ref": "#1",
+                "reactivate": True,
+            },
+        )
+        updated = await registry.call("update_plan_hash", {"plan_id": "plan"})
+        regenerated = await registry.call("regenerate_coverage_manifest", {"plan_id": "plan"})
+        prepared = await registry.call(
+            "prepare_plan_review_round",
+            {
+                "plan_path": str(tmp_path / "plan.md"),
+                "round_number": 1,
+            },
+        )
+    finally:
+        executor.shutdown(cancel_futures=False)
+        await asyncio.to_thread(executor.join)
 
     assert created == {"ok": True, "plan": {"plan_id": "plan"}}
     assert create_kwargs[0]["reactivate"] is True
+    assert updated == {"ok": True, "plan": {"plan_id": "plan"}}
     assert regenerated == {"ok": True, "manifest_path": str(manifest_path)}
     assert prepared == {"ok": True, "evidence_id": "evidence"}
-    assert len(worker_threads) == 3
-    assert all(thread_id != caller_thread for thread_id in worker_threads)
+    assert len(db_threads) == 3
+    assert len(coverage_threads) == 3
+    assert all(thread_id != caller_thread for thread_id in db_threads + coverage_threads)
+    assert set(db_threads).isdisjoint(coverage_threads)
+    assert all(thread_id != caller_thread for thread_id in other_worker_threads)
+
+
+async def test_large_plan_coverage_does_not_starve_short_db_job(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="large-plan", repo_path=str(tmp_path)).id
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id,
+        "Large plan root",
+        validation_criteria="Large-plan coverage evaluation must leave the DB lane responsive.",
+    )
+    plan_path = _write_large_plan(tmp_path)
+    coverage_started = threading.Event()
+    release_coverage = threading.Event()
+
+    def slow_coverage(_self: LocalPlanManager, _record: object) -> Path:
+        coverage_started.set()
+        if not release_coverage.wait(timeout=3):
+            raise TimeoutError("coverage test release was not signaled")
+        return tmp_path / "task-100-large.coverage.yaml"
+
+    monkeypatch.setattr(LocalPlanManager, "generate_coverage_manifest", slow_coverage)
+    executor = DatabaseExecutor(max_workers=1)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        run_db=executor.run,
+    )
+    registration = asyncio.create_task(
+        registry.call(
+            "create_plan",
+            {
+                "plan_id": "task-100-large",
+                "plan_path": str(plan_path),
+                "root_task_ref": f"#{root_task.seq_num}",
+            },
+        )
+    )
+
+    try:
+        coverage_in_flight = await asyncio.wait_for(
+            asyncio.to_thread(coverage_started.wait, 1),
+            timeout=1.1,
+        )
+        assert coverage_in_flight
+        started_at = time.monotonic()
+        result = await asyncio.wait_for(executor.run(lambda: "responsive"), timeout=0.75)
+        elapsed = time.monotonic() - started_at
+    finally:
+        release_coverage.set()
+        response = await registration
+        executor.shutdown(cancel_futures=False)
+        await asyncio.to_thread(executor.join)
+
+    assert response["ok"] is True
+    assert result == "responsive"
+    assert elapsed < 1.0
 
 
 @pytest.mark.asyncio

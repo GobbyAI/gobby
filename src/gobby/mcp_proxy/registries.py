@@ -163,7 +163,11 @@ def setup_internal_registries(
     if db is not None:
         from gobby.mcp_proxy.tools.plans import create_plan_registry
 
-        plan_registry = create_plan_registry(db, default_project_id=project_id)
+        plan_registry = create_plan_registry(
+            db,
+            default_project_id=project_id,
+            run_db=run_db,
+        )
         manager.add_registry(plan_registry)
         logger.debug("Plans registry initialized")
 

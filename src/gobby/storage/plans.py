@@ -84,6 +84,28 @@ class LocalPlanManager:
         root_task_ref: str,
         reactivate: bool = False,
     ) -> PlanRecord:
+        record = self.create_plan_record(
+            project_id=project_id,
+            plan_id=plan_id,
+            plan_path=plan_path,
+            plan_kind=plan_kind,
+            root_task_ref=root_task_ref,
+            reactivate=reactivate,
+        )
+        if _plan_carries_coverage_manifest(record.plan_kind):
+            self.generate_coverage_manifest(record)
+        return record
+
+    def create_plan_record(
+        self,
+        *,
+        project_id: str,
+        plan_id: str,
+        plan_path: str | Path,
+        plan_kind: str = PlanKind.implementation.value,
+        root_task_ref: str,
+        reactivate: bool = False,
+    ) -> PlanRecord:
         project_root = self._project_root(project_id)
         relative_path = self._relative_plan_path(project_root, plan_path)
         doc = parse_plan(
@@ -146,10 +168,7 @@ class LocalPlanManager:
                 raise ValueError(
                     f"plan {plan_id} is archived; pass reactivate=True to reactivate it"
                 )
-            record = PlanRecord.from_row(row)
-            if _plan_carries_coverage_manifest(record.plan_kind):
-                self._generate_coverage_manifest(record)
-            return record
+            return PlanRecord.from_row(row)
 
     def get_plan(self, plan_id_or_ref: str, *, project_id: str | None = None) -> PlanRecord:
         row = self._find_plan(plan_id_or_ref, project_id=project_id)
@@ -188,6 +207,17 @@ class LocalPlanManager:
         return [PlanRecord.from_row(row) for row in rows]
 
     def update_plan_hash(self, plan_id: str, *, project_id: str | None = None) -> PlanRecord:
+        record, changed = self.update_plan_hash_record(plan_id, project_id=project_id)
+        if changed and _plan_carries_coverage_manifest(record.plan_kind):
+            self.generate_coverage_manifest(record)
+        return record
+
+    def update_plan_hash_record(
+        self,
+        plan_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> tuple[PlanRecord, bool]:
         record = self.get_plan(plan_id, project_id=project_id)
         project_root = self._project_root(record.project_id)
         doc = parse_plan(
@@ -196,7 +226,7 @@ class LocalPlanManager:
             parse_mode="draft",
         )
         if doc.source_hash == record.plan_hash:
-            return record
+            return record, False
 
         now = _now()
         with self.db.transaction() as conn:
@@ -209,9 +239,7 @@ class LocalPlanManager:
                 (doc.source_hash, now, record.id),
             )
         updated = self.get_plan(plan_id, project_id=record.project_id)
-        if _plan_carries_coverage_manifest(updated.plan_kind):
-            self._generate_coverage_manifest(updated)
-        return updated
+        return updated, True
 
     def regenerate_coverage_manifest(
         self,
@@ -224,9 +252,13 @@ class LocalPlanManager:
             raise ValueError(
                 f"{record.plan_kind} plan {record.plan_id!r} does not carry a coverage manifest"
             )
-        return self._generate_coverage_manifest(record)
+        return self.generate_coverage_manifest(record)
 
-    def _generate_coverage_manifest(self, record: PlanRecord) -> Path:
+    def generate_coverage_manifest(self, record: PlanRecord) -> Path:
+        if not _plan_carries_coverage_manifest(record.plan_kind):
+            raise ValueError(
+                f"{record.plan_kind} plan {record.plan_id!r} does not carry a coverage manifest"
+            )
         project_root = self._project_root(record.project_id)
         report = evaluate(
             plan=project_root / record.plan_path,
