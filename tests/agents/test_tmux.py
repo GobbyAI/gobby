@@ -2000,6 +2000,7 @@ class TestTmuxSessionManagerExtended:
                 cwd="/tmp",
                 env={
                     "GOBBY_SESSION_ID": "session-123",
+                    "GOBBY_AGENT_API_TOKEN": "scoped-agent-token",
                     "ANTHROPIC_AUTH_TOKEN": "anthropic secret",
                     "QWEN_API_KEY": "qwen-secret",
                     "XAI_API_KEY": "xai-secret",
@@ -2010,6 +2011,8 @@ class TestTmuxSessionManagerExtended:
         new_session_args = mock_run.await_args_list[1].args
         argv_text = "\0".join(str(arg) for arg in new_session_args)
         assert "GOBBY_SESSION_ID=session-123" in argv_text
+        assert "GOBBY_AGENT_API_TOKEN" not in argv_text
+        assert "scoped-agent-token" not in argv_text
         assert "ANTHROPIC_AUTH_TOKEN" not in argv_text
         assert "anthropic secret" not in argv_text
         assert "QWEN_API_KEY" not in argv_text
@@ -2026,6 +2029,7 @@ class TestTmuxSessionManagerExtended:
 
         assert env_file.stat().st_mode & 0o777 == 0o600
         env_file_text = env_file.read_text(encoding="utf-8")
+        assert "GOBBY_AGENT_API_TOKEN=scoped-agent-token\n" in env_file_text
         assert "ANTHROPIC_AUTH_TOKEN='anthropic secret'\n" in env_file_text
         assert "QWEN_API_KEY=qwen-secret\n" in env_file_text
         assert "XAI_API_KEY=xai-secret\n" in env_file_text
